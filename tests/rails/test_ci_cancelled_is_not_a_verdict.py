@@ -6,9 +6,11 @@ arranged for there to be no answer most of the time.
 **The manufactured red.** ``ci.yml``'s ``test`` and ``breadth.yml``'s ``coverage`` are aggregation
 gates over a sharded matrix. Both were ``if: ${{ always() }}``, and ``always()`` runs a job
 *even when the run itself was cancelled* — at which point ``needs.<shard>.result`` is
-``cancelled`` and the gate's ``!= success`` test turned that into ``exit 1``. Since ci.yml's
-concurrency group deliberately collapses a branch's ``pull_request`` and ``push`` runs, one of
-the two is ALWAYS cancelled, so every PR carried a red ``test`` that no test produced.
+``cancelled`` and the gate's ``!= success`` test turned that into ``exit 1``. Until #3915 ci.yml
+also ran on a feature branch's ``push``, and its concurrency group collapsed that run onto the
+branch's ``pull_request`` run, so one of the two was ALWAYS cancelled and every PR carried a red
+``test`` that no test produced. Since #3915 a superseded ``pull_request`` run (a newer push to the
+pull request's branch) is the run that gets cancelled; the gate's condition covers both.
 MEASURED 2026-09-18 on ``9801cf068``: the cancelled ``push`` run ``35338585659`` reported all
 twelve of its other jobs ``cancelled`` and ``test`` → ``failure``, while the surviving
 ``pull_request`` run ``35338682195`` reported ``test`` → ``success``. Check-runs key on the
@@ -33,9 +35,9 @@ stated on its own:
 3. each gate script handles ``cancelled`` as its OWN branch, so a shard cancelled on a live run
    is not silently folded into the generic failure message;
 4. ``breadth.yml`` does not cancel in progress — a verification of main always completes;
-5. ``ci.yml`` still DOES cancel in progress on every branch but ``main`` — the #2595 dedupe must
-   not be collateral damage of fixing #2946, and it is the thing that stopped every PR running
-   the matrix twice — and never on ``main``, where a push is its commit's check (#3913).
+5. ``ci.yml`` still DOES cancel in progress on every branch but ``main`` — a newer push to a
+   pull request's branch must cancel the run it supersedes, and fixing #2946 must not cost
+   that — and never on ``main``, where a push is its commit's check (#3913).
 
 Parsed with a line scan rather than PyYAML, matching the convention its siblings
 ``tests/rails/test_ci_concurrency_dedupe.py`` and ``tests/rails/test_ci_tier_enforcement.py``
@@ -211,20 +213,18 @@ def test_mains_verification_run_is_never_cancelled_by_the_next_merge() -> None:
 
 
 def test_the_pr_gate_still_cancels_superseded_runs() -> None:
-    """Relation 5 — #2595's dedupe must not become collateral damage of fixing #2946.
+    """Relation 5 — cancelling a superseded run must not become collateral damage of fixing
+    #2946.
 
-    ci.yml's group is what stopped every non-fork PR running the whole matrix TWICE on one
-    head SHA (~72 jobs in flight to answer 8 PRs, against runner concurrency of 4–6). The fix
-    for the manufactured red is in the aggregate gate's condition, NOT in the group: turning
-    cancellation off here would trade a cosmetic red for the binding constraint on merge rate.
+    Off main, ci.yml's one run per push is the pull request's (#3915). A newer push to its
+    branch must cancel the run for the older head, or every push leaves its predecessor holding
+    runners. The fix for the manufactured red is in the aggregate gate's condition, NOT in the
+    group: turning cancellation off here would trade a cosmetic red for runner capacity.
     """
     value = _cancel_in_progress(CI_YML)
     assert value == "${{ github.ref != 'refs/heads/main' }}", (
         f"ci.yml's concurrency has `cancel-in-progress: {value}`. On every branch but main it "
-        "must be true, and on main false (a push to main is its commit's check). That group "
-        "collapses the "
-        "`pull_request` and `push` runs of a branch AND cancels superseded pushes (#2595); "
-        "without cancellation both duplicates run to completion and half of all runner "
-        "capacity recomputes an answer already in flight. The cancelled loser's red is fixed "
-        "in the `test` gate's `if:`, not by keeping both runs alive."
+        "must be true, so a newer push to a pull request's branch cancels the run for the "
+        "older head; on main false, since a push to main is its commit's check. The cancelled "
+        "run's red is fixed in the `test` gate's `if:`, not by keeping superseded runs alive."
     )

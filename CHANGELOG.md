@@ -24,6 +24,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Only approvals, questions and errors interrupt you; a loop's progress after each cycle waits for the daily digest, and every other notification waits in the bell.**
 - **`python -m tools.ci verify-check-run` says whether a pull request's posted merge verdict counts: only the merge controller's App's newest run, green, for the exact head and tree it records, so a job of a pull request's own that names itself `merge-verdict` counts for nothing.**
 - **The desktop app's icon, menu-bar image and loading mark are the PersonalClaw gradient mark.**
+- **CI runs once per pull request push instead of twice: a push to a branch other than main no longer starts its own CI run, so a branch is checked once it has a pull request.**
 
 ### Security
 

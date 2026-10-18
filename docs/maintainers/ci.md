@@ -327,7 +327,11 @@ judged by the copy it replaces, and the merge that adds the check runs the whole
 `docker-single-container.yml` asks the same question about its own runs before it builds.
 
 Runs on `main` are grouped by commit and never cancelled, so no merge goes unchecked because
-a later one replaced it. Everywhere else a newer push still cancels the older run.
+a later one replaced it. `ci.yml` runs on a push to `main` only: off `main` its one run is the
+pull request's, and a newer push to the pull request's branch cancels the older run. A branch
+with no pull request gets no `ci.yml` run, and GitHub starts no `pull_request` run while a pull
+request has a merge conflict, so such a branch gets none until the conflict is resolved. It
+cannot merge in that state either.
 
 ### Commit provenance
 
@@ -548,8 +552,9 @@ of the same commit was red is the release gate's question (#3911), not this work
 
 `tests/rails/test_ci_contract.py` holds each of these with planted violations:
 
-- `ci.yml` runs on every push to `main` (no negated branch, no path filter) and never cancels a
-  `main` run, at the workflow or the job level;
+- `ci.yml` runs on every push to `main` and on no other push (no `**` or other branch, no
+  `branches-ignore`, no bare `push:`, no tag, no negated branch, no path filter) and never
+  cancels a `main` run, at the workflow or the job level;
 - `test-macos` runs `test-shard`'s split on macOS under exactly the condition that runs it on
   pull requests into `main` and on an untested push: the same pytest words but the worker count
   and the report path, its own shard of its own leg's plan, the same job env and defaults, the same

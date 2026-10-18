@@ -17,9 +17,9 @@ permissions:
 
 jobs:
   frequency:
-    # The cancelled push duplicate normally loses ci.yml's branch-level concurrency race.
-    # Its matching pull_request run still triggers this observer; running on both would make
-    # the alert workflow itself noisy even though the script groups the data by head SHA.
+    # A superseded pull_request run is cancelled by its branch's next push (ci.yml's group;
+    # since #3915 a feature branch has no push run to duplicate it). The newer run still
+    # triggers this observer, so a cancelled run adds nothing; the script groups by head SHA.
     if: github.event.workflow_run.conclusion != 'cancelled'
     runs-on: ubuntu-24.04
     timeout-minutes: 5

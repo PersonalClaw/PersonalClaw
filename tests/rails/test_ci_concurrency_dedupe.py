@@ -1,35 +1,34 @@
-"""``ci.yml``'s concurrency group must collapse its two triggers onto one key.
+"""``ci.yml``'s concurrency group, off ``main``: one key per pull request's branch.
 
-Measured 2026-09-07 (issue #2595), from the Actions API rather than the checks tab: every
-non-fork PR ran the **entire CI matrix twice, concurrently, on the identical head SHA**.
-8 live branches → 16 CI runs → 9 jobs each: ~72 jobs in flight to answer 8 PRs' worth of
-questions, against account runner concurrency of 4–6 with ``test`` at ~45 minutes. Half of
-all runner capacity was recomputing an answer already in flight, which made this the binding
-constraint on merge rate.
+Off ``main``, ``ci.yml`` runs on ``pull_request`` only (#3915: the push trigger admits ``main``
+alone). Its group decides two things there: a newer push to a pull request's branch must cancel
+the run it supersedes, and no pull request's run may cancel another's.
 
-The cause was that the group keyed on ``github.ref``, a value the two triggers **disagree
-about**: ``refs/pull/<n>/merge`` under ``pull_request`` and ``refs/heads/<branch>`` under
-``push``. Different strings → different groups → no dedupe. The guardrail worked *within* a
-trigger and could not see *across* the two triggers the same file enables, while its comment
-claimed it was preventing wasted runner time.
+History, kept because it is why the key has the shape it does. Until #3915 a feature branch also
+ran on ``push``, and the key had to collapse that run onto the ``pull_request`` run of the same
+head. Measured 2026-09-07 (issue #2595): keyed on ``github.ref``, which the two triggers disagree
+about (``refs/pull/<n>/merge`` against ``refs/heads/<branch>``), every non-fork PR ran the whole
+matrix twice on one head SHA, about 72 jobs in flight for 8 PRs. Keying on the head SHA instead
+would have deduped the two triggers and broken cancellation: every commit in its own group, so
+three pushes leave three live runs.
 
-**Why this asserts a PROPERTY and not a string.** The obvious fix — keying on the head SHA —
-also makes the two keys agree, and is wrong: it puts every commit in its own group, so three
-pushes leave three live runs instead of cancelling the two superseded ones. That trades the
-duplicate-run bug for the very waste the guardrail exists to prevent, and a test that merely
-pinned the new expression as text would have happily accepted it. So this file evaluates the
-group expression against synthetic event contexts and asserts the four relations that actually
-matter:
+**Why this asserts PROPERTIES and not a string.** A test that pinned the expression as text
+would accept the SHA-keyed "fix" as readily as the right key. So this file evaluates the group
+against synthetic ``pull_request`` contexts, as GitHub fills them in, and asserts the three
+relations that matter off ``main``:
 
-1. same-repo ``pull_request`` and ``push`` on one branch → the **same** key (the dedupe);
-2. two commits on one branch → the **same** key (superseded runs still cancel — this is the
-   relation the SHA-keyed "fix" breaks);
-3. two different branches → **different** keys (a branch must not cancel its neighbours);
-4. two different forks pushing a branch of the same name → **different** keys (no
-   cross-contributor cancellation).
+1. two heads of one pull request → the **same** key (a newer push cancels the superseded run;
+   this is the relation a head-SHA or test-merge-SHA key breaks);
+2. two pull requests on two branches → **different** keys (a branch must not cancel its
+   neighbours);
+3. two forks with a branch of the same name → **different** keys (no cross-contributor
+   cancellation).
 
-Parsed from source with a line scan rather than PyYAML, matching the convention its sibling
-``tests/rails/test_ci_tier_enforcement.py`` states: PyYAML is not a declared test dependency.
+``tests/rails/test_ci_contract.py``'s concurrency row holds relations 2 and 3 (different
+candidates never share a group) for every workflow, ``pull_request_target`` included, and that
+two runs of one head share theirs. It does not hold relation 1: a newer head of one pull request
+sharing its key is held here alone. Parsed with a line scan rather than PyYAML, matching the
+convention its sibling ``tests/rails/test_ci_tier_enforcement.py`` states.
 """
 
 from __future__ import annotations
@@ -50,13 +49,8 @@ _EXPR = re.compile(r"\$\{\{(.+?)\}\}")
 
 
 def _lookup(context: dict[str, Any], dotted: str) -> Any:
-    """Resolve ``a.b.c`` against nested dicts, returning ``''`` for any missing link.
-
-    Empty-for-missing is what GitHub itself does, and it is the behaviour the ``||``
-    fallbacks in the key depend on: under ``push`` there is no ``event.pull_request`` at
-    all, so ``github.event.pull_request.head.repo.full_name`` must come out falsy rather
-    than raising.
-    """
+    """Resolve ``a.b.c`` against nested dicts, returning ``''`` for any missing link, as GitHub
+    does: the ``||`` fallbacks in the key depend on a missing property being falsy."""
     cur: Any = context
     for part in dotted.strip().split("."):
         if not isinstance(cur, dict) or part not in cur:
@@ -65,15 +59,29 @@ def _lookup(context: dict[str, Any], dotted: str) -> Any:
     return cur
 
 
+def _operand(context: dict[str, Any], text: str) -> Any:
+    """A property, or a property compared with a quoted literal (``a == 'b'``)."""
+    m = re.fullmatch(r"\s*([\w.-]+)\s*(==|!=)\s*'([^']*)'\s*", text)
+    if not m:
+        return _lookup(context, text)
+    same = str(_lookup(context, m.group(1))) == m.group(3)
+    return same if m.group(2) == "==" else not same
+
+
 def _evaluate(template: str, context: dict[str, Any]) -> str:
-    """Substitute every ``${{ … }}`` in *template*, supporting ``a || b`` chains."""
+    """Substitute every ``${{ … }}`` in *template*: ``a && b || c`` chains, GitHub's way (the
+    first truthy alternative, and within one the first falsy term or the last)."""
 
     def one(match: re.Match[str]) -> str:
-        for operand in match.group(1).split("||"):
-            value = _lookup(context, operand)
+        value: Any = ""
+        for alternative in match.group(1).split("||"):
+            for term in alternative.split("&&"):
+                value = _operand(context, term)
+                if not value:
+                    break
             if value:
                 return str(value)
-        return ""
+        return str(value) if value else ""
 
     return _EXPR.sub(one, template)
 
@@ -81,8 +89,7 @@ def _evaluate(template: str, context: dict[str, Any]) -> str:
 def _concurrency_group() -> str:
     """The raw ``group:`` value from the workflow-level ``concurrency:`` block.
 
-    Anchored on the top-level (two-space-indented) block so a future job-level
-    ``concurrency:`` cannot be picked up by mistake.
+    Anchored on the top-level block so a job-level ``concurrency:`` is never picked up.
     """
     lines = CI_YML.read_text(encoding="utf-8").splitlines()
     for i, line in enumerate(lines):
@@ -96,7 +103,7 @@ def _concurrency_group() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Synthetic contexts: the same branch, seen through each trigger.
+# Synthetic `pull_request` contexts, as GitHub fills them in.
 # ---------------------------------------------------------------------------
 
 _REPO = "PersonalClaw/PersonalClaw"
@@ -104,36 +111,28 @@ _BRANCH = "bugfix-some-branch"
 
 
 def _pull_request_ctx(
-    *, branch: str = _BRANCH, head_repo: str = _REPO, sha: str = "aaaa111"
+    *,
+    branch: str = _BRANCH,
+    head_repo: str = _REPO,
+    number: int = 42,
+    head: str = "aaaa111",
+    merge: str = "merge999",
 ) -> dict[str, Any]:
     return {
         "github": {
             "repository": _REPO,
-            "ref": "refs/pull/42/merge",
-            "ref_name": "42/merge",
+            "ref": f"refs/pull/{number}/merge",
+            "ref_name": f"{number}/merge",
             "head_ref": branch,
-            "sha": "merge999",  # the MERGE commit — deliberately not the head sha
+            # The test-merge commit: a new one for every head, and never the head itself.
+            "sha": merge,
             "event_name": "pull_request",
             "event": {
                 "pull_request": {
-                    "number": 42,
-                    "head": {"sha": sha, "repo": {"full_name": head_repo}},
+                    "number": number,
+                    "head": {"sha": head, "repo": {"full_name": head_repo}},
                 }
             },
-        }
-    }
-
-
-def _push_ctx(*, branch: str = _BRANCH, sha: str = "aaaa111") -> dict[str, Any]:
-    return {
-        "github": {
-            "repository": _REPO,
-            "ref": f"refs/heads/{branch}",
-            "ref_name": branch,
-            "head_ref": "",  # empty on push — this is why `||` is needed
-            "sha": sha,
-            "event_name": "push",
-            "event": {},
         }
     }
 
@@ -153,95 +152,75 @@ def test_the_group_expression_was_actually_found() -> None:
 
 
 def test_the_evaluator_resolves_the_real_key_to_something() -> None:
-    """If evaluation silently produced ``''`` for both triggers, relation 1 would 'pass'."""
-    group = _concurrency_group()
-    for label, ctx in (("pull_request", _pull_request_ctx()), ("push", _push_ctx())):
-        resolved = _evaluate(group, ctx)
-        assert "${{" not in resolved, f"{label}: unresolved expression left in {resolved!r}"
-        assert resolved.strip("-"), f"{label}: the key resolved to nothing: {resolved!r}"
-        assert _BRANCH in resolved, (
-            f"{label}: the resolved key {resolved!r} does not mention the branch, so it "
-            "cannot be distinguishing branches from one another"
-        )
-
-
-def test_the_evaluator_itself_distinguishes_the_two_contexts() -> None:
-    """Floor on the harness, not the workflow: `github.ref` MUST differ across the contexts.
-
-    If the two synthetic contexts were accidentally identical, relation 1 would pass no
-    matter what the workflow said. This pins the exact field the original defect keyed on.
-    """
-    assert _evaluate("${{ github.ref }}", _pull_request_ctx()) == "refs/pull/42/merge"
-    assert _evaluate("${{ github.ref }}", _push_ctx()) == f"refs/heads/{_BRANCH}"
-
-
-# ---------------------------------------------------------------------------
-# The four relations.
-# ---------------------------------------------------------------------------
-
-
-def test_both_triggers_produce_one_key_for_the_same_branch() -> None:
-    """Relation 1 — the dedupe. This is the defect in #2595, stated directly."""
-    group = _concurrency_group()
-    pr_key = _evaluate(group, _pull_request_ctx())
-    push_key = _evaluate(group, _push_ctx())
-    assert pr_key == push_key, (
-        "ci.yml fires on both `pull_request` and `push`, so a single push to a branch with an "
-        "open PR starts TWO runs. They dedupe only if both resolve the same concurrency key, "
-        f"and these do not:\n  pull_request → {pr_key!r}\n  push          → {push_key!r}\n"
-        "Keying on a value the two events disagree about (`github.ref` is "
-        "`refs/pull/<n>/merge` vs `refs/heads/<branch>`) runs the whole matrix twice on one SHA."
+    """If evaluation silently produced ``''``, relation 1 would 'pass'."""
+    resolved = _evaluate(_concurrency_group(), _pull_request_ctx())
+    assert "${{" not in resolved, f"unresolved expression left in {resolved!r}"
+    assert resolved.strip("-"), f"the key resolved to nothing: {resolved!r}"
+    assert _BRANCH in resolved, (
+        f"the resolved key {resolved!r} does not mention the branch, so it cannot be telling "
+        "branches apart"
     )
 
 
-def test_two_commits_on_one_branch_still_share_a_key() -> None:
-    """Relation 2 — superseded runs must still cancel.
+def test_the_contexts_differ_in_the_fields_a_wrong_key_would_read() -> None:
+    """Floor on the harness: two heads of one pull request differ in the head SHA and the
+    test-merge SHA, so relation 1 really checks the key does not read either."""
+    one, two = _pull_request_ctx(), _pull_request_ctx(head="bbbb222", merge="merge888")
+    for field in ("${{ github.sha }}", "${{ github.event.pull_request.head.sha }}"):
+        assert _evaluate(field, one) != _evaluate(field, two), field
 
-    This is the relation a head-SHA-keyed group breaks, which is why it is asserted
-    separately from relation 1: a SHA key satisfies the dedupe and silently gives up
-    cancelling the run for a commit nobody is waiting on any more.
-    """
+
+# ---------------------------------------------------------------------------
+# The three relations.
+# ---------------------------------------------------------------------------
+
+
+def test_a_newer_head_of_one_pull_request_shares_its_key() -> None:
+    """Relation 1 — a newer push cancels the run it supersedes."""
     group = _concurrency_group()
-    first = _evaluate(group, _push_ctx(sha="aaaa111"))
-    second = _evaluate(group, _push_ctx(sha="bbbb222"))
+    first = _evaluate(group, _pull_request_ctx(head="aaaa111", merge="merge999"))
+    second = _evaluate(group, _pull_request_ctx(head="bbbb222", merge="merge888"))
     assert first == second, (
-        "two commits pushed to the SAME branch resolved to DIFFERENT concurrency keys "
+        "two heads of the SAME pull request resolved to DIFFERENT concurrency keys "
         f"({first!r} vs {second!r}), so `cancel-in-progress` can no longer cancel the "
-        "superseded run and every push leaves its predecessor burning runners. The group "
-        "key must not contain a per-commit value such as `github.sha` or "
+        "superseded run and every push leaves its predecessor burning runners. The key must "
+        "not contain a per-commit value such as `github.sha` (the test merge) or "
         "`github.event.pull_request.head.sha`."
     )
 
 
-def test_two_branches_do_not_share_a_key() -> None:
-    """Relation 3 — a branch must not cancel its neighbours."""
+def test_two_pull_requests_on_two_branches_do_not_share_a_key() -> None:
+    """Relation 2 — a branch must not cancel its neighbours."""
     group = _concurrency_group()
-    mine = _evaluate(group, _push_ctx(branch="bugfix-mine"))
-    yours = _evaluate(group, _push_ctx(branch="bugfix-yours"))
+    mine = _evaluate(group, _pull_request_ctx(branch="bugfix-mine", number=41))
+    yours = _evaluate(group, _pull_request_ctx(branch="bugfix-yours", number=43))
     assert mine != yours, (
-        f"two different branches resolved to the same concurrency key ({mine!r}), so pushing "
-        "one would cancel CI for the other."
+        f"two pull requests on different branches resolved to the same key ({mine!r}), so a "
+        "push to one would cancel CI for the other."
     )
 
 
 def test_two_forks_with_the_same_branch_name_do_not_share_a_key() -> None:
-    """Relation 4 — no cross-contributor cancellation.
+    """Relation 3 — no cross-contributor cancellation.
 
-    ``patch-1`` is the name GitHub's own web editor picks, so two unrelated fork PRs
-    carrying it is ordinary rather than hypothetical. Keying on the branch name alone would
-    make one contributor's push cancel another's CI.
+    ``patch-1`` is the name GitHub's own web editor picks, so two unrelated fork PRs carrying
+    it is ordinary rather than hypothetical.
     """
     group = _concurrency_group()
-    a = _evaluate(group, _pull_request_ctx(branch="patch-1", head_repo="alice/PersonalClaw"))
-    b = _evaluate(group, _pull_request_ctx(branch="patch-1", head_repo="bob/PersonalClaw"))
+    a = _evaluate(
+        group, _pull_request_ctx(branch="patch-1", head_repo="alice/PersonalClaw", number=50)
+    )
+    b = _evaluate(
+        group, _pull_request_ctx(branch="patch-1", head_repo="bob/PersonalClaw", number=51)
+    )
     assert a != b, (
-        f"two different forks pushing a branch named `patch-1` resolved to the same key ({a!r}), "
-        "so one stranger's push cancels another stranger's CI run."
+        f"two forks pushing a branch named `patch-1` resolved to the same key ({a!r}), so one "
+        "stranger's push cancels another stranger's CI run."
     )
 
 
 # ---------------------------------------------------------------------------
-# The regression the dedupe would otherwise cause.
+# The lint remediation does not key on the event name.
 # ---------------------------------------------------------------------------
 
 
@@ -272,21 +251,14 @@ def test_the_feedback_step_scan_is_not_vacuous() -> None:
     )
 
 
-def test_the_lint_remediation_does_not_depend_on_which_trigger_survived() -> None:
-    """The dedupe is only safe because these steps no longer key on the event name.
-
-    With one shared concurrency group, one of the two runs cancels the other and **which one
-    survives is not contractual**. While these steps were gated on
-    ``github.event_name == 'pull_request'``, a push-survivor produced a red ``lint`` with the
-    remediation posted nowhere at all: no artifact is uploaded, and pr-feedback.yml resolves
-    its target from that artifact's ``pr.txt``, so it correctly posts nothing. That trades a
-    throughput bug for a silence bug, which is worse — a contributor sees a red check and no
-    explanation.
-    """
+def test_the_lint_remediation_does_not_depend_on_the_event_name() -> None:
+    """While the feedback steps were gated on ``github.event_name == 'pull_request'``, a
+    surviving push run produced a red ``lint`` with the remediation posted nowhere (#2595).
+    Since #3915 there is no feature-branch push run, but the steps still must not key on the
+    event: a trigger change must not bring that silence back."""
     offenders = [(name, cond) for name, cond in _feedback_step_conditions() if "event_name" in cond]
     assert not offenders, (
-        "a lint-feedback step is gated on `github.event_name`, so the remediation is only "
-        "produced when the `pull_request` run is the one that survives the shared concurrency "
-        "group — and which run survives is not contractual:\n"
+        "a lint-feedback step is gated on `github.event_name`, so whether the remediation is "
+        "produced depends on which trigger started the run:\n"
         + "\n".join(f"  {name}: if: {cond}" for name, cond in offenders)
     )
