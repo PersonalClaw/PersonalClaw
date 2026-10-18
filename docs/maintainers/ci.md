@@ -179,6 +179,16 @@ and worker count, and it does not exist yet. It replaces one class, `LatestGreen
 behind `DurationsSource`. The durations only balance the shards: when they cannot be read,
 every file weighs the same and the plan is still whole.
 
+On `main`, `breadth.yml` keeps the plan. A breadth shard's list digest is one of its inputs, so
+a plan made afresh each night, from durations that move a few percent, would hand every shard
+other files, and no tree-keyed shard would ever carry its result. Measured: two green `main`
+runs a few hours apart planned 885 to 949 of each shard's files differently. So `freshness`
+passes `--keep-from-main breadth.yml`, and the newest earlier `main` run's plan is reused for
+every leg it still plans whole: the same test files, in the same number of shards. Any change
+to the set of test files, or no readable earlier plan, plans afresh from the durations. The
+plan is kept for a week, so the next night can read it. Off `main` nothing is reused, so no
+earlier plan is read. `ci.yml` plans afresh on every run: nothing there is carried.
+
 ### `breadth.yml`
 
 The rest of the platform breadth runs nightly (09:37 UTC) and on dispatch:

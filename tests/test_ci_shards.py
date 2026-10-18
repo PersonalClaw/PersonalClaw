@@ -476,3 +476,106 @@ def test_check_still_fails_a_plan_that_is_not_whole_after_a_failed_fetch(
     out = tmp_path / "plan" / "plan.json"
     (tmp_path / "tests" / "test_planted.py").write_text("", encoding="utf-8")
     assert shards.main(["check", "--plan", str(out), "--root", str(tmp_path)]) != 0
+
+
+# ── on main, breadth keeps the earlier run's plan while it still plans today's files ──────────
+
+
+class _KeepGh:
+    """``gh`` for ``plan --keep-from-main``: main's completed breadth runs and their plans."""
+
+    def __init__(self, runs: dict[int, bytes | None], *, broken: bool = False) -> None:
+        self.plans, self.broken, self.asked = runs, broken, []
+
+    def text(self, *args: str) -> str:
+        path = next(a for a in args[1:] if not a.startswith("-"))
+        self.asked.append(path)
+        if self.broken:
+            raise subprocess.CalledProcessError(1, ["gh", *args], stderr="HTTP 502")
+        if "/runs?" in path:
+            assert "branch=main" in path, path
+            return "\n".join(str(r) for r in self.plans) if "status=completed" in path else ""
+        if "/artifacts?" in path:
+            run = int(path.split("/runs/")[1].split("/")[0])
+            return f"{run * 10} shard-plan" if self.plans.get(run) is not None else "1 junit-x"
+        raise AssertionError(f"plan asked gh for {args}")
+
+    def binary(self, *args: str) -> bytes:
+        path = next(a for a in args[1:] if not a.startswith("-"))
+        data = self.plans[int(path.split("/artifacts/")[1].split("/")[0]) // 10]
+        assert data is not None
+        return _zip("plan.json", data)
+
+
+ALL = sorted([*FILES, "tests/test_c.py"])
+
+
+def _earlier(buckets: list[list[str]], n: int = 2, leg: str = "ubuntu") -> bytes:
+    legs = {leg: {"n": n, "buckets": buckets, "durations": "x"}}
+    return json.dumps({"version": shards.VERSION, "legs": legs}).encode()
+
+
+def _keep(tmp_path: Path, monkeypatch, gh: _KeepGh, *, keep: bool = True, n: int = 2):
+    root = _tree(tmp_path, *ALL)
+    monkeypatch.setattr(shards, "_gh_text", gh.text)
+    monkeypatch.setattr(shards, "_gh_binary", gh.binary)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    out = tmp_path / "plan" / "plan.json"
+    argv = ["plan", "--repo", "o/r", "--root", str(root), "--run-id", "99", "--out", str(out)]
+    argv += ["--leg", f"ubuntu:breadth.yml:junit-ubuntu-:{n}"]
+    if keep:
+        argv += ["--keep-from-main", "breadth.yml"]
+    assert shards.main(argv) == 0
+    assert shards.main(["check", "--plan", str(out), "--root", str(root)]) == 0
+    return json.loads(out.read_text("utf-8"))["legs"]["ubuntu"]
+
+
+# An earlier plan no fresh one would make: the files planned in one odd split.
+ODD = [["tests/test_a.py"], ["tests/sub/test_s.py", "tests/test_ab.py", "tests/test_c.py"]]
+
+
+def test_main_keeps_the_newest_earlier_plan_that_still_plans_todays_files(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A shard's list digest is one of its inputs: a plan remade each night would hand every
+    shard other files, and no tree-keyed shard would ever carry its result."""
+    gh = _KeepGh({30: None, 20: _earlier(ODD), 10: _earlier([ALL[:2], ALL[2:]])})
+    leg = _keep(tmp_path, monkeypatch, gh)
+    assert leg["buckets"] == ODD
+    assert "kept run 20's plan" in leg["durations"]
+
+
+def test_a_changed_set_of_files_plans_afresh(tmp_path: Path, monkeypatch) -> None:
+    gh = _KeepGh({20: _earlier([["tests/test_a.py"], ["tests/test_ab.py", "tests/test_gone.py"]])})
+    leg = _keep(tmp_path, monkeypatch, gh)
+    assert "does not plan today's files" in leg["durations"]
+    assert sorted(f for b in leg["buckets"] for f in b) == ALL
+
+
+def test_another_number_of_shards_plans_afresh(tmp_path: Path, monkeypatch) -> None:
+    gh = _KeepGh({20: _earlier(ODD)})
+    leg = _keep(tmp_path, monkeypatch, gh, n=3)
+    assert len(leg["buckets"]) == 3 and "does not plan today's files" in leg["durations"]
+
+
+def test_an_unreadable_earlier_plan_still_gives_a_checked_fresh_plan(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    leg = _keep(tmp_path, monkeypatch, _KeepGh({20: _earlier(ODD)}, broken=True))
+    assert "::warning title=no earlier shard plan kept::" in capsys.readouterr().out
+    assert sorted(f for b in leg["buckets"] for f in b) == ALL
+    assert "kept" not in leg["durations"]
+
+
+def test_without_keep_no_earlier_plan_is_read(tmp_path: Path, monkeypatch) -> None:
+    """Off main nothing is reused, so `freshness` passes no --keep-from-main there."""
+    gh = _KeepGh({20: _earlier(ODD)})
+    leg = _keep(tmp_path, monkeypatch, gh, keep=False)
+    assert not any("status=completed" in a for a in gh.asked)
+    assert leg["buckets"] != ODD
+
+
+def test_the_run_never_keeps_its_own_plan(tmp_path: Path, monkeypatch) -> None:
+    gh = _KeepGh({99: _earlier(ODD)})
+    leg = _keep(tmp_path, monkeypatch, gh)
+    assert leg["buckets"] != ODD and "kept" not in leg["durations"]

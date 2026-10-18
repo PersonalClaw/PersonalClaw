@@ -286,6 +286,83 @@ def _spread(buckets: Iterable[Sequence[str]], weight: Mapping[str, float]) -> fl
     return max(loads) / min(loads) if loads and min(loads) > 0 else float("inf")
 
 
+#: The artifact a run's plan is uploaded as, which a later run of the same workflow keeps.
+PLAN_ARTIFACT = "shard-plan"
+
+
+def latest_main_plan(
+    repo: str, workflow: str, current_run: int, *, text: Text, binary: Binary, runs: int = 20
+) -> tuple[bytes, str]:
+    """The plan the newest earlier completed ``main`` run of ``workflow`` uploaded, and which
+    run that was. A run's conclusion does not matter: a red run's plan is still whole."""
+    listed = text(
+        "api",
+        f"repos/{repo}/actions/workflows/{workflow}/runs"
+        f"?branch=main&status=completed&per_page={runs}",
+        "--jq",
+        ".workflow_runs[].id",
+    )
+    for run in (int(r) for r in listed.split() if int(r) != current_run):
+        found = [
+            line.partition(" ")[0]
+            for line in text(
+                "api",
+                "--paginate",
+                f"repos/{repo}/actions/runs/{run}/artifacts?per_page=100",
+                "--jq",
+                '.artifacts[] | select(.expired | not) | "\\(.id) \\(.name)"',
+            ).splitlines()
+            if line.partition(" ")[2] == PLAN_ARTIFACT
+        ]
+        if not found:
+            continue
+        archive = binary("api", f"repos/{repo}/actions/artifacts/{min(found, key=int)}/zip")
+        with zipfile.ZipFile(io.BytesIO(archive)) as plan_zip:
+            return plan_zip.read("plan.json"), f"run {run}"
+    raise ValueError(f"no earlier main run of {workflow} kept a {PLAN_ARTIFACT}")
+
+
+def _kept_legs(args: argparse.Namespace) -> tuple[Mapping[str, object], str]:
+    """The legs of the earlier plan to keep, or none, with why. Any failure to read it only
+    means the plan is made afresh: a new plan is whole too, it just carries nothing tonight."""
+    if not args.keep_from_main:
+        return {}, ""
+    try:
+        data, run = latest_main_plan(
+            args.repo, args.keep_from_main, args.run_id, text=_gh_text, binary=_gh_binary
+        )
+        legs = json.loads(data.decode("utf-8"))
+        if not isinstance(legs, dict) or legs.get("version") != VERSION:
+            raise ValueError(f"{run}'s plan is not a version {VERSION} shard plan")
+        named = legs.get("legs")
+        if not isinstance(named, dict):
+            raise ValueError(f"{run}'s plan names no legs")
+        return named, f"{run}'s plan"
+    except Exception as exc:  # noqa: BLE001 - an unreadable earlier plan only means a new one
+        print(f"::warning title=no earlier shard plan kept::{type(exc).__name__}: {exc}")
+        return {}, ""
+
+
+def _kept_buckets(
+    kept: Mapping[str, object], leg: Leg, files: Sequence[str]
+) -> list[list[str]] | None:
+    """The earlier plan's buckets for ``leg``, when they are a whole plan of today's files in
+    the same number of shards: the same files, each in exactly one non-empty shard."""
+    earlier = kept.get(leg.name)
+    if not isinstance(earlier, dict) or earlier.get("n") != leg.shards:
+        return None
+    buckets = earlier.get("buckets")
+    if (
+        not isinstance(buckets, list)
+        or len(buckets) != leg.shards
+        or not all(
+            isinstance(b, list) and b and all(isinstance(f, str) for f in b) for b in buckets
+        )
+    ):
+        return None
+    return [list(b) for b in buckets] if not check(files, buckets) else None
+
+
 def _plan(args: argparse.Namespace) -> int:
     root = Path(args.root)
     files = universe(root)
@@ -293,16 +370,33 @@ def _plan(args: argparse.Namespace) -> int:
         print(f"no test file is collectable under {root}", file=sys.stderr)
         return 1
     source: DurationsSource = LatestGreenMainJunit(args.repo, text=_gh_text, binary=_gh_binary)
+    # A breadth shard records its list's digest as an input, so a result is carried only onto
+    # the files it measured. A plan made afresh from each run's durations moves files between
+    # shards every night (measured: two green main runs hours apart planned 885-949 of each
+    # shard's files differently), so no shard would ever carry. So the newest earlier main
+    # run's plan is kept for every leg it still plans whole: the same test files, the same N.
+    kept, kept_from = _kept_legs(args)
     legs: dict[str, object] = {}
     lines = []
     for leg in (Leg.parse(text) for text in args.leg):
-        durations, said = _durations_or_equal(source, leg, files)
-        buckets = plan(files, durations, leg.shards)
+        reused = _kept_buckets(kept, leg, files)
+        durations: dict[str, float]
+        if reused is not None:
+            durations, said = {}, f"kept {kept_from}: the same {len(files)} files"
+            buckets = reused
+        else:
+            durations, said = _durations_or_equal(source, leg, files)
+            if kept_from:
+                said = f"{kept_from} does not plan today's files; {said}"
+            buckets = plan(files, durations, leg.shards)
         problems = check(files, buckets)
         if problems or any(not b for b in buckets):
             print(f"{leg.name}: the plan is not whole: {problems or 'an empty shard'}")
             return 1
         legs[leg.name] = {"n": leg.shards, "buckets": buckets, "durations": said}
+        if reused is not None:
+            lines.append(f"- `{leg.name}`: {leg.shards} shards; {said}")
+            continue
         spread = _spread(buckets, weights(files, durations))
         lines.append(f"- `{leg.name}`: {leg.shards} shards, planned spread {spread:.3f}x; {said}")
     out = Path(args.out)
@@ -382,6 +476,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--repo", required=True, help="owner/name, whose main runs hold the durations")
     p.add_argument("--root", default=".", help="the repository root")
     p.add_argument("--leg", action="append", required=True, help="name:workflow:prefix:shards")
+    p.add_argument(
+        "--keep-from-main",
+        default=None,
+        metavar="WORKFLOW",
+        help="keep the plan the newest earlier main run of WORKFLOW uploaded, for each leg "
+        "it still plans whole",
+    )
+    p.add_argument("--run-id", type=int, default=0, help="this run, never kept from")
     p.add_argument("--out", required=True)
     p = sub.add_parser("list", help="write one shard's files, for pytest @<file>")
     p.add_argument("--plan", required=True)
