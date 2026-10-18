@@ -44,6 +44,33 @@ submit it under the project's license. A CI check enforces it on every PR; an
 unsigned commit fails. If you forget, `git commit --amend -s` (or `git rebase
 --signoff`) fixes it.
 
+The same check (`scripts/check_commit_provenance.py`) holds more rules, so every commit on
+`main` can say where it came from:
+
+- **Rule 1, a sign-off that matches the author:** `Signed-off-by: <author name> <author email>`,
+  as a line of its own, exactly as git records the author. Commit with the email your GitHub
+  account uses: when your pull request is squashed, GitHub records that email as the author, and
+  a sign-off with another email then fails on `main`. Dependabot's own commits, by its exact
+  author address, are exempt.
+- **Rule 2, a committer listed in [`MAINTAINERS`](MAINTAINERS),** name and email both, checked
+  on `main` only: GitHub, for a squash merge, and the maintainer. On a pull request you commit
+  your own work.
+- **Rule 3, no co-author or tool marks on a maintainer's commit:** no `Co-authored-by`,
+  `Generated-by`, `Assisted-by` or session trailer, no "Generated with" footer and no link to a
+  tool's session. An author counts as a maintainer when their name or their email matches one
+  `MAINTAINERS` lists. A contributor's own `Co-authored-by` is fine.
+- **Rule 5, no marker that tells GitHub to start no run:** no `[skip ci]`, `[ci skip]`,
+  `[no ci]`, `[skip actions]`, `[actions skip]` or `skip-checks: true`, in any commit message or
+  in the pull request's title. A push whose head carries one starts no run, so its commits would
+  land unchecked.
+
+Rule 4, which ties a pushed commit to the tree its merge verdict checked, is not checked yet: it
+needs the record the merge controller will write.
+
+Every pull request runs rules 1, 3 and 5, and the comment on a failing one names the commit and
+the rule. Every push to `main` runs rules 1, 2, 3 and 5 over the commits it landed. Once the
+check is a required status, a pull request that breaks a rule cannot merge.
+
 **So you never forget:** `npm install` in your clone installs the git hooks for
 you (its `postinstall` runs `hooks:install`; run that directly if you skipped
 it). One of them is a `prepare-commit-msg` hook that appends the

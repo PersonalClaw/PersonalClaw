@@ -846,7 +846,7 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
                     ("job", 'job = "dco"'),
                     ("permission", 'permission = "pull-requests: write"'),
                     ("steps", 'steps = ["Explain how to fix DCO"]'),
-                    ("reason", 'reason = "Posts or updates the one comment that says which'),
+                    ("reason", 'reason = "Posts or updates the one comment that names each'),
                 )
             ),
             _line(

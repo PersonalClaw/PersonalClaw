@@ -23,7 +23,7 @@ workflow = "dco.yml"
 job = "dco"
 permission = "pull-requests: write"
 steps = ["Explain how to fix DCO"]
-reason = "Posts or updates the one comment that says which commits lack a sign-off and how to add it."
+reason = "Posts or updates the one comment that names each commit, and the title, that breaks a provenance rule (sign-off, tool marks, skip markers) and how to fix it."
 
 [[audited_write]]
 workflow = "pr-feedback.yml"

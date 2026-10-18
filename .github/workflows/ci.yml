@@ -1153,6 +1153,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # provenance: its own workflow (.github/workflows/provenance.yml). Each push checks only its
+  # own range, so the check runs where no tree-check answer or other job's outcome can drop it.
+
   rails:
     # ── Every rail, once per run (#3928) ───────────────────────────────────────────────────
     # A rail checks the source tree rather than running the product: a census, a ratchet, a
