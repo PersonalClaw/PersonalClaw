@@ -9,14 +9,11 @@ The plan is longest-processing-time greedy over per-file seconds: descending dur
 broken by path, each file into the lightest bucket. A file with no record weighs the median of
 the recorded files. The same files and durations always give the same buckets.
 
-**The durations source is interim, until #3948.** #3948 keeps one shared CI telemetry record,
-written by one history writer, and the planner is to read its per-file test seconds for the
-leg's own platform and worker count. That record does not exist yet, so
-:class:`RecentMainJunit` reads the same figures as each file's median over the junit reports of
-the newest three completed ``main`` runs of the leg's workflow, and persists nothing. When the
-record lands, it replaces this one class behind :class:`DurationsSource`; nothing else changes.
-Durations only balance the shards: an unreadable source gives equal weights and the same
-complete plan.
+**The durations source is #3948's telemetry record.** :class:`TelemetryRecord` reads each file's
+median first-attempt seconds over the leg's own reports in the newest three main runs whose
+history ``tools/ci/telemetry.py`` wrote, the one writer of CI telemetry, and nothing else. Until
+the first collected main run there is no record, and the plan uses equal weights and says so.
+Durations only balance the shards: ``shards check`` is what proves every file runs once.
 
 Standard library only, like every file in ``tools/ci``.
 """
@@ -33,12 +30,14 @@ import statistics
 import subprocess
 import sys
 import tomllib
-import xml.etree.ElementTree as ET
 import zipfile
+import zlib
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+
+from . import telemetry
 
 VERSION = 1
 
@@ -129,30 +128,6 @@ def check(files: Sequence[str], buckets: Sequence[Sequence[str]]) -> list[str]:
     return problems
 
 
-# ── junit: per-file seconds ───────────────────────────────────────────────────────────────────
-
-
-def junit_seconds(data: bytes, files: Sequence[str]) -> dict[str, float]:
-    """Per-file seconds in one junit report: each test case's ``time`` (setup, call and
-    teardown) summed on the file it belongs to. A case maps to the file whose dotted module path
-    is the longest prefix of its ``classname`` (of its ``name`` when ``classname`` is empty, as
-    a module skipped at collection is written). A case that matches no file is ignored."""
-    try:
-        tree = ET.parse(io.BytesIO(data))
-    except ET.ParseError as exc:
-        raise ValueError(f"not a junit report: {exc}") from exc
-    modules = {f[: -len(".py")].replace("/", "."): f for f in files if f.endswith(".py")}
-    seconds: dict[str, float] = {}
-    for case in tree.iter("testcase"):
-        parts = (case.get("classname") or case.get("name") or "").split(".")
-        for end in range(len(parts), 0, -1):
-            path = modules.get(".".join(parts[:end]))
-            if path is not None:
-                seconds[path] = seconds.get(path, 0.0) + float(case.get("time") or 0.0)
-                break
-    return seconds
-
-
 # ── the durations source ──────────────────────────────────────────────────────────────────────
 
 
@@ -176,8 +151,7 @@ class Leg:
 
 
 class DurationsSource(Protocol):
-    """Where the per-file seconds come from. #3948's telemetry record replaces the interim
-    :class:`RecentMainJunit` behind this one method."""
+    """Where the per-file seconds come from: :class:`TelemetryRecord`."""
 
     def durations(self, leg: Leg, files: Sequence[str]) -> tuple[dict[str, float], str]:
         """Per-file seconds for ``leg``, and one line saying where they came from."""
@@ -188,51 +162,163 @@ Text = Callable[..., str]
 Binary = Callable[..., bytes]
 
 
-class RecentMainJunit:
-    """Interim, until #3948: each file's median seconds over the leg's junit reports in the
-    newest ``RUNS`` completed ``main`` runs of its workflow that hold them.
+#: The collector's history artifact, by run and attempt (``tools/ci/telemetry.py`` names it).
+HISTORY_ARTIFACT = telemetry.HISTORY_ARTIFACT
+#: An archive larger than this is never downloaded: one main run's history zips to about 3 MB.
+MAX_HISTORY_ARCHIVE_BYTES = 32 * 1024 * 1024
+#: A history larger than this, unzipped, is not read on: one main run's is about 49 MB.
+MAX_HISTORY_BYTES = 256 * 1024 * 1024
+#: One history line longer than this is refused: a test line is a few hundred bytes, and a run
+#: line with its jobs a few tens of kilobytes.
+MAX_HISTORY_LINE_BYTES = 1024 * 1024
 
-    Why a median of several runs, not the newest green one: a file's seconds swing with the
-    runner it lands on (measured over seven main runs: the same file 71-146 s, and one shard's
-    files together 0.66-1.52x their median), so a plan from one run inherits that run's noise,
-    and replayed over those runs, the median of three planned 1.02-1.06x where one run planned
-    up to 1.30x. Why red runs too: a red run's reports still time every file it ran, and reading
-    green ones only froze the source while main was red (eight main plans in a row read one run).
-    A cancelled run stopped part-way, so its times are not its files' own, and it is skipped.
 
-    Only that leg's reports are read, so one platform's times never weigh another's. A report a
-    rerun uploaded again under the same name is skipped: the lowest artifact id, the first
-    attempt's, is read. Nothing is written or kept."""
+def _file_of(dotted: str, modules: Mapping[str, str]) -> str | None:
+    """The test file whose dotted module path is the longest prefix of ``dotted``."""
+    parts = dotted.split(".")
+    for end in range(len(parts), 0, -1):
+        path = modules.get(".".join(parts[:end]))
+        if path is not None:
+            return path
+    return None
+
+
+#: What a history's reports say they ran on: ``(platform, workers)``, as the suite recorded them.
+Identity = tuple[str | None, int | None]
+
+
+def history_seconds(
+    archive: bytes, leg: Leg, files: Sequence[str]
+) -> dict[Identity, dict[str, float]]:
+    """Per-file first-attempt seconds of ``leg``'s reports in one history archive, by the
+    platform and worker count the reports recorded, so seconds measured on one never weigh
+    another. Read line by line, each line within :data:`MAX_HISTORY_LINE_BYTES` and the whole
+    within :data:`MAX_HISTORY_BYTES`; a history not in the one schema raises ``ValueError``."""
+    modules = {f[: -len(".py")].replace("/", "."): f for f in files if f.endswith(".py")}
+    grouped: dict[Identity, dict[str, float]] = {}
+    budget = MAX_HISTORY_BYTES
+    with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
+        members = [m for m in zipped.infolist() if m.filename.endswith(".jsonl")]
+        if not members:
+            raise ValueError("the archive holds no history")
+        for member in members:
+            with zipped.open(member) as handle:
+                number = -1
+                while True:
+                    raw = handle.readline(min(budget, MAX_HISTORY_LINE_BYTES) + 1)
+                    if not raw:
+                        break
+                    number += 1
+                    if len(raw) > MAX_HISTORY_LINE_BYTES:
+                        raise ValueError(f"a history line passes {MAX_HISTORY_LINE_BYTES} bytes")
+                    budget -= len(raw)
+                    if budget < 0:
+                        raise ValueError(f"the history passes {MAX_HISTORY_BYTES} bytes")
+                    line = json.loads(raw)
+                    if number == 0:
+                        if (
+                            line.get("kind") != "run"
+                            or line.get("schema") != telemetry.SCHEMA
+                            or line.get("version") != telemetry.VERSION
+                        ):
+                            raise ValueError(f"{member.filename} is not in the one schema")
+                        continue
+                    if line.get("kind") != "test" or line.get("attempt") != 1:
+                        continue
+                    if not str(line.get("report", "")).startswith(leg.report_prefix):
+                        continue
+                    classname, _, name = str(line.get("test", "")).partition("::")
+                    path = _file_of(classname or name, modules)
+                    if path is None:
+                        continue
+                    workers = line.get("workers")
+                    identity: Identity = (
+                        line.get("platform") if isinstance(line.get("platform"), str) else None,
+                        workers if isinstance(workers, int) else None,
+                    )
+                    seconds = grouped.setdefault(identity, {})
+                    seconds[path] = seconds.get(path, 0.0) + float(line.get("seconds") or 0.0)
+    return grouped
+
+
+def _describe(identity: Identity) -> str:
+    platform, workers = identity
+    return f"{platform or 'an unrecorded platform'}, {workers or 'an unrecorded number of'} workers"
+
+
+class TelemetryRecord:
+    """#3948's record: each file's median first-attempt seconds over the leg's own reports in
+    the newest ``RUNS`` completed ``main`` runs whose history the collector wrote.
+
+    It reads each run's attempt-1 history, so a rerun's seconds never stand in for the first
+    run's, and only the leg's own reports. The leg's platform and worker count are those its
+    newest history recorded, and an older run counts only with the same ones: when a leg moves
+    to another Python or another ``-n``, its plan reads the new figures from the first run that
+    recorded them. Only history a run on main in this repository produced is read: an artifact
+    of that name from a fork's run, on a branch the fork named main, is a candidate's. A run
+    with no such history, an archive over :data:`MAX_HISTORY_ARCHIVE_BYTES`, or a history the
+    reader cannot read is skipped, and an unreadable one is named in the job's log. Each history
+    is downloaded once, whatever number of legs read it. Nothing is written or kept."""
 
     RUNS = 3
     COUNTED = frozenset({"success", "failure"})
 
     def __init__(self, repo: str, *, text: Text, binary: Binary, runs: int = 30) -> None:
         self.repo, self.text, self.binary, self.limit = repo, text, binary, runs
+        self._archives: dict[int, bytes | None] = {}
 
-    def _run_seconds(self, run: int, leg: Leg, files: Sequence[str]) -> dict[str, float] | None:
-        first: dict[str, int] = {}
-        for line in self.text(
-            "api",
-            "--paginate",
-            f"repos/{self.repo}/actions/runs/{run}/artifacts?per_page=100",
-            "--jq",
-            '.artifacts[] | select(.expired | not) | "\\(.id) \\(.name)"',
-        ).splitlines():
-            ident, _, name = line.partition(" ")
-            if ident.isdigit() and name.startswith(leg.report_prefix):
-                first[name] = min(int(ident), first.get(name, int(ident)))
-        if not first:
+    def _archive(self, run: int) -> bytes | None:
+        if run not in self._archives:
+            self._archives[run] = self._download(run)
+        return self._archives[run]
+
+    def _download(self, run: int) -> bytes | None:
+        name = HISTORY_ARTIFACT.format(run=run, attempt=1)
+        listed = json.loads(
+            self.text("api", f"repos/{self.repo}/actions/artifacts?name={name}&per_page=100")
+        )
+        found = []
+        for artifact in listed.get("artifacts") or []:
+            made_by = artifact.get("workflow_run") or {}
+            if (
+                artifact.get("expired")
+                or made_by.get("id") != run
+                or made_by.get("head_branch") != "main"
+                or made_by.get("head_repository_id") != made_by.get("repository_id")
+            ):
+                continue
+            found.append((int(artifact["id"]), int(artifact.get("size_in_bytes") or 0)))
+        if not found:
             return None
-        seconds: dict[str, float] = {}
-        for name in sorted(first):
-            archive = self.binary("api", f"repos/{self.repo}/actions/artifacts/{first[name]}/zip")
-            with zipfile.ZipFile(io.BytesIO(archive)) as reports:
-                for member in reports.namelist():
-                    if member.endswith(".xml"):
-                        for path, s in junit_seconds(reports.read(member), files).items():
-                            seconds[path] = seconds.get(path, 0.0) + s
-        return seconds
+        artifact_id, artifact_bytes = min(found)
+        if artifact_bytes > MAX_HISTORY_ARCHIVE_BYTES:
+            print(f"::warning title=telemetry history skipped::run {run}: over the size limit")
+            return None
+        archive = self.binary("api", f"repos/{self.repo}/actions/artifacts/{artifact_id}/zip")
+        if len(archive) > MAX_HISTORY_ARCHIVE_BYTES:
+            print(f"::warning title=telemetry history skipped::run {run}: over the size limit")
+            return None
+        return archive
+
+    def _run_seconds(
+        self, run: int, leg: Leg, files: Sequence[str]
+    ) -> dict[Identity, dict[str, float]] | None:
+        archive = self._archive(run)
+        if archive is None:
+            return None
+        try:
+            grouped = history_seconds(archive, leg, files)
+        except (
+            zipfile.BadZipFile,
+            zlib.error,
+            ValueError,
+            TypeError,
+            AttributeError,
+            EOFError,
+        ) as exc:
+            print(f"::warning title=telemetry history unreadable::run {run}: {exc}")
+            return None
+        return grouped or None
 
     def durations(self, leg: Leg, files: Sequence[str]) -> tuple[dict[str, float], str]:
         listed = self.text(
@@ -240,28 +326,37 @@ class RecentMainJunit:
             f"repos/{self.repo}/actions/workflows/{leg.workflow}/runs"
             f"?branch=main&status=completed&per_page={self.limit}",
             "--jq",
-            '.workflow_runs[] | "\\(.id) \\(.conclusion)"',
+            '.workflow_runs[] | "\\(.id) \\(.conclusion) \\(.head_repository.full_name)"',
         )
+        identity: Identity | None = None
         read: list[tuple[int, dict[str, float]]] = []
         for line in listed.splitlines():
-            ident, _, conclusion = line.partition(" ")
-            if not ident.isdigit() or conclusion.strip() not in self.COUNTED:
+            ident, conclusion, owner = (line.split() + ["", "", ""])[:3]
+            if not ident.isdigit() or conclusion not in self.COUNTED or owner != self.repo:
                 continue
-            seconds = self._run_seconds(int(ident), leg, files)
-            if seconds is not None:
-                read.append((int(ident), seconds))
+            grouped = self._run_seconds(int(ident), leg, files)
+            if grouped is None:
+                continue
+            if identity is None:
+                identity = max(grouped, key=lambda key: (len(grouped[key]), str(key)))
+            if identity in grouped:
+                read.append((int(ident), grouped[identity]))
             if len(read) == self.RUNS:
                 break
-        if not read:
-            return {}, f"no completed main run of {leg.workflow} holds {leg.report_prefix}* reports"
+        if not read or identity is None:
+            return {}, (
+                f"no telemetry history of {leg.workflow} on main holds {leg.report_prefix}* yet,"
+                " so every file weighs the same"
+            )
         merged = {
             path: statistics.median(s[path] for _, s in read if path in s)
             for path in sorted({p for _, s in read for p in s})
         }
-        runs = [str(run) for run, _ in read]
-        if len(runs) == 1:
-            return merged, f"run {runs[0]}'s {leg.report_prefix}* reports"
-        return merged, f"the median of runs {', '.join(runs)}' {leg.report_prefix}* reports"
+        runs = ", ".join(str(run) for run, _ in read)
+        return merged, (
+            f"the median of telemetry runs {runs}' {leg.report_prefix}* first attempts"
+            f" on {_describe(identity)}"
+        )
 
 
 #: How long one ``gh`` call may take. A hung call would otherwise hold the plan job, and every
@@ -411,7 +506,7 @@ def _plan(args: argparse.Namespace) -> int:
     if not files:
         print(f"no test file is collectable under {root}", file=sys.stderr)
         return 1
-    source: DurationsSource = RecentMainJunit(args.repo, text=_gh_text, binary=_gh_binary)
+    record: DurationsSource = TelemetryRecord(args.repo, text=_gh_text, binary=_gh_binary)
     # A breadth shard records its list's digest as an input, so a result is carried only onto
     # the files it measured. A plan made afresh from each run's durations moves files between
     # shards every night (measured: two green main runs hours apart planned 885-949 of each
@@ -427,7 +522,7 @@ def _plan(args: argparse.Namespace) -> int:
             durations, said = {}, f"kept {kept_from}: the same {len(files)} files"
             buckets = reused
         else:
-            durations, said = _durations_or_equal(source, leg, files)
+            durations, said = _durations_or_equal(record, leg, files)
             if kept_from:
                 said = f"{kept_from} does not plan today's files; {said}"
             buckets = plan(files, durations, leg.shards)

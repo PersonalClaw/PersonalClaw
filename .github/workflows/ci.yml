@@ -508,20 +508,20 @@ jobs:
 
   shard-plan:
     # ── One shard plan for the run (#3923) ───────────────────────────────────────────────────
-    # The suite's test files, split into whole-file shards by the per-file seconds the newest
-    # green main run recorded in its junit reports (tools/ci/shards.py). Made once and handed to
-    # every shard as an artifact, so every shard of a leg reads the same buckets: no file is
-    # dropped or run twice, and `shards check` fails the run if one would be. The durations
-    # source is interim until #3948's telemetry record. Durations only balance the shards: an
-    # unreadable source gives equal weights and the same whole plan. Standard-library Python on
-    # the image's python3, with nothing installed.
+    # The suite's test files, split into whole-file shards by each file's median first-attempt
+    # seconds in the telemetry record of main's three newest collected runs (#3948;
+    # tools/ci/shards.py). Made once and handed to every shard as an artifact, so every shard of
+    # a leg reads the same buckets: no file is dropped or run twice, and `shards check` fails the
+    # run if one would be. Durations only balance the shards: until the first collected main run,
+    # or when the record cannot be read, every file weighs the same and the plan is still whole.
+    # Standard-library Python on the image's python3, with nothing installed.
     needs: [tree-check]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
-      actions: read   # main's recent completed runs and their junit reports
+      actions: read   # main's recent completed runs and their telemetry history
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.

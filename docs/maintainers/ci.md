@@ -220,24 +220,26 @@ run does but imports only the files the list names (`tests/shard_list.py`). A br
 records its list's digest as one of its inputs, so a result is carried only onto the files it
 measured. Modules stay whole, so a module-scoped fixture is set up in one shard.
 
-The per-file seconds are each file's median over the junit reports of the three newest
-completed `main` runs of the leg's workflow, red ones included and cancelled ones skipped, the
-leg's own reports only and the first attempt's of each, and nothing is kept. One run is not
-enough: a file's seconds swing with the runner it lands on (one file took 71-146 s over seven
-main runs), and replayed over those runs the median of three planned within 1.06x where one
-run planned up to 1.30x. Red runs count because their reports still time every file they
-ran; reading green runs only froze the source for as long as `main` was red.
+The per-file seconds come from #3948's telemetry record (see "CI telemetry" below): each file's
+median first-attempt seconds over the leg's own reports in the three newest completed `main`
+runs whose history the collector wrote, red ones included and cancelled ones skipped, on the
+platform and worker count the leg's newest history recorded. It is the only source. Until the
+first collected `main` run there is no record, and the plan weighs every file the same and says
+so; that measured 1.29x on Linux and 1.33x on macOS on `main`'s run of d75e54a0, and lasts one
+plan per leg. Only history a run on `main` in this repository produced is read: a fork's run
+can upload an artifact of the same name. One run is not enough: a file's seconds swing with the runner it lands
+on (one file took 71-146 s over seven main runs), and replayed over those runs the median of
+three planned within 1.06x where one run planned up to 1.30x. Red runs count because their
+reports still time every file they ran; reading green runs only froze the source for as long as
+`main` was red.
 
 What no plan can balance is the runner itself. Over the same seven runs, all of one shard's
 files together ran 0.66-1.52x their median on Linux and 0.70-1.95x on macOS, the whole
 shard at once, as a slower host does. So each shard's log ends with "shard collection and
 memory": each worker's collection seconds, its peak RSS at collection's end and over the run,
 and the machine's CPUs, which shows a slow host for what it is.
-That source is interim, until #3948: its shared telemetry record, written by one history
-writer, is where the planner is to read each leg's per-file test time for its own platform
-and worker count, and it does not exist yet. It replaces one class, `LatestGreenMainJunit`,
-behind `DurationsSource`. The durations only balance the shards: when they cannot be read,
-every file weighs the same and the plan is still whole.
+The durations only balance the shards: when neither source can be read, every file weighs the
+same and the plan is still whole.
 
 On `main`, `breadth.yml` keeps the plan. A breadth shard's list digest is one of its inputs, so
 a plan made afresh each night, from durations that move a few percent, would hand every shard
@@ -393,6 +395,50 @@ The rows check the edits a maintainer plausibly makes: a respelled flag, a new l
 condition, a fallback added for convenience. They do not evaluate expressions or shell, so a
 deliberately adversarial rewrite (a coverage flag assembled from variables, a hash computed in
 a helper script) can pass them; review is what holds those.
+
+## CI telemetry
+
+Every record of CI history, per run and per test, is written by one component in one versioned
+schema: `tools/ci/telemetry.py` (`python -m tools.ci telemetry`), run by `ci-telemetry.yml` from
+main's own code. Nothing else writes durations, first results, reruns or quarantines, and
+the shard planner reads its durations from it. The weekly report that reads it is #3948's next
+change.
+
+- **`collect`** runs when a CI or Breadth run completes. It counts only main's own runs: a CI run
+  of a commit landing on `main`, and Breadth's scheduled or dispatched run on `main`, from this
+  repository. It decides that from the run itself before it lists any artifact, and the job's
+  `if:` holds the same rule, so a pull request's run starts no collector and its artifacts are
+  never read. It writes `history-<run>-<attempt>.jsonl`: a first line naming the schema and its
+  version, with the facts only the Actions API knows (queue delay, setup, time to the first
+  failed job, verdict time, runner-minutes, cancelled work, artifact volume, schedule lag, one
+  entry per job), then one line per test case of that attempt's junit reports.
+- **A first result is never replaced.** Each attempt is collected on its own: from that
+  attempt's own start, end and conclusion, its own jobs, and only the reports uploaded between
+  its start and its end. So attempt 1's file keeps the first result even when it is collected
+  after a rerun, and a rerun's file sits beside it, never over it. Jobs and artifacts are listed
+  page by page against the API's count; a listing that comes up short writes nothing.
+- **Where each test ran.** Each pytest process records, on its first test case, its platform
+  (OS, machine and Python) and its number of xdist workers (`tests/run_facts.py`), and every test
+  line of that report carries them. The planner keeps one platform's and one `-n`'s seconds
+  apart, so a leg that moves to another `-n` plans from the first run that recorded it.
+- **Artifacts are data.** An archive over 8 MiB is never downloaded, a report is read in memory
+  up to 8 MiB, a report that is not UTF-8 or declares a DOCTYPE anywhere is refused, and nothing
+  is extracted or run. A report that cannot be read fails the collection and writes nothing. The
+  planner reads a history line by line, each line within 1 MiB and the whole within 256 MiB.
+- **`slots`** runs daily on its own schedule, because a scheduled run that never starts fires no
+  completion event. It writes one line per slot each scheduled workflow was due in the last
+  eight days: `ran` (with its lag), `pending` (no run yet, and the next slot has not come), or
+  `missed` (the next slot passed with no run for this one). A slot before the workflow existed
+  was never due, and a disabled workflow's slots say `disabled`. Scheduled runs here start
+  hours late (one workflow's last ten nights: 239-469 minutes), so a slot is called missed only
+  once the next one has passed.
+- **Kept 90 days.** One main run's history measured 49 MB as JSON lines and 2.7 MB compressed,
+  about what its junit reports take. The junit reports stay at 7 days: the history holds every
+  figure they give, so 90 days of both would double the storage for nothing. At the 59 main CI
+  runs measured in one busy week and one Breadth night a day, 90 days is about 860 histories,
+  roughly 2.3 GB compressed.
+- **Not yet recorded:** `rerun_result` and `quarantined` are #3947's, `cache_hits` is #3909's,
+  and `worker` and `position` are #3949's. No API reports them, so they are null, never guessed.
 
 ## Supply chain
 
