@@ -1140,14 +1140,15 @@ What the tier does not reach:
   into a process of its own for the first time is held until it is judged, by the address it was
   going to; any other frame is judged once its document has loaded. So a frame in the page's own
   process (on a browser that does not give each site its own process, every frame from another
-  site; on any browser, one from the page's own site), a frame that is redirected or navigated
-  again, and a frame inside a sandboxed frame run their first scripts before they are blanked. A
-  frame in a process of its own also runs without the in-page guard that stops the page's own
-  scripts from reaching the network, playing media or touching your devices. A page the browser
-  prepares for the page out of sight, such as a prerendered one, is held while the run's session
-  lasts; one already running before the session started watching the tab is left running,
-  unjudged. Whatever is still held when the session ends, such a page or a frame still being
-  judged, loads once it has ended.
+  site; on any browser, one from the page's own site, or from another site under the same
+  two-part ending, such as two sites under `co.uk` or `com.au`), a frame that is redirected or
+  navigated again, and a frame inside a sandboxed frame run their first scripts before they are
+  blanked. A frame in a process of its own also runs without the in-page guard that stops the
+  page's own scripts from reaching the network, playing media or touching your devices. A page
+  the browser prepares for the page out of sight, such as a prerendered one, is held while the
+  run's session lasts; one already running before the session started watching the tab is left
+  running, unjudged. Whatever is still held when the session ends, such a page or a frame still
+  being judged, loads once it has ended.
 
 **What this means for you:** a tier set in the ceiling holds for everything the agent, your
 automations and your apps reach through PersonalClaw's own requests, for every call to a remote

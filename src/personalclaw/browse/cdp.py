@@ -25,7 +25,10 @@ Three properties, in the order that makes them properties rather than logging:
    * a denied top-frame commit is torn down (:meth:`GatedCdpSession._enforce`);
    * a denied child frame is blanked on its own (:meth:`GatedCdpSession._block_frame`), so the
      page that embedded it keeps working;
-   * a frame in the page's own process is caught when it commits;
+   * a frame from the page's own site is blanked as its navigation starts, and caught again
+     when it commits or attaches; a frame from another site is left to its attach or commit,
+     since a blank as it starts keeps the browser from moving it into a process of its own,
+     where it would be paused before its document loads;
    * a frame the browser moves into a process of its own (every cross-site frame on a browser
      that gives each site its own process) is caught when auto-attach reports it, paused before
      its first document there loads, and judged again whenever it commits;
@@ -76,12 +79,25 @@ Residual gaps, stated rather than papered over:
 * **A denied frame's own document request reaches its host.** A frame is paused when its
   response arrives, so the request has been made; only intercepting requests would stop it.
 * **A frame judged at commit runs for a moment first.** Only a frame's first move into a process
-  of its own is paused before its document loads. A frame that shares its page's process (on a
-  browser that does not isolate sites, every cross-site frame), is redirected, sits in a
+  of its own is paused before its document loads. A frame that is redirected, sits in a
   sandboxed srcdoc frame, or is already in a process of its own and is navigated again, by itself
   or by its page (the browser does not attach it again, so it is not paused), commits before it
-  is judged, and its script can run until it is blanked; a capture answered before that commit
-  was reported can include it.
+  is judged, and so does one that shares its page's process: from another site (on a browser
+  that does not isolate sites, every such frame), and from the page's own site when its early
+  blank did not land first, or when it started while a page navigation the session sent (going
+  back included) was in flight. The page's own site is read as the scheme and the last two
+  labels of the host (the whole host, for an IP address), short of the browser's rule under a
+  public suffix of more than one label: a frame from ``other.co.uk`` on a page at
+  ``example.co.uk``, or from ``other.com.au`` on ``example.com.au``, is blanked as it starts; on a
+  browser that gives each site its own process that blank can keep it in the page's process,
+  where it is judged at commit rather than paused at its attach. Its script can run until it is
+  blanked; a capture answered before that commit was reported can include it.
+* **A page that leaves by a navigation of its own can lose a frame's blank.** Only a page
+  navigation the session sent (going back included) holds the early blank back. A frame of a page
+  that leaves by its own (a link the run clicked, a script, a form) can still be blanked as its
+  navigation starts, and the browser can leave a blank of a frame of the page being left, and the
+  frame's next blank with it, unanswered, which blanks the whole page. The frame is still judged
+  when it loads.
 * **No in-page guard in a frame of its own process.** The guard script is installed on the
   page, and reaches frames in the page's process only.
 * **Paused frames load after the session.** A quarantined session's paused frames, a frame still
@@ -105,6 +121,7 @@ Residual gaps, stated rather than papered over:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import time
 import uuid
@@ -190,8 +207,14 @@ FRAME_START_BOUND = 2.0
 #: sent anyway: two blanks of one frame in flight make the browser answer one of them "aborted".
 FRAME_BLANK_WAIT = 2.0
 
+#: How long a frame's early blank holds page commands while the browser has not answered it.
+#: Nothing of the frame has been shown yet, so a hold past this protects nothing; the blank is
+#: still answered, and the frame is still judged when it loads.
+EARLY_BLANK_HOLD = 2.0
+
 PHASE_FRAME_ATTACHED = "frame_attached"
 PHASE_FRAME_COMMITTED = "frame_committed"
+PHASE_FRAME_STARTED = "frame_started"
 PHASE_FRAME_UNJUDGED = "frame_unjudged"
 PHASE_RESTORED = "restored"
 PHASE_TARGET_LEFT_PAUSED = "target_left_paused"
@@ -358,6 +381,40 @@ def _document_url(url: str) -> str | None:
     return url
 
 
+def _site(url: str) -> str:
+    """The site a document's address belongs to: its scheme and the last two labels of its host
+    (the whole host, for an IP address), or ``""`` for an address with no host (``about:``,
+    ``data:``, an opaque origin). A blob is its writer's.
+
+    Two labels is short of the browser's own rule under a public suffix of more than one label:
+    ``example.co.uk`` and ``other.co.uk``, or ``example.com.au`` and ``other.com.au``, read as
+    one site. That changes only how such a frame is caught (blanked as it starts, as a frame of the
+    page's own site is), never whether it is judged when it commits or attaches."""
+    judged = _document_url(url)
+    if not judged:
+        return ""
+    try:
+        parts = urlsplit(judged)
+        host = (parts.hostname or "").lower().rstrip(".")
+    except ValueError:
+        return ""
+    if not host:
+        return ""
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        host = ".".join(host.split(".")[-2:])
+    return f"{parts.scheme.lower()}://{host}"
+
+
+def _same_site(url: str, page_url: str) -> bool:
+    """Whether a frame going to *url* is from the site of the page at *page_url*. Unsure (either
+    has no host) is no: the frame then gets no early blank and is judged as it would be without
+    one, which is the stricter path for a frame from another site."""
+    site = _site(url)
+    return bool(site) and site == _site(page_url)
+
+
 def _is_extension(url: str) -> bool:
     """A frame of an installed extension's own page: not a web host's document, so not judged as
     a frame, but still watched so the frames inside it are judged."""
@@ -469,8 +526,12 @@ class GatedCdpSession:
         self._quarantine = ""
         self._blocks: list[NavigationOutcome] = []
         self._script_allow_hosts: tuple[str, ...] = ()
+        # The page's top frame, so a frame's navigation is told from the page's own, and the
+        # address of its document, so a frame from another site is told from one of its own.
+        self._top_id = ""
+        self._top_url = ""
         # frame id -> where its latest navigation started for (``Page.frameStartedNavigating``),
-        # read when the frame attaches with no URL of its own.
+        # read when the frame attaches with no URL of its own; never the session's early blank.
         self._frame_starts: OrderedDict[str, str] = OrderedDict()
         # frame id -> the URL last judged or seen for it: one commit the browser reports twice is
         # judged, blanked and recorded once. Forgotten at every top-level commit.
@@ -478,8 +539,14 @@ class GatedCdpSession:
         # host (or URL, for a block that names no host) -> the frame block recorded first for it
         # on this page, which counts the ones after it. Forgotten at every top-level commit.
         self._frame_blocks: OrderedDict[str, NavigationOutcome] = OrderedDict()
+        # frame id -> the block its early blank made, until the frame next reports a document:
+        # blanked as it started and again when it attached or committed, it is one denial,
+        # neither recorded nor counted twice. The frame's next denial of the same host takes it;
+        # any other document settles it, so a frame that loads the URL again later is a denial of
+        # its own. Forgotten at every top commit.
+        self._head_starts: OrderedDict[str, NavigationOutcome] = OrderedDict()
         # The session's own tasks (a paused frame's judgement, a frame being watched, a worker
-        # let run), each forgotten when it ends.
+        # let run, a frame's early blank), each forgotten when it ends.
         self._tasks: set[asyncio.Task[Any]] = set()
         # Frames that were already running when start() began, still being watched.
         self._start_arming: set[asyncio.Task[Any]] = set()
@@ -493,6 +560,17 @@ class GatedCdpSession:
         # blank of the same frame sent while the first runs makes the browser answer the first
         # "aborted", which reads as a blank that loaded nothing.
         self._frame_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
+        # frame id -> how many blanks of it began at load time: an early blank whose judgement ends
+        # after one began (sent, or waiting for the frame's lock) is no head start any more, and
+        # is not sent.
+        self._frame_blanked: OrderedDict[str, int] = OrderedDict()
+        # Whether a page navigation this session sent has not committed its document yet. While
+        # one is in flight no frame is blanked as its navigation starts: the page is being
+        # replaced, and a blank of a frame of the page being left can go unanswered by the
+        # browser, along with the next blank of that frame. Set when the navigation is sent, and
+        # cleared by the commit of a top-level document (which may come before the answer), or by
+        # an answer that brings no new document.
+        self._page_navigating = False
 
     # ── state ────────────────────────────────────────────────────────────────
 
@@ -706,6 +784,9 @@ class GatedCdpSession:
                 "navigate a page whose document it could not judge"
             )
             raise CdpSessionError(self._quarantine) from exc
+        if records and records[0][0]:
+            self._top_id = records[0][0]
+            self._top_url = records[0][2]
         await self._judge_frames(records, operation=GET_FRAME_TREE, phase="start")
         if self._quarantine:
             raise CdpSessionError(self._quarantine)
@@ -786,9 +867,12 @@ class GatedCdpSession:
         if self._quarantine:
             return self._refused(url, self._quarantine)
 
+        self._page_navigating = True
         try:
             reply = await self._transport.send(NAVIGATE, {"url": url})
         except Exception as exc:
+            # Left marked in flight: the page's state is unknown, and no frame is blanked as it
+            # starts until a top-level document commits. The frame is still judged when it loads.
             # The message may or may not have reached the browser, so the page's state is
             # unknown. Quarantine rather than retry: an unknown page under a gate that
             # cannot see it is exactly the state this module exists to prevent.
@@ -808,6 +892,10 @@ class GatedCdpSession:
             )
 
         failed = _navigation_failed(reply)
+        # In flight until its document commits; a navigation within the document, one that loaded
+        # nothing and a download commit no new document, so there is none to wait for.
+        if failed or not (reply or {}).get("loaderId"):
+            self._page_navigating = False
         if failed:
             return NavigationOutcome(
                 ok=False,
@@ -875,6 +963,11 @@ class GatedCdpSession:
             await self._quiesce_or_quarantine()
             if self._quarantine:
                 return self._refused(url, self._quarantine)
+            # A page navigation the session sent, as navigate()'s is: in flight until a top-level
+            # document commits. Its answer says nothing of a document, so only that commit ends
+            # it; an entry within the same document keeps it until the page's next commit, which
+            # only defers frames' early blanks to the check when they load.
+            self._page_navigating = True
             await self._transport.send(NAVIGATE_TO_HISTORY_ENTRY, {"entryId": entry["id"]})
             return NavigationOutcome(ok=True, allowed=True, url=url, host=_host_of(url))
         if denied is None:
@@ -967,7 +1060,12 @@ class GatedCdpSession:
         the back-forward cache comes back with the frames it had, so they are judged again."""
         self._judged.clear()
         self._frame_blocks.clear()
+        self._head_starts.clear()
+        self._page_navigating = False
+        if frame.get("id"):
+            self._top_id = str(frame["id"])
         url = str(frame.get("url") or "")
+        self._top_url = url
         judged = _document_url(url)
         if judged is None:
             return
@@ -1000,16 +1098,105 @@ class GatedCdpSession:
 
     def _navigation_started(self, method: str, params: dict[str, Any]) -> None:
         """Remember where a frame's navigation is going, for the attach that reports the frame
-        with no URL of its own. Only a navigation for the frame itself counts
-        (``frameRequestedNavigation`` names a new tab or window too). Never raises."""
+        with no URL of its own; and blank a child frame from the page's own site going to a denied
+        host as it starts. One from another site is not: on a browser that gives each site its
+        own process, a blank as it starts keeps the browser from moving it into one, so it is
+        never attached, never paused before its document loads, and judged only at commit.
+
+        Only a navigation for the frame itself counts (``frameRequestedNavigation`` names a new
+        tab or window too). A start to no network document (``about:blank``) of a frame whose early
+        blank is not settled is not remembered: the browser reports the session's own blank as a
+        start of the frame, and a frame it then attaches with no URL is judged by where its own
+        navigation was going, never as the blank. Never raises."""
         try:
             if method == FRAME_REQUESTED_NAVIGATION and params.get("disposition") != "currentTab":
                 return
             fid, url = params.get("frameId"), params.get("url")
-            if isinstance(fid, str) and fid and isinstance(url, str) and url:
-                self._remember(self._frame_starts, fid, url)
+            if not (isinstance(fid, str) and fid and isinstance(url, str) and url):
+                return
+            if fid in self._head_starts and _document_url(url) is None:
+                return
+            self._remember(self._frame_starts, fid, url)
+            if (
+                method == FRAME_STARTED_NAVIGATING
+                and self._top_id
+                and fid != self._top_id
+                and _same_site(url, self._top_url)
+            ):
+                if self._frame_lock(fid).locked():
+                    # A blank of this frame is already running; it takes this navigation too.
+                    return
+                self._spawn(self._early_blank(fid, url, self._frame_blanked.get(fid, 0)))
         except Exception:
             logger.warning("browse: a frame's navigation start could not be read", exc_info=True)
+
+    async def _early_blank(self, fid: str, url: str, blanked_before: int = 0) -> None:
+        """Blank a child frame whose navigation to a denied host has just started, before it
+        commits: a frame in the page's own process is otherwise judged only once its document has
+        loaded and its script has run.
+
+        A head start, not the check. The frame is not recorded as judged, so its commit (or its
+        attach, for a frame in a process of its own) is judged as always, and blanked again with
+        the whole fail-closed ladder behind it; the two are one denial, one audit row
+        (:meth:`_record_block`). A start of a frame whose early blank for the same host is not
+        settled yet (one navigation reported as starting twice) is blanked again but is that
+        denial. A failed early blank is only logged: nothing of the frame has loaded yet, and a
+        navigation the browser replaced answers this one as aborted. The blank holds page commands
+        while it runs, for at most :data:`EARLY_BLANK_HOLD`, but discards no reply, since nothing
+        of the frame was shown.
+
+        One blank of a frame at a time: the early blank takes the frame's lock, so its load-time
+        blank waits for it rather than abort it, and it is not sent at all once a load-time blank
+        of the frame began (``blanked_before``), or while another blank of the frame runs.
+
+        None is sent while a page navigation this session sent has not committed: the page is
+        being replaced, and the browser can leave a blank of a frame of the page being left
+        unanswered, and the next blank of that frame with it, which costs the whole page. The
+        frame is still judged, and blanked, when it loads. A page that leaves by a navigation of
+        its own does not hold the early blank back (the module's residual list says so)."""
+        try:
+            judged = _document_url(url)
+            if judged is None or _is_extension(url):
+                return
+            decision = await self._judge(judged)
+            if decision.allow:
+                return
+            async with self._frame_lock(fid):
+                # Checked once the lock is held, after the judgement and the wait for another blank
+                # of the frame, both of which yield: the frame may have been blanked when it loaded
+                # meanwhile, or the session may have sent its page navigation.
+                if self._frame_blanked.get(fid, 0) != blanked_before or self._page_navigating:
+                    return
+                if self._head_start_of(fid, decision) is None:
+                    self._record_block(
+                        decision,
+                        operation=FRAME_STARTED_NAVIGATING,
+                        phase=PHASE_FRAME_STARTED,
+                        frame=True,
+                        fid=fid,
+                        started=True,
+                    )
+                self._hold()
+                held = True
+                blank = asyncio.ensure_future(
+                    self._transport.send(NAVIGATE, {"url": BLANK_URL, "frameId": fid})
+                )
+                try:
+                    await asyncio.wait({blank}, timeout=EARLY_BLANK_HOLD)
+                    if not blank.done():
+                        self._release()
+                        held = False
+                    reply = await blank
+                    failed = _navigation_failed(reply)
+                    if failed:
+                        logger.info("browse: a frame's early blank loaded nothing (%s)", failed)
+                except Exception as exc:
+                    logger.info("browse: a frame's early blank was refused (%s)", exc)
+                finally:
+                    if held:
+                        self._release()
+        except Exception:
+            logger.warning("browse: a frame's early blank failed", exc_info=True)
 
     async def _fail_closed(self, method: str, step: Awaitable[Any]) -> None:
         """Run one frame step; any failure blanks the whole page. The dispatcher logs and drops
@@ -1027,24 +1214,33 @@ class GatedCdpSession:
 
     async def _frame_commit(self, frame: dict[str, Any]) -> None:
         """A child frame committed a document: in the page's own process (the page session
-        reports it with a ``parentId``), or in a process of its own (its session reports it)."""
+        reports it with a ``parentId``), or in a process of its own (its session reports it).
+
+        A document that is not judged (the early blank's own, which a frame commits twice in a row
+        when it is blanked again) settles the frame's early blank before the check for a commit
+        reported twice; an allowed one settles it too (:meth:`_settle_head_start`)."""
         fid = str(frame.get("id") or "")
         url = str(frame.get("url") or "")
+        judged = _document_url(url)
+        if judged is None or _is_extension(url):
+            self._settle_head_start(fid)
+            if fid:
+                self._remember(self._judged, fid, url)
+            return
         if fid and self._judged.get(fid) == url:
             return
         if fid:
             self._remember(self._judged, fid, url)
-        judged = _document_url(url)
-        if judged is None or _is_extension(url):
-            return
         decision = await self._judge(judged)
         if decision.allow:
+            self._settle_head_start(fid)
             return
         blocked = self._record_block(
             decision,
             operation=FRAME_NAVIGATED,
             phase=PHASE_FRAME_COMMITTED,
             frame=True,
+            fid=fid,
         )
         await self._block_frame(fid, blocked, exposing=True)
 
@@ -1057,21 +1253,28 @@ class GatedCdpSession:
             return
         url = str(info.get("url") or "")
         tid = str(info.get("targetId") or "")
-        if not url or (tid and self._judged.get(tid) == url):
+        if not url:
+            return
+        judged = _document_url(url)
+        if judged is None or _is_extension(url):
+            self._settle_head_start(tid)
+            if tid:
+                self._remember(self._judged, tid, url)
+            return
+        if tid and self._judged.get(tid) == url:
             return
         if tid:
             self._remember(self._judged, tid, url)
-        judged = _document_url(url)
-        if judged is None or _is_extension(url):
-            return
         decision = await self._judge(judged)
         if decision.allow:
+            self._settle_head_start(tid)
             return
         blocked = self._record_block(
             decision,
             operation=TARGET_INFO_CHANGED,
             phase=PHASE_FRAME_COMMITTED,
             frame=True,
+            fid=tid,
         )
         await self._block_frame(tid, blocked, exposing=True)
 
@@ -1182,9 +1385,11 @@ class GatedCdpSession:
                 operation=ATTACHED_TO_TARGET,
                 phase=PHASE_FRAME_ATTACHED,
                 frame=True,
+                fid=tid,
             )
             await self._block_frame(tid, blocked, exposing=not waiting)
             return
+        self._settle_head_start(tid)
         self._remember(self._judged, tid, info_url or started)
         if waiting or self._starting:
             # start()'s barrier waits for a frame that was running when it began, within its
@@ -1285,14 +1490,18 @@ class GatedCdpSession:
                 self._remember(self._judged, fid, url)
             judged = _document_url(url)
             if judged is None or (not top and _is_extension(url)):
+                self._settle_head_start(fid)
                 continue
             decision = await self._judge(judged)
             if decision.allow:
+                self._settle_head_start(fid)
                 continue
             if top:
                 await self._enforce(self._record_block(decision, operation=operation, phase=phase))
                 return False
-            blocked = self._record_block(decision, operation=operation, phase=phase, frame=True)
+            blocked = self._record_block(
+                decision, operation=operation, phase=phase, frame=True, fid=fid
+            )
             if not await self._block_frame(fid, blocked, exposing=True):
                 return False
         return True
@@ -1337,8 +1546,12 @@ class GatedCdpSession:
             if not fid:
                 await self._blank_page_for(blocked)
                 return False
-            # Wait for another blank of this frame still running, within a bound: sent beside it,
-            # either blank would make the browser answer the other "aborted".
+            # Counted before the wait below, so an early blank of the frame that gets the lock
+            # first leaves the frame to this blank.
+            self._remember(self._frame_blanked, fid, self._frame_blanked.get(fid, 0) + 1)
+            # Wait for another blank of this frame still running (its early blank, or a blank of an
+            # earlier commit), within a bound: sent beside it, either blank would make the browser
+            # answer the other "aborted".
             lock = self._frame_lock(fid)
             try:
                 await asyncio.wait_for(lock.acquire(), FRAME_BLANK_WAIT)
@@ -1484,6 +1697,20 @@ class GatedCdpSession:
             task.add_done_callback(self._start_arming.discard)
         return task
 
+    def _head_start_of(self, fid: str, decision: GuardDecision) -> NavigationOutcome | None:
+        """The block the frame's early blank made for *decision*'s host, while no document of the
+        frame has settled it (:meth:`_settle_head_start`)."""
+        early = self._head_starts.get(fid)
+        if early is not None and (early.host or early.url) == (decision.host or decision.url):
+            return early
+        return None
+
+    def _settle_head_start(self, fid: str) -> None:
+        """The frame reported a document that is no denial: the navigation its early blank was for
+        loaded nothing there (the blank landed, or the frame went elsewhere), so a later load of
+        that URL by the frame is a denial of its own."""
+        self._head_starts.pop(fid, None)
+
     def _frame_lock(self, fid: str) -> asyncio.Lock:
         lock = self._frame_locks.get(fid)
         if lock is None:
@@ -1507,8 +1734,17 @@ class GatedCdpSession:
         operation: str,
         phase: str,
         frame: bool = False,
+        fid: str = "",
+        started: bool = False,
     ) -> NavigationOutcome:
         """Record one denial: a block, and its SEL row.
+
+        A frame blanked as its navigation started (``started``) and again when it attached or
+        committed is one denial: the frame's next load-time denial (``fid``) of the same host gets
+        the block the start made, neither recorded nor counted again, whatever URL it names (the
+        start's keeps its fragment, a redirect on the host ends elsewhere). It takes it once, and
+        any other document the frame reports first settles it (:meth:`_settle_head_start`), so a
+        frame that loads the URL again later is a denial of its own.
 
         A frame's block on a page that already recorded one for the same host (the same frame
         re-pointed there, or another frame from it) is counted on that one
@@ -1517,6 +1753,11 @@ class GatedCdpSession:
         nor the audit log, nor what the run is told. One whose own blank then fails is recorded
         after all (:meth:`_blank_page_for`), since the whole page went. A new host is a block of
         its own, and a new document starts over."""
+        if fid and not started:
+            early = self._head_start_of(fid, decision)
+            self._settle_head_start(fid)
+            if early is not None:
+                return early
         outcome = NavigationOutcome(
             ok=False,
             allowed=False,
@@ -1528,14 +1769,17 @@ class GatedCdpSession:
             frame=frame,
             blanked=BLANKED_FRAME if frame else "",
         )
+        if started and fid:
+            # Counted or recorded, the frame's load-time denial of the same host is this denial.
+            self._remember(self._head_starts, fid, outcome)
         if frame:
-            key = outcome.host or outcome.url
-            first = self._frame_blocks.get(key)
+            host = outcome.host or outcome.url
+            first = self._frame_blocks.get(host)
             if first is not None:
                 first.repeats += 1
                 outcome.counted_on = (first, operation, phase)
                 return outcome
-            self._remember(self._frame_blocks, key, outcome)
+            self._remember(self._frame_blocks, host, outcome)
         self._blocks.append(outcome)
         self._audit(outcome, operation=operation, phase=phase)
         return outcome

@@ -226,9 +226,10 @@ SYNC = EgressPolicy(
 #   * subresources the document requests (img/script/link/xhr/fetch/EventSource/WebSocket),
 #   * a frame's own document request and what an allowed frame's scripts fetch. A denied frame
 #     is blanked once judged: before its document loads when it first moves into a process of
-#     its own, and only once its document has loaded otherwise (a frame in the page's own
-#     process, and a frame already in a process of its own that is navigated again, by itself or
-#     by its page, which the browser does not attach again),
+#     its own; one from the page's own site also as its navigation starts, a blank that may or
+#     may not land before its document loads; and otherwise only once its document has loaded
+#     (a frame in the page's own process, and a frame already in a process of its own that is
+#     navigated again, by itself or by its page, which the browser does not attach again),
 #   * ``window.open`` / ``target=_blank`` and JS/meta-refresh navigations that never round-trip
 #     through the CDP command we guard,
 #   * service workers and shared/dedicated workers, which outlive the navigation,

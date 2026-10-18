@@ -47,6 +47,7 @@ _DNS = {
     "denied.example": ["93.184.216.35"],
     "operator-denied.example": ["93.184.216.36"],
     "redirected.example": ["93.184.216.37"],
+    "secret.allowed.example": ["93.184.216.38"],
 }
 
 
@@ -184,7 +185,7 @@ def operator_egress(monkeypatch):
     layer, which is also the only place a self-hoster's denial ever comes from. That makes
     ``egress_policy_for`` part of the path under test rather than a detail around it.
     """
-    cfg = _FakeEgressConfig(deny_hosts=["denied.example"])
+    cfg = _FakeEgressConfig(deny_hosts=["denied.example", "secret.allowed.example"])
     fake_app = types.SimpleNamespace(security=types.SimpleNamespace(egress=cfg))
     monkeypatch.setattr(AppConfig, "load", classmethod(lambda cls: fake_app))
     return cfg
@@ -1657,6 +1658,10 @@ async def test_a_read_discarded_by_a_teardown_that_quarantined_is_not_read_again
 
 DENIED = "https://denied.example/frame"
 ALLOWED = "https://allowed.example/frame"
+#: A frame the page's own site serves from a denied host, on a page at :data:`PAGE`: the frame
+#: that is blanked as its navigation starts. One from another site waits for its attach or commit.
+SAME_SITE_DENIED = "https://secret.allowed.example/frame"
+PAGE = "https://allowed.example/page"
 
 
 def _attached(sid, tid, url="", *, waiting=True, kind="iframe", subtype=""):
@@ -2947,22 +2952,52 @@ async def test_slow_lookups_for_paused_frames_hold_no_read_of_the_page(held_by):
     assert len(_resumed(transport)) == 4 and session.blocks == []
 
 
-# a navigation start is only remembered
+# a frame's navigation is blanked as it starts
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_frame_navigating_to_a_denied_host_is_blanked_as_it_starts(sel_rows):
+    """🔴 Red before: a frame in the page's own process loaded and ran until its commit was
+    reported. Its navigation is now blanked by id as soon as it starts, before it commits, and a
+    read in flight is not discarded, since nothing of it was shown."""
+    import asyncio
+
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+    page_reply = asyncio.get_running_loop().create_future()
+    transport.page_hold["Runtime.evaluate"] = page_reply
+    read = asyncio.ensure_future(session.page_transport.send("Runtime.evaluate", {}))
+    await asyncio.sleep(0)
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+    )
+    page_reply.set_result(None)
+
+    assert _frame_blanks(transport) == ["CHILD1"]
+    assert _sel(sel_rows) == [(cdp.FRAME_STARTED_NAVIGATING, "frame_started")]
+    assert await read == {}
+    assert cdp.STOP_LOADING not in transport.methods
 
 
 @pytest.mark.asyncio
-async def test_a_frames_navigation_start_is_remembered_and_sends_nothing():
-    """Where a frame's navigation is going is kept for the attach that reports it with no URL; the
-    frame itself is judged when it attaches or commits, never at the start."""
-    transport = FakeTransport()
+async def test_an_allowed_frame_navigation_and_the_top_frames_own_are_not_blanked_as_they_start():
+    """Vacuity partner: an allowed frame is left to load, and the top document is judged at
+    commit as it always was (its blank is the whole page's). Both start from the page's own site,
+    so the site rule is not what leaves them alone."""
+    transport = FakeTransport(frames=(PAGE,))
     session = await _started(transport)
     before = list(transport.sent)
     await _events(
         session,
         transport,
         (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", ALLOWED), None),
-        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD2", DENIED), None),
-        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("TOP", DENIED), None),
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("TOP", SAME_SITE_DENIED), None),
+        (cdp.FRAME_REQUESTED_NAVIGATION, _requested_nav("CHILD2", SAME_SITE_DENIED), None),
     )
 
     assert transport.sent == before and session.blocks == []
@@ -3158,6 +3193,50 @@ async def test_a_session_remembers_256_frames_and_forgets_the_oldest_first():
         (cdp.FRAME_NAVIGATED, _child_frame(DENIED, fid="C256"), None),
     )
     assert _frame_blanks(transport)[257:] == ["C0"]
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_failed_early_blank_is_not_escalated_and_the_frame_is_still_judged_at_load(
+    sel_rows,
+):
+    """The early blank is a head start, not the check: its failure is logged and nothing more,
+    and the denied commit that follows still gets the whole ladder, recorded once."""
+    transport = FakeTransport(frames=(PAGE,))
+    transport.frame_fail = ["the browser rejected the command: superseded"]
+    session = await _started(transport)
+    sel_rows.clear()
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+    )
+    assert cdp.STOP_LOADING not in transport.methods and session.quarantine_reason == ""
+
+    await _events(session, transport, (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None))
+    assert _frame_blanks(transport) == ["CHILD1", "CHILD1"]
+    assert len(sel_rows) == 1 and len(session.blocks) == 1
+    assert cdp.STOP_LOADING not in transport.methods
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_frame_blanked_as_it_started_is_blanked_again_when_it_commits(sel_rows):
+    """Blanked twice, recorded once: the early blank never marks the frame as judged."""
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+        (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None),
+    )
+
+    assert _frame_blanks(transport) == ["CHILD1", "CHILD1"]
+    assert len(sel_rows) == 1 and len(session.blocks) == 1
 
 
 # ── the production wire ──────────────────────────────────────────────────────
@@ -3990,6 +4069,172 @@ async def test_going_back_waits_for_a_block_that_began_while_the_entry_was_judge
 
 @pytest.mark.security
 @pytest.mark.asyncio
+async def test_a_frames_blank_at_load_waits_for_its_early_blank_still_running():
+    """Sent beside each other, the browser answers one of two blanks of the same frame "aborted",
+    which reads as a blank that loaded nothing and costs the whole page. So the load-time blank
+    waits for the early one, then goes out, and the page is never blanked whole."""
+    import asyncio
+
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    early = asyncio.get_running_loop().create_future()
+    transport.frame_hold = early
+
+    transport.dispatch(cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None)
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert _frame_blanks(transport) == ["CHILD1"], "the early blank was not sent"
+    commit = transport.dispatch(cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None)
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert _frame_blanks(transport) == [
+        "CHILD1"
+    ], "the load-time blank went out beside the early one"
+
+    early.set_result(None)
+    await commit
+    await session.wait_idle()
+    assert _frame_blanks(transport) == ["CHILD1", "CHILD1"]
+    assert cdp.STOP_LOADING not in transport.methods and _top_blanks(transport) == 0
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_an_unanswered_early_blank_holds_the_page_no_longer_than_its_bound(monkeypatch):
+    """Nothing of the frame has been shown, so a hold past the bound protects nothing: a read of
+    the page goes out once it passes, and the blank is still answered later."""
+    import asyncio
+
+    monkeypatch.setattr(cdp, "EARLY_BLANK_HOLD", 0.05)
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    early = asyncio.get_running_loop().create_future()
+    transport.frame_hold = early
+
+    transport.dispatch(cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None)
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert session.tearing_down, "the early blank did not hold the page"
+    assert await asyncio.wait_for(session.page_transport.send("Runtime.evaluate", {}), 1.0) == {}
+
+    early.set_result(None)
+    await session.wait_idle()
+    assert session.quarantine_reason == "" and cdp.STOP_LOADING not in transport.methods
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_an_early_blank_judged_after_its_frame_was_blanked_at_load_is_not_sent(sel_rows):
+    """The head start came too late: the frame was already blanked when it loaded, so a second
+    blank would only abort that one. Blanked once, recorded once."""
+    import asyncio
+
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+    calls = {"n": 0}
+
+    async def first_is_slow(fn, *args):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            await asyncio.sleep(0.1)
+        return fn(*args)
+
+    session._blocking = first_is_slow
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+        (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None),
+    )
+
+    assert _frame_blanks(transport) == ["CHILD1"]
+    assert len(sel_rows) == 1 and len(session.blocks) == 1
+
+
+# ── no head start while the session's own page navigation is in flight ─────────
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_no_frame_is_blanked_as_it_starts_while_the_sessions_page_navigation_is_in_flight():
+    """🔴 Red before: a frame of the page being left was blanked as its navigation started, the
+    browser left that blank and a later blank of the same frame unanswered as the page was
+    replaced, and the whole page was blanked. While a page navigation the session sent has not
+    committed, a frame's start is only remembered; the frame is still blanked when it loads, and
+    once the page has committed, frames are blanked as they start again."""
+    import asyncio
+
+    transport = FakeTransport(frames=(PAGE,))
+    transport.replies[cdp.NAVIGATE] = {"frameId": "TOP", "loaderId": "L2"}
+    session = await _started(transport)
+    held = asyncio.get_running_loop().create_future()
+    transport.page_hold[cdp.NAVIGATE] = held
+    nav = asyncio.ensure_future(session.navigate("https://allowed.example/next"))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert (cdp.NAVIGATE, {"url": "https://allowed.example/next"}) in transport.sent
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+    )
+    assert _frame_blanks(transport) == [], "a frame was blanked as it started, mid navigation"
+    await _events(session, transport, (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None))
+    assert _frame_blanks(transport) == ["CHILD1"], "the frame was not blanked when it loaded"
+
+    held.set_result(None)
+    assert (await nav).ok is True
+    # Answered, not yet committed: still in flight.
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD2", SAME_SITE_DENIED), None),
+    )
+    assert _frame_blanks(transport) == ["CHILD1"]
+
+    await _events(
+        session,
+        transport,
+        (
+            cdp.FRAME_NAVIGATED,
+            {"frame": {"id": "TOP", "url": "https://allowed.example/next"}},
+            None,
+        ),
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD3", SAME_SITE_DENIED), None),
+    )
+    assert _frame_blanks(transport) == ["CHILD1", "CHILD3"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reply",
+    [
+        {"frameId": "TOP"},
+        {"frameId": "TOP", "loaderId": "L2", "errorText": "net::ERR_ABORTED"},
+        {"frameId": "TOP", "loaderId": "L2", "isDownload": True},
+    ],
+    ids=["same-document", "loaded-nothing", "download"],
+)
+async def test_a_page_navigation_that_brings_no_new_document_ends_at_its_answer(reply):
+    """Vacuity partner: a navigation within the document, one that loaded nothing, and a download
+    commit no new document, so the head start comes back as soon as the browser answers."""
+    transport = FakeTransport(frames=(PAGE,))
+    transport.replies[cdp.NAVIGATE] = reply
+    session = await _started(transport)
+    await session.navigate("https://allowed.example/next")
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+    )
+    assert _frame_blanks(transport) == ["CHILD1"]
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
 async def test_a_second_blank_of_a_frame_waits_for_the_first_still_running():
     """Sent beside each other, the browser answers one of two blanks of the same frame "aborted",
     which reads as a blank that loaded nothing and costs the whole page. A frame that commits a
@@ -4128,3 +4373,999 @@ def test_the_guide_says_what_is_held_loads_once_the_session_ends():
     assert "never loaded" not in entry, entry
     for case in ("held while the run's session lasts", "still held when the session ends"):
         assert case in entry, f"the guide does not say {case!r}: {entry}"
+
+
+@pytest.mark.security
+def test_the_code_says_a_page_leaving_by_its_own_navigation_does_not_hold_the_early_blank_back():
+    """🔴 Red before: the early blank is held back only while a page navigation the session sent is
+    in flight, though a page that leaves by a navigation of its own is replaced as surely. The
+    residual list says so, so no reader takes the rule for one that covers every page."""
+    residual = _flat(cdp.__doc__ or "")
+    assert "leaves by a navigation of its own can lose a frame's blank" in residual, residual
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_page_navigation_sent_while_a_frames_start_is_judged_stops_its_early_blank():
+    """The judgement can wait on a host lookup, and the session can send its page navigation
+    meanwhile: the frame's start was judged before the navigation, and its blank would land in it.
+    So whether a page navigation is in flight is asked after the judgement, not before."""
+    import asyncio
+
+    transport = FakeTransport(frames=(PAGE,))
+    transport.replies[cdp.NAVIGATE] = {"frameId": "TOP", "loaderId": "L2"}
+    session = await _started(transport)
+    gate = asyncio.Event()
+
+    async def slow_for_frames(fn, *args):
+        if args and "secret.allowed.example" in str(args[0]):
+            await gate.wait()
+        return fn(*args)
+
+    session._blocking = slow_for_frames
+    start = transport.dispatch(
+        cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None
+    )
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert (await session.navigate("https://allowed.example/next")).ok is True
+    gate.set()
+    await start
+    await session.wait_idle()
+
+    assert _frame_blanks(transport) == [], "the frame was blanked during the page navigation"
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_page_commit_reported_before_its_answer_ends_the_navigation():
+    """The browser can report the new document's commit before it answers the navigation. That
+    commit is the end of it: the answer that follows must not mark the page in flight again, or no
+    frame of the new page would ever be blanked as it starts."""
+    transport = FakeTransport(frames=(PAGE,))
+    transport.replies[cdp.NAVIGATE] = {"frameId": "TOP", "loaderId": "L2"}
+    transport.events_on[cdp.NAVIGATE] = [
+        (cdp.FRAME_NAVIGATED, {"frame": {"id": "TOP", "url": "https://allowed.example/next"}}, None)
+    ]
+    session = await _started(transport)
+    assert (await session.navigate("https://allowed.example/next")).ok is True
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+    )
+    assert _frame_blanks(transport) == ["CHILD1"]
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_page_navigation_whose_send_failed_stays_in_flight_until_a_page_commits():
+    """A send that raised may have reached the browser, so the page may be being replaced: no
+    frame is blanked as it starts until a top-level document commits. The frame is still blanked
+    when it loads, and once a page commits, frames are blanked as they start again."""
+    transport = FakeTransport(fail_on={cdp.NAVIGATE}, frames=(PAGE,))
+    session = await _started(transport)
+    assert (await session.navigate("https://allowed.example/next")).ok is False
+    transport._fail_on = set()
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+    )
+    assert _frame_blanks(transport) == [], "a frame was blanked as it started, mid navigation"
+    await _events(session, transport, (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None))
+    assert _frame_blanks(transport) == ["CHILD1"], "the frame was not blanked when it loaded"
+
+    await _events(
+        session,
+        transport,
+        (
+            cdp.FRAME_NAVIGATED,
+            {"frame": {"id": "TOP", "url": "https://allowed.example/next"}},
+            None,
+        ),
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD3", SAME_SITE_DENIED), None),
+    )
+    assert _frame_blanks(transport) == ["CHILD1", "CHILD3"]
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_going_back_is_a_page_navigation_in_flight_until_a_page_commits():
+    """Going back replaces the page as a navigation does: no frame is blanked as it starts until
+    a top-level document commits. The frame is still blanked when it loads, and once a page
+    commits, frames are blanked as they start again."""
+    from personalclaw.browse.page import CdpPageDriver
+
+    page_a, page_b = "https://allowed.example/a", "https://allowed.example/b"
+    transport = _History([(1, page_a), (2, page_b)], current=1)
+    transport.frames = (page_b,)
+    session = await _started(transport)
+    await CdpPageDriver(session.page_transport).go_back()
+    assert _history_loads(transport) == [1]
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+    )
+    assert _frame_blanks(transport) == [], "a frame was blanked as it started, mid navigation"
+    await _events(session, transport, (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None))
+    assert _frame_blanks(transport) == ["CHILD1"], "the frame was not blanked when it loaded"
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_NAVIGATED, {"frame": {"id": "TOP", "url": page_a}}, None),
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD3", SAME_SITE_DENIED), None),
+    )
+    assert _frame_blanks(transport) == ["CHILD1", "CHILD3"]
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_frame_blanked_as_it_started_and_again_at_load_is_one_denial_not_a_repeat(sel_rows):
+    """The early blank and the blank at load are one denial of one frame: one block, one SEL row,
+    and not counted as a second block of its host."""
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+        (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None),
+    )
+
+    assert _frame_blanks(transport) == ["CHILD1", "CHILD1"]
+    assert [(b.host, b.repeats, b.blanked) for b in session.blocks] == [
+        ("secret.allowed.example", 0, cdp.BLANKED_FRAME)
+    ]
+    assert len(sel_rows) == 1
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_frame_counted_on_its_host_is_counted_once_for_its_early_and_load_blanks(sel_rows):
+    """A second frame from a host the page already blocked is counted on that block once, though
+    it is blanked both as it starts and when it loads."""
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+
+    await _events(
+        session, transport, (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED, fid="C0"), None)
+    )
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("C2", SAME_SITE_DENIED), None),
+        (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED, fid="C2"), None),
+    )
+
+    assert _frame_blanks(transport) == ["C0", "C2", "C2"]
+    assert [(b.host, b.repeats) for b in session.blocks] == [("secret.allowed.example", 1)]
+    assert len(sel_rows) == 1
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_frame_whose_blank_at_load_fails_after_its_early_blank_is_one_page_block(sel_rows):
+    """The early blank landed, then the blank at load failed, so the whole page went: that is one
+    denial, recorded once and told as the whole page."""
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+    )
+    transport.frame_fail = ["the browser rejected the command: refused"]
+    await _events(session, transport, (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None))
+
+    assert [(b.host, b.blanked) for b in session.blocks] == [
+        ("secret.allowed.example", cdp.BLANKED_PAGE)
+    ]
+    assert len(sel_rows) == 1
+    assert cdp.STOP_LOADING in transport.methods
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+@pytest.mark.parametrize("page", [PAGE, cdp.BLANK_URL], ids=["another-site", "page-of-no-site"])
+async def test_a_frame_not_from_the_pages_site_waits_for_its_attach_as_it_starts(page, sel_rows):
+    """🔴 Red before: a frame from another site was blanked as its navigation started, which on a
+    browser that gives each site its own process kept the browser from moving it into one: it was
+    never attached, so never paused before its document loaded. It now gets no blank as it starts,
+    nor does any frame of a page whose site is unknown; it is paused at its attach and blanked
+    there, never let run, as it was without the early blank."""
+    transport = FakeTransport(frames=(page,))
+    session = await _started(transport)
+    sel_rows.clear()
+
+    await _events(
+        session, transport, (cdp.FRAME_STARTED_NAVIGATING, _started_nav("F1", DENIED), None)
+    )
+    assert _frame_blanks(transport) == [], "a frame from another site was blanked as it started"
+
+    await _events(session, transport, (cdp.ATTACHED_TO_TARGET, _attached("S1", "F1"), None))
+    assert _frame_blanks(transport) == ["F1"]
+    assert transport.child_sent == []
+    assert _sel(sel_rows) == [(cdp.ATTACHED_TO_TARGET, "frame_attached")]
+
+
+def test_a_frames_site_is_the_last_two_labels_of_its_documents_host():
+    """The rule the early blank is given by, on the addresses it meets."""
+    assert cdp._same_site("https://secret.allowed.example/f", "https://allowed.example/p")
+    assert cdp._same_site("blob:https://allowed.example/1", "https://www.allowed.example/")
+    assert cdp._same_site("https://ALLOWED.example.:8443/f", "https://allowed.example/p")
+    assert not cdp._same_site("https://denied.example/f", "https://allowed.example/p")
+    assert not cdp._same_site("https://allowedexample.com/f", "https://allowed.example/p")
+    for unknown in (cdp.BLANK_URL, "about:srcdoc", "data:text/html,x", ""):
+        assert not cdp._same_site("https://allowed.example/f", unknown)
+        assert not cdp._same_site(unknown, "https://allowed.example/p")
+        assert not cdp._same_site(unknown, cdp.BLANK_URL), "two unknown sites read as one"
+
+
+def test_a_frames_site_counts_its_scheme_and_an_ip_addresss_whole_host():
+    """🔴 Red before: ``http:`` and ``https:`` of one host, and two IP addresses that end in the
+    same two numbers, read as one site, so a frame the browser puts in a process of its own was
+    blanked as it started, which can keep it from that process and from the pause before its
+    document loads. Each is now another site, as the browser has it; a port is no part of one."""
+    assert not cdp._same_site("http://allowed.example/f", "https://allowed.example/p")
+    assert not cdp._same_site("https://10.0.1.1/f", "https://93.184.1.1/p")
+    assert not cdp._same_site("https://[::ffff:10.0.1.1]/f", "https://[::ffff:93.184.1.1]/p")
+    assert not cdp._same_site("https://[::1]/f", "https://[::2]/p")
+    assert cdp._same_site("https://93.184.1.1:8443/f", "https://93.184.1.1/p")
+    assert cdp._same_site("http://localhost:9000/f", "http://localhost/p")
+    assert not cdp._same_site("http://a.localhost/f", "http://b.localhost/p")
+
+
+def test_a_frames_site_under_a_public_suffix_of_two_labels_reads_as_the_pages():
+    """The rule's stated shortfall, pinned so the module's residual stays true: two labels is
+    short of the browser's own rule under a public suffix of more than one label. Such a frame is
+    blanked as it starts and judged at load as every frame is
+    (:func:`test_a_frame_read_as_the_pages_site_is_judged_at_its_attach_and_at_its_commit`)."""
+    assert cdp._same_site("https://other.co.uk/f", "https://example.co.uk/p")
+    assert cdp._same_site("https://other.com.au/f", "https://example.com.au/p")
+    assert "co.uk" in cdp.__doc__ and "com.au" in cdp.__doc__
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_the_site_a_frame_is_told_against_is_the_page_that_committed_last(sel_rows):
+    """The page the session started on is not the page it is on after a commit: a frame is told
+    as the page's own site or another by the page's latest document, both ways."""
+    transport = FakeTransport(frames=(cdp.BLANK_URL,))
+    session = await _started(transport)
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_NAVIGATED, {"frame": {"id": "TOP", "url": PAGE}}, None),
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+    )
+    assert _frame_blanks(transport) == ["CHILD1"], "the page's new site was not read"
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_NAVIGATED, {"frame": {"id": "TOP", "url": cdp.BLANK_URL}}, None),
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD2", SAME_SITE_DENIED), None),
+    )
+    assert _frame_blanks(transport) == ["CHILD1"], "a frame was told against the page it left"
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_the_pages_site_is_never_read_from_a_frames_commit():
+    """The site a frame is told against is the page's: a frame of the page committing a document
+    of another site, on the page's session or on a session of its own, changes nothing of it."""
+    other = "https://redirected.example/frame"
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_NAVIGATED, _child_frame(other, fid="C0"), None),
+        (cdp.FRAME_NAVIGATED, {"frame": {"id": "OOP1", "url": other}}, "S1"),
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+    )
+
+    assert _frame_blanks(transport) == ["CHILD1"], "the page's site was read from a frame"
+
+
+class _ReportsItsBlanks(FakeTransport):
+    """A browser that reports a frame's blank as a navigation of that frame starting, as it
+    reports every navigation (``Page.frameStartedNavigating``), the session's own among them."""
+
+    async def send(
+        self, method: str, params: dict | None = None, *, session_id: str | None = None
+    ) -> dict:
+        params = dict(params or {})
+        if session_id is None and method == cdp.NAVIGATE and "frameId" in params:
+            if not self.frame_fail:
+                start = _started_nav(params["frameId"], params["url"])
+                await self.listener(cdp.FRAME_STARTED_NAVIGATING, start, None)
+        return await super().send(method, params, session_id=session_id)
+
+
+def _loaded(load: str, fid: str, url: str) -> tuple:
+    """How the browser reports a frame's document: attached with its URL, attached paused with no
+    URL of its own (judged by where its navigation started), a target change, or a commit."""
+    if load == "attach":
+        return (cdp.ATTACHED_TO_TARGET, _attached("S1", fid, url), None)
+    if load == "attach-with-no-url":
+        return (cdp.ATTACHED_TO_TARGET, _attached("S1", fid, ""), None)
+    if load == "target-change":
+        return (cdp.TARGET_INFO_CHANGED, _info(fid, url), None)
+    return (cdp.FRAME_NAVIGATED, _child_frame(url, fid=fid), None)
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+@pytest.mark.parametrize("load", ["attach", "attach-with-no-url", "target-change"])
+async def test_a_frame_blanked_as_it_started_and_again_in_a_process_of_its_own_is_one_denial(
+    load, sel_rows
+):
+    """🔴 Red before, attached with no URL: the browser reports the early blank as the frame's own
+    navigation starting, and that replaced where the frame was going, so the paused frame was judged
+    as ``about:blank`` and let run. A frame of the page's own site the browser still gives a process
+    of its own (an origin it isolates, or another site two labels do not tell apart) is blanked as
+    it starts and again when it is reported there, judged by where it was going, and never let run:
+    one block, one SEL row, not a repeat of its host."""
+    transport = _ReportsItsBlanks(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("F1", SAME_SITE_DENIED), None),
+        _loaded(load, "F1", SAME_SITE_DENIED),
+    )
+
+    assert _frame_blanks(transport) == ["F1", "F1"]
+    assert transport.child_sent == [], "the denied frame was let run"
+    assert [(b.host, b.repeats) for b in session.blocks] == [("secret.allowed.example", 0)]
+    assert len(sel_rows) == 1
+
+
+#: A page and a denied frame from another site, by the browser's rule. The site rule reads the
+#: first two as one site (two labels short of a public suffix of more), the last as two.
+_OTHER_SITE_PAIRS = [
+    ("https://example.co.uk/page", "https://other.co.uk/frame"),
+    ("https://example.com.au/page", "https://other.com.au/frame"),
+    ("https://93.184.1.1/page", "https://10.0.1.1/frame"),
+]
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+@pytest.mark.parametrize("load", ["attach", "attach-with-no-url", "commit"])
+@pytest.mark.parametrize("page,frame", _OTHER_SITE_PAIRS, ids=["co-uk", "com-au", "ip-address"])
+async def test_a_frame_read_as_the_pages_site_is_judged_at_its_attach_and_at_its_commit(
+    page, frame, load, operator_egress, monkeypatch, sel_rows
+):
+    """Differential: the site rule chooses only how a denied frame is caught first, never whether
+    it is judged. Read as the page's own site or as another, the frame is judged when the browser
+    attaches it (paused, and never let run, also when it is attached with no URL of its own after
+    the browser reported the early blank as the frame's navigation) and when it commits, and is
+    one denial; the same holds without the early blank."""
+    for host in ("example.co.uk", "other.co.uk", "example.com.au", "other.com.au"):
+        monkeypatch.setitem(_DNS, host, ["93.184.216.40"])
+    # An address is looked up as itself; the private one is denied by the guard's own stance.
+    for address in ("93.184.1.1", "10.0.1.1"):
+        monkeypatch.setitem(_DNS, address, [address])
+    operator_egress.deny_hosts = [*operator_egress.deny_hosts, "other.co.uk", "other.com.au"]
+    transport = _ReportsItsBlanks(frames=(page,))
+    session = await _started(transport)
+    sel_rows.clear()
+
+    await _events(
+        session, transport, (cdp.FRAME_STARTED_NAVIGATING, _started_nav("F1", frame), None)
+    )
+    early = len(_frame_blanks(transport))
+    await _events(session, transport, _loaded(load, "F1", frame))
+
+    assert _frame_blanks(transport)[early:] == ["F1"], "the frame was not judged when it loaded"
+    assert transport.child_sent == [] and _top_blanks(transport) == 0
+    assert [b.repeats for b in session.blocks] == [0] and len(sel_rows) == 1
+    assert session.quarantine_reason == ""
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+@pytest.mark.parametrize("load", ["commit", "attach"])
+async def test_a_frame_that_loads_the_same_denied_url_again_is_a_second_denial(load, sel_rows):
+    """🔴 Red before: the one-denial key was left by every load-time check, so a frame that loaded
+    the same denied URL again on the page (re-pointed there by its page, or reloading itself) was
+    handed the first block and counted nowhere. Only a navigation's start leaves the key now; a
+    second load is counted on the first, as a second frame from that host is."""
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+    if load == "commit":
+        events = [
+            (cdp.FRAME_NAVIGATED, _child_frame(url, fid="F1"), None)
+            for url in (DENIED, cdp.BLANK_URL, DENIED)
+        ]
+    else:
+        events = [
+            (cdp.ATTACHED_TO_TARGET, _attached("S1", "F1", DENIED), None),
+            (cdp.TARGET_INFO_CHANGED, _info("F1", cdp.BLANK_URL), None),
+            (cdp.TARGET_INFO_CHANGED, _info("F1", DENIED), None),
+        ]
+
+    await _events(session, transport, *events)
+
+    assert _frame_blanks(transport) == ["F1", "F1"]
+    assert [(b.host, b.repeats) for b in session.blocks] == [("denied.example", 1)]
+    assert len(sel_rows) == 1
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_frame_whose_second_load_of_a_denied_url_costs_the_page_is_recorded_again(
+    sel_rows,
+):
+    """🔴 Red before: the frame's second load was handed its first block, so when its blank failed
+    and the whole page went, the audit log was told nothing more and the first block was rewritten
+    as the page's. The second is recorded after all, as the whole page, beside the first."""
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_NAVIGATED, _child_frame(DENIED, fid="F1"), None),
+        (cdp.FRAME_NAVIGATED, _child_frame(cdp.BLANK_URL, fid="F1"), None),
+    )
+    transport.frame_fail = ["the browser rejected the command: refused"]
+
+    await _events(session, transport, (cdp.FRAME_NAVIGATED, _child_frame(DENIED, fid="F1"), None))
+
+    assert [(b.host, b.blanked) for b in session.blocks] == [
+        ("denied.example", cdp.BLANKED_FRAME),
+        ("denied.example", cdp.BLANKED_PAGE),
+    ]
+    assert len(sel_rows) == 2 and cdp.STOP_LOADING in transport.methods
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_frame_blanked_as_it_starts_twice_on_one_page_is_two_denials(sel_rows):
+    """🔴 Red before: an early blank that landed leaves no load of the denied URL to take its key,
+    and the frame's next start there was handed it and counted nowhere. Each start is a denial of
+    its own; the second is counted on the first."""
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+        (cdp.FRAME_NAVIGATED, _child_frame(cdp.BLANK_URL), None),
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+    )
+
+    assert _frame_blanks(transport) == ["CHILD1", "CHILD1"]
+    assert [(b.host, b.repeats) for b in session.blocks] == [("secret.allowed.example", 1)]
+    assert len(sel_rows) == 1
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_an_early_blank_on_one_document_is_not_the_denial_of_a_load_on_the_next(sel_rows):
+    """A new document starts over: an early blank whose frame never loaded the denied URL on the
+    page it left is not what a load of that URL on the next page is told as."""
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+        (cdp.FRAME_NAVIGATED, {"frame": {"id": "TOP", "url": PAGE}}, None),
+        (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None),
+    )
+
+    assert _frame_blanks(transport) == ["CHILD1", "CHILD1"]
+    assert len(session.blocks) == 2 and len(sel_rows) == 2
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_frame_blanked_as_it_starts_while_a_restored_pages_frames_are_judged_is_one_denial(
+    sel_rows,
+):
+    """A frame of a page restored from the back-forward cache can start navigating while the
+    restored frames are read and judged: blanked as it starts and again as a restored frame, it is
+    one denial, not a repeat of its host."""
+    import asyncio
+
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+    transport.frames = (PAGE, SAME_SITE_DENIED)
+    transport.events_on[cdp.GET_FRAME_TREE] = [
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD0", SAME_SITE_DENIED), None)
+    ]
+    judged: list[str] = []
+
+    async def the_restored_frames_judgement_is_slower(fn, *args):
+        if args and "secret.allowed.example" in str(args[0]):
+            judged.append(str(args[0]))
+            if len(judged) == 1:
+                await asyncio.sleep(0.05)
+        return fn(*args)
+
+    session._blocking = the_restored_frames_judgement_is_slower
+    await _events(session, transport, (cdp.FRAME_NAVIGATED, _restore(PAGE), None))
+
+    assert len(judged) == 2, "the frame was not judged both as it started and as restored"
+    assert _frame_blanks(transport) == ["CHILD0", "CHILD0"]
+    assert [(b.host, b.repeats) for b in session.blocks] == [("secret.allowed.example", 0)]
+    assert len(sel_rows) == 1
+
+
+# ── a head start is one denial with the load it was for, and no other ─────────
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+@pytest.mark.parametrize("again", ["mid-navigation", "redirected", "judged-first"])
+async def test_a_later_load_of_the_url_a_landed_early_blank_was_for_is_a_second_denial(
+    again, sel_rows
+):
+    """🔴 Red before: an early blank that landed left its block for the frame's load of that URL,
+    and the frame committed only the blank, so the block stayed until the page's next document. A
+    later load of the URL by the frame took it: re-pointed there while the session's navigation was
+    in flight, redirected there from an allowed page of the site, or loaded again with its own head
+    start judged after its commit. The document that loaded and ran was counted nowhere. The
+    frame's next document settles its head start, so the later load is counted on the first block,
+    as a second load of a denied URL always was."""
+    import asyncio
+
+    transport = FakeTransport(frames=(PAGE,))
+    transport.replies[cdp.NAVIGATE] = {"frameId": "TOP", "loaderId": "L2"}
+    session = await _started(transport)
+    sel_rows.clear()
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+        (cdp.FRAME_NAVIGATED, _child_frame(cdp.BLANK_URL), None),
+    )
+    started = SAME_SITE_DENIED
+    if again == "mid-navigation":
+        assert (await session.navigate("https://allowed.example/next")).ok is True
+    elif again == "redirected":
+        started = ALLOWED
+    else:
+        calls = {"n": 0}
+
+        async def the_start_is_judged_after_the_commit(fn, *args):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                await asyncio.sleep(0.05)
+            return fn(*args)
+
+        session._blocking = the_start_is_judged_after_the_commit
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", started), None),
+        (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None),
+    )
+
+    assert _frame_blanks(transport) == ["CHILD1", "CHILD1"]
+    assert [(b.host, b.repeats) for b in session.blocks] == [("secret.allowed.example", 1)]
+    assert _sel(sel_rows) == [(cdp.FRAME_STARTED_NAVIGATING, "frame_started")]
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+@pytest.mark.parametrize("again", ["mid-navigation", "redirected"])
+async def test_a_later_load_of_the_url_a_landed_early_blank_was_for_that_costs_the_page_is_recorded(
+    again, sel_rows
+):
+    """🔴 Red before: the later load took the early blank's block, so when its own blank failed and
+    the whole page went, no row said so and the early blank's block was rewritten as the page's.
+    The early blank stays the frame's block, and the load is recorded after all, as the whole page,
+    with a row of its own."""
+    transport = FakeTransport(frames=(PAGE,))
+    transport.replies[cdp.NAVIGATE] = {"frameId": "TOP", "loaderId": "L2"}
+    session = await _started(transport)
+    sel_rows.clear()
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+        (cdp.FRAME_NAVIGATED, _child_frame(cdp.BLANK_URL), None),
+    )
+    started = SAME_SITE_DENIED
+    if again == "mid-navigation":
+        assert (await session.navigate("https://allowed.example/next")).ok is True
+    else:
+        started = ALLOWED
+    await _events(
+        session, transport, (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", started), None)
+    )
+    transport.frame_fail = ["the browser rejected the command: refused"]
+
+    await _events(session, transport, (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None))
+
+    assert [(b.host, b.blanked) for b in session.blocks] == [
+        ("secret.allowed.example", cdp.BLANKED_FRAME),
+        ("secret.allowed.example", cdp.BLANKED_PAGE),
+    ]
+    assert _sel(sel_rows) == [
+        (cdp.FRAME_STARTED_NAVIGATING, "frame_started"),
+        (cdp.FRAME_NAVIGATED, "frame_committed"),
+    ]
+    assert cdp.STOP_LOADING in transport.methods
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fails", [False, True], ids=["blanked", "costs-the-page"])
+@pytest.mark.parametrize(
+    "started",
+    [SAME_SITE_DENIED + "#part", "https://secret.allowed.example/hop"],
+    ids=["fragment", "redirect-on-the-host"],
+)
+async def test_one_navigation_named_differently_as_it_starts_and_commits_is_one_denial(
+    started, fails, sel_rows
+):
+    """🔴 Red before: the early blank's block was kept under the URL the navigation started with,
+    and its commit names the document's own address: without the fragment, or where a redirect on
+    the same host ended. So one navigation was two denials, a repeat, or two blocks and two rows
+    when its blank at load cost the page. A frame's head start is taken by the frame's next denial
+    of the same host: one block, one row."""
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+    await _events(
+        session, transport, (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", started), None)
+    )
+    if fails:
+        transport.frame_fail = ["the browser rejected the command: refused"]
+
+    await _events(session, transport, (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None))
+
+    blanked = cdp.BLANKED_PAGE if fails else cdp.BLANKED_FRAME
+    assert [(b.host, b.repeats, b.blanked) for b in session.blocks] == [
+        ("secret.allowed.example", 0, blanked)
+    ]
+    assert len(sel_rows) == 1
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_one_navigation_reported_as_started_twice_is_one_denial(sel_rows):
+    """🔴 Red before: a frame's navigation reported as starting twice, each start judged while the
+    other was, was recorded for each start: two denials of one navigation, one counted on the other.
+    A start whose frame still has an unsettled head start for the same host is that denial."""
+    import asyncio
+
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+
+    async def a_lookup_takes_a_moment(fn, *args):
+        await asyncio.sleep(0.01)
+        return fn(*args)
+
+    session._blocking = a_lookup_takes_a_moment
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+        (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None),
+    )
+
+    assert _frame_blanks(transport)[-1] == "CHILD1"
+    assert [(b.host, b.repeats) for b in session.blocks] == [("secret.allowed.example", 0)]
+    assert len(sel_rows) == 1
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_frames_load_takes_its_head_starts_block_once(sel_rows):
+    """The frame's load-time check of the navigation its early blank was for is that denial, once:
+    a later denial of the same host by the frame is counted on it, as any is."""
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+        (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None),
+        (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED + "?again"), None),
+    )
+
+    assert _frame_blanks(transport) == ["CHILD1", "CHILD1", "CHILD1"]
+    assert [(b.host, b.repeats) for b in session.blocks] == [("secret.allowed.example", 1)]
+    assert len(sel_rows) == 1
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_start_while_the_frames_early_blank_is_unanswered_sends_no_second_blank(sel_rows):
+    """Two blanks of one frame in flight make the browser answer one "aborted": a start of a frame
+    whose early blank is still unanswered is left to that blank, and to the frame's check when it
+    loads. Nothing more is sent or recorded."""
+    import asyncio
+
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+    early = asyncio.get_running_loop().create_future()
+    transport.frame_hold = early
+    transport.dispatch(cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None)
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert _frame_blanks(transport) == ["CHILD1"]
+
+    again = _started_nav("CHILD1", "https://secret.allowed.example/again")
+    transport.dispatch(cdp.FRAME_STARTED_NAVIGATING, again, None)
+    for _ in range(5):
+        await asyncio.sleep(0)
+    early.set_result(None)
+    await session.wait_idle()
+
+    assert _frame_blanks(transport) == ["CHILD1"]
+    assert [(b.host, b.repeats) for b in session.blocks] == [("secret.allowed.example", 0)]
+    assert len(sel_rows) == 1
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_frame_blanked_when_it_loaded_is_still_blanked_as_it_starts_later():
+    """An early blank is skipped only for a blank at load sent while its own start was judged: a
+    frame blanked when it loaded earlier on the page is blanked as its next navigation starts."""
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None),
+        (cdp.FRAME_NAVIGATED, _child_frame(cdp.BLANK_URL), None),
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+    )
+
+    assert _frame_blanks(transport) == ["CHILD1", "CHILD1"]
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_an_early_blank_past_its_bound_lifts_its_hold_once(monkeypatch):
+    """The early blank lifts its hold when its bound passes, and not again when it is answered: a
+    later block's hold must still hold page commands."""
+    import asyncio
+
+    monkeypatch.setattr(cdp, "EARLY_BLANK_HOLD", 0.02)
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    early = asyncio.get_running_loop().create_future()
+    transport.frame_hold = early
+    transport.dispatch(cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None)
+    await asyncio.sleep(0.1)
+    early.set_result(None)
+    await session.wait_idle()
+
+    session._hold()
+    assert session.tearing_down, "a block's hold no longer holds page commands"
+    session._release()
+    assert not session.tearing_down
+
+
+def test_an_early_blank_holds_the_page_two_seconds_at_most():
+    """The documented bound, as a literal: the tests above shorten it, so only this pins it."""
+    assert cdp.EARLY_BLANK_HOLD == 2.0
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_the_pages_top_frame_is_the_one_that_committed_last():
+    """A start of the frame that committed the page's latest document is the page's own navigation,
+    judged when it commits, never blanked as a frame."""
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_NAVIGATED, {"frame": {"id": "TOP2", "url": PAGE}}, None),
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("TOP2", SAME_SITE_DENIED), None),
+    )
+
+    assert _frame_blanks(transport) == []
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_going_back_whose_page_commit_comes_before_its_answer_ends_the_navigation():
+    """Going back is in flight from its send: the browser can report the earlier page's commit
+    before it answers, and that commit ends it, so a frame of the page is blanked as it starts."""
+    page_a, page_b = "https://allowed.example/a", "https://allowed.example/b"
+    transport = _History([(1, page_a), (2, page_b)], current=1)
+    transport.frames = (page_b,)
+    transport.events_on[cdp.NAVIGATE_TO_HISTORY_ENTRY] = [
+        (cdp.FRAME_NAVIGATED, {"frame": {"id": "TOP", "url": page_a}}, None)
+    ]
+    session = await _started(transport)
+    assert (await session.go_back()).ok is True
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+    )
+
+    assert _frame_blanks(transport) == ["CHILD1"], "going back left the page in flight for good"
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "settled_by",
+    [
+        "blank-commit",
+        "blank-commit-again",
+        "allowed-commit",
+        "blank-target-change",
+        "allowed-target-change",
+        "allowed-attach",
+        "allowed-in-a-frame-tree",
+        "blank-in-a-frame-tree",
+    ],
+)
+async def test_a_frames_early_blank_is_settled_by_the_next_document_that_is_no_denial(
+    settled_by, sel_rows
+):
+    """🔴 Red before: only a load of the very URL an early blank was for took its block, so the
+    block outlived the blank landing, or the frame going elsewhere, and a later load of the URL by
+    the frame took it and was counted nowhere. Any document the frame reports next that is no
+    denial settles it, however it is reported: a commit (the blank's own, also when the frame
+    commits the blank twice in a row and the browser reports it as the same document), a target
+    change, an attach, or a frame tree read for a frame in a process of its own."""
+    transport = FakeTransport(frames=(PAGE,))
+    transport.replies[cdp.NAVIGATE] = {"frameId": "TOP", "loaderId": "L2"}
+    session = await _started(transport)
+    if settled_by == "blank-commit-again":
+        await _events(session, transport, (cdp.FRAME_NAVIGATED, _child_frame(cdp.BLANK_URL), None))
+    sel_rows.clear()
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+    )
+    allowed_start = (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", ALLOWED), None)
+    settle = {
+        "blank-commit": [(cdp.FRAME_NAVIGATED, _child_frame(cdp.BLANK_URL), None)],
+        "blank-commit-again": [(cdp.FRAME_NAVIGATED, _child_frame(cdp.BLANK_URL), None)],
+        "allowed-commit": [(cdp.FRAME_NAVIGATED, _child_frame(ALLOWED), None)],
+        "blank-target-change": [(cdp.TARGET_INFO_CHANGED, _info("CHILD1", cdp.BLANK_URL), None)],
+        "allowed-target-change": [(cdp.TARGET_INFO_CHANGED, _info("CHILD1", ALLOWED), None)],
+        # Re-pointed at an allowed page, which the browser attaches in a process of its own.
+        "allowed-attach": [
+            allowed_start,
+            (cdp.ATTACHED_TO_TARGET, _attached("S1", "CHILD1", ALLOWED), None),
+        ],
+        "allowed-in-a-frame-tree": [
+            (cdp.ATTACHED_TO_TARGET, _attached("R", "OOP1", ALLOWED, waiting=False), None)
+        ],
+        "blank-in-a-frame-tree": [
+            (cdp.ATTACHED_TO_TARGET, _attached("R", "OOP1", ALLOWED, waiting=False), None)
+        ],
+    }[settled_by]
+    nested = cdp.BLANK_URL if settled_by == "blank-in-a-frame-tree" else ALLOWED
+    transport.child_replies[("R", cdp.GET_FRAME_TREE)] = _running_tree(
+        "OOP1", ALLOWED, ("CHILD1", nested)
+    )
+    await _events(session, transport, *settle)
+    assert (await session.navigate("https://allowed.example/next")).ok is True
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+        (cdp.FRAME_NAVIGATED, _child_frame(SAME_SITE_DENIED), None),
+    )
+
+    assert _frame_blanks(transport) == ["CHILD1", "CHILD1"]
+    assert [(b.host, b.repeats) for b in session.blocks] == [("secret.allowed.example", 1)]
+    assert len(sel_rows) == 1
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_frames_early_blank_is_not_the_denial_of_its_load_of_another_host(sel_rows):
+    """Vacuity partner: the frame's next denial takes its early blank's block only for the same
+    host. A frame blanked as it started for one denied host that loads another (its head start did
+    not land, and the first host sent it on) is two denials, each recorded."""
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+
+    await _events(
+        session,
+        transport,
+        (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+        (cdp.FRAME_NAVIGATED, _child_frame(DENIED), None),
+    )
+
+    assert [(b.host, b.repeats) for b in session.blocks] == [
+        ("secret.allowed.example", 0),
+        ("denied.example", 0),
+    ]
+    assert _sel(sel_rows) == [
+        (cdp.FRAME_STARTED_NAVIGATING, "frame_started"),
+        (cdp.FRAME_NAVIGATED, "frame_committed"),
+    ]
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_frame_blanked_as_it_starts_for_two_denied_hosts_is_two_denials(
+    operator_egress, monkeypatch, sel_rows
+):
+    """Vacuity partner: a start of a frame whose early blank for another host was answered but
+    not settled by a document yet is a denial of its own, blanked and recorded."""
+    monkeypatch.setitem(_DNS, "vault.allowed.example", ["93.184.216.39"])
+    operator_egress.deny_hosts = [*operator_egress.deny_hosts, "vault.allowed.example"]
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+
+    for url in (SAME_SITE_DENIED, "https://vault.allowed.example/"):
+        await _events(
+            session, transport, (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", url), None)
+        )
+
+    assert _frame_blanks(transport) == ["CHILD1", "CHILD1"]
+    assert [(b.host, b.repeats) for b in session.blocks] == [
+        ("secret.allowed.example", 0),
+        ("vault.allowed.example", 0),
+    ]
+    assert len(sel_rows) == 2
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_frames_start_reported_again_before_any_document_of_it_is_the_same_denial(sel_rows):
+    """🔴 Red before: a frame's navigation reported as starting again once its early blank was
+    answered, before the frame reported any document, was recorded again and counted as a repeat.
+    It is blanked again, and is the same denial: one block, one row. Once a document settles the
+    early blank, the frame's next start is a denial of its own
+    (:func:`test_a_frame_blanked_as_it_starts_twice_on_one_page_is_two_denials`)."""
+    transport = FakeTransport(frames=(PAGE,))
+    session = await _started(transport)
+    sel_rows.clear()
+
+    for _ in range(2):
+        await _events(
+            session,
+            transport,
+            (cdp.FRAME_STARTED_NAVIGATING, _started_nav("CHILD1", SAME_SITE_DENIED), None),
+        )
+    await _events(session, transport, (cdp.FRAME_NAVIGATED, _child_frame(cdp.BLANK_URL), None))
+
+    assert _frame_blanks(transport) == ["CHILD1", "CHILD1"]
+    assert [(b.host, b.repeats) for b in session.blocks] == [("secret.allowed.example", 0)]
+    assert len(sel_rows) == 1
