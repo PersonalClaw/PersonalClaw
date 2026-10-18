@@ -113,80 +113,114 @@ def _judges(spec: dict):
 # ── they exist and load ──
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_the_template_is_shipped_and_loads(name):
-    assert name in template_names()
-    assert read_template(name) is not None
+def test_the_template_is_shipped_and_loads(subtests):
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            assert name in template_names()
+            assert read_template(name) is not None
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_the_template_validates_strictly(name):
-    result = validate_spec(_spec(name), strict=True)
-    assert result.ok, [i.to_dict() for i in result.errors]
-    assert not result.warnings, [i.to_dict() for i in result.warnings]
+def test_the_template_validates_strictly(subtests):
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            result = validate_spec(_spec(name), strict=True)
+            assert result.ok, [i.to_dict() for i in result.errors]
+            assert not result.warnings, [i.to_dict() for i in result.warnings]
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_the_template_is_lint_clean_as_bundled(name):
+def test_the_template_is_lint_clean_as_bundled(subtests):
     """Bundled templates are held to warnings-free: a warning that ships propagates to
     every template copied from it."""
-    root = read_template(name)
-    assert root is not None
-    result = lint_template(json.loads(json.dumps(root.to_dict())), bundled=True)
-    assert result.clean, [f.to_dict() for f in result.findings]
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            root = read_template(name)
+            assert root is not None
+            result = lint_template(json.loads(json.dumps(root.to_dict())), bundled=True)
+            assert result.clean, [f.to_dict() for f in result.findings]
 
 
 # ── the platform's oldest rule ──
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_no_stage_certifies_its_own_work(name):
+def test_no_stage_certifies_its_own_work(subtests):
     """The rule a self-reported `done: boolean` breaks at the spec level.
 
     A work stage that decides its own completion cannot be fixed by any runtime check —
     the graph gave it that authority. Every one of these templates closes its work with
     a separate judge, or has no work loop at all.
     """
-    spec = _spec(name)
-    work_nodes = [
-        n for n in _nodes(spec["root"]) if n.get("kind") == "stage" and n not in _judges(spec)
-    ]
-    for node in work_nodes:
-        schema = (node.get("config") or {}).get("schema") or {}
-        # `done` is the specific field to forbid. A worker may report PROGRESS
-        # (which the loop reads) but never completion.
-        assert "done" not in schema, f"{name}:{node.get('id')} self-reports done"
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            spec = _spec(name)
+            work_nodes = [
+                n
+                for n in _nodes(spec["root"])
+                if n.get("kind") == "stage" and n not in _judges(spec)
+            ]
+            for node in work_nodes:
+                schema = (node.get("config") or {}).get("schema") or {}
+                # `done` is the specific field to forbid. A worker may report PROGRESS
+                # (which the loop reads) but never completion.
+                assert "done" not in schema, f"{name}:{node.get('id')} self-reports done"
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_every_work_loop_is_closed_by_a_judge(name):
+def test_every_work_loop_is_closed_by_a_judge(subtests):
     """A loop whose body has no verifier converges on whatever the worker finds easiest
     to claim."""
-    spec = _spec(name)
-    loops = [n for n in _nodes(spec["root"]) if n.get("kind") == "loop"]
-    if not loops:
-        pytest.skip(f"{name} has no work loop")
-    judge_ids = {n.get("id") for n in _judges(spec)}
-    for loop in loops:
-        body_ids = {n.get("id") for n in _nodes(loop.get("body") or {})}
-        # Either the loop body contains a judge, or the loop is a refinement loop whose
-        # output feeds a downstream judge/gate.
-        downstream = judge_ids - body_ids
-        assert (body_ids & judge_ids) or downstream, f"{name}: loop {loop.get('id')} unjudged"
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            spec = _spec(name)
+            loops = [n for n in _nodes(spec["root"]) if n.get("kind") == "loop"]
+            if not loops:
+                pytest.skip(f"{name} has no work loop")
+            judge_ids = {n.get("id") for n in _judges(spec)}
+            for loop in loops:
+                body_ids = {n.get("id") for n in _nodes(loop.get("body") or {})}
+                # Either the loop body contains a judge, or the loop is a refinement loop whose
+                # output feeds a downstream judge/gate.
+                downstream = judge_ids - body_ids
+                assert (
+                    body_ids & judge_ids
+                ) or downstream, f"{name}: loop {loop.get('id')} unjudged"
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_every_judge_is_isolated_and_read_only(name):
+def test_every_judge_is_isolated_and_read_only(subtests):
     """`tools_posture: verify` + `isolation: fresh` are the two halves of an independent
     judge: it must be able to read what it verifies, and must not be the session that
     produced it."""
-    spec = _spec(name)
-    judges = _judges(spec)
-    assert judges, f"{name} has no judge at all"
-    for judge in judges:
-        cfg = judge.get("config") or {}
-        assert cfg.get("tools_posture") == "verify", f"{name}:{judge.get('id')}"
-        assert cfg.get("isolation") == "fresh", f"{name}:{judge.get('id')}"
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            spec = _spec(name)
+            judges = _judges(spec)
+            assert judges, f"{name} has no judge at all"
+            for judge in judges:
+                cfg = judge.get("config") or {}
+                assert cfg.get("tools_posture") == "verify", f"{name}:{judge.get('id')}"
+                assert cfg.get("isolation") == "fresh", f"{name}:{judge.get('id')}"
 
 
 def test_cross_model_isolation_is_no_longer_flagged():
@@ -245,102 +279,151 @@ def test_no_isolation_value_is_flagged_unenforceable(declared):
     assert "WFL_UNENFORCEABLE_ISOLATION" not in codes
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_no_judge_can_write(name):
+def test_no_judge_can_write(subtests):
     """A judge with write tools can fix what it was meant to report."""
-    for judge in _judges(_spec(name)):
-        assert (judge.get("config") or {}).get("tools_posture") != "full"
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            for judge in _judges(_spec(name)):
+                assert (judge.get("config") or {}).get("tools_posture") != "full"
 
 
 # ── the typed verdict contract ──
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_every_judge_returns_the_typed_verdict_shape(name):
+def test_every_judge_returns_the_typed_verdict_shape(subtests):
     """Loop nodes route on data, not prose — so the verdict field has to be there."""
-    spec = _spec(name)
-    for judge in _judges(spec):
-        cfg = judge.get("config") or {}
-        schema = cfg.get("schema") or {}
-        if not schema:
-            # A gate-kind judge carries its shape in the instruction the engine composes.
-            assert "verdict" in _effective_prompt(spec, judge), f"{name}:{judge.get('id')}"
-            continue
-        assert "verdict" in schema, f"{name}:{judge.get('id')}"
-        assert "cannot_judge" in schema, f"{name}:{judge.get('id')} has no refusal channel"
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            spec = _spec(name)
+            for judge in _judges(spec):
+                cfg = judge.get("config") or {}
+                schema = cfg.get("schema") or {}
+                if not schema:
+                    # A gate-kind judge carries its shape in the instruction the engine composes.
+                    assert "verdict" in _effective_prompt(spec, judge), f"{name}:{judge.get('id')}"
+                    continue
+                assert "verdict" in schema, f"{name}:{judge.get('id')}"
+                assert "cannot_judge" in schema, f"{name}:{judge.get('id')} has no refusal channel"
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_every_judge_prompt_names_the_closed_enum(name):
+def test_every_judge_prompt_names_the_closed_enum(subtests):
     """A judge told to return a verdict without being told the options invents them."""
-    spec = _spec(name)
-    for judge in _judges(spec):
-        prompt = _effective_prompt(spec, judge)
-        for member in (Verdict.PASS, Verdict.REJECT):
-            assert member.value in prompt, f"{name}:{judge.get('id')} omits {member.value}"
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            spec = _spec(name)
+            for judge in _judges(spec):
+                prompt = _effective_prompt(spec, judge)
+                for member in (Verdict.PASS, Verdict.REJECT):
+                    assert member.value in prompt, f"{name}:{judge.get('id')} omits {member.value}"
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_every_judge_prompt_demands_evidence(name):
+def test_every_judge_prompt_demands_evidence(subtests):
     """A verdict with no cited proof is invalid by contract, so the prompt has to ask
     for it — otherwise every verdict fails validation and the loop cannot finish."""
-    spec = _spec(name)
-    for judge in _judges(spec):
-        prompt = _effective_prompt(spec, judge).lower()
-        assert "evidence" in prompt or "proof" in prompt
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            spec = _spec(name)
+            for judge in _judges(spec):
+                prompt = _effective_prompt(spec, judge).lower()
+                assert "evidence" in prompt or "proof" in prompt
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_every_judge_prompt_carries_the_anti_leniency_doctrine(name):
+def test_every_judge_prompt_carries_the_anti_leniency_doctrine(subtests):
     """ "Do not talk yourself into approving" is doing real work: a judge asked "is this
     good?" tends to agree, because agreeing is the locally plausible answer."""
-    for judge in _judges(_spec(name)):
-        prompt = ((judge.get("config") or {}).get("prompt") or "").lower()
-        assert "do not talk yourself into approving" in prompt or "skeptic" in prompt
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            for judge in _judges(_spec(name)):
+                prompt = ((judge.get("config") or {}).get("prompt") or "").lower()
+                assert "do not talk yourself into approving" in prompt or "skeptic" in prompt
 
 
 # ── runtime_hints ──
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_the_template_declares_runtime_hints(name):
-    spec = _spec(name)
-    assert spec.get("runtime_hints"), f"{name} has no runtime_hints"
-    assert "judge" in spec["runtime_hints"]
-    assert "execution" in spec["runtime_hints"]
+def test_the_template_declares_runtime_hints(subtests):
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            spec = _spec(name)
+            assert spec.get("runtime_hints"), f"{name} has no runtime_hints"
+            assert "judge" in spec["runtime_hints"]
+            assert "execution" in spec["runtime_hints"]
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_the_hints_parse_into_the_judge_contract(name):
+def test_the_hints_parse_into_the_judge_contract(subtests):
     """The hints are only worth declaring if the contract can read them."""
-    hints = hints_from_dict(_spec(name)["runtime_hints"]["judge"])
-    assert hints.rubric, f"{name} declares no rubric"
-    assert hints.ratchet is Ratchet.STRICT
-    assert hints.judge_isolation is Isolation.FRESH
-    assert isinstance(hints.fallback_check, FallbackCheck)
-    assert hints.consecutive_clean >= 1
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            hints = hints_from_dict(_spec(name)["runtime_hints"]["judge"])
+            assert hints.rubric, f"{name} declares no rubric"
+            assert hints.ratchet is Ratchet.STRICT
+            assert hints.judge_isolation is Isolation.FRESH
+            assert isinstance(hints.fallback_check, FallbackCheck)
+            assert hints.consecutive_clean >= 1
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_every_rubric_criterion_appears_in_a_judge_prompt(name):
+def test_every_rubric_criterion_appears_in_a_judge_prompt(subtests):
     """A rubric the judge never sees is a rubric that scores nothing — the binding form
     `{{defaults.runtime_hints...}}` does NOT exist in this engine (valid roots are
     inputs/nodes/item/iter/last), so the criteria have to be inlined."""
-    spec = _spec(name)
-    hints = hints_from_dict(spec["runtime_hints"]["judge"])
-    prompts = " ".join(((n.get("config") or {}).get("prompt") or "") for n in _judges(spec)).lower()
-    for criterion in hints.rubric:
-        assert criterion.criterion.lower() in prompts, f"{name}: {criterion.criterion}"
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            spec = _spec(name)
+            hints = hints_from_dict(spec["runtime_hints"]["judge"])
+            prompts = " ".join(
+                ((n.get("config") or {}).get("prompt") or "") for n in _judges(spec)
+            ).lower()
+            for criterion in hints.rubric:
+                assert criterion.criterion.lower() in prompts, f"{name}: {criterion.criterion}"
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_every_forbidden_mode_appears_in_a_judge_prompt(name):
+def test_every_forbidden_mode_appears_in_a_judge_prompt(subtests):
     """A denylist the judge never reads cannot be checked against."""
-    spec = _spec(name)
-    hints = hints_from_dict(spec["runtime_hints"]["judge"])
-    prompts = " ".join(((n.get("config") or {}).get("prompt") or "") for n in _judges(spec)).lower()
-    for mode in hints.forbidden_success_modes:
-        assert mode.lower() in prompts, f"{name}: {mode}"
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            spec = _spec(name)
+            hints = hints_from_dict(spec["runtime_hints"]["judge"])
+            prompts = " ".join(
+                ((n.get("config") or {}).get("prompt") or "") for n in _judges(spec)
+            ).lower()
+            for mode in hints.forbidden_success_modes:
+                assert mode.lower() in prompts, f"{name}: {mode}"
 
 
 def _contract_judges():
@@ -379,36 +462,53 @@ def test_every_contract_judge_is_asked_to_name_the_forbidden_passes_it_found():
     assert kinds == {"stage", "gate"}, kinds
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_the_escalation_ladder_ends_at_surface(name):
+def test_the_escalation_ladder_ends_at_surface(subtests):
     """A ladder with no terminal rung loops at its top forever."""
-    ladder = _spec(name)["runtime_hints"]["execution"]["escalation"]["ladder"]
-    assert ladder[-1] == "surface"
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            ladder = _spec(name)["runtime_hints"]["execution"]["escalation"]["ladder"]
+            assert ladder[-1] == "surface"
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_the_breaker_is_parameterized(name):
-    breaker = _spec(name)["runtime_hints"]["execution"].get("breaker") or {}
-    assert breaker.get("fingerprint_window", 0) >= 1
-    assert breaker.get("no_progress_stop", 0) >= 1
+def test_the_breaker_is_parameterized(subtests):
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            breaker = _spec(name)["runtime_hints"]["execution"].get("breaker") or {}
+            assert breaker.get("fingerprint_window", 0) >= 1
+            assert breaker.get("no_progress_stop", 0) >= 1
 
 
 # ── loop termination ──
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_every_loop_has_a_real_exit_and_a_hard_cap(name):
+def test_every_loop_has_a_real_exit_and_a_hard_cap(subtests):
     """A loop with only a cap is a busy-loop that always burns its budget; a loop with
     only a condition never ends when the condition is unreachable. Both are needed."""
-    for loop in (n for n in _nodes(_spec(name)["root"]) if n.get("kind") == "loop"):
-        cfg = loop.get("config") or {}
-        mode = cfg.get("mode")
-        if mode == "until":
-            assert cfg.get("condition"), f"{name}:{loop.get('id')} has no condition"
-        elif mode == "until_dry":
-            assert cfg.get("progress_field"), f"{name}:{loop.get('id')} has no progress field"
-            assert cfg.get("streak", 0) >= 1
-        assert cfg.get("max_iterations", 0) >= 1, f"{name}:{loop.get('id')} has no cap"
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            for loop in (n for n in _nodes(_spec(name)["root"]) if n.get("kind") == "loop"):
+                cfg = loop.get("config") or {}
+                mode = cfg.get("mode")
+                if mode == "until":
+                    assert cfg.get("condition"), f"{name}:{loop.get('id')} has no condition"
+                elif mode == "until_dry":
+                    assert cfg.get(
+                        "progress_field"
+                    ), f"{name}:{loop.get('id')} has no progress field"
+                    assert cfg.get("streak", 0) >= 1
+                assert cfg.get("max_iterations", 0) >= 1, f"{name}:{loop.get('id')} has no cap"
 
 
 def test_every_declared_progress_field_can_be_emitted_by_its_body():
@@ -452,64 +552,95 @@ def test_every_declared_progress_field_can_be_emitted_by_its_body():
     )
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_every_loop_declares_a_stall_timeout(name):
+def test_every_loop_declares_a_stall_timeout(subtests):
     """Without one, a wedged iteration holds the run open indefinitely."""
-    for loop in (n for n in _nodes(_spec(name)["root"]) if n.get("kind") == "loop"):
-        cfg = loop.get("config") or {}
-        assert cfg.get("timeout_stall_secs", 0) > 0, f"{name}:{loop.get('id')}"
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            for loop in (n for n in _nodes(_spec(name)["root"]) if n.get("kind") == "loop"):
+                cfg = loop.get("config") or {}
+                assert cfg.get("timeout_stall_secs", 0) > 0, f"{name}:{loop.get('id')}"
 
 
 # ── shipping metadata ──
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_every_input_is_documented(name):
+def test_every_input_is_documented(subtests):
     """The run dialog builds its fields from these; an input with no help shows a bare
     snake_case name and the user has to read the spec to learn what it wants."""
-    for key, param in (_spec(name).get("inputs") or {}).items():
-        assert param.get("help"), f"{name}:{key} has no help"
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            for key, param in (_spec(name).get("inputs") or {}).items():
+                assert param.get("help"), f"{name}:{key} has no help"
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_no_input_is_both_required_and_defaulted(name):
+def test_no_input_is_both_required_and_defaulted(subtests):
     """They contradict each other: a default means it can be omitted."""
-    for key, param in (_spec(name).get("inputs") or {}).items():
-        if param.get("required"):
-            # `default: null` is what the LOADER normalizes an absent default to, so
-            # asserting the key is missing tests the loader rather than the template.
-            # A MEANINGFUL default alongside `required` is the actual contradiction.
-            assert param.get("default") in (None, ""), f"{name}:{key}"
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            for key, param in (_spec(name).get("inputs") or {}).items():
+                if param.get("required"):
+                    # `default: null` is what the LOADER normalizes an absent default to, so
+                    # asserting the key is missing tests the loader rather than the template.
+                    # A MEANINGFUL default alongside `required` is the actual contradiction.
+                    assert param.get("default") in (None, ""), f"{name}:{key}"
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_the_template_carries_both_steering_examples(name):
+def test_the_template_carries_both_steering_examples(subtests):
     """The mutation example is what teaches a model that editing a RUNNING workflow is
     a normal thing to do."""
-    events = {
-        e.get("event") for e in ((_spec(name).get("metadata") or {}).get("steering_examples") or [])
-    }
-    assert {"kickoff", "mutation"} <= events, f"{name}: {events}"
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            events = {
+                e.get("event")
+                for e in ((_spec(name).get("metadata") or {}).get("steering_examples") or [])
+            }
+            assert {"kickoff", "mutation"} <= events, f"{name}: {events}"
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_the_risk_and_capabilities_are_declared(name):
+def test_the_risk_and_capabilities_are_declared(subtests):
     """The Store shows these as the install-consent surface."""
-    metadata = _spec(name).get("metadata") or {}
-    assert metadata.get("risk") in {"low", "medium", "high"}
-    assert metadata.get("capabilities")
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            metadata = _spec(name).get("metadata") or {}
+            assert metadata.get("risk") in {"low", "medium", "high"}
+            assert metadata.get("capabilities")
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_a_writing_template_declares_write_capability(name):
+def test_a_writing_template_declares_write_capability(subtests):
     """A template whose stages have full tools but claims read-only understates what
     installing it permits."""
-    spec = _spec(name)
-    has_full_tools = any(
-        (n.get("config") or {}).get("tools_posture") == "full" for n in _nodes(spec["root"])
-    )
-    if has_full_tools:
-        assert "write" in ((spec.get("metadata") or {}).get("capabilities") or [])
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            spec = _spec(name)
+            has_full_tools = any(
+                (n.get("config") or {}).get("tools_posture") == "full" for n in _nodes(spec["root"])
+            )
+            if has_full_tools:
+                assert "write" in ((spec.get("metadata") or {}).get("capabilities") or [])
 
 
 # ── the verifiable variant's own contract ──
@@ -639,25 +770,29 @@ def test_the_loop_families_are_all_present():
 # ── the contract on the judge STAGES ──
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_every_judge_stage_declares_the_contract(name):
+def test_every_judge_stage_declares_the_contract(subtests):
     """Opt-in, because the dispatch seam sees every node and only a judge's output is a verdict.
 
     Without the declaration `apply_judge_contract` skips the node, so the contract-shaped verdict
     these prompts already ask for goes back to being produced every cycle and discarded — which is
     exactly what happened while the contract was unwired.
     """
-    stages = [n for n in _judges(_spec(name)) if n.get("kind") == "stage"]
-    assert stages, f"{name} has no judge stage"
-    for stage in stages:
-        assert (stage.get("config") or {}).get("judge_contract") is True, (
-            f"{name}/{stage.get('id')} asks for the contract object but does not declare "
-            "`judge_contract: true`, so nothing validates the answer"
-        )
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            stages = [n for n in _judges(_spec(name)) if n.get("kind") == "stage"]
+            assert stages, f"{name} has no judge stage"
+            for stage in stages:
+                assert (stage.get("config") or {}).get("judge_contract") is True, (
+                    f"{name}/{stage.get('id')} asks for the contract object but does not declare "
+                    "`judge_contract: true`, so nothing validates the answer"
+                )
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_the_scores_keys_are_the_exact_rubric_criteria(name):
+def test_the_scores_keys_are_the_exact_rubric_criteria(subtests):
     """🔴 The anti-outage rule, asserted on the templates that pay for it.
 
     Under `Ratchet.STRICT` an unscored criterion is a shortfall, i.e. a REJECT. The prompt
@@ -665,26 +800,39 @@ def test_the_scores_keys_are_the_exact_rubric_criteria(name):
     makes enforcement fair rather than a trap. `score_for` tolerates a restatement as a second
     line of defence; this is the first.
     """
-    spec = _spec(name)
-    hints = hints_from_dict(spec["runtime_hints"]["judge"])
-    prompts = " ".join(((n.get("config") or {}).get("prompt") or "") for n in _judges(spec))
-    assert "{criterion: integer}" not in prompts, (
-        f"{name} still asks for `scores: {{criterion: integer}}` — a placeholder key invites the "
-        "model to invent one, and an invented key scores nothing"
-    )
-    for criterion in hints.rubric:
-        assert (
-            f'"{criterion.criterion}": integer' in prompts
-        ), f"{name}: the scores object does not name {criterion.criterion!r} verbatim"
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            spec = _spec(name)
+            hints = hints_from_dict(spec["runtime_hints"]["judge"])
+            prompts = " ".join(((n.get("config") or {}).get("prompt") or "") for n in _judges(spec))
+            assert "{criterion: integer}" not in prompts, (
+                f"{name} still asks for `scores: {{criterion: integer}}` — a placeholder key "
+                "invites the model to invent one, and an invented key scores nothing"
+            )
+            for criterion in hints.rubric:
+                assert (
+                    f'"{criterion.criterion}": integer' in prompts
+                ), f"{name}: the scores object does not name {criterion.criterion!r} verbatim"
 
 
-@pytest.mark.parametrize("name", LOOP_TEMPLATES)
-def test_the_prompt_offers_the_whole_closed_verdict_set(name):
+def test_the_prompt_offers_the_whole_closed_verdict_set(subtests):
     """A vocabulary the prompt does not offer cannot be returned, and `RETRY` joined the set when
     the two verdict enums were merged."""
-    prompts = " ".join(((n.get("config") or {}).get("prompt") or "") for n in _judges(_spec(name)))
-    for member in Verdict:
-        assert f'"{member.value}"' in prompts, f"{name} never offers {member.value}"
+    rows = LOOP_TEMPLATES
+    assert (
+        len(rows) == 7
+    ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            prompts = " ".join(
+                ((n.get("config") or {}).get("prompt") or "") for n in _judges(_spec(name))
+            )
+            for member in Verdict:
+                assert f'"{member.value}"' in prompts, f"{name} never offers {member.value}"
 
 
 def test_the_validated_verdict_is_bound_by_the_templates_that_produce_it():
@@ -759,8 +907,7 @@ def _unguarded_last_refs(node: object) -> list[str]:
     return found
 
 
-@pytest.mark.parametrize("name", sorted(template_names()))
-def test_last_refs_carry_a_default(name: str) -> None:
+def test_last_refs_carry_a_default(subtests) -> None:
     """No `{{last.*}}` reference anywhere in a loop may go without a `default(...)` fallback.
 
     Measured live on the standing validation instance 2026-09-18: `general-project` failed its
@@ -790,14 +937,21 @@ def test_last_refs_carry_a_default(name: str) -> None:
     `_LAST_REF` for the measurement, and
     `test_workflows_bindings.py::TestPriorCycleFieldMiss` for the executing counterpart.
     """
-    refs = _unguarded_last_refs(_spec(name).get("root"))
-    assert not refs, (
-        f"{name} references {sorted(set(refs))} with no `| default(...)`. A loop body's FIRST "
-        "iteration has no `last`, and a LATER one has no `last.output.<field>` whenever the "
-        "body's model ignored its declared schema — so without a default the prompt silently "
-        "loses its input, or the loop stops on `condition_unresolvable`, instead of saying so. "
-        "Add a default naming what to use when the previous iteration did not supply the field."
-    )
+    rows = sorted(template_names())
+    assert (
+        len(rows) >= 32
+    ), f"only {len(rows)} bundled templates: the library shrank or stopped loading"
+    for name in rows:
+        with subtests.test(name=name):
+            refs = _unguarded_last_refs(_spec(name).get("root"))
+            assert not refs, (
+                f"{name} references {sorted(set(refs))} with no `| default(...)`. A loop body's "
+                "FIRST iteration has no `last`, and a LATER one has no `last.output.<field>` "
+                "whenever the body's model ignored its declared schema — so without a default the "
+                "prompt silently loses its input, or the loop stops on `condition_unresolvable`, "
+                "instead of saying so. Add a default naming what to use when the previous "
+                "iteration did not supply the field."
+            )
 
 
 #: A read of a prior cycle's value: `{{last.…}}` or `{{previous.…}}`, with or without pipes.
@@ -826,8 +980,7 @@ def _prior_cycle_refs_outside_a_loop(node: object, in_loop: bool = False) -> lis
     return found
 
 
-@pytest.mark.parametrize("name", sorted(template_names()))
-def test_a_prior_cycle_is_read_only_inside_a_loop(name: str) -> None:
+def test_a_prior_cycle_is_read_only_inside_a_loop(subtests) -> None:
     """`last` and `previous` name a prior cycle of the loop a node is IN, so outside one they
     name nothing, and a `default(...)` does not save the read.
 
@@ -839,8 +992,14 @@ def test_a_prior_cycle_is_read_only_inside_a_loop(name: str) -> None:
     raise; it quietly renders its default, a prompt missing its input. A node after a loop reads
     the loop's last result through the producing node (`{{nodes.<id>.output…}}`).
     """
-    refs = _prior_cycle_refs_outside_a_loop(_spec(name).get("root"))
-    assert not refs, (
-        f"{name} reads {sorted(set(refs))} outside any loop. There is no prior cycle there: read "
-        "the value from the node that produced it (`{{nodes.<id>.output…}}`)."
-    )
+    rows = sorted(template_names())
+    assert (
+        len(rows) >= 32
+    ), f"only {len(rows)} bundled templates: the library shrank or stopped loading"
+    for name in rows:
+        with subtests.test(name=name):
+            refs = _prior_cycle_refs_outside_a_loop(_spec(name).get("root"))
+            assert not refs, (
+                f"{name} reads {sorted(set(refs))} outside any loop. There is no prior cycle "
+                "there: read the value from the node that produced it (`{{nodes.<id>.output…}}`)."
+            )
