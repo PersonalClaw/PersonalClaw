@@ -16,8 +16,10 @@ control is one edit of one of them.
 from __future__ import annotations
 
 import ast
+import functools
 import json
 import re
+import shlex
 import shutil
 import tomllib
 from collections.abc import Callable, Iterator
@@ -33,7 +35,7 @@ import timeout_marks
 import yaml
 from rails_repo import REPO
 
-from tools.ci import breadth_evidence, rails_census
+from tools.ci import breadth_evidence, catalogue, rails_census
 
 #: An exact release, ``X.Y.Z``.
 _EXACT = re.compile(r"\d+\.\d+\.\d+")
@@ -4652,6 +4654,742 @@ SUITE_TEMP_STAYS_OUT_OF_THE_HOME = _toolchain_row(
     ),
 )
 ROWS = (*ROWS, SUITE_TEMP_STAYS_OUT_OF_THE_HOME)
+
+
+# ── Every catalogue command is the workflow's ────────────────────────────────────────────────
+#
+# tools/ci/catalogue.toml lists CI's validation jobs (#3909). Nothing runs from it yet, so each
+# entry must say what ci.yml already runs, and ci.yml must run nothing an entry does not say.
+# Every entry reads and validates and maps to the ci.yml jobs below. Each of its steps is one of
+# those jobs' run: lines, token for token, from the same working directory with the same step env,
+# once the runner's spellings of a value are read as the catalogue's placeholders; its steps come
+# in ci.yml's order, none twice. The other way, every run: line of a mapped job is one entry's
+# step, except the closed set of lines below that validate nothing. Its cap, runner, Python,
+# environment, reports and shard count are the jobs'; an entry whose steps run a security-marked
+# module is security posture; and its posture and tiers are the ones this table gives it. Every
+# ci.yml job is an entry's or orchestration. The table is the one a reader of the catalogue goes
+# by.
+
+
+@dataclass(frozen=True)
+class _Mapped:
+    """One entry as this row holds it: the ci.yml jobs it maps to, its tiers and its posture."""
+
+    ci_jobs: tuple[str, ...]
+    tiers: tuple[str, ...]
+    security: str = "ordinary"
+    live: bool = False
+    reuse: str = "never"
+
+
+_CATALOGUE_JOBS: dict[str, _Mapped] = {
+    "static": _Mapped(("lint", "harness"), ("change", "merge")),
+    "rails": _Mapped(("rails",), ("change", "merge"), reuse="tree"),
+    "python-suite": _Mapped(("test-shard",), ("merge",), security="security"),
+    "python-suite-macos": _Mapped(("test-macos",), ("merge",), security="security"),
+    "security": _Mapped(("security-corpus",), ("breadth",), security="security"),
+    "client": _Mapped(("client",), ("change", "merge")),
+    "web-unit": _Mapped(("web",), ("change", "merge"), reuse="tree"),
+    "web-build": _Mapped(("web",), ("merge",), reuse="tree"),
+    "package": _Mapped(("web",), ("merge",)),
+    "e2e": _Mapped(("e2e",), ("merge",)),
+    "browse-live": _Mapped(("e2e",), ("merge",), security="security", live=True),
+    "apps-contract": _Mapped(("apps-contract",), ("merge",)),
+    "audit": _Mapped(("audit",), ("merge",), live=True),
+}
+
+#: ci.yml's jobs that decide what runs or gather what ran, and validate nothing themselves.
+_ORCHESTRATION = frozenset({"tree-check", "changes", "shard-plan", "test"})
+
+_CI = ".github/workflows/ci.yml"
+
+#: The variables a workflow step sets only to carry a placeholder's value (the base a diff is
+#: taken against): the placeholder stands for them, so a step's env is compared without them.
+_PLACEHOLDER_VARIABLES = frozenset(
+    spelling[1:]
+    for spellings in catalogue.PLACEHOLDERS.values()
+    for spelling in spellings
+    if re.fullmatch(r"\$[A-Z_][A-Z0-9_]*", spelling)
+)
+
+#: The run: lines of a mapped ci.yml job that validate nothing, by what they do. Each is read
+#: the way a run: line is (placeholders, folded lines, words), so it matches only itself: a
+#: closed set of lines, not a pattern. Every other line of a mapped job is one entry's step.
+_NOT_COMMANDS: dict[str, str] = {
+    "the runner's identity": r"""
+        echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+    """,  # noqa: E501
+    "an install the job's toolchain names": r"""
+        uv sync --locked --extra dev
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends tmux
+        if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
+        brew install tmux
+        tmux -V
+        for tool in shellcheck dash; do
+          command -v "$tool" >/dev/null 2>&1 || {
+            sudo apt-get install -y --no-install-recommends "$tool"
+          }
+        done
+        shellcheck --version | head -2
+    """,
+    "the shell around a step: its options, and the branch on which base there is": r"""
+        set -eu
+        if [ -n "${BASE_SHA:-}" ]; then
+        elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${BEFORE:-}" ] \
+             && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+        else
+        fi
+        echo "base: the previous main commit $BEFORE"
+    """,
+    "the scan's arm with no base to diff against (the entry holds the scan with its base)": r"""
+        uv run python -m harness scan --diff
+    """,
+    "the fetch of the base, handed to the next step through GITHUB_OUTPUT": r"""
+        git fetch --no-tags --depth=1 origin "$BASE_SHA"
+        echo "ref=$BASE_SHA" >> "$GITHUB_OUTPUT"
+        git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/origin/main"
+        echo "ref=origin/main" >> "$GITHUB_OUTPUT"
+    """,
+    "a value only the runner knows, set through GITHUB_ENV for the steps after it": r"""
+        echo "VITEST_MAX_WORKERS=$(nproc)" | tee -a "$GITHUB_ENV"
+    """,
+    "the lint job's wrapper, which runs every tool and keeps its output for the relay": r"""
+        status=0
+        : > /tmp/lint-out.txt
+        run_tool() {
+          label=$1
+          shift
+          if out=$("$@" 2>&1); then
+            printf '%s\n' "$out"
+          else
+            status=1
+            { echo "**$label**"; echo '```'; printf '%s\n' "$out"; echo '```'; } >> /tmp/lint-out.txt
+          fi
+        }
+        if [ "$status" -ne 0 ]; then
+          {
+            echo "violations<<LINTEOF"
+            cat /tmp/lint-out.txt
+            echo "LINTEOF"
+          } >> "$GITHUB_OUTPUT"
+        fi
+        exit "$status"
+    """,  # noqa: E501
+    "the lint job's feedback relay": r"""
+        if [ -n "${EVENT_PR:-}" ]; then
+          number="$EVENT_PR"
+          number=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/pulls?state=open&head=${GITHUB_REPOSITORY%%/*}:${HEAD_BRANCH}" \
+            --jq '.[0].number // empty' 2>/dev/null || true)
+        printf 'number=%s\n' "${number:-}" >> "$GITHUB_OUTPUT"
+        echo "feedback relay target: PR ${number:-<none — nothing will be posted>}"
+        mkdir -p /tmp/lint-feedback
+        printf '%s' "$VIOLATIONS" > /tmp/lint-feedback/violations.md
+        printf '%s' "$PR_NUMBER" > /tmp/lint-feedback/pr.txt
+        wc -c /tmp/lint-feedback/violations.md /tmp/lint-feedback/pr.txt
+    """,  # noqa: E501
+}
+
+#: The one line more than one entry on a ci.yml job may hold as a step: the install each of them
+#: needs when it runs alone, which the job runs once for all of them.
+_SHARED_SETUP = frozenset({("npm", "ci")})
+
+
+def _run_lines(run: str) -> Iterator[tuple[str, list[str] | None]]:
+    """Each logical line of a run: block, a placeholder for each runner spelling, with its words
+    (``None`` for a line no argv could equal, such as an echo with an apostrophe)."""
+    for name, spellings in catalogue.PLACEHOLDERS.items():
+        for spelling in spellings:
+            run = run.replace(spelling, f"{{{name}}}")
+    for line in run.replace("\\\n", " ").splitlines():
+        try:
+            words = shlex.split(line, comments=True)
+        except ValueError:
+            yield line.strip(), None
+            continue
+        if words:
+            yield line.strip(), words
+
+
+_NOT_COMMAND_LINES = frozenset(
+    tuple(words) for text in _NOT_COMMANDS.values() for _, words in _run_lines(text) if words
+)
+
+
+@dataclass(frozen=True)
+class _Line:
+    """One validating run: line of a ci.yml job, the argv it runs (the lint job's
+    ``run_tool LABEL argv`` read through), where and with what step env."""
+
+    job: str
+    step: int
+    name: str
+    argv: tuple[str, ...]
+    workdir: str
+    env: tuple[tuple[str, str], ...]
+
+    def text(self) -> str:
+        return f"{self.workdir + '$ ' if self.workdir else ''}{shlex.join(self.argv)}"
+
+
+def _step_env(step: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    """A workflow step's own env, less the variables a placeholder stands for."""
+    return tuple(
+        sorted(
+            (str(k), str(v))
+            for k, v in (step.get("env") or {}).items()
+            if str(k) not in _PLACEHOLDER_VARIABLES
+        )
+    )
+
+
+def _job_lines(ci_job: str, job: dict[str, Any], bad: list[str]) -> list[_Line]:
+    """A ci.yml job's validating lines, in order. A line repeated in one step (the arms of a
+    branch that differ only in which variable holds the base) is one line."""
+    lines: list[_Line] = []
+    for index, step in enumerate(job.get("steps") or []):
+        if "run" not in step:
+            continue
+        name = str(step.get("name", f"step {index + 1}"))
+        seen: set[tuple[str, ...]] = set()
+        for text, words in _run_lines(str(step["run"])):
+            if words is None:
+                bad.append(f"ci.yml job {ci_job} runs {text!r} ({name!r}), which no argv can be")
+                continue
+            if tuple(words) in _NOT_COMMAND_LINES:
+                continue
+            argv = tuple(words[2:] if words[0] == "run_tool" and len(words) > 2 else words)
+            if argv in seen:
+                continue
+            seen.add(argv)
+            workdir = str(step.get("working-directory", ""))
+            lines.append(_Line(ci_job, index, name, argv, workdir, _step_env(step)))
+    return lines
+
+
+def _junit_paths(argv: tuple[str, ...]) -> Iterator[str]:
+    for n, arg in enumerate(argv):
+        if arg.startswith("--junitxml="):
+            yield arg.split("=", 1)[1]
+        elif arg == "--junitxml" and n + 1 < len(argv):
+            yield argv[n + 1]
+
+
+@functools.cache
+def _tree_marked() -> frozenset[str]:
+    return security_census.take(REPO).marked
+
+
+def _marked(root: Path) -> frozenset[str]:
+    """The test modules that carry the security marker under ``root``."""
+    return _tree_marked() if root == REPO else security_census.take(root).marked
+
+
+def _runs_marked(job: catalogue.Job, marked: frozenset[str]) -> list[str]:
+    """The security-marked modules a job's pytest steps name, one by one or by a folder."""
+    named = {
+        arg.rstrip("/")
+        for step in job.command
+        if "pytest" in step.argv
+        for arg in step.argv[step.argv.index("pytest") + 1 :]
+    }
+    return sorted(m for m in marked if any(m == p or m.startswith(p + "/") for p in named))
+
+
+def _claim(
+    job: catalogue.Job, lines: list[_Line], claims: dict[_Line, list[str]], bad: list[str]
+) -> None:
+    """Match each of the entry's steps to the next of its jobs' lines that runs it, in order."""
+    last, last_step = -1, 0
+    for n, step in enumerate(job.command, 1):
+        hits = [
+            i
+            for i, line in enumerate(lines)
+            if line.argv == step.argv and line.workdir == step.workdir
+        ]
+        jobs = ", ".join(_CATALOGUE_JOBS[job.id].ci_jobs)
+        if not hits:
+            bad.append(f"{job.id}: command step {n} ({step.render()}) is no run: line of {jobs}")
+            continue
+        later = [i for i in hits if i > last]
+        if not later:
+            if last in hits:
+                bad.append(
+                    f"{job.id}: command step {n} repeats command step {last_step}"
+                    f" ({step.render()}): ci.yml runs it once"
+                )
+            else:
+                bad.append(
+                    f"{job.id}: command step {n} is out of ci.yml's order ({step.render()}):"
+                    f" ci.yml runs it before command step {last_step}"
+                )
+            continue
+        last, last_step = later[0], n
+        line = lines[last]
+        claims[line].append(job.id)
+        if tuple(sorted(step.env.items())) != line.env:
+            bad.append(
+                f"{job.id}: command step {n} ({step.render()}) sets env {dict(step.env)},"
+                f" and its ci.yml step sets {dict(line.env)}"
+            )
+
+
+def _same_job(job: catalogue.Job, jobs: dict[str, Any], mine: list[_Line], bad: list[str]) -> None:
+    """The entry's cap, runner, Python, env, reports and shards are its ci.yml jobs'."""
+    ci_jobs = _CATALOGUE_JOBS[job.id].ci_jobs
+    cap = max(int(jobs[c].get("timeout-minutes") or 0) for c in ci_jobs)
+    if job.timeout_min != cap:
+        bad.append(f"{job.id}: timeout_min is {job.timeout_min}, and ci.yml's cap is {cap}")
+    runners = sorted({str(jobs[c].get("runs-on")) for c in ci_jobs})
+    if runners != [job.platform]:
+        bad.append(
+            f"{job.id}: platform is {job.platform}, and ci.yml runs it on {', '.join(runners)}"
+        )
+    # The Python is the one setup-uv set before the entry's first step on each of its jobs.
+    pythons: set[str] = set()
+    for c in ci_jobs:
+        first = min((line.step for line in mine if line.job == c), default=None)
+        pythons |= {
+            str((s.get("with") or {}).get("python-version"))
+            for index, s in enumerate(jobs[c].get("steps") or [])
+            if _action(s) == "astral-sh/setup-uv" and (first is None or index < first)
+        }
+    if pythons and job.python not in pythons:
+        bad.append(
+            f"{job.id}: python is {job.python or 'unset'}, and ci.yml's setup-uv sets"
+            f" {', '.join(sorted(pythons))} before its steps"
+        )
+    elif not pythons and job.python not in (None, "image"):
+        bad.append(f"{job.id}: python is {job.python}, and ci.yml sets none before its steps")
+    env: dict[str, str] = {}
+    for c in ci_jobs:
+        env.update({str(k): str(v) for k, v in (jobs[c].get("env") or {}).items()})
+    if dict(job.env) != env:
+        bad.append(f"{job.id}: env is {dict(job.env)}, and ci.yml's is {env}")
+    written = [path for step in job.command for path in _junit_paths(step.argv)]
+    if list(job.junit) != written:
+        bad.append(
+            f"{job.id}: junit lists {', '.join(job.junit) or 'nothing'}, and its steps write"
+            f" {', '.join(written) or 'none'}"
+        )
+    shards = max(len(_matrix_values(jobs[c], "shard")) or 1 for c in ci_jobs)
+    if job.shards != shards:
+        bad.append(f"{job.id}: shards is {job.shards}, and ci.yml runs {shards}")
+
+
+def _posture(job: catalogue.Job, marked: frozenset[str], bad: list[str]) -> None:
+    """The entry's posture and tiers are this table's, and one that runs a security-marked
+    module is security posture."""
+    want = _CATALOGUE_JOBS[job.id]
+    runs = _runs_marked(job, marked)
+    if runs and job.security != "security":
+        more = f" and {len(runs) - 3} more" if len(runs) > 3 else ""
+        bad.append(
+            f"{job.id}: security is {job.security}, but its steps run security-marked modules:"
+            f" {', '.join(runs[:3])}{more}"
+        )
+    if job.tiers != want.tiers:
+        bad.append(
+            f"{job.id}: tiers are {', '.join(job.tiers)}, and this row says {', '.join(want.tiers)}"
+        )
+    if job.security != want.security:
+        bad.append(f"{job.id}: security is {job.security}, and this row says {want.security}")
+    if job.live != want.live:
+        bad.append(
+            f"{job.id}: live is {str(job.live).lower()}, and this row says {str(want.live).lower()}"
+        )
+    if str(job.reuse) != want.reuse:
+        bad.append(f"{job.id}: reuse is {job.reuse}, and this row says {want.reuse}")
+
+
+def _catalogue_check(root: Path) -> list[str]:
+    try:
+        cat = catalogue.read(root)
+    except FileNotFoundError:
+        return [f"{catalogue.CATALOGUE} is missing"]
+    except catalogue.CatalogueError as exc:
+        return exc.problems
+    workflow = yaml.safe_load((root / _CI).read_text(encoding="utf-8")) or {}
+    jobs: dict[str, Any] = workflow.get("jobs") or {}
+    bad: list[str] = []
+    mapped = {c for entry in _CATALOGUE_JOBS.values() for c in entry.ci_jobs}
+    for ci_job in sorted(set(jobs) - mapped - _ORCHESTRATION):
+        bad.append(f"ci.yml job {ci_job} is no catalogue entry's, and not orchestration")
+    lines = {c: _job_lines(c, jobs[c], bad) for c in sorted(mapped & set(jobs))}
+    ran = {
+        tuple(words)
+        for c in lines
+        for step in jobs[c].get("steps") or []
+        if "run" in step
+        for _, words in _run_lines(str(step["run"]))
+        if words
+    }
+    for words in sorted(_NOT_COMMAND_LINES - ran):
+        bad.append(
+            f"this row lists {shlex.join(words)} as a line that validates nothing, and no mapped"
+            " ci.yml job runs it"
+        )
+    claims: dict[_Line, list[str]] = {line: [] for c in lines for line in lines[c]}
+    marked = _marked(root)
+    for job in cat.jobs:
+        entry = _CATALOGUE_JOBS.get(job.id)
+        if entry is None:
+            bad.append(f"{job.id}: no ci.yml job is mapped to it in this row")
+            continue
+        missing = [c for c in entry.ci_jobs if c not in jobs]
+        for ci_job in missing:
+            bad.append(f"{job.id}: maps to ci.yml job {ci_job}, which ci.yml does not have")
+        if missing:
+            continue
+        _claim(job, [line for c in entry.ci_jobs for line in lines[c]], claims, bad)
+        mine = [line for line, holders in claims.items() if job.id in holders]
+        _same_job(job, jobs, mine, bad)
+        _posture(job, marked, bad)
+    for line, holders in claims.items():
+        if not holders:
+            bad.append(
+                f"ci.yml job {line.job} runs {line.text()} ({line.name!r}),"
+                " and no entry's command holds it"
+            )
+        elif len(holders) > 1 and line.argv not in _SHARED_SETUP:
+            bad.append(
+                f"ci.yml job {line.job} runs {line.text()} once, and it is a step of"
+                f" {', '.join(holders)}"
+            )
+    return bad
+
+
+def _catalogue_scaffold(root: Path) -> None:
+    """The tree's own ci.yml and catalogue, which agree, and a marked stand-in for each module
+    the tree marks security, so the census finds what the entries' steps run."""
+    for rel in (_CI, catalogue.CATALOGUE):
+        _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
+    for rel in _tree_marked():
+        _write(root, rel, _MARKED)
+
+
+EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
+    name="every catalogue command is the workflow's",
+    check=_catalogue_check,
+    scaffold=_catalogue_scaffold,
+    controls=(
+        _plant(
+            "an entry without timeout_min",
+            catalogue.CATALOGUE,
+            'reuse = "tree"\ntimeout_min = 10\n',
+            'reuse = "tree"\n',
+            expect="rails: missing timeout_min",
+        ),
+        _plant(
+            "a security entry with reuse = tree",
+            catalogue.CATALOGUE,
+            'security = "security"\npython = "3.12.15"\ntimeout_min = 55\n',
+            'security = "security"\npython = "3.12.15"\nreuse = "tree"\ntimeout_min = 55\n',
+            expect="python-suite: reuse is tree, but a security job's evidence is never reused",
+        ),
+        _plant(
+            "a live entry with a TTL",
+            catalogue.CATALOGUE,
+            'live = true\npython = "3.12.15"\ntimeout_min = 15\n',
+            'live = true\nreuse = "ttl:24"\npython = "3.12.15"\ntimeout_min = 15\n',
+            expect="audit: reuse is ttl:24, but a live job's evidence is never reused",
+        ),
+        _plant(
+            "a command one token off the workflow's",
+            catalogue.CATALOGUE,
+            '"-n", "4", "--dist"',
+            '"-n", "8", "--dist"',
+            expect="rails: command step 1",
+        ),
+        _plant(
+            "the workflow's command changed without its entry",
+            _CI,
+            "uv run pytest -n 4 --dist worksteal -q tests/rails",
+            "uv run pytest -n 4 --dist worksteal -q -x tests/rails",
+            expect="rails: command step 1",
+        ),
+        _plant(
+            "a step moved to another working directory",
+            catalogue.CATALOGUE,
+            '"@visual"], workdir = "web", env',
+            '"@visual"], env',
+            expect="e2e: command step 3",
+        ),
+        _plant(
+            "an entry naming a ci.yml job that does not exist",
+            _CI,
+            "\n  client:\n",
+            "\n  client-py:\n",
+            expect="client: maps to ci.yml job client, which ci.yml does not have",
+        ),
+        _plant(
+            "a ci.yml job no entry covers",
+            _CI,
+            "\n  client:\n",
+            "\n  client-py:\n",
+            expect="ci.yml job client-py is no catalogue entry's",
+        ),
+        Control(
+            "an entry this row maps to no job",
+            _append(
+                catalogue.CATALOGUE,
+                '\n[[job]]\nid = "extra"\ntiers = ["weekly"]\ninputs = ["docs/"]\n'
+                'external_inputs = []\ntoolchain = []\ncache = []\nsecurity = "ordinary"\n'
+                'timeout_min = 5\ncommand = [{ argv = ["true"] }]\n',
+            ),
+            expect="extra: no ci.yml job is mapped to it in this row",
+        ),
+        _plant(
+            "a cap that differs from the job's",
+            catalogue.CATALOGUE,
+            'python = "3.12.15"\ntimeout_min = 25\n',
+            'python = "3.12.15"\ntimeout_min = 30\n',
+            expect="security: timeout_min is 30, and ci.yml's cap is 25",
+        ),
+        _plant(
+            "the suite on one platform marked ordinary",
+            catalogue.CATALOGUE,
+            'security = "security"\npython = "3.12.15"\ntimeout_min = 55\n',
+            'security = "ordinary"\npython = "3.12.15"\ntimeout_min = 55\n',
+            expect="python-suite: security is ordinary",
+        ),
+        _plant(
+            "a step without its workflow step's environment",
+            catalogue.CATALOGUE,
+            'env = { PERSONALCLAW_REQUIRE_BROWSE_PROOF = "1", PERSONALCLAW_SKIP_APP_BACKENDS',
+            "env = { PERSONALCLAW_SKIP_APP_BACKENDS",
+            expect="browse-live: command step 1",
+        ),
+        _plant(
+            "the workflow step's environment changed without its entry",
+            _CI,
+            'PERSONALCLAW_REQUIRE_BROWSE_PROOF: "1"',
+            'PERSONALCLAW_REQUIRE_BROWSE_PROOF: "0"',
+            expect="browse-live: command step 1",
+        ),
+        _plant(
+            "a merge tier without the rails job",
+            catalogue.CATALOGUE,
+            'id = "rails"\ntiers = ["change", "merge"]',
+            'id = "rails"\ntiers = ["change"]',
+            expect="the merge tier lacks the rails job",
+        ),
+        Control("the catalogue removed", _remove(catalogue.CATALOGUE), expect="is missing"),
+        # Both directions, in order: every validating run: line is one entry's step.
+        _plant(
+            "an entry missing a step ci.yml runs: the suite without its pytest",
+            catalogue.CATALOGUE,
+            '  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests",'
+            ' "--shard-list", "{runner_temp}/shard.txt",'
+            ' "--junitxml=reports/junit-test-shard-{shard}.xml"] },\n',
+            "",
+            expect="ci.yml job test-shard runs uv run pytest -n auto --dist worksteal -q tests",
+        ),
+        _plant(
+            "an entry missing a step ci.yml runs: the installer proof and its flag",
+            catalogue.CATALOGUE,
+            '  { argv = ["uv", "run", "pytest", "tests/test_website_installer.py",'
+            ' "--junitxml=reports/junit-lint-installer.xml"],'
+            ' env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },\n',
+            "",
+            expect="ci.yml job lint runs uv run pytest tests/test_website_installer.py",
+        ),
+        _plant(
+            "a workflow step no entry holds",
+            _CI,
+            "        run: uv run python scripts/gate_report.py\n",
+            "        run: uv run python scripts/gate_report.py\n"
+            "      - name: a new rail\n        run: uv run python scripts/new_rail.py\n",
+            expect="ci.yml job rails runs uv run python scripts/new_rail.py",
+        ),
+        _plant(
+            "two steps swapped",
+            catalogue.CATALOGUE,
+            '  { argv = ["npx", "playwright", "test", "--grep-invert", "@visual"], workdir = "web",'
+            ' env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report.json" } },\n'
+            '  { argv = ["node", "e2e/assert-no-route-skips.mjs", "e2e-report.json"],'
+            ' workdir = "web" },\n',
+            '  { argv = ["node", "e2e/assert-no-route-skips.mjs", "e2e-report.json"],'
+            ' workdir = "web" },\n'
+            '  { argv = ["npx", "playwright", "test", "--grep-invert", "@visual"], workdir = "web",'
+            ' env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report.json" } },\n',
+            expect="e2e: command step 4 is out of ci.yml's order",
+        ),
+        _plant(
+            "a step listed twice",
+            catalogue.CATALOGUE,
+            '  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },\n',
+            '  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },\n' * 2,
+            expect="rails: command step 5 repeats command step 4",
+        ),
+        _plant(
+            "one line held by two entries",
+            catalogue.CATALOGUE,
+            '  { argv = ["npm", "run", "test:mobile"] },\n',
+            '  { argv = ["npm", "run", "test:mobile"] },\n  { argv = ["npm", "run", "build"] },\n',
+            expect="ci.yml job web runs npm run build once, and it is a step of web-unit, web-",
+        ),
+        _plant(
+            "a gate that a printf pipes into",
+            _CI,
+            "        run: uv run python scripts/gate_report.py\n",
+            "        run: uv run python scripts/gate_report.py\n"
+            "      - name: a new gate\n"
+            "        run: printf '%s\\n' \"$PWD\" | uv run python scripts/new_gate.py\n",
+            expect="ci.yml job rails runs printf",
+        ),
+        _plant(
+            "a gate added to an install line",
+            _CI,
+            "        run: uv sync --locked --extra dev\n",
+            "        run: uv sync --locked --extra dev && uv run pytest tests/test_more.py\n",
+            expect="ci.yml job apps-contract runs uv sync --locked --extra dev",
+        ),
+        _plant(
+            "a line this row says validates nothing that ci.yml no longer runs",
+            _CI,
+            "          brew install tmux\n",
+            "          brew install tmux screen\n",
+            expect="this row lists brew install tmux as a line that validates nothing",
+        ),
+        _plant(
+            "a line no argv can be",
+            _CI,
+            "        run: uv run python -m tools.ci rails check\n",
+            "        run: |\n          uv run python -m tools.ci rails check\n"
+            "          echo it's checked\n",
+            expect="ci.yml job rails runs \"echo it's checked\" ('every rail lives in"
+            " tests/rails'), which no argv can be",
+        ),
+        _plant(
+            "a line that wraps the step in echo is not the step",
+            _CI,
+            'run_tool "flake8" uv run flake8',
+            'echo "flake8" uv run flake8',
+            expect="static: command step 3",
+        ),
+        # The census: an entry whose steps run a security-marked module is security posture.
+        _plant(
+            "the browse proof marked ordinary",
+            catalogue.CATALOGUE,
+            'id = "browse-live"\ntiers = ["merge"]\ninputs = [":(glob)**"]\n'
+            'external_inputs = ["browser-download"]\n'
+            'toolchain = ["uv-sync", "node", "npm-ci", "chromium"]\ncache = ["uv", "npm"]\n'
+            'security = "security"',
+            'id = "browse-live"\ntiers = ["merge"]\ninputs = [":(glob)**"]\n'
+            'external_inputs = ["browser-download"]\n'
+            'toolchain = ["uv-sync", "node", "npm-ci", "chromium"]\ncache = ["uv", "npm"]\n'
+            'security = "ordinary"',
+            expect="browse-live: security is ordinary, but its steps run security-marked modules",
+        ),
+        _plant(
+            "the security corpus marked ordinary and reused by tree",
+            catalogue.CATALOGUE,
+            'security = "security"\npython = "3.12.15"\ntimeout_min = 25\n',
+            'security = "ordinary"\nreuse = "tree"\npython = "3.12.15"\ntimeout_min = 25\n',
+            expect="security: security is ordinary, but its steps run security-marked modules",
+        ),
+        # The posture and tiers this row holds each entry to.
+        _plant(
+            "an entry out of the merge tier",
+            catalogue.CATALOGUE,
+            'id = "audit"\ntiers = ["merge"]',
+            'id = "audit"\ntiers = ["breadth"]',
+            expect="audit: tiers are breadth, and this row says merge",
+        ),
+        _plant(
+            "a live entry no longer live",
+            catalogue.CATALOGUE,
+            'security = "security"\nlive = true\n',
+            'security = "security"\n',
+            expect="browse-live: live is false, and this row says true",
+        ),
+        _plant(
+            "an ordinary entry turned security",
+            catalogue.CATALOGUE,
+            'external_inputs = ["package-index"]\ntoolchain = ["uv"]\ncache = ["uv"]\n'
+            'security = "ordinary"',
+            'external_inputs = ["package-index"]\ntoolchain = ["uv"]\ncache = ["uv"]\n'
+            'security = "security"',
+            expect="client: security is security, and this row says ordinary",
+        ),
+        _plant(
+            "an entry reused that this row says is never",
+            catalogue.CATALOGUE,
+            'security = "ordinary"\npython = "3.12.15"\ntimeout_min = 5\n',
+            'security = "ordinary"\nreuse = "tree"\npython = "3.12.15"\ntimeout_min = 5\n',
+            expect="client: reuse is tree, and this row says never",
+        ),
+        _plant(
+            "the audit not live, and reused by tree",
+            catalogue.CATALOGUE,
+            'live = true\npython = "3.12.15"\ntimeout_min = 15\n',
+            'reuse = "tree"\npython = "3.12.15"\ntimeout_min = 15\n',
+            expect="audit: reads advisory-feed",
+        ),
+        # The runner, the Python, the reports, the env and the shards are the jobs'.
+        _plant(
+            "the macOS suite on a Linux runner",
+            catalogue.CATALOGUE,
+            'platform = "macos-26"',
+            'platform = "ubuntu-24.04"',
+            expect="python-suite-macos: platform is ubuntu-24.04, but",
+        ),
+        _plant(
+            "a runner that differs from the job's",
+            catalogue.CATALOGUE,
+            'id = "static"\ntiers = ["change", "merge"]',
+            'id = "static"\nplatform = "ubuntu-22.04"\ntiers = ["change", "merge"]',
+            expect="static: platform is ubuntu-22.04, and ci.yml runs it on ubuntu-24.04",
+        ),
+        _plant(
+            "reports that are not the ones its steps write",
+            catalogue.CATALOGUE,
+            'junit = ["reports/junit-rails.xml", "reports/junit-npm-floors.xml"]',
+            "junit = []",
+            expect="rails: junit lists nothing, and its steps write reports/junit-rails.xml,",
+        ),
+        _plant(
+            "a Python that differs from the job's",
+            catalogue.CATALOGUE,
+            'security = "ordinary"\npython = "3.12.15"\ntimeout_min = 5\n',
+            'security = "ordinary"\npython = "3.12.14"\ntimeout_min = 5\n',
+            expect="client: python is 3.12.14, and ci.yml's setup-uv sets 3.12.15 before its",
+        ),
+        _plant(
+            "no Python where the job sets one",
+            catalogue.CATALOGUE,
+            'security = "ordinary"\npython = "3.12.15"\ntimeout_min = 5\n',
+            'security = "ordinary"\ntimeout_min = 5\n',
+            expect="client: python is unset, and ci.yml's setup-uv sets 3.12.15 before its",
+        ),
+        _plant(
+            "a job env that differs from the job's",
+            catalogue.CATALOGUE,
+            'PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }\njunit = ["reports/junit-rails.xml"',
+            'PERSONALCLAW_TEST_CONTAINER_RUNTIME = "0" }\njunit = ["reports/junit-rails.xml"',
+            expect="rails: env is",
+        ),
+        _plant(
+            "a shard count that differs from the job's, its steps unchanged",
+            catalogue.CATALOGUE,
+            "shards = 4\n",
+            "shards = 2\n",
+            expect="python-suite: shards is 2, and ci.yml runs 4",
+        ),
+        _plant(
+            "a run: line folded over two lines with a backslash still matches",
+            _CI,
+            "run: uv run pytest -n 4 --dist worksteal -q tests/rails --junitxml",
+            "run: |\n          uv run pytest -n 4 --dist worksteal -q tests/rails \\\n"
+            "            --junitxml",
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS)
 
 
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)

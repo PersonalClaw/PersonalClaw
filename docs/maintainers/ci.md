@@ -52,9 +52,9 @@ A trusted job reads candidate output only as data:
 The definitions are the files that decide which jobs run, what each one runs and how the
 verdict is computed: `.github/workflows/**`, `.github/actions/**`, `tools/ci/**` (the catalogue
 included), the CI contract table, and every file a command names as its entry point, such as
-the `Makefile` for a `make` target or a script under `scripts/`. Until the catalogue exists, a
-workflow step is a command. Files an entry point loads are listed by hand in
-`REVIEWED_HELPERS` in `tools/ci/trust.py`; add a helper there when an entry point starts
+the `Makefile` for a `make` target or a script under `scripts/`. Until the workflows run the
+catalogue's commands, a workflow step is a command. Files an entry point loads are listed by
+hand in `REVIEWED_HELPERS` in `tools/ci/trust.py`; add a helper there when an entry point starts
 loading one.
 
 `tools/ci/trust.py` compares the full set of those paths, each with its git mode and object id,
@@ -130,8 +130,115 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
   `attestations` or `deployments` write, or `write-all`) or any deployment environment. A new
   environment has to argue its way into `release.yml`.
 
-Until the catalogue lands, these rows run in the candidate's own suite, so a candidate could
-delete one. Its validator then runs the table from the default branch.
+Until a validator on the default branch runs the catalogue and this table, these rows run in the
+candidate's own suite, so a candidate could delete one.
+
+## The catalogue
+
+`tools/ci/catalogue.toml` lists CI's validation jobs, one `[[job]]` entry each, and
+`tools/ci/catalogue.py` reads it into typed jobs. Nothing runs from it yet: `ci.yml` still runs
+its own `run:` lines. The contract table's row "every catalogue command is the workflow's" holds
+each entry to the `ci.yml` jobs it maps to, in both directions:
+
+- Each step is one of those jobs' `run:` lines, token for token, from the same working directory
+  and with the same step `env`. An entry's steps come in `ci.yml`'s order, and none comes twice.
+- Every `run:` line of a mapped job is one entry's step. The only lines left out are a closed
+  list in the row, each named for what it does: the runner's identity, the installs the
+  toolchain names, the shell around a step (its options, and the branch on which base there is,
+  with the scan's arm that has none), the fetch of that base, a value set through `GITHUB_ENV`,
+  and the lint job's wrapper and feedback relay. A listed line that no mapped job runs any more
+  fails the row too, so the list holds only lines that exist. One line may be a step of more
+  than one entry on a job: `npm ci`, which each of them needs when it runs alone.
+- The cap, the runner, the Python (the one `setup-uv` sets before the entry's steps), the
+  environment, the JUnit reports and the shard count are the jobs'.
+- An entry whose pytest steps name a security-marked module, by its file or by a folder that
+  holds one, is `security` posture. The census in `tests/security_census.py` says which modules
+  are marked.
+- Each entry's tiers, `security`, `live` and `reuse` are the ones the row's table gives it, so
+  changing one takes an edit in both places.
+- Every `ci.yml` job is an entry's or orchestration (`tree-check`, `changes`, `shard-plan`,
+  `test`).
+
+The map from entry to job lives in that row.
+
+`python -m tools.ci list` prints every job. `python -m tools.ci explain <tier>` says what a tier
+proves and what it does not, and lists each of its jobs' commands. Both read only the catalogue
+and import only the standard library, as everything `python -m tools.ci` imports must.
+
+### Fields
+
+Every entry declares:
+
+- `id`;
+- `tiers`, from `change`, `merge`, `breadth`, `weekly` and `release`;
+- `inputs`, as git pathspecs;
+- `external_inputs`: what the job reads that the tree does not pin, such as the apps checkout,
+  the advisory feed, the package index or the shard history;
+- `toolchain` and `cache`;
+- `security`: `security` when its result is security evidence, else `ordinary`;
+- `timeout_min`.
+
+An entry may also set `platform`, `python`, `live`, `reuse`, `env`, `workers`, `mem_gb`,
+`junit`, `shards`, `needs_node`, `needs_browser`, `full_history`, `after` (the jobs whose output
+it uses) and `install_exemptions`, each exemption with its reason. A key the reader does not
+know is refused, so a misspelt field fails rather than being ignored.
+
+A job has either a `command` or a `script` with its `container`, never both. A command is a list
+of steps. Each step is an argv run from the repository root, or from `workdir` under it, with its
+own `env` set on top of the job's: the workflow step's own `env:`, such as a flag that turns a
+skip into a failure. A value only the runner knows is written as a placeholder: `{runner_temp}`,
+`{shard}` or `{base}` (the commit a diff is taken against). An argument or an `env` value
+containing `$`, or a placeholder the catalogue does not have, is refused, so no step reads the
+environment around the catalogue. An `env` name is a variable name (`[A-Z_][A-Z0-9_]*`), and a
+`workdir` holds no `$` and no placeholder. A sharded job's steps name `{shard}`; an unsharded
+job's do not.
+
+`needs_node` and `needs_browser` agree with the toolchain: `needs_node` exactly when it installs
+`node`, `needs_browser` exactly when it installs `chromium`. A pathspec's magic is read as git
+reads it, in the long form (`:(exclude)`) or the short one (`:!`, `:^`, `:/`), and a pathspec
+that leaves the repository is refused in either form.
+
+### Reuse
+
+`reuse` says when a job's result may stand for a later run with the same inputs:
+
+- `never`, the default when `reuse` is absent;
+- `tree`: any run of the same tree and external inputs;
+- `ttl:<hours>`: within that many hours, the hours a positive whole number.
+
+A `security` job or a `live` job is never reused, by TTL or by tree: its evidence is about the
+run, not the tree. A job that reads the advisory feed is live, because what the feed says
+changes with the time of the run and not with the tree, so the reader refuses one without
+`live = true`. `catalogue.parse_reuse` is the one parser of these values; any other reader
+imports it.
+
+### The tiers
+
+- **merge:** what a pull request into `main` must pass. Its security evidence is the suite's own
+  run of the security-marked modules, `python-suite` and `python-suite-macos`. The catalogue is
+  refused if this tier lacks the `rails` job, lacks either suite, holds either as anything but
+  `security`, or runs either off its own platform: `python-suite` runs on an `ubuntu-` runner
+  and `python-suite-macos` on a `macos-` one. So no other security job stands in for the suite's
+  run, and neither platform's run is lost.
+- **change:** the fast jobs, run before a commit.
+- **breadth:** the checks run on `main` that are too slow or too wide for every pull request,
+  among them the adversarial security corpus.
+- **weekly** and **release:** reserved for the long checks and for what a release is cut from.
+  No job is in them yet.
+
+`explain` prints, for each tier, what it proves and what it does not.
+
+### Adding a job
+
+1. Add a `[[job]]` entry with every required field, and its commands copied from the
+   workflow's `run:` lines.
+2. Add its id, its `ci.yml` jobs, its tiers and its posture to the table in the row "every
+   catalogue command is the workflow's". Any `run:` line of its `ci.yml` steps that validates
+   nothing goes in that row's list of such lines, under what it does.
+3. Run that row and `python -m tools.ci explain <tier>`.
+
+A workflow command changed without its entry, or an entry changed without its workflow, fails
+the row.
 
 ## The verdict
 
