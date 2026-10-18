@@ -722,6 +722,37 @@ def test_a_head_that_is_not_a_commit_id_is_named_as_such(repo: Repo, head: str) 
     assert "--expected-head must be a full commit id" in done.stderr, done.stderr
 
 
+#: Commit ids that are not a full one: the whole string is read, never a prefix of it. Under
+#: ``re.match``, a ``$`` anchor also matches before a trailing newline.
+_NOT_A_FULL_ID = [
+    pytest.param("b" * 40 + "\n", id="a-trailing-newline"),
+    pytest.param("b" * 40 + "\r\n", id="a-trailing-crlf"),
+    pytest.param("b" * 39, id="39-hex"),
+    pytest.param("b" * 41, id="41-hex"),
+    pytest.param("B" * 40, id="upper-case"),
+    pytest.param("b" * 39 + "B", id="one-upper-case-letter"),
+]
+assert len(_NOT_A_FULL_ID) == 6
+
+
+@pytest.mark.parametrize("head", _NOT_A_FULL_ID)
+def test_the_events_head_is_read_whole(repo: Repo, head: str) -> None:
+    """``--expected-head`` is a full commit id end to end: a head with a newline after its 40 hex
+    is the workflow's mistake, refused as such, not read as the list's last commit."""
+    done = repo.check_api([_signed("b" * 40, "feat: b")], head=head)
+    assert done.returncode == 2, (done.stdout, done.stderr)
+    assert "--expected-head must be a full commit id" in done.stderr, done.stderr
+
+
+@pytest.mark.parametrize("sha", _NOT_A_FULL_ID)
+def test_a_commit_id_in_the_list_is_read_whole(repo: Repo, sha: str) -> None:
+    """Each commit the API returns names a full commit id end to end, or the list is refused as
+    one the API did not return, before any rule or the head is judged."""
+    done = repo.check_api([_signed(sha, "feat: b")], head="b" * 40)
+    assert done.returncode == 2, (done.stdout, done.stderr)
+    assert "commit 0 in the list is not a commit the API returns" in done.stderr, done.stderr
+
+
 def test_a_commit_list_ending_at_the_events_head_is_checked(repo: Repo) -> None:
     """The control for the head check: the same well-signed commits, ending at the head the
     event names, pass."""
