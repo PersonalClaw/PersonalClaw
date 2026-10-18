@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   PROJECTS_FOR,
@@ -69,11 +70,17 @@ function list(config: string): ReturnType<typeof spawnSync> {
 }
 
 describe('the isolation reporter fails a run that shares a stateful spec', () => {
+  let dir = ''
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  })
+
   it('passes the real projects, and fails them once the shared project takes the stateful set', () => {
-    // Inside `web/` (gitignored `test-results/`), so the planted config is part of the same ES-module
-    // package as the config it imports; a config outside it resolves those imports differently.
-    mkdirSync(join(WEB, 'test-results'), { recursive: true })
-    const dir = mkdtempSync(join(WEB, 'test-results', 'pw-isolation-'))
+    // A scratch folder of the test's own under the OS temp directory, never the repository. Its
+    // package.json makes the planted configs an ES-module package, as web/ is, so they resolve
+    // the config they import the way web/'s own files do.
+    dir = mkdtempSync(join(tmpdir(), 'pw-isolation-'))
+    writeFileSync(join(dir, 'package.json'), '{ "type": "module" }\n')
     const base = join(WEB, 'playwright.config.ts')
     const reporter = join(E2E, 'isolationReporter.ts')
     const write = (name: string, chromium: string) => {
