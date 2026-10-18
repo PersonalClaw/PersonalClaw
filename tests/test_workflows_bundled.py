@@ -23,6 +23,7 @@ import re
 from pathlib import Path
 
 import pytest
+from table_rows import row
 
 from personalclaw.security import is_fenced
 from personalclaw.workflows.blocks import resolve_spec
@@ -212,7 +213,7 @@ class TestEachTemplate:
             template_names()
         ), "the bundled library changed: pin the new count in EXPECTED"
         for name in rows:
-            with subtests.test(name=name):
+            with row(subtests, name=name):
                 result = validate_spec(_pipeline(_raw(name)), strict=True)
                 assert result.issues == [], [i.to_dict() for i in result.issues]
 
@@ -222,7 +223,7 @@ class TestEachTemplate:
             template_names()
         ), "the bundled library changed: pin the new count in EXPECTED"
         for name in rows:
-            with subtests.test(name=name):
+            with row(subtests, name=name):
                 loaded = read_template(name)
                 assert isinstance(loaded, WorkflowDef)
                 assert loaded.name == name
@@ -234,7 +235,7 @@ class TestEachTemplate:
             template_names()
         ), "the bundled library changed: pin the new count in EXPECTED"
         for name in rows:
-            with subtests.test(name=name):
+            with row(subtests, name=name):
                 loaded = read_template(name)
                 assert loaded is not None
                 assert has_macros(loaded.to_dict()) is False
@@ -246,7 +247,7 @@ class TestEachTemplate:
             template_names()
         ), "the bundled library changed: pin the new count in EXPECTED"
         for name in rows:
-            with subtests.test(name=name):
+            with row(subtests, name=name):
                 loaded = read_template(name)
                 assert loaded is not None
                 assert loaded.source == "bundled"
@@ -259,7 +260,7 @@ class TestEachTemplate:
             template_names()
         ), "the bundled library changed: pin the new count in EXPECTED"
         for name in rows:
-            with subtests.test(name=name):
+            with row(subtests, name=name):
                 desc = str(_raw(name).get("description", ""))
                 assert len(desc) > 40, f"{name}: description is too thin to choose by"
 
@@ -271,7 +272,7 @@ class TestEachTemplate:
             template_names()
         ), "the bundled library changed: pin the new count in EXPECTED"
         for name in rows:
-            with subtests.test(name=name):
+            with row(subtests, name=name):
                 for key, param in (_raw(name).get("inputs") or {}).items():
                     assert str(param.get("help", "")).strip(), f"{name}.{key} has no help text"
 
@@ -282,7 +283,7 @@ class TestEachTemplate:
             template_names()
         ), "the bundled library changed: pin the new count in EXPECTED"
         for name in rows:
-            with subtests.test(name=name):
+            with row(subtests, name=name):
                 for key, param in (_raw(name).get("inputs") or {}).items():
                     if param.get("required"):
                         assert param.get("default") in (
@@ -298,7 +299,7 @@ class TestEachTemplate:
             template_names()
         ), "the bundled library changed: pin the new count in EXPECTED"
         for name in rows:
-            with subtests.test(name=name):
+            with row(subtests, name=name):
                 examples = _raw(name).get("metadata", {}).get("steering_examples") or []
                 assert examples, f"{name} has no steering_examples"
                 kinds = {e.get("event") for e in examples}
@@ -316,7 +317,7 @@ class TestEachTemplate:
             template_names()
         ), "the bundled library changed: pin the new count in EXPECTED"
         for name in rows:
-            with subtests.test(name=name):
+            with row(subtests, name=name):
                 result = validate_spec(_pipeline(_raw(name)), strict=True)
                 unknown = [i for i in result.issues if i.code == "WF_UNKNOWN_NODE_REF"]
                 assert not unknown, [i.to_dict() for i in unknown]
@@ -329,7 +330,7 @@ class TestEachTemplate:
             template_names()
         ), "the bundled library changed: pin the new count in EXPECTED"
         for name in rows:
-            with subtests.test(name=name):
+            with row(subtests, name=name):
                 from personalclaw.validation import ALLOWED_HOOK_PROVIDERS
 
                 root = Node.from_dict(_pipeline(_raw(name))["root"])
@@ -346,7 +347,7 @@ class TestEachTemplate:
             template_names()
         ), "the bundled library changed: pin the new count in EXPECTED"
         for name in rows:
-            with subtests.test(name=name):
+            with row(subtests, name=name):
                 raw = _raw(name)
                 root = Node.from_dict(_pipeline(raw)["root"])
                 writes = any(
@@ -699,7 +700,7 @@ class TestEveryPipeCallParses:
             template_names()
         ), "the bundled library changed: pin the new count in EXPECTED"
         for name in rows:
-            with subtests.test(name=name):
+            with row(subtests, name=name):
                 issues = validate_spec(self._served(name), strict=True).issues
                 bad = [f"{i.path}: {i.message}" for i in issues if i.code in _PIPE_CODES]
                 assert not bad, f"{name} ships pipe calls resolution cannot evaluate: {bad}"

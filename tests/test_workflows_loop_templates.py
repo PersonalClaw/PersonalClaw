@@ -14,6 +14,7 @@ import json
 import re
 
 import pytest
+from table_rows import row
 
 from personalclaw.workflows.bundled_defs import read_template, template_names
 from personalclaw.workflows.judge_contract import (
@@ -119,7 +120,7 @@ def test_the_template_is_shipped_and_loads(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             assert name in template_names()
             assert read_template(name) is not None
 
@@ -130,7 +131,7 @@ def test_the_template_validates_strictly(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             result = validate_spec(_spec(name), strict=True)
             assert result.ok, [i.to_dict() for i in result.errors]
             assert not result.warnings, [i.to_dict() for i in result.warnings]
@@ -144,7 +145,7 @@ def test_the_template_is_lint_clean_as_bundled(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             root = read_template(name)
             assert root is not None
             result = lint_template(json.loads(json.dumps(root.to_dict())), bundled=True)
@@ -166,7 +167,7 @@ def test_no_stage_certifies_its_own_work(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             spec = _spec(name)
             work_nodes = [
                 n
@@ -188,7 +189,7 @@ def test_every_work_loop_is_closed_by_a_judge(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             spec = _spec(name)
             loops = [n for n in _nodes(spec["root"]) if n.get("kind") == "loop"]
             if not loops:
@@ -213,7 +214,7 @@ def test_every_judge_is_isolated_and_read_only(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             spec = _spec(name)
             judges = _judges(spec)
             assert judges, f"{name} has no judge at all"
@@ -258,25 +259,31 @@ def test_cross_model_isolation_is_no_longer_flagged():
     assert result.ok, "a plain cross_model judge is now a clean, enforceable declaration"
 
 
-@pytest.mark.parametrize("declared", ["fresh", "cross_model", None, ""])
-def test_no_isolation_value_is_flagged_unenforceable(declared):
+#: Every isolation a judge may declare, and leaving it out.
+ISOLATION_VALUES = ["fresh", "cross_model", None, ""]
+
+
+def test_no_isolation_value_is_flagged_unenforceable(subtests):
     """Both isolation levels are real now: `fresh` by construction (a fresh one-shot session) and
     `cross_model` by the dispatch-time family check. The retired lint must fire for neither — a
     rule that warned on an honest value would train an author to ignore it."""
-    cfg = {"kind": "judge", "prompt": "p"}
-    if declared is not None:
-        cfg["isolation"] = declared
-    spec = {
-        "name": "t",
-        "version": "1.0.0",
-        "root": {
-            "kind": "sequence",
-            "id": "r",
-            "children": [{"kind": "gate", "id": "accept", "config": cfg}],
-        },
-    }
-    codes = [f.code for f in lint_template(spec).findings]
-    assert "WFL_UNENFORCEABLE_ISOLATION" not in codes
+    assert len(ISOLATION_VALUES) == 4
+    for declared in ISOLATION_VALUES:
+        with row(subtests, declared=declared):
+            cfg = {"kind": "judge", "prompt": "p"}
+            if declared is not None:
+                cfg["isolation"] = declared
+            spec = {
+                "name": "t",
+                "version": "1.0.0",
+                "root": {
+                    "kind": "sequence",
+                    "id": "r",
+                    "children": [{"kind": "gate", "id": "accept", "config": cfg}],
+                },
+            }
+            codes = [f.code for f in lint_template(spec).findings]
+            assert "WFL_UNENFORCEABLE_ISOLATION" not in codes, f"isolation={declared!r}: {codes}"
 
 
 def test_no_judge_can_write(subtests):
@@ -286,7 +293,7 @@ def test_no_judge_can_write(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             for judge in _judges(_spec(name)):
                 assert (judge.get("config") or {}).get("tools_posture") != "full"
 
@@ -301,7 +308,7 @@ def test_every_judge_returns_the_typed_verdict_shape(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             spec = _spec(name)
             for judge in _judges(spec):
                 cfg = judge.get("config") or {}
@@ -321,7 +328,7 @@ def test_every_judge_prompt_names_the_closed_enum(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             spec = _spec(name)
             for judge in _judges(spec):
                 prompt = _effective_prompt(spec, judge)
@@ -337,7 +344,7 @@ def test_every_judge_prompt_demands_evidence(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             spec = _spec(name)
             for judge in _judges(spec):
                 prompt = _effective_prompt(spec, judge).lower()
@@ -352,7 +359,7 @@ def test_every_judge_prompt_carries_the_anti_leniency_doctrine(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             for judge in _judges(_spec(name)):
                 prompt = ((judge.get("config") or {}).get("prompt") or "").lower()
                 assert "do not talk yourself into approving" in prompt or "skeptic" in prompt
@@ -367,7 +374,7 @@ def test_the_template_declares_runtime_hints(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             spec = _spec(name)
             assert spec.get("runtime_hints"), f"{name} has no runtime_hints"
             assert "judge" in spec["runtime_hints"]
@@ -381,7 +388,7 @@ def test_the_hints_parse_into_the_judge_contract(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             hints = hints_from_dict(_spec(name)["runtime_hints"]["judge"])
             assert hints.rubric, f"{name} declares no rubric"
             assert hints.ratchet is Ratchet.STRICT
@@ -399,7 +406,7 @@ def test_every_rubric_criterion_appears_in_a_judge_prompt(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             spec = _spec(name)
             hints = hints_from_dict(spec["runtime_hints"]["judge"])
             prompts = " ".join(
@@ -416,7 +423,7 @@ def test_every_forbidden_mode_appears_in_a_judge_prompt(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             spec = _spec(name)
             hints = hints_from_dict(spec["runtime_hints"]["judge"])
             prompts = " ".join(
@@ -469,7 +476,7 @@ def test_the_escalation_ladder_ends_at_surface(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             ladder = _spec(name)["runtime_hints"]["execution"]["escalation"]["ladder"]
             assert ladder[-1] == "surface"
 
@@ -480,7 +487,7 @@ def test_the_breaker_is_parameterized(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             breaker = _spec(name)["runtime_hints"]["execution"].get("breaker") or {}
             assert breaker.get("fingerprint_window", 0) >= 1
             assert breaker.get("no_progress_stop", 0) >= 1
@@ -497,7 +504,7 @@ def test_every_loop_has_a_real_exit_and_a_hard_cap(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             for loop in (n for n in _nodes(_spec(name)["root"]) if n.get("kind") == "loop"):
                 cfg = loop.get("config") or {}
                 mode = cfg.get("mode")
@@ -559,7 +566,7 @@ def test_every_loop_declares_a_stall_timeout(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             for loop in (n for n in _nodes(_spec(name)["root"]) if n.get("kind") == "loop"):
                 cfg = loop.get("config") or {}
                 assert cfg.get("timeout_stall_secs", 0) > 0, f"{name}:{loop.get('id')}"
@@ -576,7 +583,7 @@ def test_every_input_is_documented(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             for key, param in (_spec(name).get("inputs") or {}).items():
                 assert param.get("help"), f"{name}:{key} has no help"
 
@@ -588,7 +595,7 @@ def test_no_input_is_both_required_and_defaulted(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             for key, param in (_spec(name).get("inputs") or {}).items():
                 if param.get("required"):
                     # `default: null` is what the LOADER normalizes an absent default to, so
@@ -605,7 +612,7 @@ def test_the_template_carries_both_steering_examples(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             events = {
                 e.get("event")
                 for e in ((_spec(name).get("metadata") or {}).get("steering_examples") or [])
@@ -620,7 +627,7 @@ def test_the_risk_and_capabilities_are_declared(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             metadata = _spec(name).get("metadata") or {}
             assert metadata.get("risk") in {"low", "medium", "high"}
             assert metadata.get("capabilities")
@@ -634,7 +641,7 @@ def test_a_writing_template_declares_write_capability(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             spec = _spec(name)
             has_full_tools = any(
                 (n.get("config") or {}).get("tools_posture") == "full" for n in _nodes(spec["root"])
@@ -782,7 +789,7 @@ def test_every_judge_stage_declares_the_contract(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             stages = [n for n in _judges(_spec(name)) if n.get("kind") == "stage"]
             assert stages, f"{name} has no judge stage"
             for stage in stages:
@@ -805,7 +812,7 @@ def test_the_scores_keys_are_the_exact_rubric_criteria(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             spec = _spec(name)
             hints = hints_from_dict(spec["runtime_hints"]["judge"])
             prompts = " ".join(((n.get("config") or {}).get("prompt") or "") for n in _judges(spec))
@@ -827,7 +834,7 @@ def test_the_prompt_offers_the_whole_closed_verdict_set(subtests):
         len(rows) == 7
     ), "a loop template was added to or dropped from LOOP_TEMPLATES: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             prompts = " ".join(
                 ((n.get("config") or {}).get("prompt") or "") for n in _judges(_spec(name))
             )
@@ -942,7 +949,7 @@ def test_last_refs_carry_a_default(subtests) -> None:
         len(rows) >= 32
     ), f"only {len(rows)} bundled templates: the library shrank or stopped loading"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             refs = _unguarded_last_refs(_spec(name).get("root"))
             assert not refs, (
                 f"{name} references {sorted(set(refs))} with no `| default(...)`. A loop body's "
@@ -997,7 +1004,7 @@ def test_a_prior_cycle_is_read_only_inside_a_loop(subtests) -> None:
         len(rows) >= 32
     ), f"only {len(rows)} bundled templates: the library shrank or stopped loading"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             refs = _prior_cycle_refs_outside_a_loop(_spec(name).get("root"))
             assert not refs, (
                 f"{name} reads {sorted(set(refs))} outside any loop. There is no prior cycle "

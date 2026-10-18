@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 
 import pytest
+from table_rows import row
 
 from personalclaw.llm.registry import ProviderEntry, get_default_registry
 from personalclaw.routing import policy
@@ -100,14 +101,14 @@ def test_route_refs_is_a_pure_reorder(
     combos = [(m, p, q) for m in _MODES for p in _PINS for q in _QUERY_CLASSES]
     assert len(combos) == 90, "a mode, pin or query class was added or dropped: pin the count"
     for mode, pin, query_class in combos:
-        with subtests.test(mode=mode, pin=pin, query_class=query_class):
+        with row(subtests, mode=mode, pin=pin, query_class=query_class):
             _enable(monkeypatch, mode=mode, pin=pin)
             refs = [CLOUD_A, LOCAL, CLOUD_B, LOCAL_TINY]
             out = policy.route_refs("reasoning", query_class, refs)
-            row = f"mode={mode!r} pin={pin!r} class={query_class!r}"
-            assert sorted(out) == sorted(refs), f"{row}: route_refs changed the candidate SET"
-            assert len(out) == len(refs), f"{row}: route_refs changed the candidate COUNT"
-            assert refs == [CLOUD_A, LOCAL, CLOUD_B, LOCAL_TINY], f"{row}: mutated its input"
+            where = f"mode={mode!r} pin={pin!r} class={query_class!r}"
+            assert sorted(out) == sorted(refs), f"{where}: route_refs changed the candidate SET"
+            assert len(out) == len(refs), f"{where}: route_refs changed the candidate COUNT"
+            assert refs == [CLOUD_A, LOCAL, CLOUD_B, LOCAL_TINY], f"{where}: mutated its input"
 
 
 def test_route_refs_preserves_duplicates(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:

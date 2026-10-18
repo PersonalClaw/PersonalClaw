@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
+from table_rows import row
 
 from personalclaw.documents.from_markup import (
     deck_from_markdown,
@@ -29,14 +29,24 @@ def _flat(text: str) -> list[tuple[str, bool, bool, bool, str]]:
 # --------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("src", ["**bold**", "__bold__"])
-def test_bold_becomes_one_bold_run(src: str) -> None:
-    assert _flat(src) == [("bold", True, False, False, "")]
+BOLD_SPELLINGS = ["**bold**", "__bold__"]
+ITALIC_SPELLINGS = ["*italic*", "_italic_"]
 
 
-@pytest.mark.parametrize("src", ["*italic*", "_italic_"])
-def test_italic_becomes_one_italic_run(src: str) -> None:
-    assert _flat(src) == [("italic", False, True, False, "")]
+def test_bold_becomes_one_bold_run(subtests) -> None:
+    assert len(BOLD_SPELLINGS) == 2
+    for src in BOLD_SPELLINGS:
+        with row(subtests, src=src):
+            got = _flat(src)
+            assert got == [("bold", True, False, False, "")], f"{src!r} parsed as {got!r}"
+
+
+def test_italic_becomes_one_italic_run(subtests) -> None:
+    assert len(ITALIC_SPELLINGS) == 2
+    for src in ITALIC_SPELLINGS:
+        with row(subtests, src=src):
+            got = _flat(src)
+            assert got == [("italic", False, True, False, "")], f"{src!r} parsed as {got!r}"
 
 
 def test_code_span_becomes_one_code_run() -> None:
@@ -165,7 +175,7 @@ LITERAL_MARKERS = [
 def test_unmatched_or_ordinary_markers_stay_literal(subtests) -> None:
     assert len(LITERAL_MARKERS) == 12
     for src in LITERAL_MARKERS:
-        with subtests.test(src=src):
+        with row(subtests, src=src):
             got = _flat(src)
             assert got == [(src, False, False, False, "")], f"{src!r} parsed as {got!r}"
 
@@ -189,7 +199,7 @@ BLANKS = ["", "   ", "\t\n ", "\n"]
 def test_blank_input_yields_no_runs(subtests) -> None:
     assert len(BLANKS) == 4
     for src in BLANKS:
-        with subtests.test(src=src):
+        with row(subtests, src=src):
             assert parse_inline(src) == [], f"{src!r} yielded runs"
 
 
@@ -270,7 +280,7 @@ def test_joined_run_text_matches_the_measured_old_output(subtests) -> None:
     rows = sorted(OLD_STRIP_INLINE.items())
     assert len(rows) == 37, "a row was added to or dropped from OLD_STRIP_INLINE"
     for src, expected in rows:
-        with subtests.test(src=src):
+        with row(subtests, src=src):
             got = inline_text(parse_inline(src))
             assert got == expected, f"{src!r}: expected {expected!r}, got {got!r}"
 
@@ -278,7 +288,7 @@ def test_joined_run_text_matches_the_measured_old_output(subtests) -> None:
 def test_deliberate_divergences_are_pinned(subtests) -> None:
     assert len(DELIBERATE_DIVERGENCE) == 6
     for src, old, new in DELIBERATE_DIVERGENCE:
-        with subtests.test(src=src):
+        with row(subtests, src=src):
             got = inline_text(parse_inline(src))
             assert got == new, f"{src!r}: expected {new!r}, got {got!r}"
             assert new != old  # the row is only a divergence if the values actually differ
@@ -298,7 +308,7 @@ def test_no_measured_character_is_ever_dropped(subtests) -> None:
     sources = sorted(OLD_STRIP_INLINE) + [row[0] for row in DELIBERATE_DIVERGENCE]
     assert len(sources) == 43
     for src in sources:
-        with subtests.test(src=src):
+        with row(subtests, src=src):
             if src in OLD_STRIP_INLINE:  # a measured "" is a real value, not a miss
                 old = OLD_STRIP_INLINE[src]
             else:

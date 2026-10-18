@@ -13,6 +13,8 @@ Two findings measured here, both encoded as regressions:
   eval exists to check.
 """
 
+from table_rows import row
+
 from personalclaw.workflows import bundled_defs
 from personalclaw.workflows.eval_specs import (
     FIXTURES_PER_TEMPLATE,
@@ -66,7 +68,7 @@ def test_the_walk_agrees_with_the_engine_about_every_shipped_template(subtests):
         bundled_defs.template_names()
     ), "the bundled library changed: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             from personalclaw.workflows.models import Node, walk
 
             spec, _metadata = parts(name)
@@ -135,7 +137,7 @@ def test_every_shipped_template_derives_at_least_one_fixture(subtests):
         bundled_defs.template_names()
     ), "the bundled library changed: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             assert spec_for(name).fixtures
 
 
@@ -145,7 +147,7 @@ def test_a_fixture_expects_its_OWN_template(subtests):
         bundled_defs.template_names()
     ), "the bundled library changed: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             assert all(f.expected_template == name for f in spec_for(name).fixtures)
 
 
@@ -156,7 +158,7 @@ def test_fixtures_are_capped(subtests):
         bundled_defs.template_names()
     ), "the bundled library changed: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             assert len(spec_for(name).fixtures) <= FIXTURES_PER_TEMPLATE
 
 
@@ -189,7 +191,7 @@ def test_a_fixture_never_expects_a_parameter_the_TREE_does_not_read(subtests):
         bundled_defs.template_names()
     ), "the bundled library changed: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             from personalclaw.workflows.contracts import resolve_unfilled_inputs
 
             spec, _metadata = parts(name)
@@ -260,7 +262,7 @@ def test_every_shipped_template_derives_structural_checks(subtests):
         bundled_defs.template_names()
     ), "the bundled library changed: pin the new count"
     for name in rows:
-        with subtests.test(name=name):
+        with row(subtests, name=name):
             assert spec_for(name).structural_checks
 
 

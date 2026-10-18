@@ -15,6 +15,8 @@ subtest named by its command, and each test pins its row count, so a dropped row
 
 from __future__ import annotations
 
+from table_rows import row
+
 from personalclaw.task_modes import is_read_only_bash
 
 # ── Ordinary reads ───────────────────────────────────────────────────────────────────────────────
@@ -122,7 +124,7 @@ READS = [
 def test_an_ordinary_read_is_read_only(subtests) -> None:
     assert len(READS) == 95, "a row was added to or dropped from READS: pin the new count"
     for command in READS:
-        with subtests.test(command=command):
+        with row(subtests, command=command):
             assert is_read_only_bash(command) is True, f"{command!r} must be a read"
 
 
@@ -146,7 +148,7 @@ NEUTRAL_IDIOMS = [
 def test_stderr_to_null_and_a_leading_cd_keep_a_read_a_read(subtests) -> None:
     assert len(NEUTRAL_IDIOMS) == 11, "a row was added to or dropped from NEUTRAL_IDIOMS"
     for command in NEUTRAL_IDIOMS:
-        with subtests.test(command=command):
+        with row(subtests, command=command):
             assert is_read_only_bash(command) is True, f"{command!r} must be a read"
 
 
@@ -163,7 +165,7 @@ IDIOMS_VOUCH_FOR_NOTHING_ELSE = [
 def test_the_idioms_vouch_for_nothing_else(subtests) -> None:
     assert len(IDIOMS_VOUCH_FOR_NOTHING_ELSE) == 6
     for command in IDIOMS_VOUCH_FOR_NOTHING_ELSE:
-        with subtests.test(command=command):
+        with row(subtests, command=command):
             assert is_read_only_bash(command) is False, f"{command!r} must not be a read"
 
 
@@ -287,7 +289,7 @@ NOT_READS = [
 def test_a_command_that_can_change_or_run_something_is_not_a_read(subtests) -> None:
     assert len(NOT_READS) == 104, "a row was added to or dropped from NOT_READS: pin the new count"
     for command in NOT_READS:
-        with subtests.test(command=command):
+        with row(subtests, command=command):
             assert is_read_only_bash(command) is False, f"{command!r} must not be a read"
 
 
@@ -315,7 +317,7 @@ GLOBS = [
 def test_a_glob_is_read_only_where_its_expansion_cannot_become_an_option(subtests) -> None:
     assert len(GLOBS) == 11
     for command, read in GLOBS:
-        with subtests.test(command=command):
+        with row(subtests, command=command):
             assert is_read_only_bash(command) is read, f"{command!r}: expected read={read}"
 
 
@@ -351,7 +353,7 @@ def test_what_a_command_establishes_it_does(subtests) -> None:
 
     assert len(EFFECTS) == 16
     for command, writes, deletes, network, unread in EFFECTS:
-        with subtests.test(command=command):
+        with row(subtests, command=command):
             effects = command_effects(command)
             expected = (bool(writes), bool(deletes), bool(network), bool(unread))
             got = (effects.writes, effects.deletes, effects.network, effects.unread)
@@ -365,7 +367,7 @@ def test_the_description_agrees_with_the_verdict(subtests) -> None:
     every = [*READS, *NEUTRAL_IDIOMS, *NOT_READS]
     assert len(every) == 210
     for command in every:
-        with subtests.test(command=command):
+        with row(subtests, command=command):
             verdict = is_read_only_bash(command)
             assert (
                 command_effects(command).reads_only is verdict
