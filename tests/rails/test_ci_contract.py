@@ -97,6 +97,27 @@ def _action(step: dict[str, Any]) -> str:
     return str(step.get("uses", "")).split("@", 1)[0]
 
 
+def _legs(job: dict[str, Any], value: str) -> list[tuple[str, str]]:
+    """Each leg's runner and *value* (a step's input), with ``${{ matrix.<key> }}`` resolved per
+    leg: the cross product of the matrix's lists, and each ``include`` entry as a leg of its own."""
+    matrix = (job.get("strategy") or {}).get("matrix") or {}
+    if not isinstance(matrix, dict):
+        matrix = {}
+    lists = {
+        k: v for k, v in matrix.items() if k not in ("include", "exclude") and isinstance(v, list)
+    }
+    legs: list[dict[str, Any]] = [{}]
+    for key, values in lists.items():
+        legs = [{**leg, key: item} for leg in legs for item in values]
+    legs += [entry for entry in matrix.get("include") or [] if isinstance(entry, dict)]
+
+    def resolve(text: str, leg: dict[str, Any]) -> str:
+        return re.sub(r"\$\{\{\s*matrix\.(\w+)\s*\}\}", lambda m: str(leg.get(m[1], "")), text)
+
+    runs_on = str(job.get("runs-on", ""))
+    return sorted({(resolve(runs_on, leg), resolve(value, leg)) for leg in legs})
+
+
 def _dockerfiles(tree: Tree) -> Iterator[tuple[str, str]]:
     for rel, text in tree.items():
         if rel.startswith("deploy/docker/Dockerfile"):
@@ -106,10 +127,18 @@ def _dockerfiles(tree: Tree) -> Iterator[tuple[str, str]]:
 # ── the rows ───────────────────────────────────────────────────────────────────────────────
 
 
+#: CPython publishes macOS and Windows installers only while a minor takes bugfix releases: its
+#: security releases are source only, and actions/setup-python's builds follow the installers
+#: (its manifest lists 3.12.15 for Linux alone). The last patch with installers, per minor that
+#: has gone security-only, so a setup-python leg on macOS or Windows never names a later one.
+_LAST_INSTALLER_PATCH = {"3.12": 10}
+
+
 def python_violations(tree: Tree) -> list[str]:
     """Every setup-uv and setup-python step names an exact Python: a literal ``X.Y.Z`` or a
     matrix value that is one. One patch per minor across the workflows, and the minor of
-    ``.python-version`` is that file's exact patch."""
+    ``.python-version`` is that file's exact patch. A setup-python leg on a macOS or Windows
+    runner names a patch setup-python builds there (:data:`_LAST_INSTALLER_PATCH`)."""
     bad: list[str] = []
     pinned = tree[".python-version"].strip()
     if not _EXACT.fullmatch(pinned):
@@ -129,6 +158,22 @@ def python_violations(tree: Tree) -> list[str]:
             bad.append(f"{where}: {_action(step)} names no python-version")
         else:
             named.append((where, value))
+        if _action(step) != "actions/setup-python":
+            continue
+        for runner, python in _legs(job, value):
+            minor, _, patch = python.rpartition(".")
+            last = _LAST_INSTALLER_PATCH.get(minor)
+            if (
+                last is not None
+                and patch.isdigit()
+                and int(patch) > last
+                and re.search(r"macos|windows", runner, re.I)
+            ):
+                bad.append(
+                    f"{where}: setup-python has no {runner} build of Python {python} "
+                    f"(the last {minor} with installers is {minor}.{last}); "
+                    "run that leg on .python-version's Python, or set it up with setup-uv"
+                )
     by_minor: dict[str, set[str]] = {}
     for where, value in named:
         if not _EXACT.fullmatch(value):
@@ -2315,6 +2360,13 @@ ROWS: tuple[Row, ...] = (
                 'python: ["3.13.15"]',
             ),
             _plant(".python-version a minor", ".python-version", "3.13.16", "3.13"),
+            _plant(
+                "setup-python on a Mac names a 3.12 security release",
+                ".github/workflows/clean-machine-walkthroughs.yml",
+                'python-version: "3.13.16"',
+                'python-version: "3.12.15"',
+                expect="setup-python has no macos-26 build of Python 3.12.15",
+            ),
         ),
     ),
     _toolchain_row(
