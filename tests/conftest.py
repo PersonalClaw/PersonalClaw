@@ -97,6 +97,16 @@ tool_homes = importlib.import_module("tool_homes")
 # tests/security_census.py.
 security_census = importlib.import_module("security_census")
 
+# ── The quarantine ──────────────────────────────────────────────────────
+# The one way a known failure is waived: an entry of tests/quarantine.toml, capped at 10, with an
+# issue, an assignee and an expiry at most 30 days out (#3947). A list that breaks a rule stops the
+# run before any test; a quarantined test still runs, and its failure is recorded, not red
+# (`pytest_configure`). Rules: tests/quarantine.py. Its guard, which reads the list on its own,
+# fails every other expected-failure waiver: a source `xfail` mark, `pytest.xfail()`, or a
+# quarantine that waives more than it lists. Mechanism: tests/waiver_guard.py.
+quarantine = importlib.import_module("quarantine")
+waiver_guard = importlib.import_module("waiver_guard")
+
 # ── The fixture-cost report ─────────────────────────────────────────────
 # `--fixture-costs` times each fixture's own setup and teardown, in wall and CPU time, and writes
 # reports/fixture-costs.json, merged across xdist workers. Mechanism: tests/fixture_costs.py.
@@ -274,6 +284,8 @@ def pytest_configure(config):
     config.pluginmanager.register(real_home_guard.Plugin(real_home_guard.GUARD), "real-home-guard")
     config.pluginmanager.register(container_runtime.Plugin(), "container-runtime-guard")
     config.pluginmanager.register(security_census.Reporter(), "security-census")
+    waiver_guard.register(config, _INVOKING_REPO_ROOT)
+    quarantine.configure(config, _INVOKING_REPO_ROOT)
     config.pluginmanager.register(source_index.WarmUp(), "source-index-warm-up")
     # The grammars the code map's tests parse with, fetched once and kept between runs, in the run's
     # downloads folder, which every worker shares: pytest's own cache folder in the checkout, or the

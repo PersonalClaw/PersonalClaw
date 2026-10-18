@@ -583,6 +583,17 @@ reports as `e2e-reports`;
 the nightly `full` workflow adds one per matrix leg. This is how you tell a
 known flake from a genuine break without a blind re-run.
 
+**A flaky failure stays red.** A test that fails and then passes on a re-run is
+still a failure: the first result is the result, and a green re-run does not
+make it a pass. It stays red until it is fixed, or until it is quarantined in
+`tests/quarantine.toml`. An entry there names an issue that tracks the fix, the
+person who owns it, and an expiry at most 30 days out, and the list holds at
+most 10. A rail (`tests/rails/`) or a `security`-marked test is never
+quarantined. An open issue alone waives nothing, and neither does an `xfail`
+mark or `pytest.xfail()`: an expected failure the list does not name is red.
+The rules are in "The quarantine" in
+[docs/maintainers/ci.md](docs/maintainers/ci.md).
+
 ## Architecture orientation
 
 - Core package: `src/personalclaw/` — gateway (`gateway.py`), dashboard API
