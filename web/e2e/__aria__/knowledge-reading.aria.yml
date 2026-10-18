@@ -1,0 +1,39 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - button "Back to Knowledge"
+  - button "Knowledge"
+  - text: /
+  - heading "Not found" [level=#]
+  - text: This knowledge item no longer exists.

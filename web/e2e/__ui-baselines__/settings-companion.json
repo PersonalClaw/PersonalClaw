@@ -1,0 +1,152 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"No changes to save\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Push backend: Off\"",
+        "button \"Push backend: Web push\"",
+        "button \"Push backend: ntfy\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"LAN discovery\"",
+        "button[role=switch] \"Let tasks drive my browser\"",
+        "input"
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"No changes to save\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Push backend: Off\"",
+        "button \"Push backend: Web push\"",
+        "button \"Push backend: ntfy\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"LAN discovery\"",
+        "button[role=switch] \"Let tasks drive my browser\"",
+        "input"
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"No changes to save\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Push backend: Off\"",
+        "button \"Push backend: Web push\"",
+        "button \"Push backend: ntfy\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"LAN discovery\"",
+        "button[role=switch] \"Let tasks drive my browser\"",
+        "input"
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"No changes to save\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Push backend: Off\"",
+        "button \"Push backend: Web push\"",
+        "button \"Push backend: ntfy\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"LAN discovery\"",
+        "button[role=switch] \"Let tasks drive my browser\"",
+        "input"
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<div#root> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"No changes to save\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Push backend: Off\"",
+        "button \"Push backend: Web push\"",
+        "button \"Push backend: ntfy\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"LAN discovery\"",
+        "button[role=switch] \"Let tasks drive my browser\"",
+        "input"
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"No changes to save\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Push backend: Off\"",
+        "button \"Push backend: Web push\"",
+        "button \"Push backend: ntfy\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"LAN discovery\"",
+        "button[role=switch] \"Let tasks drive my browser\"",
+        "input"
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"No changes to save\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Push backend: Off\"",
+        "button \"Push backend: Web push\"",
+        "button \"Push backend: ntfy\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"LAN discovery\"",
+        "button[role=switch] \"Let tasks drive my browser\"",
+        "input"
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"No changes to save\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Push backend: Off\"",
+        "button \"Push backend: Web push\"",
+        "button \"Push backend: ntfy\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"LAN discovery\"",
+        "button[role=switch] \"Let tasks drive my browser\"",
+        "input"
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<div#root> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

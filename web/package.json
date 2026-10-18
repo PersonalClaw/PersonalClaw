@@ -15,6 +15,7 @@
     "test:watch": "vitest",
     "e2e": "playwright test --grep-invert @visual && npm run e2e:visual",
     "e2e:visual": "playwright test e2e/visual.spec.ts",
+    "e2e:ui": "playwright test e2e/surfaces.spec.ts e2e/surfaceMatrix.control.spec.ts",
     "e2e:a11y": "playwright test e2e/a11y.spec.ts",
     "e2e:update": "playwright test e2e/visual.spec.ts --update-snapshots",
     "e2e:report": "playwright show-report"

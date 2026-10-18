@@ -71,6 +71,9 @@ const MAY_WRITE_SCRATCH: Record<string, string> = {
   'design/e2eHarnessHome.test.ts':
     'Lays out a stand-in user home, a symlink into it and a stand-in CLI script, to prove a spec ' +
     'refuses an unset or default gateway home before the CLI starts.',
+  'design/uiMatrixSteps.test.ts':
+    'Writes planted Playwright JSON reports for `e2e/assert-no-route-skips.mjs` to read, to prove ' +
+    'the report checker fails a skipped scan, a missing scan and a scan short of one matrix step.',
   'test/sourceTree.test.ts':
     'Lays out small throwaway trees to prove the one walker the tree scans share lists them ' +
     'in the order the walkers it replaced did, never follows a link, and remembers a listing ' +

@@ -1,0 +1,54 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - heading "Triggers" [level=#]
+  - button "New trigger"
+  - searchbox "Search triggers"
+  - radiogroup "Triggers view":
+    - radio "List" [checked]
+    - radio "Week"
+  - button "Filter & sort": Filter
+  - status
+  - button "Notification digest"
+  - text: Notification digest · disabled At #:# <am/pm> PDT Notification digest runs on its own <last run>
+  - button "Monthly usage recap"
+  - text: Monthly usage recap · disabled At #:# <am/pm> PST, on day # of the month Usage recap runs on its own <last run>
+  - button "Morning source digest"
+  - text: Morning source digest · disabled At #:# <am/pm> PDT Source digest runs on its own <last run>
+  - button "Identity report"
+  - text: Identity report · disabled At #:# <am/pm> PST, on day # of the month Identity report runs on its own <last run>
+  - button "Self-remediation"
+  - text: "Self-remediation · disabled adaptive — every #m with nothing to repair, #m while repairing (now: every #m) Self-Remediation runs on its own never"
+  - button "Heartbeat tasks"
+  - text: Heartbeat tasks · disabled every #s Heartbeat tasks runs on its own <last run>

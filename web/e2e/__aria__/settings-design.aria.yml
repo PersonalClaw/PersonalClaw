@@ -1,0 +1,211 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Design
+  - heading "Design" [level=#]
+  - paragraph: The <theme>'s visual identity — color scheme, <theme>/<theme> mode, type scale, density and motion. Every control here applies live to the mode you are currently in.
+  - heading "Color scheme" [level=#]
+  - paragraph:
+    - text: A scheme is the <theme>'s color identity. Tuning the
+    - strong: <theme>
+    - text: mode.
+  - 'button "Mode: <theme>"': <theme>
+  - 'button "Mode: <theme>" [pressed]': <theme>
+  - 'button "Mode: Auto"': Auto
+  - text: Personality
+  - paragraph: "A personality is a whole identity, not just a palette: it sets the colors, the wordmark, the tab title, the interface density, and the motion and backdrop dials together — and can offer the assistant a matching name. Every one of those stays yours to adjust afterwards, and picking one never changes your saved configuration without asking."
+  - button "PersonalClaw The default identity — coral, the claw wordmark, no persona." [pressed]:
+    - text: PersonalClaw
+    - paragraph: The default identity — coral, the claw wordmark, no persona.
+  - button "Retro Terminal Mono-green phosphor, a still grid of square dots, dense CLI spacing, a scanline haze, and a terse operator voice. calls itself “TERM”":
+    - text: Retro Terminal
+    - paragraph: Mono-green phosphor, a still grid of square dots, dense CLI spacing, a scanline haze, and a terse operator voice.
+    - paragraph: calls itself “TERM”
+  - button "Claw Arcade Amber cabinet glow, a moving field of sparkle dots, bouncy motion, and a playful, high-energy voice. calls itself “CLAW-#”":
+    - text: Claw Arcade
+    - paragraph: Amber cabinet glow, a moving field of sparkle dots, bouncy motion, and a playful, high-energy voice.
+    - paragraph: calls itself “CLAW-#”
+  - switch "Sound cues"
+  - paragraph: Sound cues
+  - paragraph: A brief tone when a turn finishes, when an approval needs you, and when something fails. Off by default. The tones are generated in the browser, so nothing is downloaded — and a cue never plays while this tab is in the background.
+  - button "Coral" [pressed]
+  - button "Honey"
+  - button "Jade"
+  - button "Ember (mono + spark)"
+  - button "Lavender"
+  - button "Ocean"
+  - button "Forest"
+  - button "Rose"
+  - button "Amber"
+  - button "Slate"
+  - button "Mono"
+  - button "Phosphor"
+  - button "Edit colors & save a custom theme"
+  - heading "Preview" [level=#]
+  - text: Chat Tasks Triggers Knowledge Primary action Secondary
+  - heading "Agent orb" [level=#]
+  - paragraph: "What the agent shows while it works, in this scheme's colours: each state at # px, as at the head of a reply, and at # px, as in an empty chat."
+  - button "Show its states"
+  - heading "Typography & scale" [level=#]
+  - paragraph: Whole-UI zoom, text size, and the interface typeface.
+  - text: UI zoom #%
+  - slider "UI zoom": "#"
+  - button "Reset UI zoom"
+  - text: Font size #%
+  - slider "Font size": "#"
+  - button "Reset Font size"
+  - text: Font family
+  - 'button "Font family: dm-sans" [pressed]': dm-sans
+  - 'button "Font family: inter"': inter
+  - 'button "Font family: mono"': mono
+  - 'button "Font family: <theme>"': <theme>
+  - button "Reset Font family"
+  - heading "Backdrop & motion" [level=#]
+  - paragraph: The #D dot-wave surface and animation — independent of the color scheme. The animated backdrop is off by default; Background below turns it on, and Claw Arcade brings it.
+  - text: Background
+  - 'button "Background: waves"': waves
+  - 'button "Background: still"': still
+  - 'button "Background: glow"': glow
+  - 'button "Background: none" [pressed]': none
+  - button "Reset Background"
+  - text: View angle #.#°
+  - slider "View angle": "#"
+  - button "Reset View angle"
+  - text: View distance #.#×
+  - slider "View distance": "#"
+  - button "Reset View distance"
+  - text: Dot size #.#×
+  - slider "Dot size": "#"
+  - button "Reset Dot size"
+  - text: Dot density #.#×
+  - slider "Dot density": "#"
+  - button "Reset Dot density"
+  - text: Dot shape
+  - 'button "Dot shape: circle"': circle
+  - 'button "Dot shape: square"': square
+  - 'button "Dot shape: diamond"': diamond
+  - 'button "Dot shape: star"': star
+  - 'button "Dot shape: sparkle"': sparkle
+  - 'button "Dot shape: burst"': burst
+  - 'button "Dot shape: claw" [pressed]': claw
+  - button "Reset Dot shape"
+  - text: Arrangement
+  - 'button "Arrangement: grid"': grid
+  - 'button "Arrangement: diamond"': diamond
+  - 'button "Arrangement: hex" [pressed]': hex
+  - 'button "Arrangement: brick"': brick
+  - button "Reset Arrangement"
+  - text: Animation speed #.#×
+  - slider "Animation speed": "#"
+  - button "Reset Animation speed"
+  - text: Wave amount #.#×
+  - slider "Wave amount": "#"
+  - button "Reset Wave amount"
+  - text: Glow amount #.#×
+  - slider "Glow amount": "#"
+  - button "Reset Glow amount"
+  - text: Bounciness #.#×
+  - slider "Bounciness": "#"
+  - button "Reset Bounciness"
+  - text: Expressiveness #.#×
+  - slider "Expressiveness": "#.#"
+  - button "Reset Expressiveness"
+  - text: Drag elasticity #.#×
+  - slider "Drag elasticity": "#.#"
+  - button "Reset Drag elasticity"
+  - text: Swipe flick speed #.#px/s
+  - slider "Swipe flick speed": "#"
+  - button "Reset Swipe flick speed"
+  - text: Swipe distance #px
+  - slider "Swipe distance": "#"
+  - button "Reset Swipe distance"
+  - text: Short transition #ms
+  - slider "Short transition": "#"
+  - button "Reset Short transition"
+  - text: Fade #ms
+  - slider "Fade": "#"
+  - button "Reset Fade"
+  - text: Medium transition #ms
+  - slider "Medium transition": "#"
+  - button "Reset Medium transition"
+  - text: Long transition #ms
+  - slider "Long transition": "#"
+  - button "Reset Long transition"
+  - text: Caret blink #.#s
+  - slider "Caret blink": "#.#"
+  - button "Reset Caret blink"
+  - text: Loading sweep #.#s
+  - slider "Loading sweep": "#.#"
+  - button "Reset Loading sweep"
+  - text: Live beat #.#s
+  - slider "Live beat": "#.#"
+  - button "Reset Live beat"
+  - text: Text shimmer #.#s
+  - slider "Text shimmer": "#.#"
+  - button "Reset Text shimmer"
+  - text: Placeholder scan #.#s
+  - slider "Placeholder scan": "#.#"
+  - button "Reset Placeholder scan"
+  - text: Glow breath #.#s
+  - slider "Glow breath": "#"
+  - button "Reset Glow breath"
+  - text: Slow drift #.#s
+  - slider "Slow drift": "#"
+  - button "Reset Slow drift"
+  - text: Glass blur #px
+  - slider "Glass blur": "#"
+  - button "Reset Glass blur"
+  - text: Glass opacity #.#×
+  - slider "Glass opacity": "#.#"
+  - button "Reset Glass opacity"
+  - text: Status dot pulse #.#s
+  - slider "Status dot pulse": "#.#"
+  - button "Reset Status dot pulse"
+  - heading "Layout & shape" [level=#]
+  - paragraph: Interface density (comfortable / dense / CLI) and corner roundness.
+  - text: UI density
+  - 'button "UI density: comfortable" [pressed]': comfortable
+  - 'button "UI density: dense"': dense
+  - 'button "UI density: cli"': cli
+  - button "Reset UI density"
+  - text: Corner roundness #.#×
+  - slider "Corner roundness": "#"
+  - button "Reset Corner roundness"
+  - heading "Navigation" [level=#]
+  - paragraph: How much of the sidebar shows at once. The rail carries the same control at the end of its list.
+  - text: Show every surface The sidebar lists every destination.
+  - switch "Show every surface" [checked]
+  - button "Reset everything to defaults"

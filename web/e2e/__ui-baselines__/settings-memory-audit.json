@@ -1,0 +1,150 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Reload the audit log\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=tab] \"Health\"",
+        "button[role=tab] \"Inspect\"",
+        "button[role=tab] \"Recall\"",
+        "button[role=tab] \"Studio\"",
+        "input \"Filter memory audit log\""
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Reload the audit log\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=tab] \"Audit\"",
+        "button[role=tab] \"Health\"",
+        "button[role=tab] \"Inspect\"",
+        "button[role=tab] \"Recall\"",
+        "button[role=tab] \"Studio\"",
+        "input \"Filter memory audit log\""
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Reload the audit log\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=tab] \"Audit\"",
+        "button[role=tab] \"Health\"",
+        "button[role=tab] \"Inspect\"",
+        "button[role=tab] \"Recall\"",
+        "button[role=tab] \"Studio\"",
+        "input \"Filter memory audit log\""
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Reload the audit log\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=tab] \"Audit\"",
+        "button[role=tab] \"Health\"",
+        "button[role=tab] \"Inspect\"",
+        "button[role=tab] \"Recall\"",
+        "button[role=tab] \"Settings\"",
+        "button[role=tab] \"Studio\"",
+        "input \"Filter memory audit log\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Reload the audit log\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=tab] \"Health\"",
+        "button[role=tab] \"Inspect\"",
+        "button[role=tab] \"Recall\"",
+        "button[role=tab] \"Studio\"",
+        "input \"Filter memory audit log\""
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Reload the audit log\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=tab] \"Audit\"",
+        "button[role=tab] \"Health\"",
+        "button[role=tab] \"Inspect\"",
+        "button[role=tab] \"Recall\"",
+        "button[role=tab] \"Studio\"",
+        "input \"Filter memory audit log\""
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Reload the audit log\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=tab] \"Audit\"",
+        "button[role=tab] \"Health\"",
+        "button[role=tab] \"Inspect\"",
+        "button[role=tab] \"Recall\"",
+        "button[role=tab] \"Studio\"",
+        "input \"Filter memory audit log\""
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Reload the audit log\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=tab] \"Audit\"",
+        "button[role=tab] \"Health\"",
+        "button[role=tab] \"Inspect\"",
+        "button[role=tab] \"Recall\"",
+        "button[role=tab] \"Settings\"",
+        "button[role=tab] \"Studio\"",
+        "input \"Filter memory audit log\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

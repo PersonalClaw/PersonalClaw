@@ -1,0 +1,102 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Edit documents in place\""
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Edit documents in place\""
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Edit documents in place\""
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Edit documents in place\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Edit documents in place\""
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Edit documents in place\""
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Edit documents in place\""
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Edit documents in place\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

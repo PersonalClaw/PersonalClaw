@@ -1,0 +1,182 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Dream now\"",
+        "button \"Expand sidebar\"",
+        "button \"Export as HTML\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Re-scan\"",
+        "button \"Rebuild links\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=tab] \"Health\"",
+        "button[role=tab] \"Inspect\"",
+        "button[role=tab] \"Recall\"",
+        "button[role=tab] \"Studio\"",
+        "summary \"Memory keyword searchKeyword search over memory is working.\"",
+        "summary \"Memory store + faiss consistencymemory.db healthy\""
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Dream now\"",
+        "button \"Expand sidebar\"",
+        "button \"Export as HTML\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Re-scan\"",
+        "button \"Rebuild links\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=tab] \"Audit\"",
+        "button[role=tab] \"Health\"",
+        "button[role=tab] \"Inspect\"",
+        "button[role=tab] \"Recall\"",
+        "button[role=tab] \"Studio\"",
+        "summary \"Memory keyword searchKeyword search over memory is working.\"",
+        "summary \"Memory store + faiss consistencymemory.db healthy\""
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Dream now\"",
+        "button \"Expand sidebar\"",
+        "button \"Export as HTML\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Re-scan\"",
+        "button \"Rebuild links\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=tab] \"Audit\"",
+        "button[role=tab] \"Health\"",
+        "button[role=tab] \"Inspect\"",
+        "button[role=tab] \"Recall\"",
+        "button[role=tab] \"Studio\"",
+        "summary \"Memory keyword searchKeyword search over memory is working.\"",
+        "summary \"Memory store + faiss consistencymemory.db healthy\""
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Dream now\"",
+        "button \"Expand sidebar\"",
+        "button \"Export as HTML\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Re-scan\"",
+        "button \"Rebuild links\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=tab] \"Audit\"",
+        "button[role=tab] \"Health\"",
+        "button[role=tab] \"Inspect\"",
+        "button[role=tab] \"Recall\"",
+        "button[role=tab] \"Settings\"",
+        "button[role=tab] \"Studio\"",
+        "summary \"Memory keyword searchKeyword search over memory is working.\"",
+        "summary \"Memory store + faiss consistencymemory.db healthy\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Dream now\"",
+        "button \"Expand sidebar\"",
+        "button \"Export as HTML\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Re-scan\"",
+        "button \"Rebuild links\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=tab] \"Health\"",
+        "button[role=tab] \"Inspect\"",
+        "button[role=tab] \"Recall\"",
+        "button[role=tab] \"Studio\"",
+        "summary \"Memory keyword searchKeyword search over memory is working.\"",
+        "summary \"Memory store + faiss consistencymemory.db healthy\""
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Dream now\"",
+        "button \"Expand sidebar\"",
+        "button \"Export as HTML\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Re-scan\"",
+        "button \"Rebuild links\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=tab] \"Audit\"",
+        "button[role=tab] \"Health\"",
+        "button[role=tab] \"Inspect\"",
+        "button[role=tab] \"Recall\"",
+        "button[role=tab] \"Studio\"",
+        "summary \"Memory keyword searchKeyword search over memory is working.\"",
+        "summary \"Memory store + faiss consistencymemory.db healthy\""
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Dream now\"",
+        "button \"Expand sidebar\"",
+        "button \"Export as HTML\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Re-scan\"",
+        "button \"Rebuild links\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=tab] \"Audit\"",
+        "button[role=tab] \"Health\"",
+        "button[role=tab] \"Inspect\"",
+        "button[role=tab] \"Recall\"",
+        "button[role=tab] \"Studio\"",
+        "summary \"Memory keyword searchKeyword search over memory is working.\"",
+        "summary \"Memory store + faiss consistencymemory.db healthy\""
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Dream now\"",
+        "button \"Expand sidebar\"",
+        "button \"Export as HTML\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Re-scan\"",
+        "button \"Rebuild links\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=tab] \"Audit\"",
+        "button[role=tab] \"Health\"",
+        "button[role=tab] \"Inspect\"",
+        "button[role=tab] \"Recall\"",
+        "button[role=tab] \"Settings\"",
+        "button[role=tab] \"Studio\"",
+        "summary \"Memory keyword searchKeyword search over memory is working.\"",
+        "summary \"Memory store + faiss consistencymemory.db healthy\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

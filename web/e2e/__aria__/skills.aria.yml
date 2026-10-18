@@ -1,0 +1,127 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - heading "Skills" [level=#]
+  - radiogroup "Skills view":
+    - radio "Installed" [checked]
+    - radio "Browse"
+  - button "Proposals"
+  - button "New skill"
+  - searchbox "Search skills"
+  - status
+  - button "artifacts"
+  - text: artifacts
+  - img "Integrity verified"
+  - paragraph: Persist, version, and iterate on LLM-generated UI (widgets, HTML, markdown). Load when the user wants to save, find, update, or iterate on a previously-rendered widget — anything that should outlive the chat scrollback.
+  - text: bundled
+  - button "best-of-n"
+  - text: best-of-n
+  - img "Integrity verified"
+  - paragraph: Sample several candidate answers in parallel, judge them against stated criteria, and present the winner with the runners-up kept one click away. Confirms the count and the criteria first because each candidate is a separate model call. Use when the user wants options rather than one answer. Triggers include "give me N options", "give me # versions", "best of", "try a few versions", "sample and pick", "generate a few and choose", "which of these is best", "draft some variations".
+  - text: bundled
+  - button "check-work"
+  - text: check-work
+  - img "Integrity verified"
+  - paragraph: Verify what you just claimed, with real tool calls — reconstruct the claims from this session, derive #-# executable checks from those specific claims, run every one, and report pass/fail with quoted evidence. A check that cannot be executed is reported unverifiable, never assumed passing.
+  - text: bundled
+  - button "delegation"
+  - text: delegation
+  - img "Integrity verified"
+  - paragraph: Decide when to spawn a subagent vs. do work inline (cost-tiered) — don't spawn for trivial work; do spawn for parallel independent investigation or isolated long tasks; use wait for external callbacks and hook_register for external-<theme> handoffs.
+  - text: bundled
+  - button "document-authoring"
+  - text: document-authoring
+  - img "Integrity verified"
+  - paragraph: Author a real document — a report, proposal, slide deck, spec, or paper — by settling audience, claim, and structure before drafting prose, then writing to that structure. Use when asked to write or draft a document rather than answer a question.
+  - text: bundled
+  - button "editorial-document"
+  - text: editorial-document
+  - img "Integrity verified"
+  - paragraph: Write long-form editorial documents as clean, semantic HTML saved as an artifact (kind=document) — reports, briefs, explainers, proposals, write-ups. Covers the house style (structure, voice, typography) AND the security contract (the HTML is sanitized fail-closed, so author within the allowlist). Load when the user wants a polished written document, report, brief, or explainer that should read like a publication, not a chat message.
+  - text: bundled
+  - button "grill"
+  - text: grill
+  - img "Integrity verified"
+  - paragraph: Structured questioning to reach shared understanding before action. Walks the decision tree one branch at a time, checks memory for already-answered questions, saves every answer as a lesson. Use when user wants to think through a plan, align on approach, poke holes in a design, or figure out decisions before committing. Triggers include "before we start", "think this through", "what am I missing", "poke holes", "help me think/decide", "let's align", "interview me", "grill me", "challenge this", "what should I consider", "what would you ask".
+  - text: bundled
+  - button "infographic-syntax"
+  - text: infographic-syntax
+  - img "Integrity verified"
+  - paragraph: Author infographics with the AntV declarative DSL — pick a template, fill a small indented data tree, and save as an artifact (kind=infographic) that renders to crisp SVG and streams as you write it. Load when the user wants an infographic, a visual summary, a comparison/steps/hierarchy/stats graphic, or "make this look like a poster/diagram".
+  - text: bundled
+  - button "knowledge-grounding"
+  - text: knowledge-grounding
+  - img "Integrity verified"
+  - paragraph: Search the knowledge pool before answering, ground claims in retrieved sources and cite them, recognize ingest-worthy content and capture it with knowledge_create — don't fabricate when the answer is on record.
+  - text: bundled
+  - button "loop-worker"
+  - text: loop-worker
+  - img "Integrity verified"
+  - paragraph: Per-cycle protocol for an autonomous goal loop worker — the unified autonomous goal engine that runs one self-directed cycle per turn until its goal is met, then self-retires. Drives one cycle against a loop's file interface (status.json gate, brief.md goal, guidance.txt nudges, findings/cycle_NNN.json, FINDINGS.md, the type-appropriate deliverable, STOP sentinel). The worker produces work and reports evidence; a deterministic check or a separate judge — never the worker — decides done-ness.
+  - text: bundled
+  - button "memory-discipline"
+  - text: memory-discipline
+  - img "Integrity verified"
+  - paragraph: When and how to persist durable memory — save genuine user preferences, facts, and corrections; NEVER persist transient environment failures (a failed command, a flaky network call, a one-off tool error) as lessons; recall before re-asking.
+  - text: bundled
+  - button "pclaw-api"
+  - text: pclaw-api
+  - img "Integrity verified"
+  - paragraph: The operator's manual for DRIVING PersonalClaw's API and tools — how to find an exact tool/route signature, the mandatory verify-after-mutate loop, and what NOT to hand-roll. Load this before creating triggers, wiring models, driving app routes, or authoring skills through the API.
+  - text: bundled
+  - button "pclaw-features"
+  - text: pclaw-features
+  - img "Integrity verified"
+  - paragraph: Channel-neutral reference for PersonalClaw's capabilities — sessions, agents, models, dashboard, scheduling, goal loops, tasks, subagents, file/media handling, and config — so you can explain what PersonalClaw can do and route the user to the right surface.
+  - text: bundled
+  - button "research-campaign"
+  - text: research-campaign
+  - img "Integrity verified"
+  - paragraph: Run a multi-cycle research campaign — grill the question, decompose it into answerable sub-questions, investigate each against sources, then synthesize with confidence and gaps stated. Use for open questions that need real investigation rather than one lookup.
+  - text: bundled
+  - button "task-and-project"
+  - text: task-and-project
+  - img "Integrity verified"
+  - paragraph: Track work as Tasks (the /api/tasks CRUD + native task provider), and decompose larger projects into independent, verifiable units — fanning parallel investigation out to subagents while keeping one coherent plan; hand open-ended goal-driven work to a goal loop.
+  - text: bundled
+  - button "visual-output"
+  - text: visual-output
+  - img "Integrity verified"
+  - paragraph: Emit rich visual output in chat via <widget> tags — styled HTML cards, charts, tables, interactive tools, and drawn SVG/canvas diagrams, illustrations, and animations — theme-aware, centered, and responsive instead of clashing or cramped.
+  - text: bundled
+  - button "web-verify"
+  - text: web-verify
+  - img "Integrity verified"
+  - paragraph: Verify a built web page or app actually renders and works — drive it in a real browser, check the console and network, confirm the thing you changed is the thing being served, and capture evidence. Use before claiming a frontend change works.
+  - text: bundled

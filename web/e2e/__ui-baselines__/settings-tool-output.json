@@ -1,0 +1,126 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Enter a pattern first\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "input \"Match regex for the new rule\"",
+        "input \"New rule name\"",
+        "select \"Strategy for the new rule\""
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Enter a pattern first\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "input \"Match regex for the new rule\"",
+        "input \"New rule name\"",
+        "select \"Strategy for the new rule\""
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Enter a pattern first\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "input \"Match regex for the new rule\"",
+        "input \"New rule name\"",
+        "select \"Strategy for the new rule\""
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Enter a pattern first\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "input \"Match regex for the new rule\"",
+        "input \"New rule name\"",
+        "select \"Strategy for the new rule\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Enter a pattern first\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "input \"Match regex for the new rule\"",
+        "input \"New rule name\"",
+        "select \"Strategy for the new rule\""
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Enter a pattern first\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "input \"Match regex for the new rule\"",
+        "input \"New rule name\"",
+        "select \"Strategy for the new rule\""
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Enter a pattern first\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "input \"Match regex for the new rule\"",
+        "input \"New rule name\"",
+        "select \"Strategy for the new rule\""
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Enter a pattern first\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "input \"Match regex for the new rule\"",
+        "input \"New rule name\"",
+        "select \"Strategy for the new rule\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

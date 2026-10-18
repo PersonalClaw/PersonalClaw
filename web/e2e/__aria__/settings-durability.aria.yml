@@ -1,0 +1,129 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Backups
+  - heading "Backups" [level=#]
+  - paragraph: What gets backed up automatically, how long copies are kept, and whether a restore is ever actually rehearsed.
+  - heading "Schedule" [level=#]
+  - paragraph: Backups run in the background so losing work never depends on remembering to run one.
+  - text: "Automatic backups Take a nightly snapshot in the background. The snapshot is the backup a restore brings back: it holds everything, your skills, scripts and uploads included. An hourly export of your records runs too, to review and diff; it holds no files, and nothing restores from it. Off means a snapshot is taken only when you run one — below, or with"
+  - code: personalclaw snapshot
+  - text: .
+  - status
+  - switch "Automatic backups" [checked]
+  - text: Monthly restore drill Once a month, restore the newest snapshot into a temporary directory and verify it — a backup nobody has restored is a hope, not a backup. Never touches live data.
+  - switch "Monthly restore drill" [checked]
+  - text: "Last run of each job: Incremental export <when> Nightly snapshot <when>"
+  - paragraph: Created personalclaw-snapshot-#T#Z.tar.gz (#.# KB). No snapshot was removed.
+  - text: "Restore drill <when> Run now:"
+  - button "Export"
+  - button "Snapshot"
+  - button "Verify a restore"
+  - paragraph:
+    - text: To restore, use the archive list below. A full
+    - emphasis: replace
+    - text: "restore stays a command-line action, because it has to overwrite live state while the gateway is stopped:"
+    - code: personalclaw restore <archive> --mode replace
+    - text: .
+  - heading "How long copies are kept" [level=#]
+  - paragraph: "Older snapshots thin out rather than piling up: dailies become weeklies, weeklies become monthlies. # disables a tier. When these settings keep newer snapshots that no restore drill has verified, the newest verified one stays too, until a newer one passes a drill: at most one snapshot beyond these settings."
+  - text: Daily snapshots How many days of nightly snapshots to keep before thinning to weeklies.
+  - status
+  - spinbutton "Daily snapshots": "#"
+  - text: days Weekly snapshots How many weeks to keep one snapshot each.
+  - status
+  - spinbutton "Weekly snapshots": "#"
+  - text: weeks Monthly snapshots How many months to keep one snapshot each.
+  - status
+  - spinbutton "Monthly snapshots": "#"
+  - text: months
+  - heading "Archive" [level=#]
+  - paragraph: Every snapshot on disk, what is in it, and whether a restore from it has been verified.
+  - text: "Last restore drill passed — personalclaw-snapshot-#T#Z.tar.gz: # database(s) verified"
+  - list:
+    - listitem:
+      - text: personalclaw-snapshot-#T#Z.tar.gz # KB verified
+      - list:
+        - listitem: "automation: # files"
+        - listitem: "config: # files"
+        - listitem: "knowledge: # rows"
+        - listitem: "memory: # rows"
+        - listitem: "platform: # rows"
+        - listitem: "security: # rows"
+        - listitem: "work: # rows"
+      - 'button "Preview restore: personalclaw-snapshot-#T#Z.tar.gz"': Preview restore
+      - 'button "Merge-restore: personalclaw-snapshot-#T#Z.tar.gz"': Merge-restore
+  - paragraph:
+    - text: Stored in
+    - code: <e2e home>/snapshots
+    - text: . A full
+    - emphasis: replace
+    - text: "restore is a command-line action, because it has to overwrite live state while the gateway is stopped: stop it, then run"
+    - code: personalclaw restore <e2e home>/snapshots/<archive> --mode replace
+    - text: ". It brings each automation that runs on its own back paused, so a copy on another machine does not repeat what the original still runs: Resume all, on the Triggers page, switches them back on."
+  - heading "Time travel" [level=#]
+  - paragraph: "A local, continuous history of the things you and the assistant edit — so a bad edit is an undo, not a restore. It stays on this machine: it is never synced, exported, or included in a backup, and it never records secrets."
+  - text: Keep a local edit history Records configuration, skills, prompts, project context and memory notes as they change, roughly ten seconds after you stop typing. Off means no history is recorded from now on; what is already recorded is kept.
+  - status
+  - switch "Keep a local edit history" [checked]
+  - text: What to look through
+  - combobox "What to look through":
+    - option "Configuration — nothing recorded yet" [selected]
+    - option "Skills — nothing recorded yet"
+    - option "Prompts — nothing recorded yet"
+    - option "Project context — nothing recorded yet"
+    - option "Memory — # recorded change"
+  - text: Only what changed while I slept Changes made by scheduled or background work, rather than by you at the dashboard.
+  - switch "Only what changed while I slept"
+  - paragraph: Nothing recorded here yet. The first edit you make will show up.
+  - heading "Sync" [level=#]
+  - paragraph: Keep more than one machine in step through storage you own — a git repo, a synced folder, a bucket. There is no PersonalClaw server in the middle.
+  - text: "Sync this instance Push this machine's changes and pull the other machines' on the schedule below. Sync carries your records: folders of files — skills, scripts, uploads — stay on each machine, and a snapshot is what keeps them. Off means nothing leaves this machine."
+  - status
+  - switch "Sync this instance"
+  - text: "No sync transport is installed and enabled yet. Install one from the Store (git-sync keeps a human-readable history in a repo you own; dir-sync uses any folder that already syncs itself), then enable it under Settings → Providers, where its own settings live. Pull no more often than The staleness window: how long this machine may go between checking the shared store. Sync is deliberately not continuous."
+  - status
+  - spinbutton "Pull no more often than": "#"
+  - text: seconds Encrypt shards Encrypt each shard before it leaves this machine. Automatic encrypts for third-party storage (buckets, shared folders) and leaves a private git repo readable, because a diffable history is the point of using git.
+  - combobox "Encrypt shards":
+    - option "Automatic (per transport)" [selected]
+    - option "Always encrypt"
+    - option "Never encrypt"
+  - text: Last sync never run Shards leaving this machine no transport chosen
+  - paragraph: Credentials never sync — API keys and this instance's secrets are excluded before any transport sees a byte, and re-enter per machine.
+  - heading "Conflicts to review" [level=#]
+  - paragraph: When two machines edit the same thing while apart, or one deletes what the other changed, PersonalClaw keeps both and waits for you instead of guessing.
+  - text: Nothing to review — but sync has never run on this instance, so no two versions have ever been compared. Choose a transport above first.

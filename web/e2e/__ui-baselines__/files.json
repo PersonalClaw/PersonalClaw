@@ -1,0 +1,130 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Show explorer\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Context: Personal\"",
+        "button[role=radio] \"Outbox\"",
+        "button[role=radio] \"Uploads\"",
+        "button[role=radio] \"Workspace\""
+      ],
+      "390": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Show explorer\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Context: Personal\"",
+        "button[role=radio] \"Outbox\"",
+        "button[role=radio] \"Uploads\"",
+        "button[role=radio] \"Workspace\""
+      ],
+      "412": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Show explorer\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Context: Personal\"",
+        "button[role=radio] \"Outbox\"",
+        "button[role=radio] \"Uploads\"",
+        "button[role=radio] \"Workspace\""
+      ],
+      "768": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Show explorer\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Context: Personal\"",
+        "button[role=radio] \"Context: Repeatable\"",
+        "button[role=radio] \"Outbox\"",
+        "button[role=radio] \"Uploads\"",
+        "button[role=radio] \"Workspace\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h##<react id>> \"Explorer\" clips at #%: #x# in #x#",
+        "<h#> \"Files\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Show explorer\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Context: Personal\"",
+        "button[role=radio] \"Outbox\"",
+        "button[role=radio] \"Uploads\"",
+        "button[role=radio] \"Workspace\""
+      ],
+      "390": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Show explorer\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Context: Personal\"",
+        "button[role=radio] \"Outbox\"",
+        "button[role=radio] \"Uploads\"",
+        "button[role=radio] \"Workspace\""
+      ],
+      "412": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Show explorer\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Context: Personal\"",
+        "button[role=radio] \"Outbox\"",
+        "button[role=radio] \"Uploads\"",
+        "button[role=radio] \"Workspace\""
+      ],
+      "768": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Show explorer\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Context: Personal\"",
+        "button[role=radio] \"Context: Repeatable\"",
+        "button[role=radio] \"Outbox\"",
+        "button[role=radio] \"Uploads\"",
+        "button[role=radio] \"Workspace\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h##<react id>> \"Explorer\" clips at #%: #x# in #x#",
+        "<h#> \"Files\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

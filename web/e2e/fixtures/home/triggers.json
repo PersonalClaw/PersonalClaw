@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "triggers": [
+    {
+      "id": "system:notification-digest",
+      "name": "Notification digest",
+      "kind": "clock",
+      "enabled": false,
+      "created_by": "system",
+      "spec": {
+        "kind": "cron",
+        "expr": "0 8 * * *"
+      },
+      "workflow": {
+        "inline": {
+          "provider": "notification-digest",
+          "config": {}
+        }
+      },
+      "delivery": "none",
+      "capabilities": {
+        "providers": [
+          "notification-digest"
+        ]
+      }
+    },
+    {
+      "id": "system:usage-recap",
+      "name": "Monthly usage recap",
+      "kind": "clock",
+      "enabled": false,
+      "created_by": "system",
+      "spec": {
+        "kind": "cron",
+        "expr": "0 9 1 * *"
+      },
+      "workflow": {
+        "inline": {
+          "provider": "usage-recap",
+          "config": {}
+        }
+      },
+      "delivery": "none",
+      "capabilities": {
+        "providers": [
+          "usage-recap"
+        ]
+      }
+    },
+    {
+      "id": "system:source-digest",
+      "name": "Morning source digest",
+      "kind": "clock",
+      "enabled": false,
+      "created_by": "system",
+      "spec": {
+        "kind": "cron",
+        "expr": "0 7 * * *"
+      },
+      "workflow": {
+        "inline": {
+          "provider": "source-digest",
+          "config": {}
+        }
+      },
+      "delivery": "none",
+      "capabilities": {
+        "providers": [
+          "source-digest"
+        ]
+      }
+    },
+    {
+      "id": "system:learning-identity-report",
+      "name": "Identity report",
+      "kind": "clock",
+      "enabled": false,
+      "created_by": "system",
+      "spec": {
+        "kind": "cron",
+        "expr": "0 9 1 * *"
+      },
+      "workflow": {
+        "inline": {
+          "provider": "identity-report",
+          "config": {}
+        }
+      },
+      "delivery": "none",
+      "capabilities": {
+        "providers": [
+          "identity-report"
+        ]
+      }
+    },
+    {
+      "id": "system:self-remediation",
+      "name": "Self-remediation",
+      "kind": "clock",
+      "enabled": false,
+      "created_by": "system",
+      "spec": {
+        "kind": "adaptive",
+        "interval_secs_healthy": 3600,
+        "interval_secs_degraded": 300,
+        "health_state": "healthy"
+      },
+      "workflow": {
+        "inline": {
+          "provider": "self-remediation",
+          "config": {}
+        }
+      },
+      "delivery": "inbox",
+      "capabilities": {
+        "providers": [
+          "self-remediation"
+        ]
+      }
+    },
+    {
+      "id": "system:heartbeat-tasks",
+      "name": "Heartbeat tasks",
+      "kind": "clock",
+      "enabled": false,
+      "created_by": "system",
+      "spec": {
+        "kind": "interval",
+        "interval_secs": 60
+      },
+      "workflow": {
+        "inline": {
+          "provider": "heartbeat-tasks",
+          "config": {}
+        }
+      },
+      "delivery": "none",
+      "capabilities": {
+        "providers": [
+          "heartbeat-tasks"
+        ]
+      }
+    }
+  ]
+}

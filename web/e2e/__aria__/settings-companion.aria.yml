@@ -1,0 +1,68 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Companion apps
+  - heading "Companion apps" [level=#]
+  - paragraph: Native clients — phone or desktop — that connect to this gateway. Nothing is announced on your network unless you turn discovery on.
+  - heading "Local network" [level=#]
+  - paragraph: How companion apps find this gateway on your LAN.
+  - text: LAN discovery Advertise this gateway on your local network so companion apps can find it without a typed URL. Off by default — announcing a service on your LAN is an opt-in.
+  - status
+  - switch "LAN discovery"
+  - text: Instance name Friendly name companion apps show for this gateway. Empty falls back to the machine hostname.
+  - textbox "Instance name":
+    - /placeholder: e.g. Living room Mac
+  - button "Save" [disabled]
+  - text: Status LAN discovery is off — companion apps need the URL typed in. Not advertising
+  - heading "Browser control" [level=#]
+  - paragraph: Whether a browse task may drive your own browser, with the sites you are already signed in to.
+  - text: Let tasks drive my browser Off by default. When off, a task that asks for your browser is skipped with a reason — it is never switched to this machine's own browser profile, which has different logins. Scheduled and unattended runs can never use your browser at all.
+  - status
+  - switch "Let tasks drive my browser"
+  - heading "Phone push" [level=#]
+  - paragraph: How a wake-up reaches your phone. Every push carries ids only — never the tool, its arguments or any message text.
+  - text: Push backend 'Web push' uses your browser's own subscription and needs a keypair from
+  - code: personalclaw push init
+  - text: . 'ntfy' publishes to a self-hosted topic. 'Off' sends nothing.
+  - 'button "Push backend: Web push" [pressed]': Web push
+  - 'button "Push backend: ntfy"': ntfy
+  - 'button "Push backend: Off"': "Off"
+  - text: Keypair Missing — run
+  - code: personalclaw push init
+  - text: on the gateway host, then reload. Until then, Web push sends nothing. Not set up
+  - heading "Install & offline" [level=#]
+  - paragraph: Whether this browser can install the dashboard as an app and keep its shell available offline.
+  - text: Install & offline support Available — the app shell is cached, and your browser can install this page as an app. Available

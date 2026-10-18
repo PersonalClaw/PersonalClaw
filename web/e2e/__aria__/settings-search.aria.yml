@@ -1,0 +1,47 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Search
+  - heading "Search" [level=#]
+  - paragraph: Bind a search provider to each use case. Configure providers (endpoint / API key) in Providers, then assign them here. An unbound use case falls back to General search.
+  - text: No search providers configured. Install a search provider app from the
+  - link "Store":
+    - /url: "#/apps?view=store&stag=search"
+  - text: (some need no API key at all), then add its endpoint / API key in Providers if it asks for one.
+  - button "General search none — falls back to General"
+  - button "News search none — falls back to General"
+  - button "Financial search none — falls back to General"
+  - button "Article fetch none — falls back to General"

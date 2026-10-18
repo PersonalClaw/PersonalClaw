@@ -1,0 +1,58 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Audit log
+  - heading "Audit log" [level=#]
+  - paragraph: What your agent did — every tool call, API access, approval and denial, hash-chained and tamper-evident.
+  - group "Filter by outcome":
+    - button "All" [pressed]
+    - button "Denied"
+    - button "Failed"
+    - button "Needs confirmation"
+    - button "Succeeded"
+  - textbox "Filter by operation"
+  - button "Filters"
+  - button "Refresh the audit log"
+  - button "Verify"
+  - button "Export"
+  - button "Rotate"
+  - button "success tool_invocation shell · git status #:#:#"
+  - button "ok api_access devices_listed #:#:#"
+  - button "denied tool_invocation shell #:#:#"
+  - button "error api_access durability_export #:#:#"
+  - button "needs_confirm tool_invocation write_file · notes/today.md #:#:#"
+  - button "fail_open api_access tool_policy.no_session_key #:#:#"
+  - paragraph: All # matching events shown.

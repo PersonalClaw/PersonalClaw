@@ -1,0 +1,60 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Diagnostics
+  - heading "Diagnostics" [level=#]
+  - paragraph: A live tail of the gateway's own log, plus the backend log level. Nothing here changes your data — the level is the only setting it writes, and it persists across restarts.
+  - heading "Backend log level" [level=#]
+  - paragraph: Change how verbose the gateway logs are, live. Persists across restarts.
+  - 'button "Backend log level: DEBUG"': DEBUG
+  - 'button "Backend log level: INFO"': INFO
+  - 'button "Backend log level: WARNING" [pressed]': WARNING
+  - 'button "Backend log level: ERROR"': ERROR
+  - text: "Current:"
+  - strong: WARNING
+  - heading "Live logs" [level=#]
+  - paragraph: Streaming · # shown
+  - text: Show
+  - button "Show DEBUG and above" [pressed]: DEBUG
+  - button "Show INFO and above": INFO
+  - button "Show WARNING and above": WARNING
+  - button "Show ERROR and above": ERROR
+  - button "Autoscroll on" [pressed]
+  - button "Pause"
+  - button "Clear"
+  - searchbox "Filter log lines"
+  - status
+  - group "Log output": Waiting for log entries…

@@ -1,0 +1,135 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Agent defaults
+  - heading "Agent defaults" [level=#]
+  - paragraph: The default agent for new chats and how agents execute — approval, subagents, and advanced safety knobs. New sessions inherit these unless overridden.
+  - heading "Default agent" [level=#]
+  - paragraph: "Which agent definition serves a new chat when none is chosen. Native agents and connected ACP-runtime agents are both selectable. Loops don't use it: a loop runs on what you pick under Runs on when you create it."
+  - text: Default agent Used for every new chat.
+  - status
+  - button "PersonalClaw"
+  - button "Clear selection"
+  - heading "Defaults" [level=#]
+  - paragraph: Baseline behavior for every session.
+  - text: "Approval mode Who approves a tool call that needs approval. A tool that only reads never asks, and an automation or a loop runs as its own Allow or Mode says. Every call that needs approval asks you: a chat on its card, and an agent no chat started (a trigger’s Invoke Agent agent, a subagent started outside a chat) in your Inbox."
+  - status
+  - 'button "Approval mode: Ask each time" [pressed]': Ask each time
+  - 'button "Approval mode: Trust reads"': Trust reads
+  - 'button "Approval mode: Auto"': Auto
+  - text: Reply style How every agent writes its replies, unless the chat or the agent chooses its own. Changes style only, never a fact, a caveat or a refusal.
+  - status
+  - 'button "Reply style: No style" [pressed]': No style
+  - 'button "Reply style: Plain"': Plain
+  - 'button "Reply style: Terse"': Terse
+  - 'button "Reply style: Conversational"': Conversational
+  - text: YOLO mode Skip every tool-approval confirmation — overrides approval mode, applies immediately, and stays on until turned off (no expiry, unlike the chat YOLO pill). Only inside a sandbox or for trusted automation.
+  - status
+  - switch "YOLO mode"
+  - text: "Approval wait How long a tool approval waits for your answer before it is denied — the Inbox then says what was denied. An approval a running subagent or workflow step asks for also ends with that work's own time limit; asking to start a subagent waits this long. A workflow's approval gates wait this long too, except in a run started unattended, where a gate gives up after # seconds and the run says so. An automation or a loop allowed to run on its own never waits: a call its grant does not cover is declined at once, since no one is there to ask."
+  - status
+  - spinbutton "Approval wait": "#"
+  - text: min
+  - heading "Runners" [level=#]
+  - paragraph: External agent CLIs this install can drive. Nothing here runs one until you press its Check version, which runs only that CLI's version command — and only for a runner an installed agent app set up.
+  - list:
+    - listitem: Claude Code acp:claude-code never checked Not set up here — no installed agent app runs this CLI, so PersonalClaw never runs it. Capabilities unknown — no handshake recorded yet. adapter unverified @agentclientprotocol/claude-agent-acp resolves on disk but has no recorded provenance — provision it through PersonalClaw so its integrity is on file
+    - listitem: Codex acp:codex never checked Not set up here — no installed agent app runs this CLI, so PersonalClaw never runs it. Capabilities unknown — no handshake recorded yet. adapter unverified @agentclientprotocol/codex-acp resolves on disk but has no recorded provenance — provision it through PersonalClaw so its integrity is on file
+    - listitem: Gemini CLI acp:gemini-cli never checked Not set up here — no installed agent app runs this CLI, so PersonalClaw never runs it. Capabilities unknown — no handshake recorded yet. adapter no_adapter launches its own binary — no npm ACP adapter in the launch path
+    - listitem: Kiro CLI acp:kiro-cli never checked Not set up here — no installed agent app runs this CLI, so PersonalClaw never runs it. Capabilities unknown — no handshake recorded yet. adapter no_adapter launches its own binary — no npm ACP adapter in the launch path
+  - heading "Subagents" [level=#]
+  - paragraph: Limits for helper agents the main agent spawns.
+  - text: Max concurrent subagents # = auto-size from this host's CPU and memory.
+  - status
+  - spinbutton "Max concurrent subagents": "#"
+  - text: Max turns per subagent
+  - status
+  - spinbutton "Max turns per subagent": "#"
+  - text: Subagent timeout Counted from when a subagent starts running, not from when it was asked for.
+  - status
+  - spinbutton "Subagent timeout": "#"
+  - text: s Min free memory to spawn
+  - status
+  - spinbutton "Min free memory to spawn": "#"
+  - text: "GB Allowed working directories Folders besides the workspace where the agent's file tools read files without asking and change them under the same approval as the workspace's files (a room member as its own tier allows), and where a subagent may run. Empty: the workspace only."
+  - textbox "Add to allowed working directories":
+    - /placeholder: Add path…
+  - status
+  - heading "Advanced" [level=#]
+  - paragraph: Delegation, safety enforcement, and diagnostics.
+  - text: Orchestrator skill Enable agent delegation — loads the orchestrator skill with the agent roster.
+  - status
+  - switch "Orchestrator skill"
+  - text: Concurrent ACP sessions Run multiple ACP chats on ONE backend process (multiplexing) instead of one process per session. Only takes effect for backends that support session interleaving.
+  - status
+  - switch "Concurrent ACP sessions"
+  - text: "Unattended runs need a verified adapter Refuse an unattended spawn — a cron fire, a loop-cycle worker, a subagent, a heartbeat task, an inbox or side sweep, a channel delivery, or a trigger dispatch — onto a runner whose ACP adapter has no verified provenance: an npx fetch-at-launch, an adapter that changed since it was provisioned, or a runner with no catalog row. Interactive chat is never gated. See each runner's adapter state under Runners."
+  - status
+  - switch "Unattended runs need a verified adapter"
+  - text: Log level Backend logger level (overridden by --verbose).
+  - status
+  - 'button "Log level: Debug"': Debug
+  - 'button "Log level: Info"': Info
+  - 'button "Log level: Warning" [pressed]': Warning
+  - 'button "Log level: Error"': Error
+  - text: Soft-stop budget Seconds to wait for a cooperative cancel before hard-killing a session.
+  - status
+  - spinbutton "Soft-stop budget": "#"
+  - text: s Runner health check interval How long a runner's measured health stays current. Past this, its row under Runners is marked check overdue rather than presenting an old reading as the present state. Nothing is checked automatically — use a runner's Check version.
+  - status
+  - spinbutton "Runner health check interval": "#"
+  - text: s Runner idle release How long a session may hold an agent runner without using it. Past this the hold is released and the runner reads as free under Runners — so a session that went quiet, or a gateway that was killed, cannot leave a runner looking permanently taken. The session itself is untouched.
+  - status
+  - spinbutton "Runner idle release": "#"
+  - text: s Durable worker sessions Run workers inside a tmux session on PersonalClaw’s own socket so their shell outlives the gateway. On restart the recovery sweep finds the still-alive worker and marks the run resumable instead of aborting it. This host has tmux, so it takes effect.
+  - status
+  - switch "Durable worker sessions"
+  - heading "Self-QA companion" [level=#]
+  - paragraph: "Watch a repository and QA each user-impacting commit as a user would — driving the real UI, then filing an Inbox item and a Task when a scenario fails. Off by default: it spends model calls and drives your browser unattended."
+  - text: Enable the companion Off means the commit watcher stays idle. A commit only gets a scenario when the change could actually be noticed by a user — test-only and docs-only commits are recorded as skips, with the reason, and cost nothing.
+  - status
+  - switch "Enable the companion"
+  - text: Watched repository Absolute path to the git repository whose new commits trigger a QA run. Empty leaves the watcher idle even when the companion is enabled.
+  - status
+  - textbox "Watched repository":
+    - /placeholder: /path/to/your/repo
+  - 'button "Save: Watched repository" [disabled]': Save
+  - text: Max scenarios per run Ceiling on scenarios generated from one push. Every commit still gets a verdict; this bounds how many browser sessions one push can start.
+  - status
+  - spinbutton "Max scenarios per run": "#"
+  - text: Propose fix branches On a confirmed failure, open a pclaw/selfqa-<sha> branch carrying a proposed diff. Never merged and never pushed — the branch name lands in the Task for you to review.
+  - status
+  - switch "Propose fix branches"

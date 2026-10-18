@@ -272,18 +272,21 @@ function tiersSpreadBy(spec: string): string[] {
   return [...found]
 }
 
-/** Specs whose stated contract is "every reachable surface" — no per-route cost but time. */
-const WHOLE_APP_SPECS = ['a11y.spec.ts', 'walkthrough.spec.ts']
+/** Specs whose stated contract is "every reachable surface" — no per-route cost but time. Since
+ *  #3941 that is the UI quality check alone: it took over the route scans of `a11y.spec.ts` and
+ *  the three legs of the walkthrough spec. `surfaceMatrixCoverage.test.ts` holds it to every
+ *  surface those two visited. */
+const WHOLE_APP_SPECS = ['surfaces.spec.ts']
 
 /** The one declared narrower consumer, and the tiers it deliberately omits. Self-clearing: if it
  *  starts covering one of these, this reds and tells you to delete the entry, so the exception
  *  can never be wider than the code needs. */
 const NARROWER_BY_DESIGN = {
   spec: 'visual.spec.ts',
-  omits: ['SETTINGS_ROUTES', 'NON_NAV_ROUTES'],
+  omits: ['SETTINGS_ROUTES', 'NON_NAV_ROUTES', 'SUBSTATE_ROUTES'],
   why:
     'a full-page screenshot per route per theme is a real per-route cost in baseline bytes and ' +
-    'review time, unlike the axe and walkthrough legs which only cost wall-clock',
+    'review time, unlike the UI quality check, which only costs wall-clock',
 }
 
 describe('every route tier reaches every spec that claims whole-app coverage', () => {

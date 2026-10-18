@@ -831,6 +831,8 @@
         "web/e2e/fixtures/app-ui/app.json",
         "web/e2e/fixtures/app-ui/installed.json",
         "web/e2e/fixtures/app-ui/ui/index.mjs",
+        "web/e2e/fixtures/home/config.json",
+        "web/e2e/fixtures/home/triggers.json",
         "web/e2e/fixtures/scripted-chat.json"
       ]
     }

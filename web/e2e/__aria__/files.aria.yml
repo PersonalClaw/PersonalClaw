@@ -1,0 +1,65 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - heading "Files" [level=#]
+  - radiogroup "File root":
+    - radio "Workspace" [checked]
+    - radio "Outbox"
+    - radio "Uploads"
+    - 'radio "Context: Personal"'
+    - 'radio "Context: Repeatable"'
+  - button "Hide explorer" [pressed]
+  - heading "No file open" [level=#]
+  - paragraph: Pick a file from the explorer to view or edit it. Type in the search box to grep contents (⌘F).
+  - region "Explorer":
+    - separator "Resize panel — arrow keys to resize"
+    - heading "Explorer" [level=#]
+    - button "Expand to full width"
+    - button "Close"
+    - searchbox "Search file contents"
+    - status
+    - textbox "Go to path":
+      - /placeholder: Go to path…
+      - text: <e2e home>/workspace
+    - button "New file"
+    - button "New folder"
+    - button "Refresh"
+    - button "knowledge"
+    - button "Actions for knowledge"
+    - button "memory"
+    - button "Actions for memory"
+    - button "outbox"
+    - button "Actions for outbox"
+    - button "HEARTBEAT.md"
+    - button "Actions for HEARTBEAT.md"

@@ -1,0 +1,98 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: External access
+  - heading "External Access" [level=#]
+  - paragraph: Ways for something outside this machine to reach PersonalClaw. Every surface is off until you turn it on AND give it its own token, and every one is loopback-only unless you deliberately widen it in config.json. Nothing here is on by default.
+  - heading "Master switch" [level=#]
+  - paragraph: One switch over all five surfaces. Off unmounts every one of them on the next request — no restart needed.
+  - text: Allow inbound access While this is off, nothing below can serve, whatever its own switch says.
+  - switch "Allow inbound access"
+  - heading "Surfaces" [level=#]
+  - paragraph:
+    - text: Each needs its own ≥#-byte token, created with
+    - code: personalclaw inbound token create <surface>
+    - text: . A token that is missing, too short, or equal to your dashboard token is refused — the surface does not serve and says so here.
+  - text: OpenAI-compatible API Lets a tool that speaks the OpenAI API talk to one of your agents. The model name selects the agent.
+  - switch "OpenAI-compatible API"
+  - text: MCP tool surface A curated, read-only MCP server your IDE can query. Cannot write, install, or change settings.
+  - switch "MCP tool surface"
+  - text: A#A gateway Agent-to-agent requests from another assistant you run.
+  - switch "A#A gateway"
+  - text: Capture proxy Records an external agent’s sessions by proxying them. Carries full prompts, so it is the most sensitive surface here.
+  - switch "Capture proxy"
+  - text: Control bridge Semantic actions against your own dashboard. Loopback-only, always — it cannot be exposed remotely. Cannot be exposed remotely.
+  - switch "Control bridge"
+  - heading "Limits" [level=#]
+  - paragraph: Applied per client, not per surface, so one busy integration cannot spend another one’s allowance. A request over the rate gets a # and is recorded; a client that keeps going over is switched off and you are notified.
+  - text: Requests per second Sustained rate for each client. Fractional rates are legal but need a config.json edit — this stepper works in whole requests.
+  - spinbutton "Requests per second": "#"
+  - status
+  - text: Burst How many requests a client may make back-to-back before the sustained rate starts holding it back.
+  - spinbutton "Burst": "#"
+  - status
+  - text: Concurrent requests How many of a client’s requests may be in flight at once.
+  - spinbutton "Concurrent requests": "#"
+  - status
+  - text: Switch a client off after Limit breaches within an hour before a client is disabled automatically. Set # to never do that — a client will then keep getting #s indefinitely.
+  - spinbutton "Switch a client off after": "#"
+  - status
+  - text: Keep captured sessions for (days) Applies to the capture proxy only. It records full prompts, so this is the one limit here that is about privacy rather than load.
+  - spinbutton "Keep captured sessions for (days)": "#"
+  - status
+  - text: Capture upstream allow-list Hosts the capture proxy may forward a recorded turn to. Empty means it may forward NOWHERE, so a freshly enabled capture proxy refuses everything until you name at least one host (api.openai.com, api.anthropic.com).
+  - textbox "Add to capture upstream allow-list":
+    - /placeholder: Add host…
+  - status
+  - text: "Public URL: not set — every surface is loopback-only This and each surface’s “allow remote” are the boundary for anything off this machine, so they are not editable here — they are deliberately a"
+  - code: config.json
+  - text: edit. Tokens are not shown at all; only their hashes are stored.
+  - heading "Clients" [level=#]
+  - paragraph: "A client is one integration, with its own token and its own limits. Its bindings are pins, not defaults: a request that asks for a different agent or an un-listed tool is refused, never quietly redirected."
+  - text: No clients yet. A client is created through the API,
+  - code: POST /api/external-access/clients
+  - text: ", which returns its token once; send"
+  - code: "\"persistent_sessions\": true"
+  - text: "for a client of the OpenAI-compatible API to keep its conversation, or choose that here later. A plain surface token also works, but it cannot be scoped. A webhook automation's sender tokens are clients too: make one on the automation's page, or with"
+  - code: personalclaw inbound webhook create <automation-id>
+  - text: . Every token lasts at most # days, and Settings → Devices lists each one, with a revoke.
+  - heading "Remote access" [level=#]
+  - paragraph: Not editable here, on purpose.
+  - text: No public URL is set, so every surface is loopback-only. The public URL and each surface’s
+  - code: allow_remote
+  - text: flag are edited in
+  - code: config.json
+  - text: ", not from this page — widening a network surface should be a deliberate act, not one click. Prefer an SSH tunnel to loopback over opening a port."

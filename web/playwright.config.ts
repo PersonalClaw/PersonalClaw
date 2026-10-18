@@ -123,8 +123,8 @@ export const SCRIPTED = {
 //    _dev_user_middleware, so any a11y/CSRF-adjacent conclusion drawn under it
 //    would not describe a real user. The token flow below is the real one.
 //  - A MODEL, and still no credential and still no network: the two scripted-provider
-//    env vars below. config.json stays EXACTLY as it was — a user name and nothing
-//    else — on purpose: `registry.py`'s `register_scripted_provider_type()`
+//    env vars below. config.json holds a user name and two switches (the seed below)
+//    and NO model entry, on purpose: `registry.py`'s `register_scripted_provider_type()`
 //    synthesizes its own entry ("Scripted"/scripted-1, credential=None) and registers
 //    it BEFORE the config-derived ones so it wins the implicit
 //    first-entry-declaring-the-capability fallback. So there is no `providers[]` entry
@@ -145,7 +145,16 @@ const GATEWAY_COMMAND = [
   // thing. The absolute path also means the gateway resolves it after any chdir.
   `S="$PWD/${SCRIPTED.scriptPath}"`,
   `[ -f "$S" ] || { echo "PERSONALCLAW_E2E_FATAL: scripted-provider script not found at $S (cwd $PWD)" >&2; exit 1; }`,
-  `printf '%s' '{"dashboard":{"user_name":"Keyur"}}' > "$D/config.json"`,
+  // The home starts from `e2e/fixtures/home/`: config.json (the user name, and the two settings
+  // that keep the identity report and self-remediation off) and triggers.json (every system
+  // trigger the boot creates, switched off). The gateway runs its automations, so without the
+  // seed the minutely heartbeat queue fires during the run and the dashboard's schedule card
+  // changes state with the run's age. `tests/rails/test_e2e_home_seed_matches_the_boot_tree.py`
+  // holds the seed to what the boot creates.
+  'cp e2e/fixtures/home/config.json "$D/config.json"',
+  'cp e2e/fixtures/home/triggers.json "$D/triggers.json"',
+  '[ -f "$D/config.json" ] && [ -f "$D/triggers.json" ] '
+    + '|| { echo "PERSONALCLAW_E2E_FATAL: the home seed did not copy into $D (cwd $PWD)" >&2; exit 1; }',
   // Install the app-UI fixture, so the sweep reaches app-AUTHORED DOM and not just the
   // app-hosting shell. `#/app/<name>` needs a real installed app WITH a bundle: the asset route
   // reads `installed.json` and refuses an app that is absent or disabled, so the fixture ships
@@ -282,13 +291,14 @@ export default defineConfig({
   // green.
   //
   // The cost is NOT setup — checkout+uv+npm+chromium total 54 SECONDS, the
-  // caches are doing their job. It is test VOLUME in two steps:
-  //   walkthrough.spec.ts  14.5–17.1 min   (~60% of the job)
-  //   a11y.spec.ts          5.8– 7.7 min
-  // walkthrough is 2 themes × ~55 surfaces × 3 properties; a11y is 2 themes ×
-  // ~55 surfaces. Both are pure read-only sweeps (navigate, tab, read computed
-  // styles, run axe), so they are embarrassingly parallel and were being run
-  // two-at-a-time for no reason other than an unset default.
+  // caches are doing their job. It was test VOLUME in two steps (measured then):
+  //   the walkthrough spec  14.5–17.1 min   (~60% of the job)
+  //   a11y.spec.ts           5.8– 7.7 min
+  // Both were pure read-only sweeps (navigate, tab, read computed styles, run
+  // axe), so they were embarrassingly parallel and were being run two-at-a-time
+  // for no reason other than an unset default. #3941 has since folded both into
+  // `surfaces.spec.ts`, which visits each surface once per theme instead of once
+  // per check; it is just as read-only, so the reasoning below still holds.
   //
   // 🪤 3, NOT 4 (= `'100%'`). The sweeps share ONE gateway and ONE vite preview
   // on the same 4-core box. Those two are near-idle while a read-only sweep

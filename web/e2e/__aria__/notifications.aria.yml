@@ -1,0 +1,46 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - heading "Notifications #" [level=#]
+  - button "Mark all read"
+  - button "Clear all"
+  - button "Filter & sort": Filter
+  - status
+  - text: Today
+  - button "Backup restore drill passed — personalclaw-snapshot-#…"
+  - text: Backup restore drill passed <when>
+  - paragraph: "personalclaw-snapshot-#T#Z.tar.gz: # database(s) verified"
+  - 'button "Investigate in chat: Backup restore drill passed — personalclaw-snapshot-#…"'
+  - 'button "Mark read: Backup restore drill passed — personalclaw-snapshot-#…"'
+  - 'button "Delete: Backup restore drill passed — personalclaw-snapshot-#…"'

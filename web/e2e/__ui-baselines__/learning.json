@@ -1,0 +1,134 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "a \"Evals enabled in Settings → Evaluations\"",
+        "button \"Choose a model\"",
+        "button \"Compose the narrative, save it as a versioned artifact and s\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Refresh\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Monthly\"",
+        "button[role=radio] \"Off\"",
+        "button[role=radio] \"Weekly\""
+      ],
+      "390": [
+        "a \"Evals enabled in Settings → Evaluations\"",
+        "button \"Choose a model\"",
+        "button \"Compose the narrative, save it as a versioned artifact and s\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Refresh\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Monthly\"",
+        "button[role=radio] \"Off\"",
+        "button[role=radio] \"Weekly\""
+      ],
+      "412": [
+        "a \"Evals enabled in Settings → Evaluations\"",
+        "button \"Choose a model\"",
+        "button \"Compose the narrative, save it as a versioned artifact and s\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Refresh\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Monthly\"",
+        "button[role=radio] \"Off\"",
+        "button[role=radio] \"Weekly\""
+      ],
+      "768": [
+        "a \"Evals enabled in Settings → Evaluations\"",
+        "button \"Choose a model\"",
+        "button \"Compose the narrative, save it as a versioned artifact and s\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Refresh\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Monthly\"",
+        "button[role=radio] \"Off\"",
+        "button[role=radio] \"Weekly\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h#> \"Learning\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "a \"Evals enabled in Settings → Evaluations\"",
+        "button \"Choose a model\"",
+        "button \"Compose the narrative, save it as a versioned artifact and s\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Refresh\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Monthly\"",
+        "button[role=radio] \"Off\"",
+        "button[role=radio] \"Weekly\""
+      ],
+      "390": [
+        "a \"Evals enabled in Settings → Evaluations\"",
+        "button \"Choose a model\"",
+        "button \"Compose the narrative, save it as a versioned artifact and s\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Refresh\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Monthly\"",
+        "button[role=radio] \"Off\"",
+        "button[role=radio] \"Weekly\""
+      ],
+      "412": [
+        "a \"Evals enabled in Settings → Evaluations\"",
+        "button \"Choose a model\"",
+        "button \"Compose the narrative, save it as a versioned artifact and s\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Refresh\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Monthly\"",
+        "button[role=radio] \"Off\"",
+        "button[role=radio] \"Weekly\""
+      ],
+      "768": [
+        "a \"Evals enabled in Settings → Evaluations\"",
+        "button \"Choose a model\"",
+        "button \"Compose the narrative, save it as a versioned artifact and s\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Refresh\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Monthly\"",
+        "button[role=radio] \"Off\"",
+        "button[role=radio] \"Weekly\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h#> \"Learning\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

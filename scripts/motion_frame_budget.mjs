@@ -50,8 +50,8 @@
 //     node scripts/motion_frame_budget.mjs --home ... --bounciness 1       # one dial only
 //
 // Deliberately NOT a Playwright spec under `web/e2e/`: that directory is the zero-diff
-// GATE tier (visual baselines + axe), and CI runs exactly one file out of it by explicit
-// path (`ci.yml` → `npx playwright test e2e/a11y.spec.ts`). A frame-time distribution has
+// GATE tier (visual baselines, the UI quality check and axe), and CI runs every spec in it
+// (`ci.yml` → `npx playwright test --grep-invert @visual`). A frame-time distribution has
 // no committed baseline and no machine-independent threshold, so a green/red there would be
 // a lie about hardware. This prints a measurement; a human reads it.
 
