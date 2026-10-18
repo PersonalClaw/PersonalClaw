@@ -6,8 +6,10 @@
 # typecheck + vitest + vite build all passed while the built bundle crashed at
 # first render in a real browser (dual-React dependency skew). That gate re-runs
 # the whole frontend chain from a CLEAN, locked install — `npm ci` is the step
-# that catches declared-vs-resolved tree skew — then mounts the built SPA in
-# headless Chromium (scripts/render_smoke.mjs) before the push leaves the machine.
+# that catches declared-vs-resolved tree skew — then stamps the build and mounts
+# it in headless Chromium (the Playwright `smoke` project, web/e2e/smoke.spec.ts,
+# which reaches no gateway) before the push leaves the machine. The stamp and the
+# preview's freshness check run on the repo's venv, so the chain needs `.venv`.
 #
 # The Python lint half exists because pre-commit only formats the files a commit
 # STAGES: commits made before `hooks:install`, or with `--no-verify`, sail past it
@@ -40,7 +42,7 @@ set -eu
 repository_root=$(git rev-parse --show-toplevel)
 cd "$repository_root"
 
-FRONTEND_PATHS="web package.json package-lock.json scripts/render_smoke.mjs scripts/run_prepush.sh"
+FRONTEND_PATHS="web package.json package-lock.json scripts/spa_dist_freshness.py scripts/run_prepush.sh"
 PYTHON_PATHS="src/personalclaw tests harness scripts pyproject.toml"
 ZERO=0000000000000000000000000000000000000000
 
@@ -178,6 +180,7 @@ skip_frontend_checks() {
   skip_check "typecheck-web" "$skip_reason"
   skip_check "test-web" "$skip_reason"
   skip_check "build-web" "$skip_reason"
+  skip_check "stamp-web" "$skip_reason"
   skip_check "playwright-chromium" "$skip_reason"
   skip_check "render-smoke" "$skip_reason"
 }
@@ -307,7 +310,21 @@ if [ "$release_ref" -eq 0 ]; then
 fi
 
 echo "pre-push: frontend changes outgoing — running the render-smoke gate"
-echo "          (clean npm ci -> typecheck -> vitest -> build -> headless render)."
+echo "          (clean npm ci -> typecheck -> vitest -> build -> stamp -> headless render)."
+
+# The render smoke serves the build through the Playwright config's preview, which refuses a
+# dist whose stamp does not match the sources, and the stamp is written by the repo's own
+# Python (scripts/spa_dist_freshness.py imports personalclaw). So the chain needs `.venv`.
+# No skip: the render smoke is the local browser check this gate exists for.
+if [ ! -x .venv/bin/python ]; then
+  echo "" >&2
+  echo "pre-push: frontend changes outgoing, but .venv/bin/python is missing, so the build" >&2
+  echo "          cannot be stamped and the render smoke cannot serve it. Create it with:" >&2
+  echo "            python3.13 -m venv .venv && .venv/bin/pip install -e '.[dev]'" >&2
+  echo "          (or: uv sync --extra dev), then push again." >&2
+  record_result "render-smoke" "FAIL" ".venv/bin/python is missing; create the repo venv (see above)" ""
+  finish_report
+fi
 
 run_check "npm-ci" npm ci
 if [ "$last_result" = "PASS" ]; then
@@ -315,17 +332,26 @@ if [ "$last_result" = "PASS" ]; then
   run_check "test-web" npm run test:web
   run_check "build-web" npm run build
   build_result=$last_result
+  if [ "$build_result" = "PASS" ]; then
+    run_check "stamp-web" .venv/bin/python scripts/spa_dist_freshness.py stamp
+    build_result=$last_result
+  else
+    skip_check "stamp-web" "requires build-web to pass"
+  fi
   run_check "playwright-chromium" npx playwright install chromium
   playwright_result=$last_result
   if [ "$build_result" = "PASS" ] && [ "$playwright_result" = "PASS" ]; then
-    run_check "render-smoke" npm run smoke:render
+    # The smoke project alone, with no gateway booted (PW_ONLY_SMOKE): the bundle mounts on
+    # six routes with every /api answered in the page, and its planted crashes are caught.
+    run_check "render-smoke" env PW_ONLY_SMOKE=1 sh -c 'cd web && npx playwright test --project=smoke --no-deps --workers=4'
   else
-    skip_check "render-smoke" "requires both build-web and playwright-chromium to pass"
+    skip_check "render-smoke" "requires build-web, stamp-web and playwright-chromium to pass"
   fi
 else
   skip_check "typecheck-web" "requires npm-ci to pass"
   skip_check "test-web" "requires npm-ci to pass"
   skip_check "build-web" "requires npm-ci to pass"
+  skip_check "stamp-web" "requires npm-ci to pass"
   skip_check "playwright-chromium" "requires npm-ci to pass"
   skip_check "render-smoke" "requires npm-ci, build-web, and playwright-chromium to pass"
 fi

@@ -88,7 +88,14 @@ const specs = []
 
 if (specs.length === 0) fail('the JSON report contains no specs at all — the run measured nothing')
 
-const routeScans = specs.filter((s) => ROUTE_TITLE.test(s.title))
+// The report is the WHOLE run's, every spec in one invocation, and `walkthrough.spec.ts`'s titles
+// carry the route in parentheses too. The axe sweep is `a11y.spec.ts`'s alone, so only its specs
+// are counted, by the file each spec in Playwright's JSON report names.
+const A11Y_FILE = 'a11y.spec.ts'
+const a11ySpecs = specs.filter((s) => (s.file ?? '').split('/').pop() === A11Y_FILE)
+if (a11ySpecs.length === 0) fail(`the JSON report holds no spec from ${A11Y_FILE} — the axe sweep did not run`)
+
+const routeScans = a11ySpecs.filter((s) => ROUTE_TITLE.test(s.title))
 const skipped = routeScans.filter((s) => (s.tests ?? []).some((t) => t.status === 'skipped'))
 
 if (skipped.length > 0) {

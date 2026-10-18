@@ -231,7 +231,7 @@ def test_the_pytest_step_scan_finds_every_known_leg(workflows: dict[str, dict[st
         "lint",
         "test-shard",
         "test-macos",
-        "browse-live",
+        "e2e",
         "security-corpus",
         "rails",
         "client",

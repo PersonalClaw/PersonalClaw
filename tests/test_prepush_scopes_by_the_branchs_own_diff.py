@@ -45,8 +45,9 @@ expects a half to be skipped asserts **the log is empty**. That is a sharper pai
 assertions than reading announcements off stdout, and the two directions cannot both be
 satisfied by one bug. Nothing about the script itself is stubbed.
 
-The sandbox has no ``.venv``, so the script's ``[ -x .venv/bin/black ]`` branch is not
-taken and the stubs on ``PATH`` are what it resolves — asserted by
+The sandbox's ``.venv`` holds only a stub ``python`` (the frontend chain stamps its build
+with it), so the script's ``[ -x .venv/bin/black ]`` branch is not taken and the stubs on
+``PATH`` are what it resolves — asserted by
 :func:`test_the_stub_bin_is_what_the_script_resolves`, so a future change that finds a
 real toolchain first reds this file instead of silently timing out.
 """
@@ -177,9 +178,16 @@ def rebased(tmp_path: Path) -> Rebased:
         "origin/main is not the rebased branch's merge-base, so this sandbox does not "
         "reproduce the topology under test"
     )
-    assert not (root / ".venv").exists(), (
-        "the sandbox grew a .venv — the script would resolve its lint tools there instead "
-        "of from the stub PATH, and the lint legs below would run the real toolchain"
+    # The frontend chain stamps its build with the venv's Python and refuses to run without
+    # one, so the sandbox carries a stub that logs like the others. Only `python`: a
+    # `.venv/bin/black` would make the script resolve its lint tools there.
+    venv_python = root / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text(f'#!/bin/sh\necho "python" >> "{log}"\nexit 0\n', encoding="utf-8")
+    venv_python.chmod(0o755)
+    assert not (root / ".venv" / "bin" / "black").exists(), (
+        "the sandbox venv grew a black — the script would resolve its lint tools there "
+        "instead of from the stub PATH, and the lint legs below would run the real toolchain"
     )
     return Rebased(root, original, main, rebased_tip, stub_bin)
 

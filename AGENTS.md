@@ -20,8 +20,8 @@ make serve              # dev gateway on 127.0.0.1:10000, state under ./.dev-hom
 
 make lint               # black --check + isort --check + flake8 + mypy — must pass
 make test               # full pytest suite
-npm run typecheck:web && npm run test:web && npm run build   # when web/ changed (from root)
-npm run smoke:render    # then: mount the BUILT bundle in headless Chromium
+npm run typecheck:web && npm run test:web && make web-build   # when web/ changed (from root); web-build stamps the dist
+(cd web && PW_ONLY_SMOKE=1 npx playwright test --project=smoke --no-deps)   # then: mount the BUILT bundle in headless Chromium
 make build              # a distribution: clean, locked SPA, sdist + wheel inspected, rebuilt from the sdist, served
 ```
 

@@ -132,7 +132,19 @@ def sandbox(tmp_path: Path) -> Sandbox:
     _git(*_IDENT, "commit", "-q", "--no-gpg-sign", "-m", "frontend change", cwd=root)
     head = _git("rev-parse", "HEAD", cwd=root)
     assert head != base, "the branch adds no commit"
+    # The chain stamps the build with the repo venv's Python, and refuses to run without one.
+    # An exit-0 stand-in, added after the commits so no range names it.
+    _stub_venv_python(root)
     return Sandbox(root, head)
+
+
+def _stub_venv_python(root: Path) -> Path:
+    """An exit-0 ``.venv/bin/python``, so the chain can run its stamp step in a sandbox."""
+    python = root / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True, exist_ok=True)
+    python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    python.chmod(0o755)
+    return python
 
 
 def _mirror_path_without_toolchain(dest: Path) -> None:
@@ -281,6 +293,29 @@ def test_render_smoke_runs_when_toolchain_present(sandbox: Sandbox, tmp_path: Pa
     assert any(
         "run build" in line for line in invocations
     ), f"`npm run build` was not invoked: {invocations!r}"
+
+
+def test_a_missing_venv_fails_the_chain_and_says_how_to_make_one(sandbox: Sandbox, tmp_path: Path):
+    """The render smoke is the local browser check, so a missing venv is not a skip.
+
+    With npm/node present and the frontend half owed, no ``.venv/bin/python`` means the build
+    cannot be stamped and the smoke cannot serve it: the push fails, names the venv and how
+    to create it, and nothing of the chain runs.
+    """
+    (sandbox.root / ".venv" / "bin" / "python").unlink()
+    fakebin = tmp_path / "fakebin-no-venv"
+    _mirror_path_without_toolchain(fakebin)
+    log = tmp_path / "no-venv-invocations.log"
+    for name in ("npm", "node", "npx"):
+        _write_exit0_stub(fakebin / name, log)
+
+    result = _run(sandbox.frontend_push, cwd=sandbox.root, env=_env(fakebin))
+
+    assert result.returncode != 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert ".venv/bin/python is missing" in result.stderr, f"stderr={result.stderr!r}"
+    assert "uv sync --extra dev" in result.stderr, "the refusal does not say how to fix it"
+    assert "render-smoke          | FAIL" in result.stdout, f"stdout={result.stdout!r}"
+    assert not log.exists(), "the chain ran tools with no venv to stamp its build"
 
 
 def test_the_skip_is_attributable_to_the_guard(sandbox: Sandbox, tmp_path: Path):

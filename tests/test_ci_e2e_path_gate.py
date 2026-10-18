@@ -1,7 +1,7 @@
 """The browser gates' admission decision, railed in both directions.
 
-`ci.yml`'s `changes` job decides whether `e2e-a11y`, `e2e-walkthrough` and `e2e-pwa` run at all.
-A gate like that has two opposite failure modes and only one of them is loud:
+`ci.yml`'s `changes` job decides whether the `e2e` job, every browser spec in one Playwright run,
+runs at all. A gate like that has two opposite failure modes and only one of them is loud:
 
 * **Too eager** — it runs when it did not have to. Costs minutes. Visible in every run's timing.
 * **Too lazy** — it skips a diff that CAN break a rendered surface. Costs a missed regression,
@@ -34,7 +34,7 @@ _SCRIPT = _ROOT / "scripts" / "ci_touches_frontend.py"
 
 #: The jobs whose execution the gate controls. Each must take the `needs:` AND the `if:` —
 #: a `needs:` alone would only reorder them, which is the shape of a gate that does nothing.
-GATED_JOBS = ("e2e-a11y", "e2e-walkthrough", "e2e-pwa")
+GATED_JOBS = ("e2e",)
 
 #: Paths that MUST keep paying the gate. Each is a real reachability claim, not a guess:
 #: see the script's docstring and web/playwright.config.ts's header for the derivations.
@@ -88,8 +88,8 @@ MAY_SKIP = (
 def test_a_reaching_path_forces_the_gates_to_run(path: str) -> None:
     verdict, reaching = touches_frontend([path])
     assert verdict is True, (
-        f"{path!r} was classified as unable to affect a rendered surface, so the three "
-        f"browser-driven jobs would SKIP for a diff containing it. That is the silent failure "
+        f"{path!r} was classified as unable to affect a rendered surface, so the "
+        f"browser-driven `e2e` job would SKIP for a diff containing it. That is the silent failure "
         f"direction: a missed a11y/keyboard/service-worker regression reporting a green check. "
         f"If this is deliberate, the reason belongs in scripts/ci_touches_frontend.py's "
         f"IGNORABLE table AND in this list."
@@ -198,7 +198,7 @@ def test_a_crashed_classifier_runs_the_gates_rather_than_skipping_them() -> None
 
     Appending the script's stdout straight to `$GITHUB_OUTPUT` looks equivalent and fails in the
     silent direction: if the script raises, no `frontend` key is written, the expression resolves
-    to the empty string, `== 'true'` is false, and all three browser gates skip on a green run —
+    to the empty string, `== 'true'` is false, and the browser gate skips on a green run —
     a crashed classifier disabling the gates it exists to schedule. So the step must coerce any
     non-legal answer to `true`.
     """
@@ -267,8 +267,8 @@ def test_the_condition_check_refuses_a_wrong_frontend_comparison(
     jobs = _ci()["jobs"]
     planted = {
         **jobs,
-        "e2e-a11y": {
-            **jobs["e2e-a11y"],
+        "e2e": {
+            **jobs["e2e"],
             "if": "${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && "
             + mutant
             + " }}",
@@ -276,7 +276,7 @@ def test_the_condition_check_refuses_a_wrong_frontend_comparison(
     }
     monkeypatch.setattr(sys.modules[__name__], "_ci", lambda: {"jobs": planted})
     with pytest.raises(AssertionError):
-        test_each_gated_job_takes_both_the_needs_and_the_condition("e2e-a11y")
+        test_each_gated_job_takes_both_the_needs_and_the_condition("e2e")
 
 
 def test_the_script_runs_as_a_cli_and_prints_a_github_output_line() -> None:

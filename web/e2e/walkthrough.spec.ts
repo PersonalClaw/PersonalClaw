@@ -6,7 +6,7 @@ import { PALETTE_SEARCH_LABEL } from '../src/app/paletteSearchLabel'
 // ── V3: the full-app keyboard-only / reduced-motion / phone-viewport walkthrough ─────────────
 //
 // The second clause. Its first clause — `e2e/a11y.spec.ts`
-// mounted as a blocking CI gate against a seeded authenticated session — is met by the `e2e-a11y`
+// mounted as a blocking CI gate against a seeded authenticated session — is met by the `e2e`
 // job in `ci.yml`. This file is the other half, and it exists because axe cannot express any of
 // the three properties below.
 //

@@ -291,18 +291,21 @@ typecheck, vitest (jsdom), and `vite build` all passed while the v0.1.0
 release shipped a blank dashboard — a dependency skew split the installed tree
 across React 18 and React-DOM 19, and the bundle crashed at first render in a
 way only a real browser exposes. So every frontend-affecting push must also
-prove the **built artifact mounts**: `npm run smoke:render` serves `web/dist`
-and loads the key routes in headless Chromium, asserting `#root` renders real
-content with no uncaught errors, no ErrorBoundary fallback and no widget's
-"Couldn't show …" notice. The
+prove the **built artifact mounts**. The render smoke is the Playwright `smoke`
+project (`web/e2e/smoke.spec.ts`): it loads the key routes of the built `web/dist`
+in headless Chromium with every `/api` call answered in the page, so no gateway is
+involved, and asserts `#root` renders real content with no uncaught errors, no
+ErrorBoundary fallback and no widget's "Couldn't show …" notice. Run it on its own
+with `make web-build` (which stamps the build) and then
+`cd web && PW_ONLY_SMOKE=1 npx playwright test --project=smoke --no-deps`. The
+preview refuses a dist whose stamp does not match the sources, so an unstamped or
+stale build fails before any test. The
 repository-owned pre-push hook (`npm run hooks:install`, one-time) runs the
 whole chain — clean `npm ci` (this is what catches declared-vs-resolved
-lockfile skew), typecheck, vitest, build, render smoke — automatically whenever
-outgoing commits touch `web/`, `package.json`, or `package-lock.json`, and CI's
-`web` job repeats it on every PR. To smoke a dev gateway instead of the static
-server, name its scratch home: `npm run smoke:render -- --home ./.dev-home` (the smoke
-finds the gateway from the record the gateway keeps in that home, and refuses the default
-home).
+lockfile skew), typecheck, vitest, build, stamp, render smoke — automatically whenever
+outgoing commits touch `web/`, `package.json`, or `package-lock.json`, and needs the
+repo's `.venv` to stamp the build. In CI the smoke is the first project of the `e2e`
+job's one Playwright run, against the build the `web` job stamped and uploaded.
 
 "Outgoing commits" means **what your branch adds on top of `main`**, measured
 from the merge-base with `origin/main` — not the range between your branch and
@@ -547,7 +550,9 @@ gh run download <run-id> --name junit-test-shard-2      # 1…4, one per shard
 
 `<testcase>` elements with a `<failure>` child are the failures, with the node
 id and the assertion message. The other jobs publish theirs under
-`junit-browse-live`, `junit-rails`, `junit-client` and `junit-lint-installer`;
+`junit-browse-live` (the `e2e` job's browse proof), `junit-rails`, `junit-client` and
+`junit-lint-installer`, and the `e2e` job uploads its browser run's JSON, blob and HTML
+reports as `e2e-reports`;
 the nightly `full` workflow adds one per matrix leg. This is how you tell a
 known flake from a genuine break without a blind re-run.
 

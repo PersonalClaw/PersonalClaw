@@ -1,4 +1,6 @@
 import { defineConfig, devices } from '@playwright/test'
+import { readdirSync } from 'node:fs'
+import { SPEC_ISOLATION, STATEFUL_SPECS, seededOrder, unclassified } from './e2e/isolation'
 
 // ── Playwright visual-regression + a11y harness ────────────────────────────
 // The SAFETY RAIL for design-system consistency work: every
@@ -151,8 +153,89 @@ const GATEWAY_COMMAND = [
   `PERSONALCLAW_HOME="$D" PERSONALCLAW_WORKSPACE="$D/workspace" ${SCRIPTED.scriptEnvVar}="$S" exec "$PC" gateway --port ${GATEWAY_PORT} --no-open --json-ready`,
 ].join('\n')
 
+// ── One invocation, three ways to share the gateway ───────────────────────────────────────────
+// `smoke` runs first and reaches no gateway (smoke.spec.ts). `chromium` runs every spec the
+// isolation table calls shared, in parallel against the one gateway and home. The specs it calls
+// stateful run after it, one at a time (`stateful`), then once more each in an order drawn from
+// a seed (`stateful-again-1`, `stateful-again-2`), so a stateful spec that passes only after the
+// other has run reds here. The seed is PW_STATEFUL_SEED when set, so a run's order can be
+// replayed, and the run reports it (`metadata.statefulSeed`, and each second-pass test's
+// `stateful-seed` annotation). It is written back to the environment so every worker this config
+// is re-read in draws the same order.
+//
+// The second pass rides on Playwright's teardown projects, the one way to run a project AFTER
+// another without depending on it passing: each runs once its owner's dependents are done.
+// `chromium` owns `stateful`, `setup` owns `stateful-again-1` and `smoke` owns `stateful-again-2`,
+// which is also the order they run in. A red in a shared spec therefore hides no stateful spec.
+const SPECS = readdirSync('./e2e').filter((f) => f.endsWith('.spec.ts'))
+const missing = unclassified(SPECS)
+if (missing.length) {
+  throw new Error(`e2e/isolation.ts gives no isolation mode to: ${missing.join(', ')}. Classify each before it can run.`)
+}
+process.env.PW_STATEFUL_SEED ||= String(Math.floor(Math.random() * 2 ** 31))
+const STATEFUL_SEED = Number(process.env.PW_STATEFUL_SEED)
+const SECOND_PASS = seededOrder(STATEFUL_SPECS, STATEFUL_SEED)
+if (SECOND_PASS.length !== 2) {
+  throw new Error(`the stateful second pass has a project per spec, two of them; e2e/isolation.ts now names ${SECOND_PASS.length}`)
+}
+const fileMatcher = (files: readonly string[]) => files.map((f) => new RegExp(`(^|/)${f.replace(/\./g, '\\.')}$`))
+
+// Teardown projects ignore the command line's file filter, so `playwright test e2e/visual.spec.ts`
+// (`npm run e2e:visual`) would run the stateful set too. A run whose file filter names no
+// stateful spec leaves the chain out. Decided once, in the runner, and handed to the workers that
+// re-read this config through the environment, like the seed, so all of them see one project list.
+const VALUE_FLAGS = new Set(['-c', '--config', '-g', '--grep', '-G', '--grep-invert', '--project', '--shard', '-j',
+  '--workers', '--reporter', '--output', '--retries', '--repeat-each', '--timeout', '--max-failures', '-x'])
+function fileFilters(argv: readonly string[]): string[] {
+  const at = argv.indexOf('test')
+  if (at < 0) return []
+  const out: string[] = []
+  for (let i = at + 1; i < argv.length; i++) {
+    const word = argv[i]
+    if (VALUE_FLAGS.has(word)) i++
+    else if (!word.startsWith('-')) out.push(word)
+  }
+  return out
+}
+if (process.env.PW_STATEFUL_CHAIN === undefined) {
+  const filters = fileFilters(process.argv)
+  const named = filters.some((f) => STATEFUL_SPECS.some((spec) => spec.includes(f.split('/').pop() ?? f) || f.endsWith(spec)))
+  process.env.PW_STATEFUL_CHAIN = filters.length === 0 || named ? '1' : '0'
+}
+const STATEFUL_CHAIN = process.env.PW_STATEFUL_CHAIN === '1'
+
+// A run whose file filter names ONLY stateful specs (`playwright test e2e/staleWrite.spec.ts`) leaves
+// `chromium` with nothing to run, so nothing would pull in `setup`, and every stateful spec would
+// meet the onboarding screen. Then the chain hangs off `setup` instead: `stateful` depends on it, and
+// the second pass follows as teardowns, one after the other.
+if (process.env.PW_STATEFUL_ONLY === undefined) {
+  const filters = fileFilters(process.argv)
+  const onlyStateful =
+    filters.length > 0 &&
+    filters.every((f) => STATEFUL_SPECS.some((spec) => f.endsWith(spec) || spec.includes(f.split('/').pop() ?? f)))
+  process.env.PW_STATEFUL_ONLY = onlyStateful ? '1' : '0'
+}
+const STATEFUL_ONLY = process.env.PW_STATEFUL_ONLY === '1'
+
+// The local pre-push browser check runs the smoke project alone, which needs no gateway, so
+// the gateway is not booted for it.
+const ONLY_SMOKE = !!process.env.PW_ONLY_SMOKE
+
+// The preview serves the dist the build ALREADY made, and refuses one that does not match the
+// checked-out sources: building here made every invocation rebuild the SPA (14 builds per pull
+// request) and could serve whatever was in web/dist. The interpreter is the repo's venv when
+// there is one, which is where the freshness check's imports resolve. Its verdict goes to stderr:
+// Playwright shows a web server's stderr and drops its stdout, so a refusal names its reason.
+const FRESHNESS_CHECK =
+  'PY=../.venv/bin/python; [ -x "$PY" ] || PY=python3; "$PY" ../scripts/spa_dist_freshness.py check --require-stamp >&2'
+
 export default defineConfig({
   testDir: './e2e',
+  metadata: {
+    statefulSeed: String(STATEFUL_SEED),
+    statefulOrder: SECOND_PASS,
+    isolation: Object.fromEntries(Object.entries(SPEC_ISOLATION).map(([spec, { mode }]) => [spec, mode])),
+  },
   // Baselines are platform-qualified (see snapshotPathTemplate) so a mac dev
   // and linux CI keep separate goldens.
   snapshotPathTemplate: '{testDir}/__screenshots__/{testFilePath}/{arg}-{platform}{ext}',
@@ -160,8 +243,8 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   // ── Why this is set at all, and why 3 ────────────────────────────────────
   // Unset, playwright runs HALF the logical cores. `ubuntu-latest` on a public
-  // repo is 4-core, so CI was silently running 2 workers — and `e2e-a11y` is
-  // the binding constraint on this repo's merge rate. Measured 2026-09-18 from
+  // repo is 4-core, so CI was silently running 2 workers — and the browser job
+  // (then `e2e-a11y`, now `e2e`) is the binding constraint on this repo's merge rate. Measured 2026-09-18 from
   // the Actions API across five CONCLUDED runs (35381670780, 35381697823,
   // 35381857440, 35382011453, 35382279089): the job is 23.6–28.7 min while the
   // next-longest job in the whole workflow is `test-shard` at ~9 min, so every
@@ -190,8 +273,15 @@ export default defineConfig({
   // exactly what it asserted before; nothing is sharded, skipped or retimed.
   // Local runs keep playwright's default so a dev machine is not pinned.
   workers: process.env.CI ? 3 : undefined,
+  // A retried pass is reported as `flaky` in the JSON and blob reports, never as a plain pass.
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : [['list']],
+  // The isolation reporter is FIRST: it annotates every test with its isolation mode before the
+  // JSON and blob reporters read them, and fails the run when a spec runs where its mode forbids.
+  // The JSON report's path is PLAYWRIGHT_JSON_OUTPUT_NAME; the blob's is blob-report/, which
+  // `merge-reports` reads when the run is sharded.
+  reporter: process.env.CI
+    ? [['./e2e/isolationReporter.ts'], ['github'], ['json'], ['blob'], ['html', { open: 'never' }]]
+    : [['./e2e/isolationReporter.ts'], ['list']],
   expect: {
     // A small pixel tolerance absorbs sub-pixel AA noise while still catching
     // real chrome changes. Tune down as baselines stabilize.
@@ -212,14 +302,58 @@ export default defineConfig({
     // setup project must start from an EMPTY jar — an inline state object, not
     // `undefined`: a project `use` of `undefined` does not override the top-level
     // path, so setup died trying to read the file it exists to create.
-    { name: 'setup', testMatch: /auth\.setup\.ts$/, use: { storageState: { cookies: [], origins: [] } } },
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] }, dependencies: ['setup'] },
+    {
+      name: 'setup',
+      testMatch: /auth\.setup\.ts$/,
+      use: { storageState: { cookies: [], origins: [] } },
+      ...(STATEFUL_CHAIN && !STATEFUL_ONLY ? { teardown: 'stateful-again-1' } : {}),
+    },
+    // The render smoke, first: the built bundle mounts with no gateway behind it.
+    {
+      name: 'smoke',
+      testMatch: /smoke\.spec\.ts$/,
+      use: { ...devices['Desktop Chrome'], storageState: { cookies: [], origins: [] } },
+      ...(STATEFUL_CHAIN && !STATEFUL_ONLY ? { teardown: 'stateful-again-2' } : {}),
+    },
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+      // `setup` only. The smoke has no dependencies, so it runs in the first phase beside `setup`,
+      // before any spec here; it is not one of these dependencies, because a dependency that fails
+      // skips its dependents, and a red smoke would then hide every shared spec in the run.
+      dependencies: ['setup'],
+      // Every spec but the smoke and the stateful set. Not `visual.spec.ts`: a testIgnore would
+      // hide it from its own `--project=chromium` invocation, so `--grep-invert @visual` leaves it
+      // out of this one.
+      testIgnore: fileMatcher(['smoke.spec.ts', ...STATEFUL_SPECS]),
+      ...(STATEFUL_CHAIN && !STATEFUL_ONLY ? { teardown: 'stateful' } : {}),
+    },
+    ...(STATEFUL_CHAIN
+      ? [
+          {
+            name: 'stateful',
+            use: { ...devices['Desktop Chrome'] },
+            testMatch: fileMatcher(STATEFUL_SPECS),
+            workers: 1,
+            fullyParallel: false,
+            ...(STATEFUL_ONLY ? { dependencies: ['setup'], teardown: 'stateful-again-1' } : {}),
+          },
+          ...SECOND_PASS.map((spec, i) => ({
+            name: `stateful-again-${i + 1}`,
+            use: { ...devices['Desktop Chrome'] },
+            testMatch: fileMatcher([spec]),
+            workers: 1,
+            fullyParallel: false,
+            ...(STATEFUL_ONLY && i === 0 ? { teardown: 'stateful-again-2' } : {}),
+          })),
+        ]
+      : []),
   ],
   // Two servers: the isolated gateway, then the built SPA that proxies to it.
   webServer: process.env.PW_NO_SERVER
     ? undefined
     : [
-        {
+        ...(ONLY_SMOKE ? [] : [{
           command: GATEWAY_COMMAND,
           // Readiness is the READY line, NOT a port probe: the named capture
           // group lands in process.env.PW_TOKEN (Playwright's documented
@@ -228,21 +362,17 @@ export default defineConfig({
           // proceed on a bound-but-unauthenticated gateway with no token.
           wait: { stdout: /PERSONALCLAW_READY:.*"token":\s*"(?<pw_token>[^"]+)"/ },
           timeout: 180_000,
-        },
+        }]),
         {
-          command: `npm run build && npm run preview -- --port ${PORT} --strictPort`,
+          // No build: the dist is built and stamped once (`make web-build`, or CI's `web` job),
+          // and a stale or unstamped one fails here, naming the freshness check, before any test.
+          command: `${FRESHNESS_CHECK} && npm run preview -- --port ${PORT} --strictPort`,
           url: BASE_URL,
-          // 🕐 THE BUILD IS A PRECONDITION, AND 180s IS BELOW ITS COST ON A LOADED HOST. This
-          // entry runs `npm run build` — a full vite build — before the preview
-          // server can answer, and that is pure host-bound work. Against the old 180_000 a
-          // loaded box did not fail a test, it produced NO TESTS: `Error: Timed out waiting
-          // 180000ms from config.webServer`, at a sha whose goldens were 41/41 on a quiet one.
-          // So the rail's answer was decided by the machine before a single pixel was compared.
-          //
-          // Raising a PRECONDITION budget loosens nothing that is asserted: `maxDiffPixelRatio`
-          // stays 0.01, no golden is exempted and no axe rule moves. It only stops a busy host
-          // from being reported as a broken suite.
-          timeout: 900_000,
+          // 60s, from 900s. The 900s budget existed only for the build this entry used to run
+          // (a full vite build, on a loaded host). What is left is the freshness digest over
+          // web/src and starting a static server, which takes seconds; 60s keeps a loaded host
+          // from reading as a broken suite without waiting a quarter hour on a hang.
+          timeout: 60_000,
           reuseExistingServer: !process.env.CI,
           // vite.config.ts reads PERSONALCLAW_PORT for its /api proxy target.
           env: { PERSONALCLAW_PORT: String(GATEWAY_PORT) },

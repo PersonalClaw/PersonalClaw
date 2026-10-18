@@ -8,7 +8,7 @@
 //
 //   1. **jsdom has no frame clock.** `requestAnimationFrame` in the unit tier is a
 //      setTimeout shim — it can report any rate you like. This has to be a real browser,
-//      which is why it lives next to `render_smoke.mjs` rather than in `web/src/**`.
+//      which is why it is a standalone driver rather than a test in `web/src/**`.
 //   2. **An idle page is not evidence.** 60fps while nothing moves proves nothing, so every
 //      surface is MEASURED DURING a provoked interaction (route crossfade + entrance
 //      cascade, an overlay opening on `physics.playful`, a wheel scroll, a hover sweep),

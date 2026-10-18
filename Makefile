@@ -134,7 +134,7 @@ test:
 ## the run, and the gate stayed green anyway. A run where nothing had tried would have proved
 ## nothing about being offline; this one proves the app degrades rather than depends.
 test-e2e:
-	cd $(WEB_DIR) && npx playwright test --project=chromium --ignore-snapshots
+	cd $(WEB_DIR) && npx playwright test --ignore-snapshots
 
 ## test-visual: the visual-regression suite with screenshot assertions ENFORCED. Split out of
 ## test-e2e because its baselines are environment-sensitive (28/39 red on a clean main checkout on
