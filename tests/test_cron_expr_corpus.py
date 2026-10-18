@@ -17,8 +17,6 @@ import json
 import tomllib
 from pathlib import Path
 
-import pytest
-
 from personalclaw.schedule import validate_cron_expr
 
 CORPUS = Path(__file__).resolve().parents[1] / "web/src/pages/schedule/cronExprCorpus.json"
@@ -69,13 +67,18 @@ def test_the_runtime_and_lock_keep_the_parser_on_the_measured_major():
     assert locked_requirement["specifier"] == ">=2.0,<3"
 
 
-@pytest.mark.parametrize("case", _cases(), ids=lambda c: repr(c["expr"]))
-def test_croniter_still_agrees_with_the_recorded_verdict(case):
-    assert validate_cron_expr(case["expr"]) is case["valid"], (
-        f"{case['expr']!r} ({case['group']}) — croniter now says "
-        f"{validate_cron_expr(case['expr'])}, the corpus records {case['valid']}. "
-        "Regenerate cronExprCorpus.json rather than editing the verdict."
-    )
+def test_croniter_still_agrees_with_the_recorded_verdict(subtests):
+    """One table over the corpus (docs/maintainers/testing.md): each case is a subtest named by
+    its expression, and the pinned count fails a case dropped from the file."""
+    cases = _cases()
+    assert len(cases) == 70, "a case was added to or dropped from the corpus: pin the new count"
+    for case in cases:
+        with subtests.test(expr=case["expr"]):
+            assert validate_cron_expr(case["expr"]) is case["valid"], (
+                f"{case['expr']!r} ({case['group']}) — croniter now says "
+                f"{validate_cron_expr(case['expr'])}, the corpus records {case['valid']}. "
+                "Regenerate cronExprCorpus.json rather than editing the verdict."
+            )
 
 
 def test_the_two_expressions_the_old_token_COUNT_got_wrong_are_both_covered():
