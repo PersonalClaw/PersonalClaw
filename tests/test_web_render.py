@@ -13,6 +13,7 @@ render is needed; the guard is exercised with is_available forced True + a fake 
 from __future__ import annotations
 
 import socket
+import sys
 
 import pytest
 
@@ -96,15 +97,18 @@ async def test_render_egress_guard_blocks_before_browser(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_render_guard_allows_public_then_would_launch(monkeypatch):
-    # Public URL passes the guard; with Playwright genuinely absent the import path
-    # returns an unavailable result (proves the guard is not what stops it here).
+    # Public URL passes the guard and reaches the import path, which returns an unavailable
+    # result (proves the guard is not what stops it here). The import is made to fail whether
+    # or not the js-render extra is installed: with it, and a browser, the test would otherwise
+    # render the real page over the network.
     monkeypatch.setattr(rd, "is_available", lambda: True)  # claim available…
-    # …but the real import inside will fail (not installed) → handled gracefully.
+    monkeypatch.setitem(sys.modules, "playwright.async_api", None)  # …but the import fails
     out = await render_url(
         "https://example.com", resolver=_resolver({"example.com": ["93.184.216.34"]})
     )
-    assert out.ok is False  # import fails in this env
-    assert out.unavailable is True or "import" in out.error.lower()
+    assert out.ok is False
+    assert out.unavailable is True
+    assert "import" in out.error.lower()
 
 
 # ── web_fetch(render=True) ──────────────────────────────────────────────────────
