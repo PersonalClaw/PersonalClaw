@@ -360,8 +360,14 @@ def _build_sensitive_regex() -> re.Pattern[str]:
     dirs_pattern = "|".join(escaped_dirs)
     # `[+,\s]*` between the home expression and the slash: a built path joins them with a
     # concatenation operator or a comma rather than writing them adjacent.
+    #
+    # The redirect alternative is `[<>|]\s*`, not `.*[<>|]\s*`: the screen only asks whether a
+    # search finds a match (:func:`is_sensitive_bash_command`), and a search already tries every
+    # position, so a leading `.*` changes no verdict. It only cost time: tried from every
+    # position, each attempt ran to the end of the line, so a line with no match took time in the
+    # square of its length (about 40 s at 100 KB).
     return re.compile(
-        rf"(?:{_READ_CMDS}.*|{_SCRIPT_OPEN}.*|.*[<>|]\s*){home_alts}[+,\s]*/(?:{dirs_pattern})"
+        rf"(?:{_READ_CMDS}.*|{_SCRIPT_OPEN}.*|[<>|]\s*){home_alts}[+,\s]*/(?:{dirs_pattern})"
         rf"(?:/|\s|$|['\"),])",
         re.IGNORECASE,
     )
@@ -816,7 +822,14 @@ def is_sensitive_bash_command(
         return _SHELL_REFUSAL[CREDENTIAL]
     owned = SensitivePaths(home_credential_dirs=False)
     folders = _credential_folders()
+    # A word and path already checked in this call gave no refusal, since the first refusal ends
+    # it, and asked again they give the same answer: each is resolved once. The set lives only for
+    # this call, so a path that becomes a link afterwards is seen by the next check.
+    checked: set[tuple[str, str]] = set()
     for word, path in named_paths(command, cwd=cwd, names=owned.names):
+        if (word, str(path)) in checked:
+            continue
+        checked.add((word, str(path)))
         kind = owned.kind(str(path))
         if kind:
             return _SHELL_REFUSAL[kind]

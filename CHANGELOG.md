@@ -24,6 +24,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **An answered approval, a Stop or an edit takes effect immediately.**
 - **A long shell command, such as one that writes a file from a here-document, is checked against the shell denylist in a fraction of a second, where a few kilobytes took several seconds and held up every chat while it was checked.**
+- **The check of a shell command for credential files takes a fraction of a second on a long command, where 100 KB took about 40 seconds and held up every chat while it ran.**
 - **The gateway image runs its bundled agent CLIs on Node 24, where it shipped Debian's Node 20, which no longer gets security fixes.**
 - **An agent's shell command is no longer refused as a push when it only reads text that says "push", such as a search of your workflow files, or when the word is in a commit, tag, merge, note or stash message given with `-m` or `--message`. A message given in a here-document, and any other git argument or word containing "push", are still refused, and so is a real push unless you allow pushes in Settings → Security.**
 - **A message you send while a turn runs is no longer stopped after 10 minutes when its turn comes: it runs until it is done, as one sent to an idle chat does, and a turn nobody is watching, such as a subagent's report or a loop's cycle, is stopped only once it has made no progress for its whole limit, saying how far it got.**
