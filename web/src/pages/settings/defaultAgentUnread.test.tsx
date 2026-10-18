@@ -23,6 +23,9 @@ beforeEach(() => {
       ...(await orig<{ api: Record<string, unknown> }>()).api,
       personalclawConfig: async () => ({ agent: { approval_mode: 'auto', yolo: false } }),
       agents: () => agents(),
+      // The Runners section reads its own list. Unmocked, that read went to the network and failed
+      // at a moment of its own, adding a second Retry beside the default agent's one now and then.
+      agentRunners: async () => [],
       savedAgents: async () => [],
       agentProviders: async () => [],
       setDefaultAgent: async () => ({ ok: true }),
@@ -54,6 +57,8 @@ describe('Default agent', () => {
     agents.mockRejectedValueOnce(new Error('agents unreadable')).mockResolvedValue({ agents: [], default_agent: 'scout' })
     await mountPanel()
     await screen.findByText("Couldn't read the default agent, so it can't be changed until a retry succeeds.")
+    // The default agent's own Retry, not another section's.
+    expect(screen.getAllByRole('button', { name: 'Retry' })).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(screen.getByText('scout')).toBeInTheDocument())
     expect(screen.queryByText(/Couldn't read the default agent/)).toBeNull()
