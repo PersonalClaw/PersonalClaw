@@ -43,11 +43,61 @@ pytestmark = [
 
 NAMES = ("cmda", "cmdb", "cmdc")
 
-#: Each function writes one record: a 0x01, then its name and each argument, each ended by a NUL.
-#: One printf, so the members of a pipeline do not interleave their records.
+#: Stands for a newline inside an argument in a record. The reader refuses a line holding a control
+#: character, so no argument of a line it accepts holds this byte itself.
+NEWLINE_MARK = "\x02"
+#: Ends a record, after its last field.
+RECORD_END = "\x03"
+
+#: Each function writes one record: a 0x01, then its name, each argument and :data:`RECORD_END`,
+#: each ended by a NUL. The members of a pipeline run at once and append to the same file, so a
+#: record has to reach it in one write. bash's printf flushed at a newline, so an argument that
+#: held one split its record in two, and another member's record could land between the halves
+#: (measured: 3 runs in 1,500 on one such line). A newline inside an argument is written as
+#: :data:`NEWLINE_MARK` and read back as a newline, so a record holds no newline. A record that is
+#: split anyway fails as one (:func:`parse_records`), not as a different parse.
 PRELUDE = "\n".join(
-    f'{name}() {{ printf \'%s\\0\' $\'\\001\'"$FUNCNAME" "$@" >>"$OUT"; }}' for name in NAMES
+    [
+        "_pc_nl=$'\\n'; _pc_mark=$'\\002'; _pc_end=$'\\003'",
+        *(
+            f"{name}() {{ printf '%s\\0' $'\\001'\"$FUNCNAME\" \"${{@//$_pc_nl/$_pc_mark}}\" "
+            f'"$_pc_end" >>"$OUT"; }}'
+            for name in NAMES
+        ),
+    ]
 )
+
+
+class RecordSplit(AssertionError):
+    """bash's record of a line is not whole records one after another: a member of a pipeline
+    wrote its record in pieces and another's landed between them."""
+
+
+def parse_records(data: bytes) -> list[tuple[str, ...]]:
+    """The function calls a record file holds, each as its name and arguments, in the order they
+    were written. Every record must be framed: a 0x01, a name the line can call, its fields each
+    ended by a NUL, :data:`RECORD_END` last and nowhere else, and no newline. Anything else raises
+    :class:`RecordSplit` with the raw bytes."""
+    if not data:
+        return []
+    if not data.startswith(b"\x01"):
+        raise RecordSplit(f"record split: the record file does not start a record: {data!r}")
+    calls = []
+    for raw in data.split(b"\x01")[1:]:
+        fields = raw.split(b"\0")
+        end = RECORD_END.encode()
+        if (
+            len(fields) < 3
+            or fields[-1] != b""
+            or fields[-2] != end
+            or end in b"\0".join(fields[:-2])
+            or b"\n" in raw
+            or fields[0].decode() not in NAMES
+        ):
+            raise RecordSplit(f"record split: a record is not whole: {raw!r} in {data!r}")
+        calls.append(tuple(f.decode().replace(NEWLINE_MARK, "\n") for f in fields[:-2]))
+    return calls
+
 
 #: Characters a word may hold unquoted without the shell reading them as syntax or expanding them.
 SAFE = frozenset(string.ascii_letters + string.digits + "-_./=,:@%+")
@@ -202,8 +252,7 @@ def bash_view(line: str) -> list[tuple[str, ...]]:
             check=False,
         )
         data = out.read_bytes()
-    records = data.split(b"\x01")[1:]
-    return [tuple(r.decode().split("\0")[:-1]) for r in records]
+    return parse_records(data)
 
 
 def agrees(line: str) -> bool | None:
@@ -265,12 +314,63 @@ CORPUS = [
     "cmda 'never closed",
     "cmda && ; cmdb",
     "cmda\n&& cmdb",
+    # A pipeline whose middle member's argument holds a newline: its record was split at the
+    # newline, and the last member's landed between the halves.
+    "cmdb mid#hash | cmdb \"-_'}|b\" '0[\\\nd' mid#hash | cmda ./path/to.file",
 ]
 
 
 @pytest.mark.parametrize("line", CORPUS)
 def test_a_corpus_line_is_read_as_bash_runs_it(line):
     assert agrees(line) is not False, _explain(line)
+
+
+def _record(*fields: str) -> bytes:
+    return b"\x01" + b"".join(f.encode() + b"\0" for f in (*fields, RECORD_END))
+
+
+def test_a_record_with_a_newline_in_an_argument_reads_back_whole():
+    """The placeholder round-trips: bash writes the newline as NEWLINE_MARK, and it reads back as
+    the newline the argument held."""
+    assert bash_view("cmdb 'a\nb' c") == [("cmdb", "a\nb", "c")]
+    assert bash_view("cmda | cmdb 'x\ny'") in (
+        [("cmda",), ("cmdb", "x\ny")],
+        [("cmdb", "x\ny"), ("cmda",)],
+    )
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        # One member's record cut in two, another's between the halves, as measured on main.
+        _record("cmdb", "mid#hash")
+        + b"\x01cmdb\x00-_'}|b\x000[\\"
+        + _record("cmda", "./path/to.file")
+        + b"d\x00mid#hash\x00\x03\x00",
+        # The same bytes as bash wrote them before the placeholder: no end marker, a newline.
+        b"\x01cmdb\x00mid#hash\x00\x01cmdb\x00-_'}|b\x000[\\\n"
+        b"\x01cmda\x00./path/to.file\x00d\x00mid#hash\x00",
+        # A record with no end, one with a field after its end, and bytes before the first record.
+        b"\x01cmda\x00x\x00",
+        b"\x01cmda\x00\x03\x00x\x00",
+        b"x\x01cmda\x00\x03\x00",
+        # A whole record that still holds a raw newline: written without the placeholder, so it
+        # could have been split, even though nothing landed inside it this time.
+        b"\x01cmda\x00a\nb\x00\x03\x00",
+    ],
+    ids=[
+        "interleaved",
+        "interleaved-before-the-placeholder",
+        "no-end",
+        "after-end",
+        "leading",
+        "raw-newline",
+    ],
+)
+def test_a_record_that_is_not_whole_fails_as_a_record_split(data):
+    """A split record is reported as one, with its bytes, never compared as a different call."""
+    with pytest.raises(RecordSplit, match="record split"):
+        parse_records(data)
 
 
 def test_the_corpus_holds_lines_the_reader_reads_and_lines_it_refuses():
