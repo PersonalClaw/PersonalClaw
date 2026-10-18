@@ -103,6 +103,7 @@ jobs:
         with:
           version: "0.13.1"
           python-version: "3.12.15"
+          prune-cache: true
 
       - name: The next release builds on the same package set
         # nix/next-release.nix: this checkout's wheel, against nixpkgs as flake.lock pins it

@@ -164,6 +164,7 @@ jobs:
           version: "0.13.1"
           python-version: ${{ matrix.python }}
           enable-cache: true
+          prune-cache: true
       # setup-uv only names the interpreter (UV_PYTHON); `uv python find` never downloads one.
       # Every step below that runs `uv python find` needs it present, carried shard or not, so
       # a scratch venv is made on it first: that downloads the managed interpreter setup-uv
@@ -293,6 +294,7 @@ jobs:
           version: "0.13.1"
           python-version: ${{ matrix.python }}
           enable-cache: true
+          prune-cache: true
       # setup-uv only names the interpreter (UV_PYTHON); `uv python find` never downloads one.
       # Every step below that runs `uv python find` needs it present, carried shard or not, so
       # a scratch venv is made on it first: that downloads the managed interpreter setup-uv
@@ -421,6 +423,7 @@ jobs:
           version: "0.13.1"
           python-version: ${{ matrix.python }}
           enable-cache: true
+          prune-cache: true
       # setup-uv only names the interpreter (UV_PYTHON); `uv python find` never downloads one.
       # Every step below that runs `uv python find` needs it present, carried shard or not, so
       # a scratch venv is made on it first: that downloads the managed interpreter setup-uv
@@ -550,6 +553,7 @@ jobs:
           version: "0.13.1"
           python-version: ${{ matrix.python }}
           enable-cache: true
+          prune-cache: true
       # setup-uv only names the interpreter (UV_PYTHON); `uv python find` never downloads one.
       # Every step below that runs `uv python find` needs it present, carried shard or not, so
       # a scratch venv is made on it first: that downloads the managed interpreter setup-uv
@@ -686,6 +690,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.12.15"
           enable-cache: true
+          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
       # A pattern that matches nothing (every shard carried) is not an error; a failed download
@@ -762,6 +767,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.12.15"
           enable-cache: true
+          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: this shard's inputs, as its runner reports them
@@ -845,6 +851,7 @@ jobs:
           version: "0.13.1"
           python-version: ${{ matrix.python }}
           enable-cache: true
+          prune-cache: true
       # setup-uv only names the interpreter (UV_PYTHON); `uv python find` never downloads one.
       # Every step below that runs `uv python find` needs it present, carried shard or not, so
       # a scratch venv is made on it first: that downloads the managed interpreter setup-uv
@@ -1001,6 +1008,7 @@ jobs:
         with:
           version: "0.13.1"
           python-version: "3.13.16"
+          prune-cache: true
       # The two public-installer legs below necessarily install the latest published release.
       # This source-tree leg closes the pre-publication gap: install the wheel this checkout
       # builds, remove every system timezone search path, and run the setup command a fresh user
@@ -1145,6 +1153,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.12.15"
           enable-cache: true
+          prune-cache: true
       - name: pip-audit
         # Install into a uv-managed venv, not `--system`: the runner's /usr is
         # PEP-668 externally-managed and uv refuses `--system` there (the whole step
