@@ -1334,11 +1334,23 @@ def test_a_denied_cross_site_frame_is_blanked_and_the_page_keeps_working(frames:
         assert "/frame-secret-sub.png" not in case["hits"], "the denied frame loaded its images"
 
 
-def test_a_denied_same_site_frame_is_blanked_when_it_commits(frames: dict) -> None:
+def _one_denial(case: dict, host: str, caught: set[tuple[str, str]]) -> None:
+    """One frame of *host* denied once: one SEL row, recorded where it was caught first."""
+    rows = [(op, phase) for op, phase, h in case["sel"] if h == host]
+    assert len(rows) == 1 and rows[0] in caught, case["sel"]
+
+
+def test_a_denied_same_site_frame_is_blanked_as_it_starts_or_when_it_commits(frames: dict) -> None:
+    """Blanked as its navigation starts, and again when it commits if that blank did not land
+    first: one denial either way, recorded under the first."""
     case = frames["l2"]
     _blanked_alone(case)
     assert case["px"]["magenta"] == 0 and case["px"]["green"] > 0, case["px"]
-    assert (cdp.FRAME_NAVIGATED, "frame_committed", SAME_SITE_DENIED) in case["sel"], case["sel"]
+    caught = {
+        (cdp.FRAME_STARTED_NAVIGATING, "frame_started"),
+        (cdp.FRAME_NAVIGATED, "frame_committed"),
+    }
+    _one_denial(case, SAME_SITE_DENIED, caught)
 
 
 def test_a_denied_frame_nested_in_an_allowed_frame_is_blanked(frames: dict) -> None:
@@ -1360,7 +1372,12 @@ def test_an_allowed_frame_nested_in_an_allowed_frame_runs(frames: dict) -> None:
 def test_a_frame_that_moves_itself_to_a_denied_host_is_blanked(frames: dict) -> None:
     case = frames["l5"]
     _blanked_alone(case)
-    assert any(phase == "frame_committed" for _op, phase, _h in case["sel"]), case["sel"]
+    # A frame of another site moving to a host of a third: no early blank, caught at its commit.
+    committed = {
+        (cdp.FRAME_NAVIGATED, "frame_committed"),
+        (cdp.TARGET_INFO_CHANGED, "frame_committed"),
+    }
+    _one_denial(case, DENIED_HOST, committed)
     assert case["px"]["magenta"] == 0, case["px"]
 
 
