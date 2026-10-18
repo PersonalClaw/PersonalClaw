@@ -7,7 +7,7 @@ const doc: UiDoc = {
   name: 'Composer',
   keywords: ['composer', 'input', 'chat', 'prompt', 'editor', 'send', 'mic', 'attach', 'markdown', 'textarea'],
   description:
-    'The one configurable message composer — used by Chat and the goal composer. A surface sheet wrapping a live-markdown editor (CodeMirror, not a <textarea>) that auto-grows to a user-resizable max, an inline pill cluster ([+] · agent · model · approval · reasoning), and a right-hand action cluster (optimize · mic · send/stop/steer/queue). The `controls` prop is the single seam that picks which pills and "+"-menu items appear; drag-and-drop file attach, a pasted screenshot as an attachment, focus/drag-over motion, and ↑/↓ history recall come built in.',
+    'The one configurable message composer — used by Chat and the goal composer. A surface sheet wrapping a live-markdown editor (CodeMirror, not a <textarea>) that auto-grows to a user-resizable max, an inline pill cluster ([+] · agent · model · approval · reasoning), and a right-hand action cluster (optimize · mic · send/stop/steer/queue). The `controls` prop is the single seam that picks which pills and "+"-menu items appear; drag-and-drop file attach, a pasted screenshot as an attachment, its focus ring and ↑/↓ history recall come built in. A focused composer shows the plain 2px coral ring every input gets; under Claw Arcade, the identity that keeps the decorative light (web/DESIGN.md §7), it wakes instead with an animated gradient ring, a coral rim and a spring rise, on focus and on drag-over.',
   props: [
     { name: 'value', description: 'The current draft text (controlled).' },
     { name: 'onChange', description: 'Fires with the new draft on every edit.' },
@@ -23,7 +23,7 @@ const doc: UiDoc = {
     { name: 'onAttach', description: 'Receives picked, dropped or pasted files — required (with controls.attach) to enable the "+" attach button, drag-and-drop, and pasting a screenshot.' },
     { name: 'onOpenPrompts', description: 'Opens the saved-prompt palette; when set, the "+" menu offers "Saved prompts".' },
     { name: 'plusMenuExtra', description: 'Host-owned extra items at the bottom of the "+" menu (e.g. Auto-nudge); receives `close` to dismiss the menu on action.' },
-    { name: 'onFocusChange', description: 'Notified when the editor gains/loses focus (drives the host layout + focus lift).' },
+    { name: 'onFocusChange', description: 'Notified when the editor gains/loses focus (drives the host layout and the focus aura around the composer).' },
     { name: 'mentionProject', description: 'Workspace dir scoping the @-mention file search.' },
     { name: 'onMentionFile', description: 'Notified when a file is picked via @-mention (host records the path for send).' },
     { name: 'onMentionKnowledge', description: 'Notified when a knowledge item is picked via @-mention (host records the id).' },
@@ -59,7 +59,7 @@ const doc: UiDoc = {
     { guidance: false, description: 'Do not enable controls.attach or controls.mic without also passing onAttach / onTranscribe — the affordance only appears when its handler exists.' },
     { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens (the token-lint ratchet fails the build otherwise).' },
   ],
-  anatomy: ['outer motion.div (focus / drag-over lift + scale spring)', 'conic-gradient ring glow (surges + breathes on drag-over)', 'surface sheet (pill↔sheet radius morph)', 'drag-and-drop attach overlay (AnimatePresence)', 'top-center resize handle grip', 'MarkdownInput (CodeMirror live-markdown editor)', 'pill cluster row ([+] menu · agent · model · approval · reasoning)', 'action cluster (optimize · mic · send/stop/steer/queue)', 'hidden file input'],
+  anatomy: ['outer motion.div (Claw Arcade: focus / drag-over lift + scale spring)', 'conic-gradient ring glow (Claw Arcade only: surges + breathes on drag-over)', 'surface sheet (pill↔sheet radius morph; the plain 2px coral focus ring outside Claw Arcade)', 'drag-and-drop attach overlay (AnimatePresence)', 'top-center resize handle grip', 'MarkdownInput (CodeMirror live-markdown editor)', 'pill cluster row ([+] menu · agent · model · approval · reasoning)', 'action cluster (optimize · mic · send/stop/steer/queue)', 'hidden file input'],
 }
 
 export default doc

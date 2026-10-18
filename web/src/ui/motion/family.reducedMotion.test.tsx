@@ -62,8 +62,8 @@ Object.defineProperty(window, 'matchMedia', {
   }) as unknown as MediaQueryList,
 })
 
-// DotGlow resolves its backdrop mode from the appearance store; 'waves' is the default and the
-// only mode with a live loop to suppress. jsdom implements no canvas, so DotGlow's effect returns
+// DotGlow resolves its backdrop mode from the appearance store; 'waves' (Claw Arcade's backdrop) is
+// the mode whose live loop there is to suppress. jsdom implements no canvas, so DotGlow's effect returns
 // at the null 2D context — which is fine here, because the branch this file reads is stated in
 // RENDER. Frame-level proof that the loop stops is `DotGlow.reducedMotion.test.tsx`'s job.
 vi.mock('../../app/appearance', () => ({

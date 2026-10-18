@@ -22,6 +22,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **With the default look, picking a colour scheme in Settings → Design keeps the UI density, dot shape, arrangement, bounciness and expressiveness you set, where it put them back to their defaults.**
 - **An answered approval, a Stop or an edit takes effect immediately.**
 - **A long shell command, such as one that writes a file from a here-document, is checked against the shell denylist in a fraction of a second, where a few kilobytes took several seconds and held up every chat while it was checked.**
 - **The check of a shell command for credential files takes a fraction of a second on a long command, where 100 KB took about 40 seconds and held up every chat while it ran.**
@@ -45,6 +46,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **The animated backdrop is off by default, so an idle chat no longer repaints every frame: Claw Arcade brings the wave field with its glow, the composer's glowing focus ring and the button sheen, and Retro Terminal brings a still field; if you already use one of them, pick its backdrop under Background in Settings → Design.**
 - **Updating a git clone that uv installed needs uv 0.13.1 or newer, which `uv self update` gets.**
 - **`personalclaw setup` ends by naming `personalclaw service install`, which keeps the gateway running in the background and through reboots, on a Mac or on Linux with systemd.**
 - **Every CI job stops at its own time limit, sized from how long it has taken, so a hung job no longer holds a runner for hours.**

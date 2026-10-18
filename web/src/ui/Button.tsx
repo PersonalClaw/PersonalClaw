@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react'
 import { cx } from './cx'
 import { spring, physics, expr, exprHeavy } from '../design/motion'
 import { fvs } from '../design/fontWeight'
+import { usePersonality } from '../app/personality'
 
 type Variant = 'primary' | 'tonal' | 'secondary' | 'ghost' | 'danger' | 'ghost-accent'
 type Size = 'xs' | 'sm' | 'md' | 'lg'
@@ -60,9 +61,10 @@ const sizeRole: Record<Size, string> = {
  *  fully yield to reduced-motion):
  *   • spring press-in whose depth grows with expressiveness,
  *   • hover-lift,
- *   • a liquid pointer-tracking sheen on solid (primary/danger) buttons — a
+ *   • in an identity that keeps the decorative light (Claw Arcade, `web/DESIGN.md`
+ *     §7), a liquid pointer-tracking sheen on solid (primary/danger) buttons — a
  *     radial highlight following the cursor; dropped below the heavy-effect
- *     threshold so "refined" stays flat,
+ *     threshold so "refined" stays flat (the default look's solid buttons are flat),
  *   • a `loading` state that cross-fades the label out for a centered spinner
  *     while preserving the button's width (no layout jump), optionally naming
  *     what is happening via `loadingLabel`.
@@ -142,6 +144,7 @@ export function Button({
   disabledReason?: string
 }) {
   const reduce = useReducedMotion()
+  const light = !!usePersonality().personality.behavior.decorativeLight
   const ref = useRef<HTMLButtonElement>(null)
   const isSolid = variant === 'primary' || variant === 'danger'
   const off = !!disabled || loading
@@ -166,7 +169,7 @@ export function Button({
   // Press/hover depth scale with expressiveness (floor keeps a hint when refined).
   const pressScale = reduce ? 1 : 1 - expr(0.05, 0.4)
   const hoverScale = reduce ? 1 : 1 + expr(0.025, 0.4)
-  const showSheen = isSolid && !reduce && exprHeavy(0.45) && !off
+  const showSheen = light && isSolid && !reduce && exprHeavy(0.45) && !off
 
   return (
     <motion.button
@@ -225,7 +228,7 @@ export function Button({
         variants[variant], sizes[size], className,
       )}
     >
-      {/* Liquid pointer-tracking sheen (solid buttons, bold intensity only). */}
+      {/* Liquid pointer-tracking sheen (the decorative light's: solid buttons, bold intensity only). */}
       {showSheen && (
         <motion.span aria-hidden className="pointer-events-none absolute inset-0" style={{ background: sheen, opacity: 0.9 }} />
       )}

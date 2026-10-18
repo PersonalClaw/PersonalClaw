@@ -42,8 +42,8 @@ type DialName = keyof PersonalityDials
 function dialToken(dial: DialName) {
   const varName = PERSONALITY_DIAL_TOKENS[dial]
   const token = TOKENS.find((t) => t.varName === varName)
-  if (!token || token.kind === 'color' || !token.runtimeKey) {
-    throw new Error(`dial ${dial} → ${varName} is not a runtime-backed token`)
+  if (!token || token.kind === 'color') {
+    throw new Error(`dial ${dial} → ${varName} is not a scalar or select token`)
   }
   return token
 }
@@ -71,8 +71,18 @@ function mount() {
   )
 }
 
-/** What `runtime` currently holds for a dial, via the token's own runtime key. */
-const live = (dial: DialName) => runtime[dialToken(dial).runtimeKey as keyof typeof runtime]
+/** The value a dial is in effect at: what `runtime` holds for it, via the token's own runtime
+ *  key, or — for the backdrop, which its one reader takes from the store rather than from
+ *  `runtime` — the CSS var the store writes on `<html>`. */
+function live(dial: DialName): unknown {
+  const token = dialToken(dial)
+  if (token.runtimeKey) return runtime[token.runtimeKey as keyof typeof runtime]
+  return document.documentElement.style.getPropertyValue(token.varName)
+}
+
+/** The backdrop the owner's overrides pin, if any. */
+const storedBackdrop = (): string | undefined =>
+  JSON.parse(localStorage.getItem('appearance') ?? '{}').selects?.['--bg-style']
 
 const ORIGINAL_MATCH_MEDIA = window.matchMedia
 const RUNTIME_SNAPSHOT = { ...runtime }
@@ -149,6 +159,34 @@ describe('activating an identity writes its dials through the appearance store',
     act(() => activate('retro-terminal'))
     expect(runtime.dotShape, 'the arcade sparkle survived the switch').toBe('square')
     expect(runtime.expressiveness).toBe(0.25)
+  })
+})
+
+describe('each identity arrives with its own backdrop', () => {
+  // `web/DESIGN.md` §7: the default look has none, Retro Terminal a still field, and Claw Arcade
+  // the animated wave field. A dial like the other four, so it lands in the owner's own overrides,
+  // where the Background control shows it and can dial it back.
+  it('claw-arcade brings the wave field', () => {
+    mount()
+    act(() => activate('claw-arcade'))
+    expect(storedBackdrop(), 'the arcade wrote no backdrop override').toBe('waves')
+    expect(live('bgStyle')).toBe('waves')
+  })
+
+  it('retro-terminal brings a still field', () => {
+    mount()
+    act(() => activate('retro-terminal'))
+    expect(storedBackdrop()).toBe('still')
+    expect(live('bgStyle')).toBe('still')
+  })
+
+  it('the default identity has none, and switching back to it clears the override', () => {
+    mount()
+    expect(live('bgStyle'), 'a fresh browser starts with a backdrop').toBe('none')
+    act(() => activate('claw-arcade'))
+    act(() => activate(DEFAULT_PERSONALITY))
+    expect(storedBackdrop(), 'the arcade’s wave field is still pinned').toBeUndefined()
+    expect(live('bgStyle')).toBe('none')
   })
 })
 

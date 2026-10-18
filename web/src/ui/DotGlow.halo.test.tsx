@@ -79,6 +79,10 @@ beforeEach(() => {
   Object.defineProperty(window, 'cancelAnimationFrame', { configurable: true, writable: true, value: () => {} })
   // jsdom has no canvas: a context whose every call is a no-op is enough, this file measures the layer.
   HTMLCanvasElement.prototype.getContext = (() => new Proxy({}, { get: () => () => {} })) as never
+  // The window has the focus, so the field paints every frame it is given. jsdom's own answer is
+  // whether an element was ever focused; behind another app the field paints at 30 fps
+  // (`DotGlow.pause.test.tsx`).
+  Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => true })
   for (const prop of ['clientWidth', 'clientHeight'] as const) {
     Object.defineProperty(HTMLDivElement.prototype, prop, { configurable: true, value: prop === 'clientWidth' ? STAGE.w : STAGE.h })
   }
@@ -88,6 +92,7 @@ afterEach(() => {
   Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, writable: true, value: ORIGINAL.raf })
   Object.defineProperty(window, 'cancelAnimationFrame', { configurable: true, writable: true, value: ORIGINAL.caf })
   HTMLCanvasElement.prototype.getContext = ORIGINAL.getContext
+  delete (document as unknown as Record<string, unknown>).hasFocus
   for (const prop of ['clientWidth', 'clientHeight'] as const) delete (HTMLDivElement.prototype as unknown as Record<string, unknown>)[prop]
 })
 

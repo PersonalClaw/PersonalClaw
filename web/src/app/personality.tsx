@@ -51,6 +51,12 @@ interface Ctx {
    *  passes straight through — otherwise clicking the tile that is already lit would
    *  silently drop the identity.
    *
+   *  Nor is any pick made in the DEFAULT identity: there is no identity to leave, so the
+   *  pick changes the colours and nothing else. Running the switch there would reset every
+   *  dial the default does not declare, so each scheme tile would turn off a backdrop the
+   *  owner picked under Background, which lasts until the next identity switch
+   *  (`web/DESIGN.md` §7), and put their density and motion dials back too.
+   *
    *  Deliberately does NOT touch `agent.bot_name`. That is server state the picker only
    *  ever writes with explicit consent, and a colour tile carries no consent surface, so
    *  clearing it here would be an unasked-for write to the user's configuration. */
@@ -148,10 +154,10 @@ export function PersonalityProvider({ children }: { children: ReactNode }) {
 
   const pickScheme = useCallback(
     (schemeId: string) => {
-      if (schemeId !== personality.baseScheme) activate(DEFAULT_PERSONALITY)
+      if (!isDefault && schemeId !== personality.baseScheme) activate(DEFAULT_PERSONALITY)
       applyScheme(schemeId)
     },
-    [personality, activate, applyScheme],
+    [personality, isDefault, activate, applyScheme],
   )
 
   const value = useMemo<Ctx>(

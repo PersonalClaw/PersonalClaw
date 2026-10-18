@@ -305,7 +305,7 @@ The default identity draws no decorative light. Coral is a solid accent on neutr
 
 Claw Arcade is the one identity that keeps the light, all of it as decoration. The working signal is still the orb.
 
-- **The wave field** (`waves`), which pauses whenever nobody can see it: in a hidden tab, and when its stage is offscreen.
+- **The wave field** (`waves`), which pauses whenever nobody can see it: in a hidden tab, and when its stage is offscreen. While another app has the focus it keeps moving, at 30 fps.
 - **The halo:** the wide glow around the composer (`ui/DotGlow`), its bloom, and the focus aura that gathers close around the composer while it has the caret.
 - **The composer's focus:** the animated 4-stop gradient ring (coral spectrum + highlight stop), the tight coral rim of `--shadow-composer-focus`, and the spring rise.
 - **The sheen:** a pointer-tracking radial sheen on solid buttons.

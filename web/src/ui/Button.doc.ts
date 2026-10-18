@@ -7,7 +7,7 @@ const doc: UiDoc = {
   name: 'Button',
   keywords: ['button', 'cta', 'action', 'submit', 'primary', 'danger', 'loading', 'pill'],
   description:
-    'The one shared button for every clickable action. Six variants (primary / tonal / secondary / ghost / ghost-accent / danger) across four sizes, pill-shaped by default with an optional squircle corner. Physical press/hover springs and a loading state that swaps the label for a centered spinner without changing width.',
+    'The one shared button for every clickable action. Six variants (primary / tonal / secondary / ghost / ghost-accent / danger) across four sizes, pill-shaped by default with an optional squircle corner. Physical press/hover springs and a loading state that swaps the label for a centered spinner without changing width. Under Claw Arcade, the identity that keeps the decorative light (web/DESIGN.md §7), solid variants also carry a pointer-tracking sheen; everywhere else they stay flat.',
   props: [
     { name: 'children', description: 'The button label (and optional leading icon).' },
     { name: 'variant', description: "Visual emphasis. 'primary' is the page's main action; 'tonal' is a primary-tinted chip CTA; 'secondary'/'ghost' are quieter; 'ghost-accent' is a ghost whose LABEL carries the accent, for the retry-after-failure affordance — it uses primary-emphasis, the shade that clears AA on every ground including the surface-high it hovers to; 'danger' is destructive." },
@@ -34,7 +34,7 @@ const doc: UiDoc = {
     { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens (the token-lint ratchet fails the build otherwise).' },
     { guidance: false, description: 'Do not use Button for icon-only affordances — use IconButton (or SquareIconButton) instead.' },
   ],
-  anatomy: ['motion.button (press/hover spring)', 'pointer-tracked sheen (solid variants, bold intensity)', 'label span (cross-fades under spinner)', 'loading spinner overlay'],
+  anatomy: ['motion.button (press/hover spring)', 'pointer-tracked sheen (Claw Arcade only: solid variants, bold intensity)', 'label span (cross-fades under spinner)', 'loading spinner overlay'],
 }
 
 export default doc

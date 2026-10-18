@@ -3896,7 +3896,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               the stage `DotGlow` fades the halo out inside of, so a docked panel beside the
               column (Activity, file peek, chat history, the mobile map drawer — all opaque
               `SidePanel`s) bounds the halo instead of slicing it at the panel's edge. */}
-          <DotGlow intensity={composerFocused ? 1.6 : 1} focused={composerFocused} composerRef={composerRef} />
+          <DotGlow focused={composerFocused} composerRef={composerRef} />
           {loadingHistory ? (
             // Opening an existing session: paint the chat frame instantly (header +
             // docked composer are already live around this column) and skeleton the

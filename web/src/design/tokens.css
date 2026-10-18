@@ -203,7 +203,9 @@
   --shadow-rest: 0 2px 8px -2px rgb(0 0 0 / 0.16);
   --shadow-lift: 0 22px 55px -14px rgb(0 0 0 / 0.6),
     0 0 48px -6px color-mix(in srgb, var(--color-primary) 50%, transparent);
-  /* The COMPOSER's awake (focus / drag-over) shadow. Not `--shadow-lift`, for a measured
+  /* The COMPOSER's awake (focus / drag-over) shadow, under the decorative light that Claw Arcade
+     keeps (web/DESIGN.md §7); the default look's focused composer keeps `--shadow-rest` and a
+     plain 2px coral ring instead. Not `--shadow-lift`, for a measured
      reason: the composer sits in the page gutter (`px-l`, 16px) — docked 16px above the page
      bottom, and 16px from the rail at the shipped `full` width — and the page box clips
      anything past that. `--shadow-lift` reaches ~60px, so it was cut into a straight line

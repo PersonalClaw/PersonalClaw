@@ -166,8 +166,12 @@ export function DesignPanel() {
       {/* ── 2. TYPOGRAPHY (zoom / font size / typeface) ── */}
       <ControlSection title="Typography & scale" icon={Type} subtitle="Whole-UI zoom, text size, and the interface typeface." groups={TYPOGRAPHY_GROUPS} />
 
-      {/* ── 3. BACKDROP & MOTION (separate from the scheme) ── */}
-      <ControlSection title="Backdrop & motion" icon={Boxes} subtitle="The 3D dot-wave surface and animation — independent of the color scheme." groups={BACKDROP_GROUPS} />
+      {/* ── 3. BACKDROP & MOTION (separate from the scheme) ──
+          The note says where the animated backdrop went when it stopped being the default
+          (web/DESIGN.md §7), and where to turn it back on: an owner who misses it looks here,
+          just above the Background control that turns it on in any identity. */}
+      <ControlSection title="Backdrop & motion" icon={Boxes} subtitle="The 3D dot-wave surface and animation — independent of the color scheme."
+        note="The animated backdrop is off by default; Background below turns it on, and Claw Arcade brings it." groups={BACKDROP_GROUPS} />
 
       {/* ── 4. SHAPE ── (content width is a preset in Account → Layout) */}
       <ControlSection title="Layout & shape" icon={LayoutIcon} subtitle="Interface density (comfortable / dense / CLI) and corner roundness." groups={LAYOUT_GROUPS} />
@@ -287,12 +291,13 @@ function Preview() {
   )
 }
 
-/** A group of non-color token controls (scalars + selects), always visible. */
-function ControlSection({ title, icon: Icon, subtitle, groups }: { title: string; icon: typeof Boxes; subtitle: string; groups: string[] }) {
+/** A group of non-color token controls (scalars + selects), always visible. `note` is one
+ *  more sentence under the subtitle, for what an owner needs to know before tuning them. */
+function ControlSection({ title, icon: Icon, subtitle, note, groups }: { title: string; icon: typeof Boxes; subtitle: string; note?: string; groups: string[] }) {
   const tokens = TOKENS.filter((t) => groups.includes(t.group))
   if (!tokens.length) return null
   return (
-    <Section title={title} icon={Icon} hint={subtitle}>
+    <Section title={title} icon={Icon} hint={note ? `${subtitle} ${note}` : subtitle}>
       <Surface tone="container" radius="lg" className="px-l py-m">
         <div className="divide-y divide-outline-variant/30">
           {tokens.map((t) =>

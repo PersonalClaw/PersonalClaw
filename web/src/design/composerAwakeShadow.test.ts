@@ -26,11 +26,21 @@ const tokens = readFileSync(join(WEB, 'src/design/tokens.css'), 'utf8')
 /** The page gutter the composer sits in: `px-l` = `--spacing-l` = 16px at the default density. */
 const GUTTER = 16
 
-/** The token the composer surface animates its box-shadow to when focused or receiving a drop. */
+/** The token the composer surface animates its box-shadow to when awake (focused or receiving a
+ *  drop, under the decorative light — Claw Arcade's, `web/DESIGN.md` §7). */
 function awakeToken(): string {
-  const m = composer.match(/boxShadow:\s*\(focused \|\| dragOver\)\s*\?\s*'var\((--[\w-]+)\)'/)
+  const m = composer.match(/boxShadow:\s*awake\s*\?\s*'var\((--[\w-]+)\)'/)
   expect(m, 'Composer.tsx no longer animates its awake box-shadow to a single var() token — re-point this rail').not.toBeNull()
   return m![1]
+}
+
+/** How far the default look's focus ring reaches past the composer: its outline width plus its
+ *  offset, read out of `Composer.tsx`'s `FOCUS_RING`. */
+function focusRingReach(): number {
+  const ring = composer.match(/const FOCUS_RING = \{([^}]*)\}/)
+  expect(ring, 'Composer.tsx no longer declares FOCUS_RING — re-point this rail').not.toBeNull()
+  const px = (prop: string) => Number(ring![1].match(new RegExp(`${prop}:\\s*'(\\d+(?:\\.\\d+)?)px'`))?.[1] ?? NaN)
+  return px('outlineWidth') + px('outlineOffset')
 }
 
 /** Every declaration of `name` in tokens.css (the dark @theme default plus any scheme override). */
@@ -83,6 +93,12 @@ describe('the composer’s awake shadow stays inside its gutter', () => {
         expect(r.side, `${name}: "${layer}" reaches ${r.side}px beside the composer; the gutter leaves ${budget}px`).toBeLessThanOrEqual(budget)
       }
     }
+  })
+
+  it('so does the default look’s plain focus ring, which never rises', () => {
+    const reach = focusRingReach()
+    expect(reach, 'FOCUS_RING has no readable outline width and offset').toBeGreaterThan(0)
+    expect(reach, `the focus ring reaches ${reach}px past the composer; the gutter has ${GUTTER}px`).toBeLessThanOrEqual(GUTTER)
   })
 
   it('the measuring stick is not vacuous: the cards’ `--shadow-lift` it replaced does NOT fit', () => {

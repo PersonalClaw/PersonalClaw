@@ -79,6 +79,9 @@ const NEUTRAL_SCHEME = 'ocean'
 type Ctl = {
   activate: (id: string) => void
   pickScheme: (id: string) => void
+  /** What a Settings control does: a hand-picked select or slider value. */
+  setSelect: (varName: string, value: string) => void
+  setScalar: (varName: string, value: number) => void
   personalityId: string
   wordmarkLabel: string
   activeScheme: string
@@ -93,6 +96,8 @@ function Probe() {
   ctl = {
     activate: p.activate,
     pickScheme: p.pickScheme,
+    setSelect: a.setSelect,
+    setScalar: a.setScalar,
     personalityId: p.personality.id,
     wordmarkLabel: p.wordmarkLabel,
     activeScheme: a.activeScheme,
@@ -212,6 +217,36 @@ describe.each(OTHERS.map((p) => [p.id] as const))('%s → a standard scheme', (i
     expect(document.querySelector<HTMLLinkElement>('link[rel~="icon"]')?.getAttribute('href')).toBe('/claw.svg')
     expect(document.documentElement.dataset.personality).toBe(DEFAULT_PERSONALITY)
     expect(ctl.wordmarkLabel).toBe('PersonalClaw')
+  })
+})
+
+describe('in the default identity, a scheme pick changes the colours and nothing else', () => {
+  // A scheme is colours only (`pages/settings/DesignPanel.tsx`), and a backdrop the owner picked
+  // by hand lasts until the next identity switch (`web/DESIGN.md` §7). With the default identity
+  // already on, a scheme pick has no identity to take with it, so it must not run the switch at
+  // all: the switch resets every dial the default does not declare, and the backdrop is one, so
+  // every scheme tile turned off a wave field picked under Background.
+  const storedSelects = (): Record<string, string> =>
+    JSON.parse(localStorage.getItem('appearance') ?? '{}').selects ?? {}
+
+  it('keeps a hand-picked backdrop, density and motion dials', () => {
+    mount()
+    act(() => {
+      ctl.setSelect('--bg-style', 'waves')
+      ctl.setSelect('--ui-density', 'dense')
+      ctl.setSelect('--dot-shape', 'circle')
+      ctl.setScalar('--bounciness', 0.4)
+    })
+    const picked = { density: ctl.density, dials: ctl.dials }
+    // Precondition: the picks landed, so "kept" is about values that moved off their defaults.
+    expect(picked.density).toBe('dense')
+    expect(storedSelects()['--bg-style']).toBe('waves')
+
+    act(() => ctl.pickScheme(NEUTRAL_SCHEME))
+    expect(ctl.activeScheme, 'the picked scheme must still land').toBe(NEUTRAL_SCHEME)
+    expect(ctl.personalityId).toBe(DEFAULT_PERSONALITY)
+    expect(storedSelects()['--bg-style'], 'the scheme tile turned the hand-picked wave field off').toBe('waves')
+    expect({ density: ctl.density, dials: ctl.dials }, 'the scheme tile reset a density or dial pick').toEqual(picked)
   })
 })
 

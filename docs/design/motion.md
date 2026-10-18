@@ -388,7 +388,9 @@ refuses to present a window that never observed a running animation as a result.
 Apple-silicon Mac (darwin arm64), against a gateway seeded with the `demo-home` fixture. This is
 the most generous environment the app will ever run in, and the headline table below is
 labelled as such rather than presented as a guarantee — which is why the 4× throttled and
-headed-on-real-vsync runs follow it.
+headed-on-real-vsync runs follow it. The runs predate the backdrop going off by default, so the
+ChatPage rows include the wave field repainting behind the composer on every frame, which the
+default look no longer draws and Claw Arcade still does (`web/DESIGN.md` §7).
 
 One thing that changes how to read every row: **the headless shell does not present at 60Hz.**
 Its idle control lands on 8.33ms flat — an uncapped ~120Hz clock. The *same page in a headed
