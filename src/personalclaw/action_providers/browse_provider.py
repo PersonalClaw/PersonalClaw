@@ -579,7 +579,17 @@ class BrowseActionProvider(ActionProvider):
         driver = CdpPageDriver(
             session.page_transport, screenshot_dir=Path(raw_dir) if raw_dir else None
         )
-        return session, driver, transport.close
+
+        async def close() -> None:
+            # The session's own work ends first, so nothing it still runs for a frame fails on
+            # the closed socket and records a denial after the run; the socket closes however
+            # that ends.
+            try:
+                await session.close()
+            finally:
+                await transport.close()
+
+        return session, driver, close
 
     # ── The credential handoff ───────────────────────────────────────────────
 

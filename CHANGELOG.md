@@ -22,6 +22,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Only approvals, questions and errors interrupt you; a loop's progress after each cycle waits for the daily digest, and every other notification waits in the bell.**
 - **`python -m tools.ci verify-check-run` says whether a pull request's posted merge verdict counts: only the merge controller's App's newest run, green, for the exact head and tree it records, so a job of a pull request's own that names itself `merge-verdict` counts for nothing.**
 
+### Security
+
+- **A browse run blanks a frame from a site it may not reach, such as one your egress settings deny, on its own and says so, where it blanked the whole page; in a browser that gives each site its own process, that frame was not blanked at all and stayed in the run's screenshots and took its clicks.**
+
 ## [0.2.2] — 2026-10-18
 
 A patch release on 0.2.1. A long shell command, such as one that writes a file from a here-document,

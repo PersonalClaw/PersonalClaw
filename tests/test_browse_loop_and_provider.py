@@ -532,6 +532,132 @@ class TestTheLoop:
         )
         assert not any("was refused" in p for p in decide.page_prompts)
 
+    @pytest.mark.security
+    def test_a_frame_blanked_during_a_step_is_reported_in_the_next_prompt(self):
+        """🔴 Red before: the run was never told a frame of its page was blanked, so a model
+        looking for a payment form or a sign-in box that lived in that frame went on looking.
+        A navigation the gate refused is still reported once, as refused, and never as a frame."""
+        CHANGELOG_DENIED = "https://example.test/denied"
+
+        class _Blocks(_FakeSession):
+            def __init__(self, page):
+                super().__init__(page, deny=(CHANGELOG_DENIED,))
+                self.blocks: list = []
+
+            async def navigate(self, url: str):
+                outcome = await super().navigate(url)
+                if not outcome.ok:
+                    self.blocks.append(
+                        SimpleNamespace(frame=False, host="example.test", reason=outcome.reason)
+                    )
+                return outcome
+
+        page = _FakePage({INDEX_URL: INDEX_HTML, CHANGELOG_URL: CHANGELOG_HTML}, url=INDEX_URL)
+        session = _Blocks(page)
+
+        async def scroll(direction):
+            page.actions.append(("scroll", direction))
+            session.blocks.append(
+                SimpleNamespace(frame=True, host="ads.example", reason="the host is denied")
+            )
+
+        page.scroll = scroll
+        decide = _Decide("SCROLL down", f"NAVIGATE {CHANGELOG_DENIED}", "DONE")
+        _run(
+            run_browse_loop(
+                goal="read the changelog",
+                start_url=INDEX_URL,
+                session=session,
+                page=page,
+                decide=decide,
+            )
+        )
+
+        blanked = [p for p in decide.page_prompts if "was blanked" in p]
+        assert len(blanked) == 1, decide.page_prompts
+        assert "a frame from ads.example was blanked: the host is denied" in blanked[0]
+        assert decide.page_prompts.index(blanked[0]) == 1, "told on the step after the block"
+        refused = [p for p in decide.page_prompts if "was refused" in p]
+        assert len(refused) == 1 and "was blanked" not in refused[0], decide.page_prompts
+
+    @pytest.mark.security
+    def test_a_step_that_blanks_many_frames_names_the_first_three_and_counts_the_rest(self):
+        """🔴 Red before: every frame blanked was a line of its own in the next prompt, outside the
+        page's fence and naming a host the page chose, so a page that blanked frame after frame
+        grew the prompt without end. A step's prompt names three and counts the rest."""
+
+        class _Blocks(_FakeSession):
+            def __init__(self, page):
+                super().__init__(page)
+                self.blocks: list = []
+
+        page = _FakePage({INDEX_URL: INDEX_HTML}, url=INDEX_URL)
+        session = _Blocks(page)
+
+        async def scroll(direction):
+            page.actions.append(("scroll", direction))
+            session.blocks.extend(
+                SimpleNamespace(frame=True, host=f"ads{n}.example", reason="the host is denied")
+                for n in range(10)
+            )
+
+        page.scroll = scroll
+        decide = _Decide("SCROLL down", "DONE")
+        _run(
+            run_browse_loop(
+                goal="read the docs", start_url=INDEX_URL, session=session, page=page, decide=decide
+            )
+        )
+
+        told = decide.page_prompts[1].splitlines()
+        assert [line for line in told if line.startswith(("- a frame from", "- 7 more"))] == [
+            "- a frame from ads0.example was blanked: the host is denied",
+            "- a frame from ads1.example was blanked: the host is denied",
+            "- a frame from ads2.example was blanked: the host is denied",
+            "- 7 more frames of this page were blocked",
+        ]
+
+    @pytest.mark.security
+    def test_a_frame_block_is_reported_as_what_was_done_about_the_frame(self):
+        """🔴 Red before: every frame block was reported as "a frame from X was blanked", the
+        fallback that blanked the whole page and a fenced frame left unloaded included, where the
+        whole page went or nothing was blanked at all. Each is reported as what happened."""
+
+        class _Blocks(_FakeSession):
+            def __init__(self, page):
+                super().__init__(page)
+                self.blocks: list = []
+
+        page = _FakePage({INDEX_URL: INDEX_HTML}, url=INDEX_URL)
+        session = _Blocks(page)
+
+        async def scroll(direction):
+            page.actions.append(("scroll", direction))
+            session.blocks.extend(
+                SimpleNamespace(frame=True, host=host, reason="the host is denied", blanked=done)
+                for host, done in (
+                    ("ads.example", "page"),
+                    ("fenced.example", "unloaded"),
+                    ("frame.example", "frame"),
+                )
+            )
+
+        page.scroll = scroll
+        decide = _Decide("SCROLL down", "DONE")
+        _run(
+            run_browse_loop(
+                goal="read the docs", start_url=INDEX_URL, session=session, page=page, decide=decide
+            )
+        )
+
+        told = decide.page_prompts[1].splitlines()
+        assert [line for line in told if line.startswith(("- a frame from", "- 7 more"))] == [
+            "- a frame from ads.example could not be blanked on its own, so the whole page was "
+            "blanked: the host is denied",
+            "- a frame from fenced.example was left unloaded: the host is denied",
+            "- a frame from frame.example was blanked: the host is denied",
+        ]
+
     def test_a_denied_first_navigation_is_a_failure_not_a_park(self):
         """A run that never loaded a page produced nothing to keep, so it fails rather than
         parking — parking a run with no notes asks a human to look at an empty result."""

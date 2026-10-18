@@ -37,8 +37,8 @@ from personalclaw.browse.plans import (
 
 #: Open a gateway CDP session for ``cdp_url`` and return ``(session, page, closer)`` — the same
 #: triple ``browse_provider._open`` yields (a startable/navigable session, a page driver, and an
-#: awaitable that tears the transport down). Injected so the runner drives a recorder in a test
-#: exactly as it drives a live browser in production.
+#: awaitable that ends the session's work and tears the transport down). Injected so the runner
+#: drives a recorder in a test exactly as it drives a live browser in production.
 CdpSessionOpener = Callable[[str], Awaitable[tuple[Any, Any, Callable[[], Awaitable[None]]]]]
 
 
@@ -126,7 +126,7 @@ def make_gateway_opener(
     Lazy-imports the CDP transport/driver/session (exactly as ``browse_provider._open`` does) so
     importing this module never drags in the browser stack — the watched-sources poll path imports
     it, and most polls never escalate to the browse tier. Returns ``(session, page, closer)`` for a
-    resolved ``cdp_url``; the closer tears the transport down.
+    resolved ``cdp_url``; the closer ends the session's own work, then tears the transport down.
     """
 
     async def _open(cdp_url: str) -> tuple[Any, Any, Callable[[], Awaitable[None]]]:
@@ -143,6 +143,16 @@ def make_gateway_opener(
             session.page_transport,
             screenshot_dir=Path(screenshot_dir) if screenshot_dir else None,
         )
-        return session, driver, transport.close
+
+        async def close() -> None:
+            # The session's own work ends first, so nothing it still runs for a frame fails on
+            # the closed socket and records a denial after the tick; the socket closes however
+            # that ends.
+            try:
+                await session.close()
+            finally:
+                await transport.close()
+
+        return session, driver, close
 
     return _open

@@ -1131,9 +1131,23 @@ What the tier does not reach:
   tools and only its calls are refused. A sign-in's renewal, which the connection sends on its
   own, keeps to your settings alone, and the connection looks the server's name up again for
   itself, so it is not held to the address the guard checked.
-- **What a page in the browser loads on its own.** Its images, scripts and frames are not asked of
-  the guard; only the navigation is (`net.policy.BROWSE`), and so is a redirect the page takes,
-  judged for the run that opened it.
+- **What a page in the browser loads on its own.** Its images and scripts are not asked of the
+  guard; the navigation is (`net.policy.BROWSE`), and so are a redirect the page takes and the
+  earlier page the run goes back to, judged for the run that opened it. Each frame of the page is
+  judged the same way. A frame from a host your settings deny, or under a `listed` or `registry`
+  tier from any host off the list, is blanked, the run is told, and the rest of the page keeps
+  working. The browser has already asked that host for the frame. Only a frame the browser moves
+  into a process of its own for the first time is held until it is judged, by the address it was
+  going to; any other frame is judged once its document has loaded. So a frame in the page's own
+  process (on a browser that does not give each site its own process, every frame from another
+  site; on any browser, one from the page's own site), a frame that is redirected or navigated
+  again, and a frame inside a sandboxed frame run their first scripts before they are blanked. A
+  frame in a process of its own also runs without the in-page guard that stops the page's own
+  scripts from reaching the network, playing media or touching your devices. A page the browser
+  prepares for the page out of sight, such as a prerendered one, is held while the run's session
+  lasts; one already running before the session started watching the tab is left running,
+  unjudged. Whatever is still held when the session ends, such a page or a frame still being
+  judged, loads once it has ended.
 
 **What this means for you:** a tier set in the ceiling holds for everything the agent, your
 automations and your apps reach through PersonalClaw's own requests, for every call to a remote
