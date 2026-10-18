@@ -5,9 +5,10 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 
-from . import shards, variation_census
+from . import audit, shards, variation_census
 
-COMMANDS: dict[str, Callable[[list[str] | None], int]] = {
+COMMANDS: dict[str, Callable[[list[str]], int]] = {
+    "audit": audit.main,
     "shards": shards.main,
     "variation-census": variation_census.main,
 }

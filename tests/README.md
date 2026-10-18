@@ -25,14 +25,9 @@ python -m pytest -k provider_lazy_imports -v
 python -m pytest --lf -v
 ```
 
-The OSS CI gate is reproduced end-to-end by:
-
-```bash
-docker build --target test .
-```
-
-That stage runs `black --check`, `isort --check-only`, `flake8`, `mypy`, and
-`pytest` against the in-image source tree.
+CI's gate is `.github/workflows/ci.yml`: its `lint` job runs `make lint` (black,
+isort, flake8 and mypy), and its `test-shard` and `test-macos` jobs run the suite.
+Locally, `make lint` and `make test` run the same checks.
 
 ## What the suite downloads
 

@@ -44,10 +44,6 @@ _RANGE_INSTALLS = {
         "rehearses the public installer on this checkout, so it resolves exactly what that "
         "installer will"
     ),
-    (".github/workflows/breadth.yml", "-e . pip-audit"): (
-        "a report-only audit of what a fresh `pip install personalclaw` resolves today, which is "
-        "the population the ranges govern; it builds nothing that ships"
-    ),
     (".github/workflows/clean-machine-walkthroughs.yml", "pip install --quiet personalclaw"): (
         "installs the released wheel from PyPI: a stranger's documented path is the subject"
     ),

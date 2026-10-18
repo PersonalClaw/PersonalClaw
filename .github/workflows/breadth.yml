@@ -1131,13 +1131,13 @@ jobs:
   audit:
     # report holds each key to this job's latest attempt, by this name.
     name: breadth-leg audit/1
-    # Report-only supply-chain scan — visibility, not a merge gate (substrate, not
-    # bureaucracy). Dependabot drives the actual update PRs.
+    # The dependency audit ci.yml's `audit` runs on a pull request (tools/ci/audit.py), every
+    # night on main, where a new advisory lands without a commit: red on a tool that did not
+    # run and on an unwaived high or critical finding, and that red opens the leg's issue.
     needs: [freshness]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    continue-on-error: true
     env:
       PY: "3.12.15"
     steps:
@@ -1154,23 +1154,20 @@ jobs:
           python-version: "3.12.15"
           enable-cache: true
           prune-cache: true
-      - name: pip-audit
-        # Install into a uv-managed venv, not `--system`: the runner's /usr is
-        # PEP-668 externally-managed and uv refuses `--system` there (the whole step
-        # then errored out under `bash -e` before pip-audit ever ran, silently
-        # disabling the scan). Report-only, so a finding never gates (|| true).
-        # pip-audit is not in uv.lock, so it is named as an exact release, and nothing refreshes
-        # it yet: moving it is a reviewed edit of this line.
-        run: |
-          uv venv .venv-audit
-          uv pip install --python .venv-audit/bin/python -e . pip-audit==2.10.1
-          .venv-audit/bin/python -m pip_audit || true
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
-          cache: npm
-      - name: npm audit (root workspace)
-        run: npm ci && npm audit || true
+      # pip-audit is not in uv.lock, so it is named as an exact release, and nothing refreshes
+      # it yet: moving it is a reviewed edit of this line. A venv of its own, with the project
+      # never installed into it, so what it audits is only the exported locks.
+      - name: pip-audit, in a venv of its own
+        run: |
+          uv venv "$RUNNER_TEMP/audit-venv"
+          uv pip install --python "$RUNNER_TEMP/audit-venv/bin/python" pip-audit==2.10.1
+      - name: audit the graphs core ships
+        run: >-
+          "$RUNNER_TEMP/audit-venv/bin/python" -m tools.ci audit run
+          --pip-audit "$RUNNER_TEMP/audit-venv/bin/python" --work "$RUNNER_TEMP/audit"
       # The advisories the audit reads move daily, so the night is an input: a later night's
       # green closes its issue, and a same-night rerun's green is a flake.
       - name: this leg's inputs, as its runner reports them

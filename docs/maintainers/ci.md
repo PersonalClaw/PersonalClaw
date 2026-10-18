@@ -505,6 +505,42 @@ The audited writes today:
 | `release.yml` | `attest` | `id-token: write`, `attestations: write` | build-provenance attestations |
 | `breadth.yml` | `report` | `issues: write` | one issue per red nightly leg |
 
+### The dependency audit
+
+`tools/ci/audit.py` audits the graphs core ships, read from its locks and never from a fresh
+resolution, so a lock pinned to an older vulnerable release is reported even when a fresh
+resolution would be clean:
+
+- **Python:** `uv export --locked` once per shipped graph, with the extras its artifact
+  installs (`PYTHON_GRAPHS`: the wheel, the gateway image's `uv export` in
+  `deploy/docker/Dockerfile.backend`, the desktop bundle's `uv sync` in `release.yml`),
+  audited by `pip-audit --no-deps --disable-pip`. `tests/test_ci_audit.py` reads each graph's
+  extras from the file that installs them.
+- **npm:** `npm audit --package-lock-only` on the root `package-lock.json`, every workspace
+  and build tool included, since build tools run in CI and shape the artifacts.
+
+It fails on a tool that did not run (no report, or one that cannot be read), on a high or
+critical finding no live waiver covers, and on a waiver that is expired, more than 30 days
+out, missing a field, or matching no finding. pip-audit reports no severity, so a Python
+finding gates as a high one would. Every other finding is listed in the job summary. It runs
+as `ci.yml`'s `audit` job, gated on `tree-check` like every job a tested tree skips, and as
+breadth's nightly `audit` leg, whose red opens the leg's issue. A new advisory on a dependency
+no pull request touched therefore stops merging until it is fixed or waived. The release half,
+refusing an unwaived critical, is #3911's.
+
+Waivers are `[[waiver]]` entries in `tools/ci/audit-baseline.toml`, in the form of the
+exceptions below. Not audited here: the apps' and the website's locks, which their own
+repositories audit, and the images' OS packages, which need a scanner of their own.
+
+### Nothing throws an exit status away unseen
+
+The contract row `nothing-throws-an-exit-status-away-unseen` (`tests/ci_masking.py`) finds
+every `|| true`, `|| :` and `continue-on-error` in a workflow, a Dockerfile or a script under
+`scripts/`, and requires each to be named in its list with a reason. An entry that matches
+nothing fails, and a tolerated pytest step must have its outcome read back by a later step of
+its job. It reads the spellings the tree uses; `set +e`, `|| echo` and the like are review's
+to catch.
+
 ### Exceptions
 
 An `[[exception]]` waives exactly one violation of one rule in one file, while a pin cannot hold

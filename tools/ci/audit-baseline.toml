@@ -1,0 +1,20 @@
+# The dependency audit's waivers (#3918), read by `python -m tools.ci audit run`.
+#
+# A waiver covers exactly one advisory on one package in one lock, and expires at most 30 days
+# after the day it is written or renewed. Renewing is a new expiry with a new reason. An expired
+# waiver, one more than 30 days out, one missing a field, and one that matches no finding all
+# fail the audit, so the list cannot rot. `file`, `scope` and `reference` are the finding's own,
+# as the audit's summary prints them: `scope` is `pip-audit` (file `uv.lock`) or `npm-audit`
+# (file `package-lock.json`), and `reference` is "<package> <advisory>".
+#
+# Only a high or critical finding (or a Python one, which pip-audit reports unrated) fails the
+# run when it is not waived. A moderate or low one is reported and gates nothing; it is listed
+# here so that what is left after the in-range updates is written down with its reason and date.
+
+[[waiver]]
+file = "package-lock.json"
+scope = "npm-audit"
+reference = "sprintf-js GHSA-hp3w-g68c-fv3c"
+owner = "maintainers"
+reason = "Moderate. Reached only through desktop's build tools (electron-builder, app-builder-lib, @electron/get, global-agent, roarr), never shipped in an artifact's runtime. No sprintf-js release fixes it: 1.1.3, the newest, is in the advisory's range, and npm's only offered fix is a semver-major downgrade of electron-builder. This ends when sprintf-js or roarr publishes a fix, or electron-builder drops the chain."
+expires = 2026-11-17

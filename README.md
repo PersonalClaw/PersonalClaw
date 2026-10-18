@@ -387,8 +387,9 @@ versions; PyPI publishing uses **Trusted Publishing** (OIDC — no long-lived to
 stored anywhere) behind a manual owner-approval gate; every release attaches **syft
 SPDX-JSON SBOMs** for the wheel and both architectures of each image, plus
 **build-provenance attestations** for the wheel and images; and Dependabot watches the
-pip, npm, and GitHub-Actions ecosystems weekly. `pip-audit` and `npm audit` run on every
-push to `main`.
+pip, npm, and GitHub-Actions ecosystems weekly. A dependency audit of what ships (`pip-audit`
+on the locked Python graphs, `npm audit` on the npm lock) runs on every pull request and every
+night, and fails on a new high or critical finding that no live waiver covers.
 
 ## Documentation
 
