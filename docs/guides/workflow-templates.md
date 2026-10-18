@@ -126,7 +126,8 @@ what its kind gives it:
 |---|---|
 | `loop` | its last cycle's output, as `{{last.output}}` reads a cycle, once it ends done; nothing when it is handed to you instead, and a step reading it is then skipped |
 | `branch` | `{"case": "<the case it took>", "produced": <what that case produced>}`, with `produced` once that case has ended in success, read as `{{last.output}}` reads a cycle; a step reading it is skipped when the case failed |
-| `sequence`, `parallel`, `foreach` | nothing: validation refuses the read when you save (`WF_UNSATISFIABLE_OUTPUT_REF`), so read the step inside whose output you need |
+| `foreach` | the list of what each item that gave a result produced, in item order, once the fan-out ends in success; an item that failed or was skipped is left out, and the fan-out's own row on the run page says how many were left out and why ("2 of 4 items gave a result: 1 failed, 1 skipped"). It is a list, so validation refuses a field read of it (`{{nodes.<foreach>.output.title}}`) and names `\| map('title')` instead |
+| `sequence`, `parallel` | nothing: validation refuses the read when you save (`WF_UNSATISFIABLE_OUTPUT_REF`), so read the step inside whose output you need |
 
 A loop's output is its last cycle's, so a loop that should hand on a running account
 has each cycle return one, built on `{{last.output.…}}`.
@@ -157,7 +158,7 @@ the result when you outgrow the pattern.
 | Macro | Expands to | Use when |
 |---|---|---|
 | `judge_panel` | `parallel[infer × lenses]` → `transform` | a subject needs independent scoring |
-| `verify_panel` | `foreach(pipeline)[infer(refute)]` → `transform` | a finding list needs adversarial checking |
+| `verify_panel` | `foreach(pipeline)[transform(seed) → infer(refute)]` → `transform` | a finding list needs adversarial checking |
 | `route` | `infer(classify)` → `branch` | the work depends on what kind of thing this is |
 | `research_sweep` | `parallel[stage × modes]` → `transform` → `foreach[infer]` | one search angle will not find everything |
 
@@ -176,7 +177,15 @@ what makes a panel worth its tokens.
 
 `verify_panel` asks the model to **refute**, defaulting to refuted when
 uncertain. A verifier asked "is this real?" agrees, because agreeing is the
-locally plausible answer.
+locally plausible answer. Hand it the findings as a **list** (`findings`): it runs one
+verifier per finding, and gives each one `context`, what the findings are about (the
+target's code or text), so the verifier can check rather than guess. Its `_confirmed`
+step drops only a finding a verifier explicitly refuted: `kept` is every other finding,
+each carrying `refuted: false` (it survived) or `refuted: null` (its verifier failed,
+timed out or answered outside its schema, so nobody ruled on it); `survived` and
+`unverified` are the two halves. To join several finders' lists into one, tag each with
+where it came from first: `[{{nodes.a.output.findings | tag('lens','a')}}, …]`, then
+`| flatten`.
 
 `route` classifies at the `fast` tier by default: choosing between three paths is
 a cheap judgment, and paying reasoning-tier prices to route *into* a

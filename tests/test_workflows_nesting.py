@@ -446,8 +446,12 @@ class TestForeachConcurrency:
         }
         run, status = await _run_parent(spec)
         assert status == RunStatus.COMPLETE
-        done = [i for i in store.read_state(run.id).values() if i.state == InstanceState.DONE]
-        assert len(done) == 5
+        states = store.read_state(run.id)
+        # Every item, by path. The fan-out's own row (`root`, which holds its items' list) sits
+        # beside them and is not one of them.
+        done = {p for p, i in states.items() if i.state == InstanceState.DONE and ".body#" in p}
+        assert done == {f"root.body#{n}" for n in range(5)}, sorted(done)
+        assert states["root"].state == InstanceState.DONE
 
     async def test_the_cap_is_honoured_at_RUN_TIME_not_just_in_the_frontier(self) -> None:
         """Measured, because a cap the scheduler computes but the controller ignores is no cap."""

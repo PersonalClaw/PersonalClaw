@@ -244,12 +244,28 @@ def judge_ruling(ctl: RunController, node: Node, parent_path: str, iteration: in
     return ruling
 
 
+def _failed_untolerated(ctl: RunController, nodes: dict[str, Node], path: str) -> bool:
+    """Whether the step at *path* FAILED in a way its cycle answers for: a step that declares
+    `allow_failure: true` said its failure is not one (`tick.tolerate_failures` degrades it to its
+    parent, and `_failed_steps` never names it), so its cycle did not fail either."""
+    inst = ctl.instances.get(path)
+    if inst is None or inst.state is not InstanceState.FAILED:
+        return False
+    node = nodes.get(spec_path(path))
+    return (
+        yes_or_no(((node.config if node is not None else None) or {}).get("allow_failure"))
+        is not True
+    )
+
+
 def cycle_failed(ctl: RunController, parent_path: str, iteration: int) -> bool:
-    """Whether a step of this loop iteration (``<parent_path>.body@<iteration>``) FAILED."""
+    """Whether a step of this loop iteration (``<parent_path>.body@<iteration>``) FAILED, and did
+    not declare its failure tolerated (`allow_failure`)."""
     base = f"{parent_path}.body@{iteration}"
+    nodes = dict(walk(ctl.root))
     return any(
-        inst.state is InstanceState.FAILED
-        for path, inst in ctl.instances.items()
+        _failed_untolerated(ctl, nodes, path)
+        for path in ctl.instances
         if path == base or path.startswith(f"{base}.")
     )
 
@@ -311,6 +327,7 @@ def _iteration_failures(ctl: RunController, loop_path: str) -> tuple[int, int, s
     """
     failed = attempted = 0
     first = ""
+    nodes = dict(walk(ctl.root))
     for index in range(int(ctl._iterations.get(loop_path, 0)) + 1):
         prefix = f"{loop_path}.body@{index}"
         members = sorted(
@@ -320,7 +337,7 @@ def _iteration_failures(ctl: RunController, loop_path: str) -> tuple[int, int, s
         if not members:
             continue
         attempted += 1
-        broken = [p for p in members if ctl.instances[p].state is InstanceState.FAILED]
+        broken = [p for p in members if _failed_untolerated(ctl, nodes, p)]
         if not broken:
             continue
         failed += 1

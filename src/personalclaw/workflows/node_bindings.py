@@ -368,12 +368,17 @@ def _accumulated_outputs(ctl: RunController, subtree: str) -> list[Any]:
     newest overwriting the rest.
     """
     acc: list[Any] = []
+    # A fan-out's own record (`record_foreach_outputs`) is the list of its items' outputs, already
+    # counted under each item: layered in, it would replace everything before it.
+    fan_outs = {path for path, node in walk(ctl.root) if node.kind is NodeKind.FOREACH}
     for spath in sorted(
         (p for p in ctl.instances if p == subtree or p.startswith(f"{subtree}.")),
         key=instance_order,
     ):
         inst = ctl.instances[spath]
         if inst.state not in SUCCESS_STATES or not inst.output_ref:
+            continue
+        if spec_path(spath) in fan_outs:
             continue
         # By INSTANCE PATH, not by `output_ref`: the ref is already the run-relative file
         # path, and `read_output` derives the filename from what it is given — passing the
@@ -527,6 +532,115 @@ def record_branch_outputs(ctl: RunController) -> None:
             latest[node.id] = path
     for node_id, path in latest.items():
         ctl._outputs[node_id] = ctl._branch_recorded[path]
+    if recorded:
+        ctl._persist_state()
+
+
+def _fan_out_paths(
+    ctl: RunController, tree: dict[str, Node], fan_outs: dict[str, Node]
+) -> set[str]:
+    """Every instance path of a `foreach` the run has reached. One outside every iterated container
+    is its spec path; one inside a loop's cycle or a fan-out's item is that path under each
+    instance of the body around it the run has started, so a fan-out over no items there is
+    recorded too."""
+    iterated = [p for p, n in tree.items() if n.kind in (NodeKind.LOOP, NodeKind.FOREACH)]
+    started: dict[str, set[str]] = {}
+    for path in ctl.instances:
+        for match in re.finditer(r"\.body[@#]\d+", path):
+            prefix = path[: match.end()]
+            started.setdefault(spec_path(prefix), set()).add(prefix)
+    found: set[str] = set()
+    for spec in fan_outs:
+        around = [f"{p}.body" for p in iterated if spec.startswith(f"{p}.body.")]
+        if not around:
+            found.add(spec)
+            continue
+        body = max(around, key=len)
+        found.update(prefix + spec[len(body) :] for prefix in started.get(body, ()))
+    return found
+
+
+def _left_out(ran: int, total: int, why: dict[str, int]) -> str:
+    """The caption of a fan-out some of whose items gave no result: `2 of 4 items gave a result:
+    1 failed, 1 skipped`. "" when every item did."""
+    if ran == total:
+        return ""
+    noun = "item" if total == 1 else "items"
+    parts = ", ".join(f"{count} {state}" for state, count in sorted(why.items()))
+    return f"{ran} of {total} {noun} gave a result: {parts}"
+
+
+def record_foreach_outputs(ctl: RunController) -> None:
+    """Record each `foreach` that has ended in success: its output is the list of what each of its
+    items produced, in item order, read the way a loop's cycle is (`subtree_output`), so a step
+    after the fan-out reads every item's result as `{{nodes.<foreach>.output}}`.
+
+    Until this a fan-out recorded nothing, so no step could read what its items produced except
+    the last item to finish, through the body's own step id (which still reads that way). An item
+    that FAILED or was SKIPPED produced no result and is left out; how many were left out, and
+    why, is the fan-out step's own caption (`degraded_reason`), so "3 of 40 gave a result" is not
+    read as "3 ran". Stored with the fan-out's instance and entered under its id the way a
+    finished loop's output is (`loop_convergence.finish_loop`), so the run page and a resumed run
+    read the same list. Recorded once per ending: `ctl._foreach_recorded` forgets a fan-out a tick
+    sees unfinished (a rewind), and its next ending records again.
+    """
+    from personalclaw.workflows.tick import _resolve_items
+
+    tree = dict(walk(ctl.root))
+    fan_outs = {path: node for path, node in tree.items() if node.kind is NodeKind.FOREACH}
+    if not fan_outs:
+        return
+    states = {path: inst.state for path, inst in ctl.instances.items()}
+    recorded = False
+    for path in sorted(_fan_out_paths(ctl, tree, fan_outs), key=instance_order, reverse=True):
+        node = fan_outs[spec_path(path)]
+        state = derive_state(
+            node,
+            path,
+            states,
+            declined_edges=ctl._declined_edges,
+            outputs=ctl._outputs,
+            inputs=ctl.run.inputs,
+            iterations=ctl._iterations,
+            instance_outputs=ctl._instance_outputs,
+        )
+        if state not in SUCCESS_STATES or node.body is None:
+            if ctl._foreach_recorded.pop(path, None) is not None or (
+                path in ctl.instances and ctl.instances[path].output_ref
+            ):
+                # Its items were reset (a rewind): what it recorded no longer stands.
+                ctl.forget_output(path, node.id)
+                ctl.instances.pop(path, None)
+                recorded = True
+            continue
+        if path in ctl._foreach_recorded and ctl._instance(path).output_ref:
+            continue
+        items = _resolve_items(node, item_context(ctl, path)) or []
+        produced: list[Any] = []
+        why: dict[str, int] = {}
+        for index in range(len(items)):
+            ipath = f"{path}.body#{index}"
+            item_state = derive_state(
+                node.body,
+                ipath,
+                states,
+                declined_edges=ctl._declined_edges,
+                outputs=ctl._outputs,
+                inputs=ctl.run.inputs,
+                iterations=ctl._iterations,
+                instance_outputs=ctl._instance_outputs,
+            )
+            if item_state in SUCCESS_STATES:
+                produced.append(subtree_output(ctl, ipath)[0])
+            else:
+                why[item_state.value] = why.get(item_state.value, 0) + 1
+        store.archive_output(ctl.run.id, path, ctl.run.spec_version)
+        inst = ctl._instance(path)
+        inst.state = state
+        inst.degraded_reason = _left_out(len(produced), len(items), why)
+        inst.output_ref, ctl._foreach_recorded[path] = ctl.journal.store_output(path, produced)
+        ctl.record_output(path, node.id, ctl._foreach_recorded[path])
+        recorded = True
     if recorded:
         ctl._persist_state()
 

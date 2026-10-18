@@ -399,6 +399,8 @@ class RunController:
         #: last ended (`node_bindings.record_branch_outputs`). In memory only: a resumed run records
         #: each ended case once more, writing the value its step already holds.
         self._branch_recorded: dict[str, Any] = {}
+        #: foreach instance path → the item list recorded for it (`record_foreach_outputs`).
+        self._foreach_recorded: dict[str, Any] = {}
         self._terminal = asyncio.Event()
         #: Set when an answer gives the run work again (`resume`), so a live tick loop wakes at
         #: once instead of on its next tick. It only ever shortens a wait: the loop still decides
@@ -1317,6 +1319,7 @@ class RunController:
         # Before the frontier, so a step it admits after a branch reads what the branch's case
         # produced, and a selector or `items` reading a branch resolves the same value.
         node_bindings.record_branch_outputs(self)
+        node_bindings.record_foreach_outputs(self)
         states = {p: i.state for p, i in self.instances.items()}
         fr = frontier(
             self.root,

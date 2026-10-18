@@ -311,6 +311,39 @@ def _pipe_flatten(value: Any) -> Any:
     return out
 
 
+def _pipe_tag(value: Any, key: str = "", tagged: Any = None) -> Any:
+    """`tag('lens', 'safety')` — each record of a list with one more field, `lens: "safety"`; on a
+    single record, that record with the field.
+
+    The one way to say where a record came from when lists from several steps are joined into
+    one (`[a | tag('lens','a'), b | tag('lens','b')] | flatten`): without it, the joined list
+    cannot tell its records apart. A copy of each record, never an edit of the step's output. A
+    record that is not an object is kept as `{"value": <it>, <key>: <tagged>}`."""
+    if not key:
+        raise BindingError("tag requires a key: tag('field', 'value')")
+    if isinstance(value, dict):
+        return {**value, key: tagged}
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise BindingError("tag expects a list or an object")
+    return [{**v, key: tagged} if isinstance(v, dict) else {"value": v, key: tagged} for v in value]
+
+
+def _pipe_reject(value: Any, key: str = "", expected: Any = None) -> Any:
+    """`reject('refuted', true)` — the records of a list EXCEPT those whose `key` is exactly
+    `expected`. `filter`'s complement, with one difference that is the reason it exists: a record
+    that does not carry `key` at all is KEPT. `filter('refuted', false)` would drop a finding no
+    verifier ruled on; this drops only the ones a verifier refuted."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise BindingError("reject expects a list")
+    if not key:
+        raise BindingError("reject requires a key: reject('field', value)")
+    return [v for v in value if not (isinstance(v, dict) and key in v and v[key] == expected)]
+
+
 def _pipe_slice(value: Any, start: Any = 0, stop: Any = None) -> Any:
     if value is None:
         return []
@@ -598,6 +631,8 @@ PIPES: dict[str, Any] = {
     "filter": _pipe_filter,
     "map": _pipe_map,
     "flatten": _pipe_flatten,
+    "tag": _pipe_tag,
+    "reject": _pipe_reject,
     "slice": _pipe_slice,
     "count": _pipe_count,
     "default": _pipe_default,

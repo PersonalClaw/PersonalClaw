@@ -69,15 +69,17 @@ CONTAINER_KINDS = frozenset(
     {NodeKind.SEQUENCE, NodeKind.PARALLEL, NodeKind.FOREACH, NodeKind.LOOP, NodeKind.BRANCH}
 )
 
-#: The kinds that record no output of their own: a `sequence`, `parallel` or `foreach` runs the
-#: steps inside it and produces nothing itself, so a `{{nodes.<id>…}}` naming one can never
-#: resolve. Every other kind records one under its id: a step when it settles (a `branch` records
-#: its routing, `{"case": label}`, and adds `produced`, what that case produced, once the case has
-#: ended in success — `node_bindings.record_branch_outputs`), and a `loop` when it ends done, its
-#: last cycle's output (`loop_convergence.finish_loop`). ONE definition: the validator refuses a
-#: read of one of these when the spec is saved (`WF_UNSATISFIABLE_OUTPUT_REF`), and the binding
-#: error of a run that meets one names them.
-NO_OUTPUT_KINDS = frozenset({NodeKind.SEQUENCE, NodeKind.PARALLEL, NodeKind.FOREACH})
+#: The kinds that record no output of their own: a `sequence` or `parallel` runs the steps inside
+#: it and produces nothing itself, so a `{{nodes.<id>…}}` naming one can never resolve. Every other
+#: kind records one under its id: a step when it settles (a `branch` records its routing,
+#: `{"case": label}`, and adds `produced`, what that case produced, once the case has ended in
+#: success — `node_bindings.record_branch_outputs`), a `loop` when it ends done, its last cycle's
+#: output (`loop_convergence.finish_loop`), and a `foreach` when it ends in success, the list of
+#: what each item that gave a result produced, in item order
+#: (`node_bindings.record_foreach_outputs`). ONE definition: the validator refuses a read of one
+#: of these when the spec is saved (`WF_UNSATISFIABLE_OUTPUT_REF`), and the binding error of a run
+#: that meets one names them.
+NO_OUTPUT_KINDS = frozenset({NodeKind.SEQUENCE, NodeKind.PARALLEL})
 
 #: Kinds that consume model tokens AND take an author-tunable `model_tier`. `visualize`
 #: is deliberately NOT here: it makes a model call but is pinned to the reasoning axis,

@@ -77,6 +77,31 @@ class TestPipes:
         got = resolve("{{nodes.find.output.findings | filter('verdict','CONFIRMED')}}", ctx)
         assert [f["title"] for f in got] == ["N+1 query", "cold cache"]
 
+    def test_reject_drops_only_an_exact_match_and_keeps_a_record_without_the_key(self) -> None:
+        """`filter`'s complement for a verdict: a record nobody ruled on (no `refuted`, or
+        `refuted: null`) is kept, and only `refuted: true` is dropped."""
+        c = BindingContext(
+            node_outputs={
+                "n": {
+                    "xs": [
+                        {"t": "a", "refuted": True},
+                        {"t": "b", "refuted": False},
+                        {"t": "c", "refuted": None},
+                        {"t": "d"},
+                    ]
+                }
+            }
+        )
+        got = resolve("{{nodes.n.output.xs | reject('refuted', true)}}", c)
+        assert [r["t"] for r in got] == ["b", "c", "d"]
+
+    def test_tag_adds_a_field_to_each_record_without_editing_the_source(self) -> None:
+        xs = [{"t": "a"}, "plain"]
+        c = BindingContext(node_outputs={"n": {"xs": xs}})
+        got = resolve("{{nodes.n.output.xs | tag('lens', 'safety')}}", c)
+        assert got == [{"t": "a", "lens": "safety"}, {"value": "plain", "lens": "safety"}]
+        assert xs == [{"t": "a"}, "plain"], "tag edited the step's own output"
+
     def test_bare_filter_is_filter_boolean(self, ctx) -> None:
         c = BindingContext(node_outputs={"n": {"xs": [1, 0, None, 2, "", 3]}})
         assert resolve("{{nodes.n.output.xs | filter}}", c) == [1, 2, 3]
