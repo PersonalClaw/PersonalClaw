@@ -79,27 +79,35 @@ def _locals_are(*names: str) -> None:
 # ── 1. the purity contract ──────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(
-    "query_class",
-    ["short_chat", "code", "summarize", "extract_structured", "long_reasoning", ""],
-)
-@pytest.mark.parametrize("mode", ["off", "heuristic", "learned"])
-@pytest.mark.parametrize("pin", ["", "local", "cloud", CLOUD_B, "no-such-ref"])
+_QUERY_CLASSES = ["short_chat", "code", "summarize", "extract_structured", "long_reasoning", ""]
+_MODES = ["off", "heuristic", "learned"]
+_PINS = ["", "local", "cloud", CLOUD_B, "no-such-ref"]
+
+
 def test_route_refs_is_a_pure_reorder(
-    home: Path, monkeypatch: pytest.MonkeyPatch, query_class: str, mode: str, pin: str
+    home: Path, monkeypatch: pytest.MonkeyPatch, subtests
 ) -> None:
     """Across EVERY mode/pin/class combination the result is a permutation of the input.
 
     Set-equality AND length are both asserted: length alone would miss a duplicated ref, and
     set-equality alone would miss a dropped duplicate. Together they pin the multiset.
+
+    One table over the combinations (docs/maintainers/testing.md), each a subtest named by its
+    mode, pin and class. The rows share one home: each row sets its own mode and pin before it
+    routes, the one local entry is the same for every row, and nothing a row routes is written.
     """
-    _enable(monkeypatch, mode=mode, pin=pin)
     _locals_are("ollama-models")
-    refs = [CLOUD_A, LOCAL, CLOUD_B, LOCAL_TINY]
-    out = policy.route_refs("reasoning", query_class, refs)
-    assert sorted(out) == sorted(refs), "route_refs changed the candidate SET"
-    assert len(out) == len(refs), "route_refs changed the candidate COUNT"
-    assert refs == [CLOUD_A, LOCAL, CLOUD_B, LOCAL_TINY], "route_refs mutated its input list"
+    combos = [(m, p, q) for m in _MODES for p in _PINS for q in _QUERY_CLASSES]
+    assert len(combos) == 90, "a mode, pin or query class was added or dropped: pin the count"
+    for mode, pin, query_class in combos:
+        with subtests.test(mode=mode, pin=pin, query_class=query_class):
+            _enable(monkeypatch, mode=mode, pin=pin)
+            refs = [CLOUD_A, LOCAL, CLOUD_B, LOCAL_TINY]
+            out = policy.route_refs("reasoning", query_class, refs)
+            row = f"mode={mode!r} pin={pin!r} class={query_class!r}"
+            assert sorted(out) == sorted(refs), f"{row}: route_refs changed the candidate SET"
+            assert len(out) == len(refs), f"{row}: route_refs changed the candidate COUNT"
+            assert refs == [CLOUD_A, LOCAL, CLOUD_B, LOCAL_TINY], f"{row}: mutated its input"
 
 
 def test_route_refs_preserves_duplicates(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:

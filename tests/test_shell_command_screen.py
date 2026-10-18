@@ -8,11 +8,12 @@ else, an unknown option included, is not a read.
 
 ``command_effects`` is the same reading's description of a command that is not a read, which an
 approval prompt shows.
+
+Each property is one table test over its corpus (docs/maintainers/testing.md): every row is a
+subtest named by its command, and each test pins its row count, so a dropped row fails.
 """
 
 from __future__ import annotations
-
-import pytest
 
 from personalclaw.task_modes import is_read_only_bash
 
@@ -118,9 +119,11 @@ READS = [
 ]
 
 
-@pytest.mark.parametrize("command", READS)
-def test_an_ordinary_read_is_read_only(command: str) -> None:
-    assert is_read_only_bash(command) is True
+def test_an_ordinary_read_is_read_only(subtests) -> None:
+    assert len(READS) == 95, "a row was added to or dropped from READS: pin the new count"
+    for command in READS:
+        with subtests.test(command=command):
+            assert is_read_only_bash(command) is True, f"{command!r} must be a read"
 
 
 # ── The two idioms models use most for reads ─────────────────────────────────────────────────────
@@ -140,24 +143,28 @@ NEUTRAL_IDIOMS = [
 ]
 
 
-@pytest.mark.parametrize("command", NEUTRAL_IDIOMS)
-def test_stderr_to_null_and_a_leading_cd_keep_a_read_a_read(command: str) -> None:
-    assert is_read_only_bash(command) is True
+def test_stderr_to_null_and_a_leading_cd_keep_a_read_a_read(subtests) -> None:
+    assert len(NEUTRAL_IDIOMS) == 11, "a row was added to or dropped from NEUTRAL_IDIOMS"
+    for command in NEUTRAL_IDIOMS:
+        with subtests.test(command=command):
+            assert is_read_only_bash(command) is True, f"{command!r} must be a read"
 
 
-@pytest.mark.parametrize(
-    "command",
-    [
-        "cd ~ && rm notes.txt",
-        "cd ~ && cat a > b",
-        "rm notes.txt 2>/dev/null",
-        "cd -P ~ && ls",
-        "ls && cd notes && ls",
-        "cd notes | ls",
-    ],
-)
-def test_the_idioms_vouch_for_nothing_else(command: str) -> None:
-    assert is_read_only_bash(command) is False
+IDIOMS_VOUCH_FOR_NOTHING_ELSE = [
+    "cd ~ && rm notes.txt",
+    "cd ~ && cat a > b",
+    "rm notes.txt 2>/dev/null",
+    "cd -P ~ && ls",
+    "ls && cd notes && ls",
+    "cd notes | ls",
+]
+
+
+def test_the_idioms_vouch_for_nothing_else(subtests) -> None:
+    assert len(IDIOMS_VOUCH_FOR_NOTHING_ELSE) == 6
+    for command in IDIOMS_VOUCH_FOR_NOTHING_ELSE:
+        with subtests.test(command=command):
+            assert is_read_only_bash(command) is False, f"{command!r} must not be a read"
 
 
 # ── Commands that write, delete or run something ─────────────────────────────────────────────────
@@ -277,87 +284,92 @@ NOT_READS = [
 ]
 
 
-@pytest.mark.parametrize("command", NOT_READS)
-def test_a_command_that_can_change_or_run_something_is_not_a_read(command: str) -> None:
-    assert is_read_only_bash(command) is False
+def test_a_command_that_can_change_or_run_something_is_not_a_read(subtests) -> None:
+    assert len(NOT_READS) == 104, "a row was added to or dropped from NOT_READS: pin the new count"
+    for command in NOT_READS:
+        with subtests.test(command=command):
+            assert is_read_only_bash(command) is False, f"{command!r} must not be a read"
 
 
 # ── A word the shell expands ─────────────────────────────────────────────────────────────────────
 
+#: (command, whether it is a read).
+GLOBS = [
+    # A program with no option that writes reads whatever a glob expands to.
+    ("cat *.md", True),
+    ("grep -n TODO *.md", True),
+    # A program that has one reads a glob only where it cannot expand into an option.
+    ("sort notes/*.txt", True),
+    ("sort *.txt", False),
+    ("find notes/* -name x", True),
+    ("find * -name x", False),
+    ("find . -name *.py", False),
+    ("git log -- src/*", True),
+    ("git -C rep* log", False),
+    # A program whose operands are positional reads no glob at all.
+    ("uniq notes/*.txt", False),
+    ("git branch --sort notes/*", False),
+]
 
-@pytest.mark.parametrize(
-    "command,read",
-    [
-        # A program with no option that writes reads whatever a glob expands to.
-        ("cat *.md", True),
-        ("grep -n TODO *.md", True),
-        # A program that has one reads a glob only where it cannot expand into an option.
-        ("sort notes/*.txt", True),
-        ("sort *.txt", False),
-        ("find notes/* -name x", True),
-        ("find * -name x", False),
-        ("find . -name *.py", False),
-        ("git log -- src/*", True),
-        ("git -C rep* log", False),
-        # A program whose operands are positional reads no glob at all.
-        ("uniq notes/*.txt", False),
-        ("git branch --sort notes/*", False),
-    ],
-)
-def test_a_glob_is_read_only_where_its_expansion_cannot_become_an_option(
-    command: str, read: bool
-) -> None:
-    assert is_read_only_bash(command) is read
+
+def test_a_glob_is_read_only_where_its_expansion_cannot_become_an_option(subtests) -> None:
+    assert len(GLOBS) == 11
+    for command, read in GLOBS:
+        with subtests.test(command=command):
+            assert is_read_only_bash(command) is read, f"{command!r}: expected read={read}"
 
 
 # ── What the rest establishes it does ────────────────────────────────────────────────────────────
 
+#: (command, writes, deletes, network, unread).
+EFFECTS = [
+    # A redirect into a file writes it, whatever runs before it.
+    ("cd ~ && printf 'hello\\n' > Documents/note.txt && cat Documents/note.txt", 1, 0, 0, 0),
+    ("echo hi >> notes.txt", 1, 0, 0, 0),
+    ("sort -o out.txt in.txt", 1, 0, 0, 0),
+    ("git log --output=log.txt", 1, 0, 0, 0),
+    ("uniq in.txt out.txt", 1, 0, 0, 0),
+    ("cp a b", 1, 0, 0, 1),
+    # A delete is a write to the world too.
+    ("find . -name '*.tmp' -delete", 1, 1, 0, 0),
+    ("rm -rf build", 1, 1, 0, 0),
+    ("git branch -D old", 1, 1, 0, 0),
+    # The network.
+    ("git remote show origin", 0, 0, 1, 0),
+    ("curl https://example.com", 0, 0, 1, 1),
+    # Anything the screen cannot vouch for, and nothing it can name.
+    ("python script.py", 0, 0, 0, 1),
+    ("find . -exec cat {} +", 0, 0, 0, 1),
+    ("ls > /dev/null", 0, 0, 0, 1),
+    ("make build > build.log", 1, 0, 0, 1),
+    ("git commit -m msg", 1, 0, 0, 1),
+]
 
-@pytest.mark.parametrize(
-    "command,writes,deletes,network,unread",
-    [
-        # A redirect into a file writes it, whatever runs before it.
-        ("cd ~ && printf 'hello\\n' > Documents/note.txt && cat Documents/note.txt", 1, 0, 0, 0),
-        ("echo hi >> notes.txt", 1, 0, 0, 0),
-        ("sort -o out.txt in.txt", 1, 0, 0, 0),
-        ("git log --output=log.txt", 1, 0, 0, 0),
-        ("uniq in.txt out.txt", 1, 0, 0, 0),
-        ("cp a b", 1, 0, 0, 1),
-        # A delete is a write to the world too.
-        ("find . -name '*.tmp' -delete", 1, 1, 0, 0),
-        ("rm -rf build", 1, 1, 0, 0),
-        ("git branch -D old", 1, 1, 0, 0),
-        # The network.
-        ("git remote show origin", 0, 0, 1, 0),
-        ("curl https://example.com", 0, 0, 1, 1),
-        # Anything the screen cannot vouch for, and nothing it can name.
-        ("python script.py", 0, 0, 0, 1),
-        ("find . -exec cat {} +", 0, 0, 0, 1),
-        ("ls > /dev/null", 0, 0, 0, 1),
-        ("make build > build.log", 1, 0, 0, 1),
-        ("git commit -m msg", 1, 0, 0, 1),
-    ],
-)
-def test_what_a_command_establishes_it_does(
-    command: str, writes: int, deletes: int, network: int, unread: int
-) -> None:
+
+def test_what_a_command_establishes_it_does(subtests) -> None:
     from personalclaw.command_effects import command_effects
 
-    effects = command_effects(command)
-    assert (effects.writes, effects.deletes, effects.network, effects.unread) == (
-        bool(writes),
-        bool(deletes),
-        bool(network),
-        bool(unread),
-    )
-    assert effects.reads_only is False
+    assert len(EFFECTS) == 16
+    for command, writes, deletes, network, unread in EFFECTS:
+        with subtests.test(command=command):
+            effects = command_effects(command)
+            expected = (bool(writes), bool(deletes), bool(network), bool(unread))
+            got = (effects.writes, effects.deletes, effects.network, effects.unread)
+            assert got == expected, f"{command!r}: (writes, deletes, network, unread) {got}"
+            assert effects.reads_only is False, f"{command!r} described as a read"
 
 
-@pytest.mark.parametrize("command", [*READS, *NEUTRAL_IDIOMS, *NOT_READS])
-def test_the_description_agrees_with_the_verdict(command: str) -> None:
+def test_the_description_agrees_with_the_verdict(subtests) -> None:
     from personalclaw.command_effects import command_effects
 
-    assert command_effects(command).reads_only is is_read_only_bash(command)
+    every = [*READS, *NEUTRAL_IDIOMS, *NOT_READS]
+    assert len(every) == 210
+    for command in every:
+        with subtests.test(command=command):
+            verdict = is_read_only_bash(command)
+            assert (
+                command_effects(command).reads_only is verdict
+            ), f"{command!r}: the description disagrees with the verdict read={verdict}"
 
 
 def test_a_read_establishes_no_effect() -> None:

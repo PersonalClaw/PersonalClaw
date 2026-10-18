@@ -146,25 +146,28 @@ def test_an_empty_backtick_pair_is_not_a_code_span() -> None:
 # --------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "src",
-    [
-        "**unclosed",
-        "text ** more",
-        "no *closer here",
-        "trailing `backtick",
-        "[t](",
-        "[t]",
-        "empty **** marker",
-        "empty ** ** marker",
-        "2 * 3 * 4",
-        "snake_case_name here",
-        "a_b_c_d",
-        "# not a heading here",
-    ],
-)
-def test_unmatched_or_ordinary_markers_stay_literal(src: str) -> None:
-    assert _flat(src) == [(src, False, False, False, "")]
+LITERAL_MARKERS = [
+    "**unclosed",
+    "text ** more",
+    "no *closer here",
+    "trailing `backtick",
+    "[t](",
+    "[t]",
+    "empty **** marker",
+    "empty ** ** marker",
+    "2 * 3 * 4",
+    "snake_case_name here",
+    "a_b_c_d",
+    "# not a heading here",
+]
+
+
+def test_unmatched_or_ordinary_markers_stay_literal(subtests) -> None:
+    assert len(LITERAL_MARKERS) == 12
+    for src in LITERAL_MARKERS:
+        with subtests.test(src=src):
+            got = _flat(src)
+            assert got == [(src, False, False, False, "")], f"{src!r} parsed as {got!r}"
 
 
 def test_a_partial_link_keeps_its_leftover_bracket() -> None:
@@ -180,9 +183,14 @@ def test_a_partial_link_keeps_its_leftover_bracket() -> None:
 # --------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("src", ["", "   ", "\t\n ", "\n"])
-def test_blank_input_yields_no_runs(src: str) -> None:
-    assert parse_inline(src) == []
+BLANKS = ["", "   ", "\t\n ", "\n"]
+
+
+def test_blank_input_yields_no_runs(subtests) -> None:
+    assert len(BLANKS) == 4
+    for src in BLANKS:
+        with subtests.test(src=src):
+            assert parse_inline(src) == [], f"{src!r} yielded runs"
 
 
 def test_edge_whitespace_is_trimmed_like_the_old_stripper_did() -> None:
@@ -258,15 +266,22 @@ DELIBERATE_DIVERGENCE: list[tuple[str, str, str]] = [
 ]
 
 
-@pytest.mark.parametrize(("src", "expected"), sorted(OLD_STRIP_INLINE.items()))
-def test_joined_run_text_matches_the_measured_old_output(src: str, expected: str) -> None:
-    assert inline_text(parse_inline(src)) == expected
+def test_joined_run_text_matches_the_measured_old_output(subtests) -> None:
+    rows = sorted(OLD_STRIP_INLINE.items())
+    assert len(rows) == 37, "a row was added to or dropped from OLD_STRIP_INLINE"
+    for src, expected in rows:
+        with subtests.test(src=src):
+            got = inline_text(parse_inline(src))
+            assert got == expected, f"{src!r}: expected {expected!r}, got {got!r}"
 
 
-@pytest.mark.parametrize(("src", "old", "new"), DELIBERATE_DIVERGENCE)
-def test_deliberate_divergences_are_pinned(src: str, old: str, new: str) -> None:
-    assert inline_text(parse_inline(src)) == new
-    assert new != old  # the row is only a divergence if the values actually differ
+def test_deliberate_divergences_are_pinned(subtests) -> None:
+    assert len(DELIBERATE_DIVERGENCE) == 6
+    for src, old, new in DELIBERATE_DIVERGENCE:
+        with subtests.test(src=src):
+            got = inline_text(parse_inline(src))
+            assert got == new, f"{src!r}: expected {new!r}, got {got!r}"
+            assert new != old  # the row is only a divergence if the values actually differ
 
 
 def _is_subsequence(needle: str, haystack: str) -> bool:
@@ -274,23 +289,23 @@ def _is_subsequence(needle: str, haystack: str) -> bool:
     return all(c in it for c in needle)
 
 
-@pytest.mark.parametrize(
-    "src",
-    sorted(OLD_STRIP_INLINE) + [row[0] for row in DELIBERATE_DIVERGENCE],
-)
-def test_no_measured_character_is_ever_dropped(src: str) -> None:
+def test_no_measured_character_is_ever_dropped(subtests) -> None:
     """Everything the old stripper emitted still appears, in order, in the new text.
 
     This is the general no-dropped-content rail: it holds across the agreeing cases AND
     the divergences, because every divergence only ever ADDS back characters.
     """
-    if src in OLD_STRIP_INLINE:  # a measured "" is a real value, not a miss
-        old = OLD_STRIP_INLINE[src]
-    else:
-        old = next(r[1] for r in DELIBERATE_DIVERGENCE if r[0] == src)
-    new = inline_text(parse_inline(src))
-    assert _is_subsequence(old, new), f"{old!r} is not preserved in {new!r}"
-    assert _is_subsequence(new, src), f"{new!r} invents text not present in {src!r}"
+    sources = sorted(OLD_STRIP_INLINE) + [row[0] for row in DELIBERATE_DIVERGENCE]
+    assert len(sources) == 43
+    for src in sources:
+        with subtests.test(src=src):
+            if src in OLD_STRIP_INLINE:  # a measured "" is a real value, not a miss
+                old = OLD_STRIP_INLINE[src]
+            else:
+                old = next(r[1] for r in DELIBERATE_DIVERGENCE if r[0] == src)
+            new = inline_text(parse_inline(src))
+            assert _is_subsequence(old, new), f"{src!r}: {old!r} is not preserved in {new!r}"
+            assert _is_subsequence(new, src), f"{new!r} invents text not present in {src!r}"
 
 
 # --------------------------------------------------------------------------------------
