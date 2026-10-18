@@ -132,6 +132,23 @@ judged by the copy it replaces, and the merge that adds the check runs the whole
 Runs on `main` are grouped by commit and never cancelled, so no merge goes unchecked because
 a later one replaced it. Everywhere else a newer push still cancels the older run.
 
+### A closed pull request's runs
+
+A concurrency group cancels a run only when a newer run joins it, and closing a pull request
+starts no run in the workflows that test it. `cancel-closed-pr-runs.yml` runs on
+`pull_request` `closed`, merged or not. Each of its jobs joins one per-pull-request workflow's
+group with `cancel-in-progress` and runs nothing but its Runner identity step: no checkout,
+`permissions: {}`, and no `pull_request_target`. A job-level group and a workflow-level group are
+one namespace across the repository's workflows (GitHub's "Control the concurrency of workflows
+and jobs": group names "must be unique across workflows to avoid canceling in-progress jobs or
+runs from other workflows"), so the job cancels that workflow's run.
+
+Its keys are written for the close, not copied: when a pull request closes because it merged,
+`github.ref` is the branch it merged into and `github.sha` its merge commit (GitHub's "Events
+that trigger workflows", `pull_request`), so `ci.yml`'s own key would name the merge's `main`
+group and its `cancel-in-progress` would read false. A workflow added later that runs on
+`pull_request` needs a job here; the contract row below fails until it has one.
+
 ### `test-macos`
 
 Pull requests into `main` run the suite on `macos-26` with Python 3.13, four shards split as
@@ -269,7 +286,13 @@ of the same commit was red is the release gate's question (#3911), not this work
   (`$GITHUB_REF`); every `decide`, `ran` and `report` pass the run attempt; every leg's job is
   named `breadth-leg <key>`; no never-reused leg downloads `freshness`'s map, and a tree-keyed
   shard downloads it only on `refs/heads/main`;
-- `docker-single-container.yml` checks the tree before it builds on `main`.
+- `docker-single-container.yml` checks the tree before it builds on `main`;
+- every workflow that runs on `pull_request` has its run cancelled when the pull request closes:
+  the row evaluates each workflow's group on a pull request's run and the canceller's on its
+  close, merged and unmerged, from this repository and from a fork, and holds them equal with
+  `cancel-in-progress`. It also fails a workflow with no group to join, a canceller job whose
+  group a merge's push to `main` would share, and a canceller that runs anything, holds a
+  permission or runs on any other event.
 
 The rows check the edits a maintainer plausibly makes: a respelled flag, a new leg, a moved
 condition, a fallback added for convenience. They do not evaluate expressions or shell, so a

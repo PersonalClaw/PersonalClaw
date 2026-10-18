@@ -2882,6 +2882,407 @@ def run_row(row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest) 
         row.on_tree(request)
 
 
+# ── A closed pull request's runs are cancelled ──────────────────────────────────────────────
+#
+# A concurrency group cancels a run only when a newer run joins it, and closing a pull request
+# starts no run in the workflows that test it. `cancel-closed-pr-runs.yml` runs on `closed`, and
+# each of its jobs joins one such workflow's group with cancel-in-progress. The row evaluates the
+# group expressions against event contexts, as GitHub would, instead of comparing their text: on a
+# merged pull request's close `github.ref` is the base branch, so a key copied from the workflow
+# can evaluate to another group.
+
+_CANCELLER = "cancel-closed-pr-runs.yml"
+_CANCELLER_PATH = f"{_WORKFLOWS}/{_CANCELLER}"
+#: The types a `pull_request:` trigger with no `types` runs on.
+_OPENING_TYPES = frozenset({"opened", "synchronize", "reopened"})
+_CLOSE_REPO = "PersonalClaw/PersonalClaw"
+_CLOSE_FORK = "someone/PersonalClaw"
+_CLOSE_HEAD = "bugfix-some-branch"
+#: The merge commit: what `github.sha` is on the merge's push to main, and on a merged close.
+_MERGE_SHA = "merge0000"
+_EXPRESSION = re.compile(r"\$\{\{(.+?)\}\}", re.S)
+_OPERAND = re.compile(r"\s*(!)?\s*([A-Za-z_][\w.-]*)\s*(?:(==|!=)\s*'([^']*)')?\s*")
+
+
+def _pr_context(*, head_repo: str, action: str, merged: bool = False) -> dict[str, Any]:
+    """A `pull_request` event's context: a pull request's run (`synchronize`), or its close."""
+    merged_close = action == "closed" and merged
+    head = {"ref": _CLOSE_HEAD, "sha": "head2222", "repo": {"full_name": head_repo}}
+    return {
+        "github": {
+            "repository": _CLOSE_REPO,
+            "event_name": "pull_request",
+            # GitHub's "Events that trigger workflows", `pull_request`: when a pull request closes
+            # because it merged, the ref is the branch it merged into and the sha its merge commit.
+            "ref": "refs/heads/main" if merged_close else "refs/pull/42/merge",
+            "ref_name": "main" if merged_close else "42/merge",
+            "sha": _MERGE_SHA if merged_close else "testmerge1111",
+            "head_ref": _CLOSE_HEAD,
+            "base_ref": "main",
+            "event": {
+                "action": action,
+                "number": 42,
+                "pull_request": {"number": 42, "merged": merged, "head": head},
+            },
+        }
+    }
+
+
+def _main_push_context() -> dict[str, Any]:
+    """The merge's own push to main."""
+    return {
+        "github": {
+            "repository": _CLOSE_REPO,
+            "event_name": "push",
+            "ref": "refs/heads/main",
+            "ref_name": "main",
+            "sha": _MERGE_SHA,
+            "head_ref": "",
+            "base_ref": "",
+            "event": {},
+        }
+    }
+
+
+def _context_value(context: dict[str, Any], dotted: str) -> Any:
+    """``a.b.c`` in *context*, or ``""`` for a missing link, as GitHub reads a missing property."""
+    value: Any = context
+    for part in dotted.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return ""
+        value = value[part]
+    return value
+
+
+def _operand(context: dict[str, Any], text: str) -> Any:
+    """One term: a property, ``true``/``false``, or a property compared with a quoted literal.
+    Anything else raises, so the row reports an expression it cannot read instead of guessing."""
+    match = _OPERAND.fullmatch(text)
+    if match is None:
+        raise ValueError(f"an expression this row cannot evaluate: {text.strip()!r}")
+    negate, path, op, literal = match.groups()
+    value = path == "true" if path in ("true", "false") else _context_value(context, path)
+    if op is not None:
+        same = str(value).lower() == literal.lower()
+        value = same if op == "==" else not same
+    return (not value) if negate else value
+
+
+def _expression(context: dict[str, Any], text: str) -> Any:
+    """``a || b`` and ``a && b`` as GitHub evaluates them: the first truthy alternative or the
+    last one, and within an alternative the first falsy term or the last one."""
+    value: Any = ""
+    for alternative in text.split("||"):
+        for term in alternative.split("&&"):
+            value = _operand(context, term)
+            if not value:
+                break
+        if value:
+            return value
+    return value
+
+
+def _evaluate(template: str, context: dict[str, Any]) -> str:
+    """A group name with every ``${{ }}`` evaluated, lower-cased: GitHub compares group names
+    without case."""
+
+    def one(match: re.Match[str]) -> str:
+        value = _expression(context, match.group(1))
+        return ("true" if value else "false") if isinstance(value, bool) else str(value)
+
+    return _EXPRESSION.sub(one, template).lower()
+
+
+def _cancels(value: object, context: dict[str, Any]) -> bool:
+    if isinstance(value, bool):
+        return value
+    match = _EXPRESSION.fullmatch(str(value).strip())
+    if match:
+        return bool(_expression(context, match.group(1)))
+    return str(value).strip() == "true"
+
+
+def _pull_request_types(trigger: object) -> set[str]:
+    types = trigger.get("types") if isinstance(trigger, dict) else None
+    if types is None:
+        return set(_OPENING_TYPES)
+    return {str(t) for t in (types if isinstance(types, list) else [types])}
+
+
+def _runs_on_pull_requests(tree: Tree) -> list[tuple[str, dict[str, Any]]]:
+    """Every workflow but the canceller that runs on a `pull_request` event other than `closed`."""
+    found = []
+    for name, workflow in _workflows(tree):
+        trigger = _triggers(workflow).get("pull_request", "absent")
+        if name != _CANCELLER and trigger != "absent":
+            if _pull_request_types(trigger) - {"closed"}:
+                found.append((name, workflow))
+    return found
+
+
+def _canceller_shape(workflow: dict[str, Any]) -> list[str]:
+    """It runs on `pull_request` `closed` and nothing else, holds no permission, and runs nothing
+    but each job's Runner identity step: no checkout, no action, no secret."""
+    bad: list[str] = []
+    triggers = _triggers(workflow)
+    if set(triggers) != {"pull_request"} or _pull_request_types(triggers["pull_request"]) != {
+        "closed"
+    }:
+        bad.append(f"{_CANCELLER} runs on {triggers!r}, not on `pull_request` `closed` alone")
+    if workflow.get("permissions") != {}:
+        bad.append(f"{_CANCELLER} holds {workflow.get('permissions')!r}, not `permissions: {{}}`")
+    for job_id, job in (workflow.get("jobs") or {}).items():
+        where = f"{_CANCELLER}:{job_id}"
+        if not isinstance(job, dict):
+            bad.append(f"{where} is not a job")
+            continue
+        if job.get("permissions") != {}:
+            bad.append(f"{where} holds {job.get('permissions')!r}, not `permissions: {{}}`")
+        if "uses" in job:
+            bad.append(f"{where} calls the workflow {job['uses']}")
+        if "secrets." in json.dumps(job):
+            bad.append(f"{where} references a secret")
+        for step in job.get("steps") or []:
+            if step.get("uses"):
+                bad.append(f"{where} runs {step['uses']}: the closing run runs nothing")
+            elif step.get("name") != "Runner identity":
+                what = step.get("name") or step.get("run")
+                bad.append(f"{where} runs {what!r}: the closing run runs nothing but its identity")
+    return bad
+
+
+def closed_pr_runs_violations(tree: Tree) -> list[str]:
+    """Every workflow that runs on `pull_request` has its run cancelled when the pull request
+    closes: a job of the canceller evaluates, on the close, to the group that workflow's run
+    evaluated to, with cancel-in-progress, whether the pull request merged or not and whether it
+    came from this repository or a fork. No job of it joins a push to main's group."""
+    canceller = dict(_workflows(tree)).get(_CANCELLER)
+    if canceller is None:
+        return [f"{_CANCELLER} is missing, so a closed pull request's runs go on to their end"]
+    bad = _canceller_shape(canceller)
+    joins: list[tuple[str, str, object]] = []
+    for job_id, job in (canceller.get("jobs") or {}).items():
+        concurrency = job.get("concurrency") if isinstance(job, dict) else None
+        if isinstance(concurrency, dict) and "group" in concurrency:
+            cancel = concurrency.get("cancel-in-progress", False)
+            joins.append((job_id, str(concurrency["group"]), cancel))
+        else:
+            bad.append(f"{_CANCELLER}:{job_id} joins no concurrency group")
+
+    def closing_groups(context: dict[str, Any], *, cancelling: bool) -> list[tuple[str, str]]:
+        groups = []
+        for job_id, group, cancel in joins:
+            try:
+                if not cancelling or _cancels(cancel, context):
+                    groups.append((job_id, _evaluate(group, context)))
+            except ValueError as exc:
+                bad.append(f"{_CANCELLER}:{job_id}: {exc}")
+        return groups
+
+    for name, workflow in _runs_on_pull_requests(tree):
+        concurrency = workflow.get("concurrency")
+        if not isinstance(concurrency, dict) or "group" not in concurrency:
+            bad.append(
+                f"{name} runs on pull_request with no workflow-level concurrency group, so no "
+                "run can cancel its runs"
+            )
+            continue
+        for head_repo, origin in ((_CLOSE_REPO, "this repository"), (_CLOSE_FORK, "a fork")):
+            run = _pr_context(head_repo=head_repo, action="synchronize")
+            try:
+                key = _evaluate(str(concurrency["group"]), run)
+            except ValueError as exc:
+                bad.append(f"{name}: {exc}")
+                break
+            for merged in (False, True):
+                close = _pr_context(head_repo=head_repo, action="closed", merged=merged)
+                if key not in {group for _job, group in closing_groups(close, cancelling=True)}:
+                    how = "merged" if merged else "closed unmerged"
+                    bad.append(
+                        f"{name}: no {_CANCELLER} job cancels the run of a pull request from "
+                        f"{origin} once it is {how} (the run's group is {key!r})"
+                    )
+
+    # A job that only joins a group still replaces its pending run, so every join counts here.
+    merged_close = _pr_context(head_repo=_CLOSE_REPO, action="closed", merged=True)
+    joined = closing_groups(merged_close, cancelling=False)
+    for name, workflow in _workflows(tree):
+        concurrency = workflow.get("concurrency")
+        if name == _CANCELLER or "push" not in _triggers(workflow):
+            continue
+        if not isinstance(concurrency, dict) or "group" not in concurrency:
+            continue
+        try:
+            main_group = _evaluate(str(concurrency["group"]), _main_push_context())
+        except ValueError as exc:
+            bad.append(f"{name}: {exc}")
+            continue
+        for job_id, group in joined:
+            if group == main_group:
+                bad.append(
+                    f"{_CANCELLER}:{job_id} joins {name}'s group on the merge's push to main "
+                    f"({group!r}), so a merge would cancel main's check"
+                )
+    return list(dict.fromkeys(bad))
+
+
+_CANCEL_CI_GROUP = (
+    "      group: ci-${{ github.event.pull_request.head.repo.full_name || github.repository }}"
+    "-${{ github.head_ref }}\n"
+)
+_CANCEL_PINS_GROUP = (
+    "      group: action-pins-refs/pull/${{ github.event.pull_request.number }}/merge\n"
+)
+_NEW_PR_WORKFLOW = (
+    "name: A new check\non:\n  pull_request:\n"
+    "concurrency:\n  group: new-check-${{ github.head_ref }}\n  cancel-in-progress: true\n"
+    "permissions: {}\njobs: {}\n"
+)
+
+
+def _new_workflow(rel: str, text: str) -> Callable[[Path], None]:
+    return lambda root: _write(root, rel, text)
+
+
+CLOSED_PR_RUNS_ARE_CANCELLED = _toolchain_row(
+    "every workflow that runs on pull_request is cancelled when the pull request closes",
+    closed_pr_runs_violations,
+    (
+        Control(
+            "the canceller removed",
+            lambda root: (root / _CANCELLER_PATH).unlink(),
+            expect="is missing",
+        ),
+        _plant(
+            "a pull_request workflow no job cancels",
+            _CANCELLER_PATH,
+            "group: nix-",
+            "group: nix-closed-",
+            expect="nix.yml: no",
+        ),
+        Control(
+            "a new pull_request workflow no job cancels",
+            _new_workflow(f"{_WORKFLOWS}/new-check.yml", _NEW_PR_WORKFLOW),
+            expect="new-check.yml: no",
+        ),
+        Control(
+            "a new pull_request workflow with no concurrency group",
+            _new_workflow(
+                f"{_WORKFLOWS}/new-check.yml",
+                "name: A new check\non:\n  pull_request:\npermissions: {}\njobs: {}\n",
+            ),
+            expect="no workflow-level concurrency group",
+        ),
+        _plant(
+            "ci.yml's own key copied, which a merged close evaluates to main's commit",
+            _CANCELLER_PATH,
+            _CANCEL_CI_GROUP,
+            "      group: ci-${{ github.ref == 'refs/heads/main' && github.sha"
+            " || github.event.pull_request.head.repo.full_name || github.repository }}"
+            "-${{ github.head_ref || github.ref_name }}\n",
+            expect="once it is merged",
+        ),
+        _plant(
+            "ci.yml's own cancel-in-progress copied, which is false on a merged close",
+            _CANCELLER_PATH,
+            "      cancel-in-progress: true\n",
+            "      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n",
+            expect="ci.yml: no",
+        ),
+        _plant(
+            "a job that does not cancel in progress",
+            _CANCELLER_PATH,
+            "      cancel-in-progress: true\n",
+            "      cancel-in-progress: false\n",
+            expect="closed unmerged",
+        ),
+        _plant(
+            "a group keyed on github.ref, which a merge moves to the base branch",
+            _CANCELLER_PATH,
+            _CANCEL_PINS_GROUP,
+            "      group: action-pins-${{ github.ref }}\n",
+            expect="action-pins.yml: no",
+        ),
+        _plant(
+            "a group without the head repository, so a fork's run is missed",
+            _CANCELLER_PATH,
+            _CANCEL_CI_GROUP,
+            "      group: ci-${{ github.repository }}-${{ github.head_ref }}\n",
+            expect="from a fork",
+        ),
+        _plant(
+            "a group that joins the merge's push to main",
+            _CANCELLER_PATH,
+            _CANCEL_PINS_GROUP,
+            "      group: ci-${{ github.sha }}-${{ github.ref_name }}\n",
+            expect="cancel main's check",
+        ),
+        _plant(
+            "an expression the row cannot evaluate",
+            _CANCELLER_PATH,
+            _CANCEL_CI_GROUP,
+            "      group: ci-${{ format('{0}', github.head_ref) }}\n",
+            expect="cannot evaluate",
+        ),
+        _plant(
+            "pull_request_target instead",
+            _CANCELLER_PATH,
+            "  pull_request:\n    types: [closed]\n",
+            "  pull_request_target:\n    types: [closed]\n",
+            expect="not on `pull_request` `closed` alone",
+        ),
+        _plant(
+            "a run on an opening event too",
+            _CANCELLER_PATH,
+            "    types: [closed]\n",
+            "    types: [closed, opened]\n",
+            expect="not on `pull_request` `closed` alone",
+        ),
+        _plant(
+            "a write at the top",
+            _CANCELLER_PATH,
+            "\npermissions: {}\n\njobs:\n",
+            "\npermissions:\n  actions: write\n\njobs:\n",
+            expect="not `permissions: {}`",
+        ),
+        _plant(
+            "a write on a job",
+            _CANCELLER_PATH,
+            "    permissions: {}\n",
+            "    permissions:\n      actions: write\n",
+            expect="not `permissions: {}`",
+        ),
+        _plant(
+            "a checkout of the pull request's head",
+            _CANCELLER_PATH,
+            "    steps:\n",
+            "    steps:\n"
+            "      - uses: actions/checkout@0000000000000000000000000000000000000000 # v6.0.0\n"
+            "        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n",
+            expect="runs actions/checkout",
+        ),
+        _plant(
+            "a step that runs a command",
+            _CANCELLER_PATH,
+            "    steps:\n",
+            "    steps:\n      - name: Cancel by hand\n        run: gh run list\n",
+            expect="runs nothing but its identity",
+        ),
+        Control(
+            "a workflow that runs on pull_request only when closed is not one to cancel",
+            _new_workflow(
+                f"{_WORKFLOWS}/on-close.yml",
+                "name: On close\non:\n  pull_request:\n    types: [closed]\n"
+                "permissions: {}\njobs: {}\n",
+            ),
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, CLOSED_PR_RUNS_ARE_CANCELLED)
+
+
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
 def test_the_ci_contract_holds_and_each_check_can_fail(
     row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest
