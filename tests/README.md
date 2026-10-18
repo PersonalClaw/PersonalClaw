@@ -99,7 +99,7 @@ module's source with `ast`, without importing it, and requires the marker on:
    and the browser safety tests and real-home and credential guards listed one
    by one in `NAMED_MODULES`, each with what it proves.
 
-The `security marker` row of the CI contract table (`tests/test_ci_contract.py`)
+The `security marker` row of the CI contract table (`tests/rails/test_ci_contract.py`)
 fails on a required module without the marker, on a misspelt one, and on a
 registry or named module that no longer exists, so a rename cannot shrink the
 set. Planted violations prove the row can fail. A module may carry the marker
@@ -118,9 +118,33 @@ under the package (an app's `app.json`, a bundled workflow), `web_files()`, `doc
 it finds fewer files than its floor. `text(path)` and `tree(path)` read and parse a file once per
 process, and every test shares the result, so never change a tree. A worker builds the index
 before the first test whose module reads it, outside that test's timeout. The "no test walks a
-source root itself" row of `tests/test_ci_contract.py` fails on a test that walks one of these
+source root itself" row of `tests/rails/test_ci_contract.py` fails on a test that walks one of these
 roots on its own. A test that must walk one itself goes in `NOT_THROUGH_THE_INDEX` in
 `tests/private_walkers.py`, by `file::function`, with the reason it cannot use the index.
+
+## Rails: `tests/rails`
+
+A rail checks the source tree rather than running the product: a census, a ratchet, a parity
+or wiring check, a row of the CI contract table. Rails live in `tests/rails/` and run once per
+CI run, in `ci.yml`'s `rails` job, and nightly on macOS in `breadth.yml`'s `rails-macos` leg. No
+suite shard runs them. To run the same set the `rails` job runs:
+
+```bash
+python -m pytest tests/rails -n 4 --dist worksteal
+```
+
+`tools/ci/rails_census.py` decides which modules are rails, from their source: a module is a rail
+when one of its tests reads the tree (the source index, `.github`, a walk or a parse of a
+repository file) and none boots a gateway, a browser or a container, or reaches the network. A
+local child such as `git`, and an in-process `TestServer`, are fine. `python -m tools.ci rails
+census` prints each verdict with its reason. The "every rail lives in tests/rails" row of the
+contract table fails on a rail outside `tests/rails/` and on a non-rail inside it. Two kinds of
+module stay where they are: a security-marked one, and a rail that still holds behaviour tests,
+named in `tools/ci/rails-pending-split.txt` until its split. That list only shrinks.
+
+A rail names the repository from `REPO` in `tests/rails/rails_repo.py`, not from `parents[n]`
+of its own file. A rail imports no behaviour test module: a name both need lives in a helper
+module in `tests/`.
 
 ## Conventions
 
@@ -133,7 +157,7 @@ roots on its own. A test that must walk one itself goes in `NOT_THROUGH_THE_INDE
 - Use the `tmp_path` fixture for filesystem tests. `tests/conftest.py` overrides it to name each
   folder `t<N>-<test name>` from a counter, because pytest's own scans the whole temporary folder
   on every call and grows slower with every test a worker runs; for the same reason no
-  function-scoped autouse fixture calls `mktemp()` (a row of `tests/test_ci_contract.py`)
+  function-scoped autouse fixture calls `mktemp()` (a row of `tests/rails/test_ci_contract.py`)
 - `--fixture-costs` writes `reports/fixture-costs.json`: each fixture's own setup and teardown
   time per call (calls, median, p95 and total in wall time; median and total in this thread's CPU
   time, the steadier number on a loaded machine), and each test's setup and teardown totals,

@@ -8,8 +8,8 @@ statement: >
 appliesTo:
   - apps/**/*.py
 requiredTests:
-  - tests/test_apps_import_boundary.py::test_apps_only_import_sdk
-  - tests/test_apps_import_boundary.py::test_each_app_file_sdk_clean
+  - tests/rails/test_apps_import_boundary.py::test_apps_only_import_sdk
+  - tests/rails/test_apps_import_boundary.py::test_each_app_file_sdk_clean
 scanner: app-sdk-boundary
 source: >
   The provider-agnostic-core tenet: apps must be removable and must not couple to core
@@ -34,6 +34,6 @@ symbol). If the SDK doesn't expose what the app needs, that is a gap to fill in 
 
 The deliberate in-core exceptions (things that legitimately live in core despite looking
 vendor-ish) are enumerated in `docs/architecture/provider-boundary.md`; do not add to
-them. `tests/test_apps_import_boundary.py` enforces this per app file; the scanner check
+them. `tests/rails/test_apps_import_boundary.py` enforces this per app file; the scanner check
 `app-sdk-boundary` promotes it to a diff-time check so a bad import is caught before the
 test run.

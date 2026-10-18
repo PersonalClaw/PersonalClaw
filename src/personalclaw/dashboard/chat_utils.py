@@ -718,7 +718,7 @@ def persisted_history_key(conversation_log, session_name: str) -> str:
     other call sites simply skipped it and hand-formed the prefix. A duplicated idiom
     is not an owner; this function is, and every keyed ``conversation_log`` access in
     ``dashboard/`` routes through it or through ``resolve_history_key`` directly
-    (``tests/test_session_key_one_owner_audit.py`` reds on a new bypass).
+    (``tests/rails/test_session_key_one_owner_audit.py`` reds on a new bypass).
 
     Returns the resolved persisted key, falling back to the dashboard-namespaced form
     when nothing is persisted under either candidate — so for a never-yet-saved

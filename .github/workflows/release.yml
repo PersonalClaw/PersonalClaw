@@ -388,7 +388,7 @@ jobs:
       # setup-buildx runs whatever BuildKit is newest, so the arm64 half of an image would be
       # built by a different emulator on a day nothing here changed. release-image-tooling.yml's
       # `pin-smoke` job runs these same three pins on a pull request that changes this file,
-      # and tests/test_ci_supply_chain_contract.py holds the two copies equal.
+      # and tests/rails/test_ci_supply_chain_contract.py holds the two copies equal.
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           # tonistiigi/binfmt:qemu-v10.2.3-68, the linux/amd64 manifest (this runner's platform)

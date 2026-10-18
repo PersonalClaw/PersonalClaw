@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import re
 
-from test_wire_error_envelope_census import EMITTER_SITE_FLOOR, scan
+from wire_error_envelopes import EMITTER_SITE_FLOOR, scan
 
 from personalclaw.errors import ERROR_CODES
 from personalclaw.http_errors import HTTP_ERROR_CODES, json_error

@@ -54,7 +54,7 @@ def test_every_false_spelling_reads_false(subtests):
 
 A failing row prints as `SUBFAILED(raw='no')` with its own message, and the rows after it still
 run. The same holds inside an `async def` test under pytest-asyncio; `tests/test_ci_variation_census.py`
-proves it on a planted async table. `tests/test_ci_contract.py` is a real table test: every CI
+proves it on a planted async table. `tests/rails/test_ci_contract.py` is a real table test: every CI
 property is one row, its controls run as subtests.
 
 When rows share a fixture, undo what each row changes before the next:

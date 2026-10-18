@@ -1454,7 +1454,7 @@ def _restore_preserved_data(name: str, dest: Path) -> tuple[str, Path | None]:
     Treating the parked copy as AUTHORITATIVE is licensed by exactly one thing: the park
     is a single :meth:`~pathlib.Path.rename` within one filesystem, so the directory
     exists only if the whole copy landed (#2585). That is the guarantee, it lives on that
-    one line in :func:`uninstall_keep_data`, and ``tests/test_app_data_copy_owner.py``
+    one line in :func:`uninstall_keep_data`, and ``tests/rails/test_app_data_copy_owner.py``
     fails if any other site learns to write or destroy that path. It is NOT "the parked
     dir is non-empty, so it must be finished" — this function cannot check completeness
     and does not try to.

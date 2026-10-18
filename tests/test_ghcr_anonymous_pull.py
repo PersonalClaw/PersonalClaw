@@ -219,7 +219,7 @@ def test_the_workflow_declares_no_credentials_and_fetches_the_tags() -> None:
     assert not [step for step in job["steps"] if "env" in step]
     assert "secrets." not in text
 
-    # The runner-image line every job logs first (tests/test_ci_contract.py) reads no secret.
+    # The runner-image line every job logs first (tests/rails/test_ci_contract.py) reads no secret.
     assert identity["name"] == "Runner identity" and "secrets." not in identity["run"]
     assert checkout["uses"].startswith("actions/checkout@")
     # Without the tags the expectation resolves empty and the tag half would pass vacuously.

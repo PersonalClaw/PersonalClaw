@@ -2,7 +2,7 @@
 
 Why this file exists, stated plainly, because it is the kind of rail that looks redundant
 until it isn't. A provider app may only reach core through the SDK facade
-(``tests/test_apps_import_boundary.py``), and three symbols on that facade are the whole
+(``tests/rails/test_apps_import_boundary.py``), and three symbols on that facade are the whole
 contract for "report a context percentage": what did this binding declare
 (``declared_context_window``), what may a BUDGET divide by (``model_context_window``), and
 how is a provider's token report turned into a reading (``ContextGauge`` +

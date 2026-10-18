@@ -25,7 +25,7 @@ card renders it; see :mod:`personalclaw.proactive.surface` for the state vocabul
 Every failure leaves through :func:`~personalclaw.http_errors.json_error` — the ONE structured
 wire envelope `AGENTS.md` §"Shared conventions" declares. Not a style choice: the flat
 ``{"error": "<prose>"}`` shape is a RATCHETED, shrinking population
-(`tests/test_wire_error_envelope_census.py`), so a new route emitting it would be a new site a
+(`tests/rails/test_wire_error_envelope_census.py`), so a new route emitting it would be a new site a
 client can only branch on by matching prose. The digest card branches on the codes below.
 """
 

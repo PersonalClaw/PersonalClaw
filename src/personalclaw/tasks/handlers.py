@@ -11,7 +11,7 @@ from personalclaw.tasks.provider import StaleTaskWrite
 # Every refusal these routes add answers with the ONE wire envelope (`json_error`), not the
 # flat `{"error": "<prose>"}` several of the handlers below still carry: a client that has
 # to branch on a parameter it got wrong needs a code, and the flat population is
-# shrink-only (`tests/test_wire_error_envelope_census.py`).
+# shrink-only (`tests/rails/test_wire_error_envelope_census.py`).
 
 
 def _page_window(request: web.Request) -> tuple[int, int]:

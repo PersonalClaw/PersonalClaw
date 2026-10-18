@@ -381,7 +381,7 @@ jobs:
   rails:
     runs-on: ubuntu-latest
     steps:
-      - run: uv run pytest tests/test_provider_boundary_residue.py -n0
+      - run: uv run pytest tests/rails/test_provider_boundary_residue.py -n0
 """
 
 

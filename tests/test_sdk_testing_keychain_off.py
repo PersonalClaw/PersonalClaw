@@ -4,7 +4,7 @@ The OS keychain is the machine's: a scratch ``PERSONALCLAW_HOME`` keeps an app's
 home's own namespace there, not out of the keychain, and a test on the default home reaches the
 owner's own secrets. The apps repo's root ``conftest.py`` used to patch
 ``personalclaw.config.credentials._usable_keyring`` to keep it out, which an app's harness may
-not import (``tests/test_apps_import_boundary.py``). This is the switch it calls instead.
+not import (``tests/rails/test_apps_import_boundary.py``). This is the switch it calls instead.
 
 Every case drives the real credential calls against a stub ``keyring`` that records what it
 was asked, with a floor that the same call does reach it while the keychain is on. A switch

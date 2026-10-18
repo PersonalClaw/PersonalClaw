@@ -5,7 +5,7 @@ import { EM_DASH, LedgerRailsPanel } from './LedgerRailsPanel'
 
 // ── The run side renders both ledger rails, and ABSENT IS NOT ZERO ──
 //
-// The backend rail (`tests/test_ledger_rails.py`) proves the projection reports `null` for a
+// The backend rail (`tests/rails/test_ledger_rails.py`) proves the projection reports `null` for a
 // cell whose ledger row carried no key. That guarantee is worth nothing if the panel then prints
 // `null` as `0` — a `toFixed()` on a nullish value, or a `?? 0` — so this file pins the RENDERING.
 //

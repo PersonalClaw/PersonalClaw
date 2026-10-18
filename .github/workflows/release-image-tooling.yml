@@ -5,7 +5,7 @@
 # image buildx starts. That job runs only on a tag, after `pypi` may already have published, so
 # a bad pin would first show as half a release. This job runs the same three pins on a pull
 # request that changes them, with nothing to log in to and nothing to push:
-# tests/test_ci_supply_chain_contract.py holds its pins equal to release.yml's.
+# tests/rails/test_ci_supply_chain_contract.py holds its pins equal to release.yml's.
 #
 # A workflow of its own because its trigger is a path filter: docker-single-container.yml's
 # filter would have to name release.yml, and every release.yml change would then pay for that

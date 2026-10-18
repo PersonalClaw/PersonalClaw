@@ -148,7 +148,7 @@ them is `providers/` (`providers/loader.py` loads each enabled app, pins its
 directory on `sys.path`, and registers its contributions through a typed
 `ToolTypeHandler`). The stable app-facing import surface is `sdk/` (26 modules
 — apps import core **only** via `personalclaw.sdk.*`, enforced by
-`tests/test_apps_import_boundary.py`).
+`tests/rails/test_apps_import_boundary.py`).
 
 | Capability | Core seam | Contributed by |
 |---|---|---|
@@ -207,7 +207,7 @@ ask at a time, and is announced over the socket when it lands: a chat's organize
 `chat_organize` frame naming the chat (the chip reads it back through the GET, which decides what
 an app may see), the suggestions and an attachment's reading as `refresh` frames naming
 `suggestions` and `attachments`. A page re-reads on that frame, and aborts a read it no longer
-waits for (`web/src/lib/useLatestRead.ts`). `tests/test_no_get_route_waits_on_a_model_rail.py`
+waits for (`web/src/lib/useLatestRead.ts`). `tests/rails/test_no_get_route_waits_on_a_model_rail.py`
 holds every GET route to this.
 
 ## Subsystem index

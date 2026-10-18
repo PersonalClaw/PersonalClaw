@@ -45,11 +45,24 @@ def test_the_universe_is_every_file_pytest_collects_by_its_defaults(tmp_path: Pa
     )
     assert shards.universe(root) == [
         "tests/b_test.py",
-        "tests/rails/test_r.py",
         "tests/security/test_z.py",
         "tests/sub/test_s.py",
         "tests/test_a.py",
-    ], "tests/rails stays until #3928's own job runs it, or it would run nowhere"
+    ], "tests/rails is the rails job's, so no shard may list a rail"
+
+
+def test_a_shard_plan_listing_a_rail_fails_its_check(tmp_path: Path) -> None:
+    """The control: a plan that hands a rail to a shard is a listed file pytest's shards would
+    not collect, and ``check`` refuses it."""
+    root = _tree(tmp_path, "tests/test_a.py", "tests/rails/test_r.py")
+    files = shards.universe(root)
+    assert shards.check(files, [["tests/test_a.py", "tests/rails/test_r.py"]])
+
+
+def test_the_rails_folder_name_is_the_censuss() -> None:
+    from tools.ci import rails_census
+
+    assert shards.RAILS == rails_census.RAILS
 
 
 def test_the_universe_reads_testpaths_and_python_files(tmp_path: Path) -> None:

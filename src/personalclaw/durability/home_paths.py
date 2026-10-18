@@ -34,7 +34,7 @@ and the export's files it could not carry; a lock's refusal is logged and answer
 it (:func:`landing` is its form for a door that goes on to the next item, and :func:`put_file`
 writes an archive's file at a path it gave), every read an export makes from :func:`export_path`,
 its form for a read, and every lock in the home is opened by :func:`open_lock`.
-``tests/test_home_path_census.py`` fails a write, a read or a lock of theirs that skips it.
+``tests/rails/test_home_path_census.py`` fails a write, a read or a lock of theirs that skips it.
 """
 
 from __future__ import annotations

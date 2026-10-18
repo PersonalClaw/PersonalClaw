@@ -31,6 +31,12 @@ one of these legs sets `PERSONALCLAW_SKIP_APP_BACKENDS=1`. Coverage is measured
 separately, nightly in `breadth.yml`, in six shards of its own
 (`coverage-shard`), and the `coverage` job combines their data into one report.
 
+No shard runs the rails. The modules in `tests/rails/`, which check the source
+tree rather than run the product, are left out of every shard plan and run once
+per CI run in `ci.yml`'s `rails` job, as `pytest tests/rails -n 4 --dist
+worksteal`, and nightly on macOS in `breadth.yml`'s `rails-macos` leg. The same
+command runs them locally. A whole-suite `make test` still collects them.
+
 ## Measurement protocol
 
 Each full local run captures stdout and stderr to a distinct file under

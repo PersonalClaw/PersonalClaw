@@ -84,16 +84,18 @@ def test_split_node_id_strips_class_and_params() -> None:
 def test_file_defines_finds_real_function() -> None:
     # A real, environment-SKIPPED test still resolves via the AST fallback (the module
     # skips at collection time on this workspace but the function is genuinely defined).
-    assert _file_defines("tests/test_apps_import_boundary.py", "test_apps_only_import_sdk")
-    assert not _file_defines("tests/test_apps_import_boundary.py", "test_not_a_real_name")
+    assert _file_defines("tests/rails/test_apps_import_boundary.py", "test_apps_only_import_sdk")
+    assert not _file_defines("tests/rails/test_apps_import_boundary.py", "test_not_a_real_name")
 
 
 def test_node_id_matches_ast_fallback_for_skipped_module() -> None:
     # With an empty collected set, a skipped-module node still matches via AST.
-    node = "tests/test_apps_import_boundary.py::test_apps_only_import_sdk"
+    node = "tests/rails/test_apps_import_boundary.py::test_apps_only_import_sdk"
     assert _node_id_matches(node, collected=set())
     # A genuinely missing name does not match even with the fallback.
-    assert not _node_id_matches("tests/test_apps_import_boundary.py::test_ghost", collected=set())
+    assert not _node_id_matches(
+        "tests/rails/test_apps_import_boundary.py::test_ghost", collected=set()
+    )
 
 
 def test_dangling_node_id_is_flagged(tmp_path: Path) -> None:

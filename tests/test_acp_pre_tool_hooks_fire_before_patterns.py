@@ -509,7 +509,7 @@ async def test_every_path_asks_the_hooks_at_the_same_step(tmp_path, the_store, p
 def test_the_table_covers_every_place_that_decides_a_call():
     """A place that approves a call (the deny-list census's `_DECIDES` and its gates) is a path
     here, so a new one is run through the cases above before it can approve anything."""
-    from test_every_approval_path_asks_the_deny_list_first import _DECIDES, _GATES
+    from approval_deny_list_sites import _DECIDES, _GATES
 
     covered = {
         "dashboard/chat_runner.py::run_chat._let_through": "agent CLI chat",

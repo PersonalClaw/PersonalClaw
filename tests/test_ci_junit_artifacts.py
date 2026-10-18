@@ -20,7 +20,7 @@ honest, because either one alone is silently useless:
 Parsed from the workflow source, not executed: GitHub Actions is not available to the
 suite, and the shape asserted here ("this step's command carries this flag", "this job
 has an upload step") is carried by the text. Same convention as
-``tests/test_ci_tier_enforcement.py`` and ``tests/test_gate_aggregate_runs_in_ci.py``.
+``tests/rails/test_ci_tier_enforcement.py`` and ``tests/test_gate_aggregate_runs_in_ci.py``.
 """
 
 from __future__ import annotations

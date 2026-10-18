@@ -63,6 +63,8 @@ _DOCKER = ".github/workflows/docker-single-container.yml"
 _WALK = ".github/workflows/clean-machine-walkthroughs.yml"
 _BREADTH = ".github/workflows/breadth.yml"
 _SUITE_LEGS = ("ubuntu", "macos", "arm", "coverage-shard")
+#: The tree-keyed breadth legs: the suite legs, and the rails on macOS.
+_TREE_KEYED_LEGS = (*_SUITE_LEGS, "rails-macos")
 
 MASKED: tuple[Masked, ...] = (
     Masked(
@@ -144,20 +146,20 @@ MASKED: tuple[Masked, ...] = (
 TOLERATED: tuple[Tolerated, ...] = (
     Tolerated(
         _BREADTH,
-        _SUITE_LEGS,
+        _TREE_KEYED_LEGS,
         "the earlier record's results",
         "No earlier record (a first night, an expired artifact) is not a failure: decide then "
         "says run.",
     ),
     Tolerated(
         _BREADTH,
-        _SUITE_LEGS,
+        _TREE_KEYED_LEGS,
         "decide",
         "A decision that crashes writes no run=false, so the shard runs.",
     ),
     Tolerated(
         _BREADTH,
-        (*_SUITE_LEGS, "security-corpus", "canary"),
+        (*_TREE_KEYED_LEGS, "security-corpus", "canary"),
         "pytest",
         "Its outcome is the shard's result: `ran` records it, and the last step fails the job "
         "on a red entry, after the evidence is written and uploaded.",

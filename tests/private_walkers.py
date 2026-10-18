@@ -1,6 +1,6 @@
 """No test walks one of the source roots itself: it reads them through ``tests/source_index.py``.
 
-The rule, as ``tests/test_ci_contract.py`` holds it over every module under ``tests/``:
+The rule, as ``tests/rails/test_ci_contract.py`` holds it over every module under ``tests/``:
 
 a **recursive walk** (``.rglob(…)``, ``os.walk(…)``, ``glob.glob(…, recursive=True)``, a
 ``.glob("**…")``) that starts at the package (``src/personalclaw``, or a path built from one of

@@ -163,7 +163,7 @@ from personalclaw.context import (
 # is a separate release artifact that cannot land atomically with core.
 # `tests/test_channel_inbound_chokepoint.py` now asserts the ABSENCE, so the second
 # route cannot quietly return, and the `personalclaw.sdk.*`-only import boundary
-# (`tests/test_apps_import_boundary.py`) makes the door structural rather than
+# (`tests/rails/test_apps_import_boundary.py`) makes the door structural rather than
 # conventional.
 from personalclaw.dashboard.chat import save_session_to_history
 from personalclaw.dashboard.handlers import get_update_info

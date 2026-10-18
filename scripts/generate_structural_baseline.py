@@ -64,7 +64,7 @@ the other two.
     * **``web/`` (the SPA).** The design-system ratchets already own frontend structure and
       run under vitest; a second, Python-side counter over ``web/src`` would be a duplicate
       gate — exactly the defect ``structural-duplication`` measures.
-    * **The apps → core import direction.** ``tests/test_apps_import_boundary.py`` already
+    * **The apps → core import direction.** ``tests/rails/test_apps_import_boundary.py`` already
       owns it (apps may reach core only via ``personalclaw.sdk.*``). This change deliberately
       picks directions that test does NOT cover: INSIDE core, and the reverse direction
       (core importing its own published facade).
@@ -539,9 +539,9 @@ DIRECTION_RULES: tuple[DirectionRule, ...] = (
         upper=("sdk",),
         rationale=(
             "``personalclaw.sdk`` is the OUTWARD facade that removable app bundles import; "
-            "tests/test_apps_import_boundary.py pins the other direction (apps may reach core "
-            "only through it) and that test SKIPS in a standalone clone, so this direction has "
-            "never been guarded at all. When core imports its own facade, the facade becomes "
+            "tests/rails/test_apps_import_boundary.py pins the other direction (apps may reach "
+            "core only through it) and that test SKIPS in a standalone clone, so this direction "
+            "has never been guarded at all. When core imports its own facade, the facade becomes "
             "load-bearing INSIDE core and can no longer be reshaped for apps without breaking "
             "core — the provider-boundary tenet inverted. Measured 10 edges across 7 files."
         ),

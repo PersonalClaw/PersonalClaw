@@ -395,7 +395,7 @@ class TestRefusalEnvelope:
     `AGENTS.md` §"Shared conventions" → **Error envelope (HTTP)** declares
     ``{"error": {"code", "message"}}``. This surface shipped seven flat
     ``{"error": "<prose>"}`` refusals instead, and they were INVISIBLE to
-    `tests/test_wire_error_envelope_census.py` because they went through the local
+    `tests/rails/test_wire_error_envelope_census.py` because they went through the local
     ``_json``/``_done`` helpers — at the ``json_response`` line the payload is a variable,
     so the scanner could not read its shape. The census now follows wrapper indirection
     and these tests are the behavioural half: the census proves the SHAPE is emitted from

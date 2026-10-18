@@ -21,7 +21,7 @@ Concretely, it earns its place in the workspace three ways that a sibling repo c
 - `tests/test_mobile_shell.py` asserts the shell's route string against the route
   `web/src/app/App.tsx` registers, and its registry vocabulary against `endpoints.ts`. Those rails
   are only possible with both sides in one tree.
-- `tests/test_ci_tier_enforcement.py` requires every tested npm workspace to have a root
+- `tests/rails/test_ci_tier_enforcement.py` requires every tested npm workspace to have a root
   `test:<name>` script and a CI step, so `mobile/`'s tests cannot quietly stop running.
 - One `npm ci` at the repo root installs it, like `web/` and `desktop/`.
 

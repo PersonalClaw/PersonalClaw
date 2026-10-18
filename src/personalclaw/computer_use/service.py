@@ -19,7 +19,7 @@ step   what                                          owner
 **Composition is this module's job, and the ORDER is the substance of it.** Steps 2/4/5
 first shipped as three correct, tested, and provably inert functions — an audit
 censused the production callers and found zero, which is why
-``tests/test_computer_use_call_sites.py`` exists. Wiring them is therefore not "add three
+``tests/rails/test_computer_use_call_sites.py`` exists. Wiring them is therefore not "add three
 calls": a screen that runs after the driver has already pressed the button is not a screen, so
 ``test_the_chain_runs_every_screen_before_the_acting_driver_call`` records the actual sequence
 at runtime and asserts it, rather than asserting that each step happened somewhere.

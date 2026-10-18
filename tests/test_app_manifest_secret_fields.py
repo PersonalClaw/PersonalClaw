@@ -17,7 +17,7 @@ Settings → Providers load actually fetches an instance config for, which made 
 browser-reachable cleartext credential in the set.
 
 **What this rail can and cannot prove — stated up front, because its sibling's history is a
-warning.** ``tests/test_apps_import_boundary.py`` had *never run anywhere* (issue 1777): it
+warning.** ``tests/rails/test_apps_import_boundary.py`` had *never run anywhere* (issue 1777): it
 resolved a path that was always absent and module-skipped, so the one lint enforcing the
 provider-agnostic-core tenet reported "skipped" on every run while a violation could have
 landed at any time. This rail reuses that file's :func:`_app_roots` so it inherits the fixed
@@ -125,12 +125,12 @@ from typing import Any
 
 import pytest
 
-from personalclaw.apps.secret_fields import is_credential_field_name
-
 # The resolution of "where do first-party apps live" has ONE owner already — reuse it rather
 # than re-deriving it here. A second answer to that question is the defect shape this rail
 # exists to catch, and issue 1777 is what a wrong answer costs.
-from tests.test_apps_import_boundary import _app_roots
+from app_roots import _app_roots
+
+from personalclaw.apps.secret_fields import is_credential_field_name
 
 
 def _credential_fields(props: dict[str, Any] | None, trail: str = "") -> list[tuple[str, bool]]:

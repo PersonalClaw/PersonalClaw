@@ -1242,7 +1242,7 @@ PRODUCER_NONE = "none"
 #: actually produces each. `breaker_trip` is the one that does not: the loop watchdog is its only
 #: writer in the tree (`loop/journal.py::breaker_trip`) and the run engine has no breaker to trip.
 #: Declared rather than inferred, because a projection over an event list cannot see who writes the
-#: list — and railed in both directions (`tests/test_ledger_rails.py`), so an engine that
+#: list — and railed in both directions (`tests/rails/test_ledger_rails.py`), so an engine that
 #: grows a breaker reds this table instead of silently turning an absent cell into a zero.
 RAIL_PRODUCERS: dict[str, str] = {
     "step_completed": PRODUCER_ENGINE,

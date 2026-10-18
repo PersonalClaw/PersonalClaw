@@ -576,7 +576,7 @@ def test_the_room_surface_emits_no_computed_wire_code():
     reverting to ``json_error(exc.code, ...)`` reds beside the code instead of only in a
     tree-wide count somebody else has to attribute.
     """
-    from test_wire_error_envelope_census import Census, scan_source
+    from wire_error_envelopes import Census, scan_source
 
     census = Census()
     rel = "src/personalclaw/dashboard/handlers/rooms.py"

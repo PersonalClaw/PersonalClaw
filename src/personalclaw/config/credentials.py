@@ -36,8 +36,8 @@ The write/read asymmetry is deliberate:
 home's: every PersonalClaw home on the machine reaches the same one. So the keychain half of a
 home's store is filed under a service name that belongs to that home, and
 :func:`keychain_service` is the one place the name is made — every keychain read, write, delete
-and index entry passes it (``tests/test_keychain_namespace_census.py``). The default home keeps
-the name every earlier release used, ``personalclaw``, so an existing install's secrets stay
+and index entry passes it (``tests/rails/test_keychain_namespace_census.py``). The default home
+keeps the name every earlier release used, ``personalclaw``, so an existing install's secrets stay
 where they are. Any other home is named ``personalclaw-<id>``, from an id minted on its first
 keychain write and kept in the home (:data:`KEYCHAIN_NAMESPACE_FILE`) — never from the home's
 path, which can move. One name for every home let a scratch or dev home list the default home's
@@ -328,7 +328,7 @@ def keychain_service(home: Path | None = None, *, mint: bool = False) -> str:
     none is named — or ``""`` when that home has none to use.
 
     🔴 The one place that name is made. Every keychain read, write, delete and index entry passes
-    what this returns, and nothing else does (``tests/test_keychain_namespace_census.py``).
+    what this returns, and nothing else does (``tests/rails/test_keychain_namespace_census.py``).
 
     The default home answers ``personalclaw``, the name every home used before each had its own.
     Any other home answers ``personalclaw-<id>``, the id read from its

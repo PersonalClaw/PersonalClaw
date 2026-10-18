@@ -91,8 +91,9 @@ tool_homes = importlib.import_module("tool_homes")
 
 # ── The security marker's census ────────────────────────────────────────
 # Which modules must carry `pytest.mark.security`, read from their source. The CI contract row
-# (`tests/test_ci_contract.py`) fails on one that does not, and a run where that row ran prints how
-# many modules and items carry it (`pytest_terminal_summary`). Rule: tests/security_census.py.
+# (`tests/rails/test_ci_contract.py`) fails on one that does not, and a run where that row ran
+# prints how many modules and items carry it (`pytest_terminal_summary`). Rule:
+# tests/security_census.py.
 security_census = importlib.import_module("security_census")
 
 # ── The fixture-cost report ─────────────────────────────────────────────
@@ -357,7 +358,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 # parses the package once per worker. That costs seconds, so it must not land inside the first
 # rail's own time limit: pytest-timeout arms its timer in its `pytest_runtest_protocol` wrapper,
 # and `tryfirst` puts this wrapper outside that one, so the walk runs before the timer starts. A
-# worker that runs no tree rail never builds the index. Proof: tests/test_source_index.py.
+# worker that runs no tree rail never builds the index. Proof: tests/rails/test_source_index.py.
 source_index = importlib.import_module("source_index")
 
 

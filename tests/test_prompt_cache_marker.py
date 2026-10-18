@@ -589,7 +589,7 @@ def test_the_field_carries_meta_for_the_settings_surface():
 # An app whose provider owns its OWN wire (bedrock-models' Converse client) must READ
 # the neutral marker to translate it into its vendor's syntax — core never learns that
 # syntax. Apps may only reach core through ``personalclaw.sdk.*``
-# (tests/test_apps_import_boundary.py), so the marker key has to be ON that facade or
+# (tests/rails/test_apps_import_boundary.py), so the marker key has to be ON that facade or
 # the out-of-repo consumer is stranded with a hand-copied string literal.
 
 

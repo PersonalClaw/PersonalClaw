@@ -94,7 +94,7 @@ event loop, where on a 512 MB upload it stopped every other request for up to 0.
 
 While an upload's complete runs, `UploadStore.completing` holds it: a retried complete, a late part
 and a drop are refused with 409 (`upload_completing` for the drop), and the sweep passes it over.
-`tests/test_event_loop_whole_file_census.py` keeps whole-file work off the loop everywhere in the
+`tests/rails/test_event_loop_whole_file_census.py` keeps whole-file work off the loop everywhere in the
 package, and names what is still on it.
 
 ### The content scan
@@ -173,7 +173,7 @@ silent past 60 s, and one that ends without an answer (as it does when the scann
 content) are answered 503 `upload_content_unchecked`; text a reader made that the scan refuses or
 could not check is withheld in the same way. Each refusal is a row in the security event log
 (`upload_scan`, naming the route, or where the text was going).
-`tests/test_stored_upload_scan_census.py` reads the package for every route that takes a file's
+`tests/rails/test_stored_upload_scan_census.py` reads the package for every route that takes a file's
 bytes from a request, and fails on one that neither scans them nor says why not.
 
 ### The artifact mirror follows every write, whichever process made it

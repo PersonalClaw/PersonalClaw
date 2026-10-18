@@ -7,7 +7,7 @@ app lives under. See ``personalclaw/apps/native_contract.py`` and
 ``docs/architecture/app-platform.md``.
 
 This file is the enforcement half, and it is deliberately built to be non-vacuous.
-``tests/test_apps_import_boundary.py`` (the installed-app twin) resolves the workspace
+``tests/rails/test_apps_import_boundary.py`` (the installed-app twin) resolves the workspace
 ``apps/`` dir and ``pytest.skip``s the whole module when it is absent — which is the case
 in a standalone core clone AND in this project's own workspace, whose apps checkout is
 named ``PersonalClawApps``. A skipped rail reads exactly like a passing one. The bundled

@@ -633,7 +633,7 @@ jobs:
       - name: pytest (shard ${{ matrix.shard }} of 4 — xdist within the shard, no coverage)
         # -n auto --dist worksteal: one xdist worker per core (4 on this runner), each test handed
         #   to whichever worker is free. pytest's own default is one process, so a suite step
-        #   names its workers (tests/test_ci_contract.py holds every suite step to that).
+        #   names its workers (tests/rails/test_ci_contract.py holds every suite step to that).
         # No --cov: coverage is measured by breadth.yml's `coverage` legs.
         # -q: with the addopts `--verbose` this nets to NORMAL verbosity — a progress summary,
         #   not one line per test — so each shard's log stays small (the #2720 truncation class).
@@ -850,7 +850,7 @@ jobs:
       # Vitest's own default worker count is one less than the cores, and `web/vitest.config.ts`
       # holds a bare local run to 3 so a laptop keeps some; this job is the runner's only work,
       # so it takes every core. Through $GITHUB_ENV so the vitest step stays the one-line
-      # `npm run test:web` that tests/test_ci_tier_enforcement.py reads.
+      # `npm run test:web` that tests/rails/test_ci_tier_enforcement.py reads.
       - name: vitest on every core
         run: echo "VITEST_MAX_WORKERS=$(nproc)" | tee -a "$GITHUB_ENV"
       - name: test (vitest)
@@ -1432,14 +1432,21 @@ jobs:
           retention-days: 7
 
   rails:
-    # Cheap anti-regression rails: machine-checked invariants.
-    # Today: provider-boundary residue sweep (present on main).
+    # ── Every rail, once per run (#3928) ───────────────────────────────────────────────────
+    # A rail checks the source tree rather than running the product: a census, a ratchet, a
+    # parity or wiring check. tools/ci/rails_census.py decides which modules are rails, and they
+    # live in tests/rails. They run here, once, and in no suite shard: tools/ci/shards.py leaves
+    # tests/rails out of every plan, so `shards check` proves no shard lists one. breadth.yml's
+    # `rails-macos` leg runs the same set nightly on macOS.
     needs: [tree-check]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # No PERSONALCLAW_HOME (see the test job) — the residue sweep is a static
-    # import-boundary check and the suite runs under the no-global-home contract.
+    # No PERSONALCLAW_HOME (see `test-shard`): the suite runs under the no-global-home contract.
+    # The rest is `test-shard`'s environment, so a rail sees what it saw in a shard.
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -1456,9 +1463,14 @@ jobs:
           prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
-      # One process, pytest's default: these rails are tiny.
-      - name: provider-boundary residue sweep
-        run: uv run pytest tests/test_provider_boundary_residue.py --junitxml=reports/junit-rails.xml
+      # Every module the census places in tests/rails, on four workers. Its junit lists every rail
+      # this run ran, so a rail red on main can be traced to the pull request's run that ran it.
+      - name: every rail (tests/rails)
+        run: uv run pytest -n 4 --dist worksteal -q tests/rails --junitxml=reports/junit-rails.xml
+      # The rule itself, apart from the contract row that holds it: the census's own verdict,
+      # naming any rail outside tests/rails and any pending-split name that no longer applies.
+      - name: every rail lives in tests/rails
+        run: uv run python -m tools.ci rails check
       # Every tracked font, image, binary and fixture has a recorded source, licence and notice
       # in ASSET_LICENSES.json. tests/test_asset_licenses.py asserts the same thing inside the
       # suite; this step prints the checker's own list of what is missing.

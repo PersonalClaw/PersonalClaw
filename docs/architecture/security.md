@@ -179,7 +179,7 @@ and the address is never logged, since a sign-in page's carries its single-use `
   Changing an existing password asks for the current one, and the 2FA code when one is enrolled,
   whatever the session; a wrong one is refused, logged and counted toward the sign-in lockout.
   Containment never asks: signing devices out, replacing the key, revoking a token, turning
-  incident mode on, tightening sign-in. `tests/test_owner_presence_census.py` fails a route that
+  incident mode on, tightening sign-in. `tests/rails/test_owner_presence_census.py` fails a route that
   mints a credential without asking, and one that contains and does.
 - **The keys that are not sign-ins have a lifetime too, each the one its job allows.**
   - An app backend's proxy secret (`apps/<app>/.app_secret`, the HMAC key the reverse proxy signs
@@ -359,7 +359,7 @@ grants, is refused before its message is sent, and the owner is told why.
   gateway log.
   `tests/test_every_command_path_asks_the_denylist.py` fails a spawn site that
   runs a written command without asking, and
-  `tests/test_every_approval_path_asks_the_deny_list_first.py` a place that approves
+  `tests/rails/test_every_approval_path_asks_the_deny_list_first.py` a place that approves
   a call without asking the screen. What a text pattern cannot see is
   [limitations §15](../security/limitations.md#15-the-shell-denylist-reads-a-commands-text).
 - **Suspicious-pattern watchers** — `SUSPICIOUS_BASH_PATTERNS` (52 patterns)
@@ -1496,7 +1496,7 @@ gate) do; the side chat and an agent's test run on its page refuse every call ex
 No session is kept for them, so what one chat's chore reads never
 reaches another's: the chores used to share one long-lived session whose conversation carried
 every chore of every chat, and a consolidation stored words read there as the user's own facts.
-`tests/test_session_acquisition_census.py` fails a chore that takes a session. The one-shot
+`tests/rails/test_session_acquisition_census.py` fails a chore that takes a session. The one-shot
 completions (inbox triage, digests, re-tagging, schedule parsing) are such calls too. A chore of an
 Incognito or Temporary chat reaches no model but the chat's own: it runs on that model only in the
 chat's own turn, and is refused anywhere else before anything is sent

@@ -18,7 +18,7 @@
 # `refs/pull/N/merge` (GitHub's "Events that trigger workflows", `pull_request`). ci.yml's own key
 # would then name the merge commit's main group, and its cancel-in-progress would read false.
 # Each key here is what that workflow's key evaluated to on the pull request's own runs.
-# tests/test_ci_contract.py evaluates both, for every workflow that runs on `pull_request`, and
+# tests/rails/test_ci_contract.py evaluates both, for every workflow that runs on `pull_request`, and
 # holds them equal, merged or not, from this repository or a fork.
 #
 # Nothing of the pull request runs here: no checkout, `permissions: {}`, and one step that logs

@@ -1155,7 +1155,7 @@ async def run_search(
         best_ever=best_ever if best_ever is not None else capture_best_ever(subject),
     )
     # The witness hashes every file it watches, so it runs off the event loop, as whole-file
-    # work must (`tests/test_event_loop_whole_file_census.py`).
+    # work must (`tests/rails/test_event_loop_whole_file_census.py`).
     witness = await asyncio.to_thread(LiveWitness.capture, [*frozen, *witness_extra])
     key = f"{SEARCH_KIND}:{subject}"
 
