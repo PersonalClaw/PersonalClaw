@@ -231,7 +231,7 @@ def test_the_ceiling_shim_wraps_the_sandbox_and_not_the_reverse(
     # its ssh accepts. The spy below monkeypatches `run` on the shared `subprocess` MODULE
     # object, so it captures every spawn in the process and cannot tell those probes apart from
     # the cron child's own — it counted both. Whether it saw one or two therefore depended on
-    # whether some earlier test in the same pytest-split shard had already warmed the cache,
+    # whether some earlier test in the same shard had already warmed the cache,
     # which is exactly how this assertion came up `2 == 1` on the `(3.13, macos-14, 4)` leg and,
     # run alone, on Linux. One whole wrap, thrown away, settles all of it on every backend, so
     # the window holds the cron spawn and nothing else and the count below stays an exact 1

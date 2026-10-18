@@ -1278,10 +1278,9 @@ def macos_leg_violations(tree: Tree) -> list[str]:
     if shards != theirs:
         bad.append(f"ci.yml:test-macos splits into {len(shards)}, test-shard into {len(theirs)}")
     command = _pytest_run(macos)
-    if f"--splits {len(shards)} " not in command:
-        bad.append("ci.yml:test-macos's --splits is not its shard count")
-    if "--group ${{ matrix.shard }} " not in command:
-        bad.append("ci.yml:test-macos does not run its own shard's group")
+    listing = f"--leg test-macos --shard ${{{{ matrix.shard }}}}/{len(shards)} "
+    if listing not in " ".join(_runs(macos).split()) + " ":
+        bad.append("ci.yml:test-macos does not list its own shard of its own leg's plan")
     if _suite_words(command) != _suite_words(_pytest_run(ubuntu)):
         bad.append("ci.yml:test-macos's pytest selects other than test-shard's")
     if (macos.get("env") or {}) != (ubuntu.get("env") or {}) or any(
@@ -1770,16 +1769,14 @@ def _pytest_args(words: list[str]) -> list[str]:
 def _runs_the_suite(words: list[str]) -> bool:
     """A root pytest that runs the suite, or a shard of it, rather than files it names.
 
-    It is a suite run when it takes a slice of a split (``--splits`` or ``--group``), or when
-    nothing it collects is narrower than the whole suite: it names no path at all (pytest falls
-    back to ``testpaths``), or names only ``tests`` itself. A step that names files or a
+    It is a suite run when nothing it collects is narrower than the whole suite: it names no
+    path at all (pytest falls back to ``testpaths``), or names only ``tests`` itself, as every
+    shard does with its ``--shard-list``. A step that names files or a
     narrower directory, such as ``lint``'s installer test or the scanner corpus, picks its own.
     """
     if not _root_pytest(words):
         return False
     args = _pytest_args(words)
-    if any(w in ("--splits", "--group") or w.startswith(("--splits=", "--group=")) for w in args):
-        return True
     paths = [w for w in args if not w.startswith("-") and _TEST_PATH.search(w)]
     return all(p.rstrip("/") == "tests" for p in paths)
 
@@ -1805,6 +1802,84 @@ def suite_workers_violations(tree: Tree) -> list[str]:
         for words in _commands(str(step.get("run", ""))):
             if _runs_the_suite(words) and not _sets_workers(_pytest_args(words)):
                 bad.append(f"{name}:{job_id} runs the suite with no -n: {' '.join(words)}")
+    return bad
+
+
+_SHARD_LIST = '--shard-list "$RUNNER_TEMP/shard.txt"'
+_PLAN_FILE = '--plan "$RUNNER_TEMP/shard-plan/plan.json"'
+#: The job that plans each workflow's suite shards once for the run.
+_PLANNERS = {"ci.yml": "shard-plan", "breadth.yml": "freshness"}
+_PLAN_LEG = re.compile(r"--leg\s+([\w-]+):([\w.-]+):([\w.-]+):(\d+)")
+_BREADTH_LISTING = (
+    '--leg "${{ github.job }}" --shard "${{ matrix.shard }}/${{ strategy.job-total }}"'
+)
+
+
+def suite_shard_violations(tree: Tree) -> list[str]:
+    """Every suite shard runs its share of its run's one plan (#3923):
+
+    - one job of each workflow plans every leg (``shards plan``), and checks the plan
+      (``shards check``) after making it;
+    - each matrix job whose pytest runs the suite waits on that job, downloads the plan, lists
+      its own leg's shard ``${{ matrix.shard }}`` of N before pytest, and runs pytest with that
+      ``--shard-list``. N is the job's matrix size, and the plan names the leg with that N and
+      the prefix of the job's junit artifact;
+    - no suite step passes pytest-split's ``--splits`` or ``--group``.
+    """
+    bad: list[str] = []
+    for name, planner in _PLANNERS.items():
+        jobs = (_workflow(tree, name) or {}).get("jobs") or {}
+        steps = (jobs.get(planner) or {}).get("steps") or []
+        runs = [" ".join(str(s.get("run", "")).split()) for s in steps]
+        plans = [i for i, r in enumerate(runs) if "tools.ci shards plan" in r]
+        if len(plans) != 1:
+            bad.append(f"{name}:{planner} does not plan the shards once")
+            continue
+        if not any(f"tools.ci shards check {_PLAN_FILE}" in r for r in runs[plans[0] + 1 :]):
+            bad.append(f"{name}:{planner} uploads a plan it never checked")
+        legs = {m[0]: (m[2], int(m[3])) for m in _PLAN_LEG.findall(runs[plans[0]])}
+        for job_id, job in jobs.items():
+            steps = job.get("steps") or []
+            texts = [" ".join(str(s.get("run", "")).split()) for s in steps]
+            suite = [
+                i
+                for i, s in enumerate(steps)
+                if any(_runs_the_suite(w) for w in _commands(str(s.get("run", ""))))
+            ]
+            shards = _matrix_values(job, "shard")
+            if not suite or not shards:
+                continue
+            where, n, first = f"{name}:{job_id}", len(shards), suite[0]
+            if any(_SHARD_LIST not in texts[i] for i in suite):
+                bad.append(f"{where} runs the suite without its shard's list")
+            if any(w.startswith(("--splits", "--group")) for i in suite for w in texts[i].split()):
+                bad.append(f"{where} still splits with pytest-split")
+            if planner not in _needs(job):
+                bad.append(f"{where} does not wait on {planner}, which plans its shards")
+            if not any(
+                _action(s) == "actions/download-artifact"
+                and (s.get("with") or {}).get("name") == "shard-plan"
+                for s in steps[:first]
+            ):
+                bad.append(f"{where} does not download the run's shard plan before pytest")
+            own = (f"--leg {job_id} --shard ${{{{ matrix.shard }}}}/{n} ", _BREADTH_LISTING + " ")
+            if not any(
+                f"tools.ci shards list {_PLAN_FILE}" in t
+                and '--out "$RUNNER_TEMP/shard.txt"' in t
+                and any(o in t + " " for o in own)
+                for t in texts[:first]
+            ):
+                bad.append(f"{where} does not list its own shard of {n} before pytest")
+            planned = legs.get(job_id)
+            reports = [
+                str((s.get("with") or {}).get("name", ""))
+                for s in steps
+                if _action(s) == "actions/upload-artifact"
+            ]
+            if planned is None or planned[1] != n:
+                bad.append(f"{where}: the plan names it {planned}, not in {n} shards")
+            elif not any(r.startswith(planned[0]) for r in reports):
+                bad.append(f"{where}: no junit report is named {planned[0]}*, as the plan reads")
     return bad
 
 
@@ -2374,8 +2449,9 @@ ROWS: tuple[Row, ...] = (
                     _replace("ci.yml", _MACOS_RUN, f'{_MACOS_RUN} -m "not slow"'),
                     _replace(
                         "ci.yml",
-                        "uv run pytest -n auto --dist worksteal -q --splits 4",
-                        'uv run pytest -n auto --dist worksteal -q -m "not slow" --splits 4',
+                        "uv run pytest -n auto --dist worksteal -q tests --shard-list",
+                        'uv run pytest -n auto --dist worksteal -q -m "not slow"'
+                        " tests --shard-list",
                     ),
                 ),
                 fails=False,
@@ -2387,12 +2463,16 @@ ROWS: tuple[Row, ...] = (
                 "",
             ),
             _plant(
-                "every macOS shard runs group 1",
+                "every macOS shard lists shard 1",
                 _CI,
-                "--group ${{ matrix.shard }} --splitting-algorithm least_duration"
-                " --junitxml=reports/junit-test-macos-",
-                "--group 1 --splitting-algorithm least_duration"
-                " --junitxml=reports/junit-test-macos-",
+                "--leg test-macos --shard ${{ matrix.shard }}/4",
+                "--leg test-macos --shard 1/4",
+            ),
+            _plant(
+                "test-macos listing test-shard's plan",
+                _CI,
+                "--leg test-macos --shard ${{ matrix.shard }}/4",
+                "--leg test-shard --shard ${{ matrix.shard }}/4",
             ),
             _plant(
                 "a positional path only test-macos has",
@@ -2553,14 +2633,14 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "--cov on a gate shard",
                 _CI,
-                "uv run pytest -n auto --dist worksteal -q --splits 4",
-                "uv run pytest -n auto --dist worksteal --cov=personalclaw -q --splits 4",
+                "uv run pytest -n auto --dist worksteal -q tests --shard-list",
+                "uv run pytest -n auto --dist worksteal --cov=personalclaw -q tests --shard-list",
             ),
             _plant(
                 "--cov personalclaw, the spaced form",
                 _CI,
-                "uv run pytest -n auto --dist worksteal -q --splits 4",
-                "uv run pytest -n auto --dist worksteal --cov personalclaw -q --splits 4",
+                "uv run pytest -n auto --dist worksteal -q tests --shard-list",
+                "uv run pytest -n auto --dist worksteal --cov personalclaw -q tests --shard-list",
             ),
             _plant(
                 "runs-on: [macos-14]",
@@ -3008,22 +3088,82 @@ ROWS: tuple[Row, ...] = (
         ),
     ),
     _toolchain_row(
+        "every suite shard runs its share of its run's one plan",
+        suite_shard_violations,
+        (
+            _plant(
+                "a suite shard with no shard list",
+                _CI,
+                '-q tests --shard-list "$RUNNER_TEMP/shard.txt"'
+                " --junitxml=reports/junit-test-shard-",
+                "-q --junitxml=reports/junit-test-shard-",
+            ),
+            _plant(
+                "a shard listing another N",
+                _CI,
+                "--leg test-shard --shard ${{ matrix.shard }}/4",
+                "--leg test-shard --shard ${{ matrix.shard }}/3",
+            ),
+            _plant(
+                "the plan naming a leg in another N",
+                _CI,
+                "--leg test-shard:ci.yml:junit-test-shard-:4",
+                "--leg test-shard:ci.yml:junit-test-shard-:3",
+            ),
+            _plant(
+                "a plan nobody checks",
+                _CI,
+                "      - name: every collectable file is in exactly one shard of each leg\n"
+                "        run: python3 -m tools.ci shards check"
+                ' --plan "$RUNNER_TEMP/shard-plan/plan.json"\n',
+                "",
+            ),
+            _plant(
+                "a shard that does not wait on the plan",
+                _CI,
+                "    needs: [tree-check, shard-plan]\n",
+                "    needs: [tree-check]\n",
+            ),
+            _plant(
+                "a breadth leg the plan leaves out",
+                _BREADTH,
+                "          --leg arm:breadth.yml:junit-arm-:4\n",
+                "",
+            ),
+            _plant(
+                "a junit prefix the leg's reports do not carry",
+                _BREADTH,
+                "--leg canary:breadth.yml:junit-canary-:4",
+                "--leg canary:breadth.yml:junit-canaries-:4",
+            ),
+            _plant(
+                "a shard back on pytest-split",
+                _BREADTH,
+                'tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-arm.xml',
+                'tests --shard-list "$RUNNER_TEMP/shard.txt" --splits 4'
+                " --junitxml=reports/junit-arm.xml",
+            ),
+            Control("every shard, as the tree has it, passes", _nothing, fails=False),
+        ),
+    ),
+    _toolchain_row(
         "every pytest step that runs the suite sets its worker count",
         suite_workers_violations,
         (
             _plant(
                 "a suite shard with no -n",
                 _CI,
-                "uv run pytest -n auto --dist worksteal -q --splits 4",
-                "uv run pytest -q --splits 4",
+                "uv run pytest -n auto --dist worksteal -q tests --shard-list",
+                "uv run pytest -q tests --shard-list",
             ),
             _plant(
-                "a breadth shard split with --splits= and --group=, with no -n",
+                "a breadth shard with no -n",
                 _BREADTH,
-                "uv run pytest -n auto --dist worksteal -q --splits 4 --group ${{ matrix.shard }}"
-                " --splitting-algorithm least_duration --junitxml=reports/junit-ubuntu.xml",
-                "uv run pytest -q --splits=4 --group=${{ matrix.shard }}"
-                " --splitting-algorithm least_duration --junitxml=reports/junit-ubuntu.xml",
+                "uv run pytest -n auto --dist worksteal -q tests"
+                ' --shard-list "$RUNNER_TEMP/shard.txt"'
+                " --junitxml=reports/junit-ubuntu.xml",
+                'uv run pytest -q tests --shard-list "$RUNNER_TEMP/shard.txt"'
+                " --junitxml=reports/junit-ubuntu.xml",
             ),
             _plant(
                 "a pytest that names no path, so collects testpaths",
@@ -3047,8 +3187,8 @@ ROWS: tuple[Row, ...] = (
                 "a suite shard with -n4 passes",
                 _replace(
                     "ci.yml",
-                    "uv run pytest -n auto --dist worksteal -q --splits 4",
-                    "uv run pytest -n4 --dist worksteal -q --splits 4",
+                    "uv run pytest -n auto --dist worksteal -q tests --shard-list",
+                    "uv run pytest -n4 --dist worksteal -q tests --shard-list",
                 ),
                 fails=False,
             ),
@@ -3056,8 +3196,8 @@ ROWS: tuple[Row, ...] = (
                 "a suite shard with --numprocesses=4 passes",
                 _replace(
                     "ci.yml",
-                    "uv run pytest -n auto --dist worksteal -q --splits 4",
-                    "uv run pytest --numprocesses=4 --dist worksteal -q --splits 4",
+                    "uv run pytest -n auto --dist worksteal -q tests --shard-list",
+                    "uv run pytest --numprocesses=4 --dist worksteal -q tests --shard-list",
                 ),
                 fails=False,
             ),
@@ -3077,8 +3217,8 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "--no-cov on a suite shard",
                 _CI,
-                "uv run pytest -n auto --dist worksteal -q --splits 4",
-                "uv run pytest -n auto --dist worksteal --no-cov -q --splits 4",
+                "uv run pytest -n auto --dist worksteal -q tests --shard-list",
+                "uv run pytest -n auto --dist worksteal --no-cov -q tests --shard-list",
             ),
             _plant(
                 "--no-cov inside a folded multi-line run",
