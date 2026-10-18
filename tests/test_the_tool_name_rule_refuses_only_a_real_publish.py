@@ -297,11 +297,13 @@ MEGABYTE = 1_000_000
 )
 def test_a_one_megabyte_line_is_judged_in_under_a_second(line, refused):
     """🔴 Red before: the push pattern's leading `.*` made the search quadratic, and a 1 MB read
-    took minutes. Measured on the push rule alone (`_may_push`), the part this rule adds."""
+    took minutes. Measured on the push rule alone (`_may_push`), the part this rule adds, as the CPU
+    time this process spends: other processes on a loaded machine stretch the wall clock without
+    adding any work."""
     import time
 
-    started = time.perf_counter()
+    started = time.process_time()
     may = security._may_push(line)
-    took = time.perf_counter() - started
+    took = time.process_time() - started
     assert may is refused
     assert took < 1.0, f"{took:.2f}s"
