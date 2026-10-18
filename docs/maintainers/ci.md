@@ -275,7 +275,10 @@ The rest of the platform breadth runs nightly (09:37 UTC) and on dispatch:
   or green, only when every input matches.
 - **Legs that run every night:** the security corpus, a canary on the next Ubuntu image
   (advisory), the installer smoke, and the dependency audit. `NON_REUSABLE` in
-  `tools/ci/breadth_evidence.py` names them.
+  `tools/ci/breadth_evidence.py` names them. The canary differs from the ubuntu-24.04 leg
+  only in image and Python, so a red is the new image's: pytest keeps its own temporary
+  folders, since `RUNNER_TEMP` sits under the runner's home, where the suite's home guard
+  refuses a test's folders and paths print as `~/...`.
 - **`report`** runs last, whatever the legs concluded. It writes the record (canonical JSON)
   as the artifact `breadth-evidence-<sha256>`, kept 90 days, and puts the digest in the
   summary. It keeps one issue per red leg, titled `breadth: <leg> is red`, and reads only what
@@ -368,6 +371,8 @@ of the same commit was red is the release gate's question (#3911), not this work
 - every suite shard runs its share of its run's one plan: one job plans every leg and checks the
   plan, and each shard waits on that job, downloads the plan, lists its own leg's shard of N (its
   matrix size, as the plan names it) and runs pytest over `tests` with that `--shard-list`;
+- no step that runs the suite keeps pytest's temporary folders under the runner's home: no
+  `--basetemp` and no `TMPDIR` under `RUNNER_TEMP`, the workspace, `$HOME` or `~`;
 - no workflow command passes `--no-cov`, which would only undo a default that is not there;
 - `freshness` first and `report` last;
 - `NON_REUSABLE` matches the jobs;
