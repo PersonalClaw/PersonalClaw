@@ -893,7 +893,11 @@ def _visit_foreach(
             ipath = f"{path}.body#{idx}"
             if not _started(ipath):
                 continue
-            if _is_terminal(_derive(node.body, ipath, states, edges, iterations, ctx)):
+            # Judged on the item's own outputs, as its visit and its derivation are: on another
+            # item's, a branch in this item reads its running case as the skipped one, the item
+            # looks finished, and the cap admits one item too many.
+            item_ctx = ctx.scoped_to(ipath)
+            if _is_terminal(_derive(node.body, ipath, states, edges, iterations, item_ctx)):
                 continue
             in_flight += 1
 

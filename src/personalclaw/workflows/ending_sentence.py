@@ -233,10 +233,14 @@ def judge_ruling(ctl: RunController, node: Node, parent_path: str, iteration: in
     for sub, child in walk(node.body):
         if not child.id or yes_or_no((child.config or {}).get("judge_contract")) is not True:
             continue
-        inst = ctl.instances.get(base if sub == "root" else f"{base}{sub[len('root'):]}")
+        ipath = base if sub == "root" else f"{base}{sub[len('root'):]}"
+        inst = ctl.instances.get(ipath)
         if inst is None or inst.state not in SUCCESS_STATES:
             continue
-        ruling = ctl._outputs.get(child.id)
+        # This instance's own ruling: inside a fan-out item, the node id holds another item's.
+        from personalclaw.workflows.node_bindings import item_output
+
+        ruling = item_output(ctl, ipath, child.id)
     return ruling
 
 

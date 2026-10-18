@@ -50,6 +50,31 @@ def item_prefixes(path: str) -> list[str]:
     return [path[: match.end()] for match in _ITEM_RE.finditer(path)]
 
 
+def _scoped_refs(
+    by_id: dict[str, str] | None,
+    by_instance: dict[str, tuple[str, str]] | None,
+    prefixes: list[str],
+) -> dict[str, str] | None:
+    """`by_id` as a step inside the items *prefixes* reads it: for each enclosing item, outermost
+    first, every item's ref of a node of that item's body comes out, then this item's own go back
+    in, latest last. The rule `BindingContext.scoped_to` applies to outputs."""
+    if not by_instance:
+        return by_id
+    refs = dict(by_id or {})
+    for prefix in prefixes:
+        body = spec_path(prefix)
+        mine: list[str] = []
+        for ipath, (node_id, _ref) in by_instance.items():
+            if ipath.startswith(f"{prefix}."):
+                mine.append(ipath)
+            if spec_path(ipath).startswith(f"{body}."):
+                refs.pop(node_id, None)
+        for ipath in sorted(mine, key=instance_order):
+            node_id, ref = by_instance[ipath]
+            refs[node_id] = ref
+    return refs or None
+
+
 #: A pipe call: `name` or `name('a','b')` / `name(3)`.
 _PIPE_RE = re.compile(r"^([a-z_]+)\s*(?:\((.*)\))?$")
 
@@ -144,6 +169,10 @@ class BindingContext:
     #: so on its own it holds whichever item finished last; `scoped_to` lays one item's own
     #: outputs over it. None outside a run that keeps them, where nothing is scoped.
     instance_outputs: dict[str, tuple[str, Any]] | None = None
+    #: instance path → (node id, artifact ref), for each step inside a fan-out item whose output
+    #: was offloaded: `node_artifacts` has the same last-writer problem `node_outputs` has, and
+    #: `scoped_to` scopes it by the same rule.
+    instance_artifacts: dict[str, tuple[str, str]] | None = None
     #: `_item_index`'s grouping of `instance_outputs`, built on first use. Carried by `replace`,
     #: which is right: a scoped copy holds the same `instance_outputs`.
     _index: tuple[dict[str, list[str]], dict[str, set[str]]] | None = field(
@@ -164,13 +193,17 @@ class BindingContext:
         inside it) reads the latest. A node of the item's body that has not produced an output
         in THIS item is taken out rather than left on another item's, so the read fails as
         unresolved, as it does before any item has run, instead of answering for the wrong item.
-        A read of a node outside every enclosing item's body is left as it was.
+        A read of a node outside every enclosing item's body is left as it was. Offloaded outputs'
+        artifact refs (`{{nodes.x.artifact}}`) are scoped by the same rule.
         """
-        if not self.instance_outputs:
+        if not self.instance_outputs and not self.instance_artifacts:
             return self
         prefixes = item_prefixes(path)
         if not prefixes:
             return self
+        artifacts = _scoped_refs(self.node_artifacts, self.instance_artifacts, prefixes)
+        if not self.instance_outputs:
+            return replace(self, node_artifacts=artifacts)
         by_item, ids_by_body = self._item_index()
         outputs = dict(self.node_outputs or {})
         for prefix in prefixes:
@@ -181,7 +214,7 @@ class BindingContext:
             for ipath in by_item.get(prefix, ()):
                 node_id, value = self.instance_outputs[ipath]
                 outputs[node_id] = value
-        return replace(self, node_outputs=outputs)
+        return replace(self, node_outputs=outputs, node_artifacts=artifacts)
 
     def _item_index(self) -> tuple[dict[str, list[str]], dict[str, set[str]]]:
         """`instance_outputs` grouped once per context, so scoping an item does not walk every

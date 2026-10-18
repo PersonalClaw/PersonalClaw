@@ -196,7 +196,7 @@ def _admission_state(ctl: RunController, ready: list[ReadyNode]) -> AdmissionSta
                 since[item.path] = stamp_epoch(completed)
         if config.get("metric_pass") is None:
             continue
-        value = _resolve_metric(ctl, config.get("metric_from"))
+        value = _resolve_metric(ctl, config.get("metric_from"), item.path)
         if value is not None:
             metrics[item.path] = value
         floor = _opt_metric(config.get("metric_floor"))
@@ -270,21 +270,24 @@ def _prior_step(ctl: RunController, path: str) -> tuple[str, str]:
     return prior, (node.id if node is not None else "")
 
 
-def _resolve_metric(ctl: RunController, raw: Any) -> float | None:
-    """Resolve `metric_from` against the run's outputs.
+def _resolve_metric(ctl: RunController, raw: Any, path: str) -> float | None:
+    """Resolve `metric_from` against the outputs the gated step at instance *path* reads.
 
     Accepts the dotted form (`verify.score`) and the familiar binding form
     (`{{nodes.verify.output.score}}`) — normalising instead of ignoring, because a metric source
     the engine silently could not read would leave the gate looking enforced while abstaining on
-    every tick.
+    every tick. Inside a fan-out item it reads that item's own steps (`node_bindings.item_outputs`):
+    read by node id, a step was let through, held or rolled back on another item's score.
     """
+    from personalclaw.workflows.node_bindings import item_outputs
+
     source = str(raw or "").strip()
     if not source:
         return None
     source = source.strip("{} ").strip()
     if source.startswith("nodes."):
         source = source[len("nodes.") :].replace(".output.", ".", 1)
-    cursor: Any = ctl._outputs
+    cursor: Any = item_outputs(ctl, path)
     for key in source.split("."):
         if not isinstance(cursor, dict):
             return None
