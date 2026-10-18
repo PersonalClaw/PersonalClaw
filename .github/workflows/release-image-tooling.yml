@@ -52,14 +52,14 @@ jobs:
           # sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c.
           driver-opts: image=moby/buildkit:v0.34.0@sha256:3eea2ed5d1766c44eb4740853abf56ba85ad40b2c8d4a22e047cbacf15f463c8
       - name: Build a two-platform image (no push)
-        # The base is the images' own node:24.21.0-alpine, by its multi-arch index, so each
+        # The base is the images' own node:24.22.0-alpine, by its multi-arch index, so each
         # platform pulls its own manifest. No context: the Dockerfile comes from stdin.
         # `cacheonly` keeps the result in BuildKit and nowhere else.
         run: |
           set -euo pipefail
           docker buildx version
           docker buildx build --platform linux/amd64,linux/arm64 --output type=cacheonly - <<'DOCKERFILE'
-          FROM mirror.gcr.io/library/node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
+          FROM mirror.gcr.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
           RUN echo "built for $(uname -m)" && node --version
           DOCKERFILE
           docker buildx inspect --bootstrap | grep -E '^(Driver|BuildKit version|Platforms):'
