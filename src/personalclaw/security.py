@@ -23,7 +23,7 @@ from personalclaw.command_paths import (
     strip_shell_quotes,
 )
 from personalclaw.sel import SecurityEvent, SecurityEventLog
-from personalclaw.shell_syntax import one_command
+from personalclaw.shell_syntax import Word, lex, simple_commands
 
 logger = logging.getLogger(__name__)
 
@@ -45,20 +45,11 @@ BUILTIN_DENY_PATTERNS: list[str] = [
     "*terminate_instance*",
     "*drop_table*",
     "*delete_bucket*",
-    # Git push (should be explicit)
+    # Git push (should be explicit). For a shell command, `is_denied` refuses only what may run
+    # a push (`_may_push`), which reads `git stash push` as stash's own action; there is no
+    # text exception, so a stash push is judged the same way alone or in a chain.
     "*git*push*",
 ]
-
-# Exceptions keyed by the deny pattern they apply to. If an input matches
-# a deny pattern AND one of that pattern's exceptions, the deny is skipped.
-# This avoids a blanket allowlist that could bypass unrelated deny rules.
-# An exception is applied only to an input the shell reads as one command
-# (`shell_syntax.one_command`, the reading an auto-approve pattern is held to):
-# a second command after `git stash push`, joined by any operator the shell
-# runs or run inside it, is a command the exception never named.
-_DENY_EXCEPTIONS: dict[str, list[str]] = {
-    "*git*push*": ["* stash push*"],
-}
 
 # ── Sensitive Paths ──
 # Directories and files that must never be read by the agent.
@@ -1873,6 +1864,132 @@ def _push_allowed(command: str) -> bool:
     return allowed(command)
 
 
+#: How many times a word that itself holds the push rule's two words (``bash -c "…"``) is read
+#: again as a command; one nested deeper is taken for a push.
+_PUSH_READ_DEPTH = 4
+
+#: A word that names git, or a command line holding it as a word of its own: ``git``,
+#: ``/usr/bin/git``, ``git.exe``, ``git "$@"``. Not ``.github`` or ``legit``.
+_GIT_WORD = re.compile(r"(?<![\w-])git(?:\.exe)?(?![\w-])", re.IGNORECASE)
+
+
+#: git's own options before its subcommand that take the next word as their value.
+_GIT_VALUED = frozenset({"-c", "-C", "--git-dir", "--work-tree", "--namespace", "--config-env"})
+
+#: The subcommands whose ``-m``/``--message`` word is a message git stores and never runs. An
+#: alias or any other subcommand keeps its words read in full.
+_MESSAGE_SUBCOMMANDS = frozenset({"commit", "tag", "merge", "notes", "stash"})
+#: An option whose next word is a commit's or a tag's message (``-m``, ``-am``, ``--message``).
+_MESSAGE_NEXT = re.compile(r"^(?:-[a-z]*m|--message)$")
+#: The same option with its message attached (``-m"…"``, ``--message=…``).
+_MESSAGE_ATTACHED = re.compile(r"^(?:-m.|--message=)")
+
+
+_BASELINE_PUSH_RE: re.Pattern[str] | None = None
+
+
+def _baseline_push_re() -> re.Pattern[str]:
+    """The shell denylist's push pattern, compiled for a search without its leading ``.*``.
+
+    A search already finds a match anywhere, so the leading ``.*`` changes no verdict. On a long
+    line it only costs time: the search tries it from every position, and from each one it runs
+    to the end of the line, so a 1 MB line took minutes."""
+    global _BASELINE_PUSH_RE
+    if _BASELINE_PUSH_RE is None:
+        from personalclaw.shell_denylist import GIT_PUSH_BASELINE_PATTERN
+
+        pattern = GIT_PUSH_BASELINE_PATTERN
+        pattern = pattern[2:] if pattern.startswith(".*") else pattern
+        _BASELINE_PUSH_RE = re.compile(pattern, re.IGNORECASE)
+    return _BASELINE_PUSH_RE
+
+
+def _may_push(command: str, depth: int = 0) -> bool:
+    """Whether *command*, a shell command the tool-name push rule matched, may run a push.
+
+    Deny by default. It may when the shell denylist's own push pattern matches it, so this is
+    never narrower than that rule (a git wrapper such as ``mygit push`` is refused there); when
+    the shell reader (:func:`shell_syntax.lex`) cannot read it (a substitution, a subshell, a
+    background job); when it holds a here-document; and when, in any simple command it holds, a
+    word naming git (:data:`_GIT_WORD`) or a word whose value the reader cannot know (a
+    variable, a glob) comes before a word that holds "push" or cannot be known either. The one
+    such word it skips is the message of a commit, a tag, a merge or a note
+    (:data:`_MESSAGE_SUBCOMMANDS`, ``git commit -m "…push…"``). A word that itself holds "git" and
+    later "push" is refused as the name it is when it has no space in it (``git_push``, a file
+    named so), and read again as a command when it has (``bash -c "git push"``), at most
+    :data:`_PUSH_READ_DEPTH` deep. So a read that names the word, or a commit message that holds
+    it, is not a push, and every spelling of one this reader can see, or cannot read at all, is."""
+    if depth >= _PUSH_READ_DEPTH:
+        return True
+    # Never narrower than the shell denylist's own push pattern: what it refuses, this does too.
+    if _baseline_push_re().search(command):
+        return True
+    tokens = lex(command)
+    commands = simple_commands(tokens) if tokens is not None else None
+    if commands is None:
+        return True
+    for simple in commands:
+        words = simple.words
+        if any(redirect.op == "<<" for redirect, _target in simple.redirects):
+            return True
+        pushes, messages = _git_words_push(words)
+        if pushes:
+            return True
+        read = [w for i, w in enumerate(words) if i not in messages]
+        for word in [*read, *(target for _redirect, target in simple.redirects)]:
+            inner = word.text
+            if not fnmatch.fnmatch(inner.lower(), GIT_PUSH_TOOL_PATTERN):
+                continue
+            # A word with no space in it is a name (`git_push`, a script, a file), refused as the
+            # rule refuses a name. One that is a command line (`bash -c "…"`) is read as one; a
+            # word that is the whole command again is not re-read, so nothing loops on itself.
+            if not any(ch.isspace() for ch in inner):
+                return True
+            if inner.strip() != command.strip() and _may_push(inner, depth + 1):
+                return True
+    return False
+
+
+def _git_words_push(words: list[Word]) -> tuple[bool, set[int]]:
+    """Whether, in one simple command's *words*, a word naming git, or one the reader cannot know,
+    comes before a word that holds "push" or cannot be known; and which words are a stored
+    message (:data:`_MESSAGE_SUBCOMMANDS`), which are skipped."""
+    named_git = False
+    subcommand = stash_action = ""
+    value_next = message_next = False
+    messages: set[int] = set()
+    for i, word in enumerate(words):
+        text = word.text.lower()
+        unknown = word.opaque or word.glob_at >= 0
+        if not named_git:
+            named_git = unknown or bool(_GIT_WORD.search(word.text))
+            continue
+        takes_message = subcommand in _MESSAGE_SUBCOMMANDS
+        if message_next:
+            message_next = False
+            messages.add(i)
+            continue
+        if takes_message and _MESSAGE_ATTACHED.match(text):
+            messages.add(i)
+            continue
+        if subcommand == "stash" and not stash_action and not unknown and not text.startswith("-"):
+            # `git stash push` keeps local changes: stash's own action, which publishes nothing.
+            stash_action = text
+            if text == "push":
+                continue
+        if unknown or "push" in text:
+            return True, messages
+        if takes_message and _MESSAGE_NEXT.match(text):
+            message_next = True
+        elif value_next:
+            value_next = False
+        elif not subcommand and word.text in _GIT_VALUED:
+            value_next = True
+        elif not subcommand and not text.startswith("-"):
+            subcommand = text
+    return False, messages
+
+
 def redact(text: str) -> str:
     """Apply all redaction passes (exfiltration URLs + credentials)."""
     text = redact_exfiltration_urls(text)[0]
@@ -2127,14 +2244,26 @@ def _fence_attr(value: str) -> str:
     )
 
 
-def is_denied(tool_name: str, extra_patterns: list[str] | None = None) -> str | None:
+def is_denied(
+    tool_name: str, extra_patterns: list[str] | None = None, *, shell: bool | None = None
+) -> str | None:
     """Check tool name against built-in + extra deny patterns.
 
     Returns denial reason string, or None if allowed.
+
+    *shell* says *tool_name* is a shell command rather than a tool's name; by default it is when
+    it carries the ``Running: `` title a shell call has. For a shell command the built-in push
+    rule (:data:`GIT_PUSH_TOOL_PATTERN`) refuses only what may run a push (:func:`_may_push`),
+    not every command whose text holds "git" and later "push", such as a read of
+    ``.github/workflows`` or a commit message. A pattern the owner added is matched as written,
+    and anything that is not a shell command is matched as a name, as before.
     """
     lower = tool_name.lower()
+    if shell is None:
+        shell = tool_name.startswith(_RUNNING)
+    builtin = len(BUILTIN_DENY_PATTERNS)
     all_patterns = BUILTIN_DENY_PATTERNS + (extra_patterns or [])
-    for pattern in all_patterns:
+    for index, pattern in enumerate(all_patterns):
         if fnmatch.fnmatch(lower, pattern.lower()):
             refused = (
                 _push_refusal(pattern)
@@ -2147,14 +2276,15 @@ def is_denied(tool_name: str, extra_patterns: list[str] | None = None) -> str | 
                 if not _emit_deny_exception_event(tool_name, pattern, mechanism=_SWITCH):
                     return refused
                 continue
-            exceptions = _DENY_EXCEPTIONS.get(pattern, [])
+            # Last, so what the switch lets through goes as it did, recorded as before: a shell
+            # command the built-in push rule matched only by its text, which runs no push (a
+            # read, a message, a stash push alone or in a chain), is not refused by it.
             if (
-                exceptions
-                and any(fnmatch.fnmatch(lower, e.lower()) for e in exceptions)
-                and one_command(lower) is not None
+                shell
+                and index < builtin
+                and pattern == GIT_PUSH_TOOL_PATTERN
+                and not _may_push(_command_in(tool_name))
             ):
-                if not _emit_deny_exception_event(tool_name, pattern):
-                    return refused
                 continue
             return refused
     return None

@@ -365,13 +365,16 @@ grants, is refused before its message is sent, and the owner is told why.
 - **Suspicious-pattern watchers** — `SUSPICIOUS_BASH_PATTERNS` (52 patterns)
   flag rather than block.
 - **Tool-name denies** — `BUILTIN_DENY_PATTERNS` (fnmatch over tool names)
-  with a documented `_DENY_EXCEPTIONS` escape hatch, and the operator's own
-  `hooks.auto_deny_tools`, both read by the hook chain at each call through the same
-  screen (`screen_tool_call`): on an agent CLI's call and on PersonalClaw's own agent's,
-  whatever grant would answer it, and on Tools → Try it and a scheduled script's tool call
-  by the tool's name. An exception is applied only to a line the shell reads as one command
-  (`shell_syntax.one_command`), so a push joined to `git stash push`, the background `&`
-  included, is refused as the push it is.
+  and the operator's own `hooks.auto_deny_tools`, both read by the hook chain at each call
+  through the same screen (`screen_tool_call`): on an agent CLI's call and on PersonalClaw's
+  own agent's, whatever grant would answer it, and on Tools → Try it and a scheduled script's
+  tool call by the tool's name. For a shell command the built-in push rule refuses only what
+  may run a push (`security._may_push`, which reads the line with `shell_syntax`). It has no
+  text exception, so `git stash push` is judged the same way alone or in a chain. A call's
+  title that is the very command it runs (bare, in backticks, or after `Running: `) is judged
+  as that command; a title that differs from its command is still judged as a name.
+  `tests/test_shell_syntax_splits_a_line_as_bash_does.py` holds the reader to bash's own
+  split of a line into commands and words.
 - **An operator's auto-approve pattern approves one command** (`hooks.auto_approve_tools`,
   `hooks._pattern_verdict`). A pattern that names a command approves that command only, read
   as the shell reads it (`shell_syntax`, the reader the task-mode gate reads commands with): a

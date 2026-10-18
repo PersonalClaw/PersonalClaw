@@ -1,15 +1,17 @@
-"""A deny-list exception covers the one command it names, never a second one joined to it.
+"""A stash push is judged by what the line runs, never waved through by its text.
 
-`*git*push*` is in the built-in deny list, which holds whatever the approval mode, and
-`* stash push*` is its exception: `git stash push` keeps work on this machine and pushes nothing.
-The exception is applied only to a line the shell reads as one command
-(`shell_syntax.one_command`, the reading an operator's auto-approve pattern is held to), so a push
-joined to a stash by any operator the shell runs, the background `&` included, or run inside it,
-is refused as the push it is.
+`*git*push*` is in the built-in deny list, which holds whatever the approval mode. It used to have
+a text exception, `* stash push*`, applied to a line the shell reads as one command. A text match
+over the whole line can be met by words that are not a stash push at all: a value given to git's
+own `-c` that holds " stash push", in front of a real push, let that push past the rule. The
+exception is gone. For a shell call the rule refuses only what may run a push
+(`security._may_push`), which reads `git stash push` as stash's own action, so a stash push is
+judged one way whether it stands alone or sits in a chain.
 
 The lines are built from the reader: every spelling of the characters an operator, a redirect or a
-substitution is written with, put between `git stash push` and a push. Where the reader reads the
-line as one command, it is a stash push with more arguments, and the exception holds.
+substitution is written with, put between `git stash push` and a push. Each one is refused: a
+second command joined by an operator runs the push, and a word after git that holds "push" (a
+redirect's target included) is taken for one.
 """
 
 from __future__ import annotations
@@ -18,15 +20,22 @@ import itertools
 
 import pytest
 
-from personalclaw import shell_syntax
 from personalclaw.security import is_denied
 
 pytestmark = pytest.mark.security
 
+RUNNING = "Running: "
+GIT = "git"
+PUSH = "push"
+STASH = f"{GIT} stash {PUSH}"
 
 OPERATOR_CHARS = ";&|<>\n"
 OTHER_CHARS = "`$(){}#"
-PUSH = "git push origin main --force"
+A_PUSH = f"{GIT} {PUSH} origin main --force"
+
+
+def _refused(command: str) -> bool:
+    return is_denied(f"{RUNNING}{command}") is not None
 
 
 def _lines() -> list[str]:
@@ -36,42 +45,33 @@ def _lines() -> list[str]:
         for p in itertools.product(OPERATOR_CHARS + OTHER_CHARS, repeat=n)
     ]
     spellings += ["".join(p) for p in itertools.product(OPERATOR_CHARS, repeat=3)]
-    return [f"git stash push {s} {PUSH}" for s in dict.fromkeys(spellings)]
+    return [f"{STASH} {s} {A_PUSH}" for s in dict.fromkeys(spellings)]
 
 
 LINES = _lines()
 
 
-def test_a_push_joined_to_a_stash_is_refused_however_it_is_joined():
-    """The defect: the old separator check missed the background `&`, so
-    `git stash push & git push --force` matched the exception and the push ran past the floor."""
-    more = [line for line in LINES if shell_syntax.one_command(line) is None]
-    assert more, "vacuity"
-    allowed = [line for line in more if is_denied(line) is None]
+def test_a_push_beside_a_stash_is_refused_however_it_is_spelled():
+    """Every spelling, whether the reader reads it as one command or more: a redirect into a file
+    named `git` is refused too, since the line still names a push after git."""
+    assert len(LINES) > 100, "vacuity"
+    allowed = [line for line in LINES if not _refused(line)]
     assert not allowed, allowed[:10]
-
-
-def test_a_stash_push_the_reader_reads_as_one_command_keeps_its_exception():
-    """The other half: the exception is not withdrawn wholesale. A line the reader reads as one
-    command is `git stash push` with more arguments (a redirect sends its output to a file), and
-    a stash pushes nothing."""
-    one = [line for line in LINES if shell_syntax.one_command(line) is not None]
-    assert one, "vacuity"
-    refused = [line for line in one if is_denied(line) is not None]
-    assert not refused, refused[:10]
 
 
 @pytest.mark.parametrize(
     "line",
     [
-        "git stash push & git push origin main --force",
-        "git stash push |& git push origin main",
-        "git stash push <(git push origin main)",
-        "git stash push; git push origin main --force",
-        "git stash push && git push origin main",
-        'git stash push -m "$(git push origin main --force)"',
-        "git stash push -m `git push origin main`",
-        "git stash push\ngit push origin main",
+        f"{STASH} & {A_PUSH}",
+        f"{STASH} |& {GIT} {PUSH} origin main",
+        f"{STASH} <({GIT} {PUSH} origin main)",
+        f"{STASH}; {A_PUSH}",
+        f"{STASH} && {GIT} {PUSH} origin main",
+        f'{STASH} -m "$({A_PUSH})"',
+        f"{STASH} -m `{GIT} {PUSH} origin main`",
+        f"{STASH}\n{GIT} {PUSH} origin main",
+        f"{STASH} < {A_PUSH}",
+        f"{STASH} > {A_PUSH}",
     ],
     ids=[
         "background",
@@ -82,23 +82,48 @@ def test_a_stash_push_the_reader_reads_as_one_command_keeps_its_exception():
         "substitution",
         "backtick",
         "newline",
+        "redirect-from",
+        "redirect-to",
     ],
 )
 def test_a_second_command_is_never_covered(line):
-    assert is_denied(line) is not None
+    assert _refused(line)
+
+
+# The review's case and its variants: text that holds " stash push" in front of a real push. The
+# old exception matched each one and let the push through.
+TEXT_THAT_LOOKS_LIKE_A_STASH = [
+    f'{GIT} -c x.y=" stash {PUSH}" {PUSH} --force origin main',
+    f"{GIT} -c x.y=' stash {PUSH}' {PUSH} --force origin main",
+    f'{GIT} -c "x.y= stash {PUSH}" {PUSH} --force origin main',
+    f"{GIT} -c 'x.y= stash {PUSH}' {PUSH} --force origin main",
+    f'{GIT} -c x.y=" stash {PUSH}" {PUSH} origin main',
+    f'{GIT} -c x.y=" stash {PUSH}" {PUSH} origin --delete main',
+    f'{GIT} {PUSH} -o " stash {PUSH}" --force origin main',
+    f'X=" stash {PUSH}" {GIT} {PUSH} --force origin main',
+]
+
+
+@pytest.mark.parametrize("line", TEXT_THAT_LOOKS_LIKE_A_STASH)
+def test_text_that_looks_like_a_stash_push_does_not_carry_a_push(line):
+    """🔴 Red before: the text exception matched " stash push" anywhere on the line. Judged both as
+    a shell call and as a bare name, which is how an agent CLI may title the call."""
+    assert _refused(line), line
+    assert is_denied(line) is not None, line
 
 
 @pytest.mark.parametrize(
     "line",
     [
-        "git stash push",
-        "git stash push -m 'wip; and more'",
-        "git -C /home/user/src/app stash push",
-        "git stash push 2>&1",
+        STASH,
+        f"{STASH} -m 'wip; and more'",
+        f'{STASH} -m "wip"',
+        f"{GIT} -C /home/user/src/app stash {PUSH}",
+        f"{STASH} 2>&1",
     ],
 )
-def test_the_exception_holds_for_the_stash_it_names(line):
-    assert is_denied(line) is None
+def test_a_stash_push_alone_is_not_refused(line):
+    assert not _refused(line)
 
 
 def test_a_push_is_refused_on_the_command_an_agent_cli_runs_as_well_as_its_title():
@@ -108,12 +133,12 @@ def test_a_push_is_refused_on_the_command_an_agent_cli_runs_as_well_as_its_title
     from personalclaw.hooks import TOOL_DENY, HookManager, HooksConfig
 
     hooks = HookManager(HooksConfig(auto_approve_tools=["*"]))
-    command = '{"command": "git stash push & git push origin main --force"}'
-    verdict = screen_tool_call(hooks, "Running: git stash push", command, tool_kind="execute")
+    command = '{"command": "%s & %s"}' % (STASH, A_PUSH)
+    verdict = screen_tool_call(hooks, f"{RUNNING}{STASH}", command, tool_kind="execute")
     assert verdict.action == TOOL_DENY, verdict
     assert (
         screen_tool_call(
-            hooks, "Running: git stash push", '{"command": "git stash push"}', tool_kind="execute"
+            hooks, f"{RUNNING}{STASH}", '{"command": "%s"}' % STASH, tool_kind="execute"
         ).action
         != TOOL_DENY
     ), "and the stash itself still runs"

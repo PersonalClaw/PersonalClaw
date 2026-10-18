@@ -342,11 +342,13 @@ class TestBuiltinDenyPatterns:
         assert is_denied("git -C /Volumes/Foo/Bar push --force") is not None
         assert is_denied("git_push") is not None
         assert is_denied("git_push origin main") is not None
-        # git stash push is safe (local-only, no remote side effects)
-        assert is_denied("git stash push") is None
-        assert is_denied("git stash push -m 'wip'") is None
-        assert is_denied("git -C /path stash push") is None
-        assert is_denied("git -c core.autocrlf=true stash push -m 'wip'") is None
+        # git stash push is safe (local-only, no remote side effects): a shell call that runs one
+        # is not refused. The same words as a tool's name are a name, and refused as one.
+        assert is_denied("Running: git stash push") is None
+        assert is_denied("Running: git stash push -m 'wip'") is None
+        assert is_denied("Running: git -C /path stash push") is None
+        assert is_denied("Running: git -c core.autocrlf=true stash push -m 'wip'") is None
+        assert is_denied("git stash push") is not None
         # path containing "stash" must not bypass deny
         assert is_denied("git -C /tmp/stash push origin main --force") is not None
         # command chaining/substitution must not bypass deny
