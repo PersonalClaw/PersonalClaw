@@ -302,10 +302,10 @@ export async function settleShellChrome(page: Page, timeout = 6_000): Promise<bo
  *  Measured on `#/dashboard` while this helper observed mutations only: the page rendered at
  *  two different heights across runs and the diff showed the SAME content band twice at two
  *  y-offsets (0.04 ratio / 28,614 px dark, 27,779 px light). The cause is a variable-height
- *  live region in the page FLOW — `DashboardPage`'s docked `SystemRailIsland` is `shrink-0`
- *  and `SystemHealth` renders its metric strip only once the `system` slice arrives
- *  (`SystemHealth.tsx:120`), with `flex-wrap`, so the rail is one height before that answer
- *  and another after. That is also why MASKING it was not enough on its own: a mask replaces
+ *  live region in the page FLOW — `DashboardPage`'s docked system rail was `shrink-0` (the
+ *  strip lives in Settings › System now, where the same holds) and `SystemHealth` renders its
+ *  metric strip only once the `system` slice arrives, with `flex-wrap`, so the rail is one
+ *  height before that answer and another after. That is also why MASKING it was not enough on its own: a mask replaces
  *  a region's pixels, not its SIZE, so the masked box simply landed at a different y in the
  *  two captures and reddened anyway.
  *
@@ -636,25 +636,6 @@ export async function expectRouteScreenshot(
   await expect(page).toHaveScreenshot(`${name}.png`, {
     fullPage: true,
     animations: 'disabled',
-    // Mask volatile regions (clocks, live counters). The settles in `gotoRoute` handle
-    // values that are merely LATE; this list is for values that are supposed to keep
-    // changing, which no amount of settling can fix.
-    //
-    // `system-rail-island` (dashboard only — `DashboardPage.tsx`'s `SystemRailIsland`) is
-    // the one that qualifies today: `SystemHealth` renders live host reads straight into
-    // the page body — uptime, cpu%, mem, net rx/tx, load average — from the same
-    // `/api/system` poll the shell's connectivity dot uses. Two screenshots of an
-    // otherwise byte-identical tree, taken seconds apart, show a different uptime and a
-    // different load average BY CONSTRUCTION.
-    //
-    // The locator matches zero elements on every other route, and masking a locator that
-    // resolves to nothing is a no-op, so this is applied unconditionally rather than
-    // threading a per-route mask list through `visual.spec.ts`. The widget's own rendering
-    // stays covered where that belongs — a deterministic unit test over fixed data
-    // (`src/pages/dashboard/widgets/systemHealthLabels.test.tsx`), not a live-gateway pixel
-    // diff. `SystemRailIsland` is mounted twice (docked from `lg` up, in-scroll below it),
-    // and the mask covers both because it is declared on the component, not on a mount.
-    mask: [page.locator('[data-testid="system-rail-island"]')],
   })
 }
 

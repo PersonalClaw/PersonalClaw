@@ -54,9 +54,9 @@ export function Discover({ navigate }: RouteProps) {
   // with a Retry; and 1.6s into a delayed load it said the same thing again.
   //
   // Three conditions, three answers, all three borrowed from something already shipped:
-  //  · failed  → the honest read-error slot `OnThisMachine`/`PinnedArtifacts` already use, with
+  //  · failed  → the honest read-error slot `PinnedArtifacts` already uses, with
   //              `#/discover`'s own noun for the thing ("your tips").
-  //  · unread  → nothing, exactly as `OnThisMachine` and `PinnedArtifacts` do for `!data`. A slot
+  //  · unread  → nothing, exactly as `PinnedArtifacts` does for `!data`. A slot
   //              that says nothing for a moment is not a claim; a wrong sentence is.
   //  · off     → the fact PLUS the on-ramp `#/discover`'s off-branch already carries, to the same
   //              route (`settings/legibility`) under the same label.

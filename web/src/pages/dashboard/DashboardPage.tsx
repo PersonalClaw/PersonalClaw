@@ -1,9 +1,7 @@
 import { useState, type ReactNode } from 'react'
-import { motion } from 'framer-motion'
 import {
   MessageSquare, History, type LucideIcon,
-  MessageSquarePlus, ListTodo, BookOpen, FolderKanban, FileCode2, TerminalSquare, Sparkles, Compass,
-  Package, HardDrive, Orbit, Monitor, Globe,
+  ListTodo, Sparkles, Compass, Package, Orbit, Monitor, Globe,
 } from 'lucide-react'
 import { DashboardLiveProvider } from './DashboardLive'
 import { PinnedTiles } from './PinnedTiles'
@@ -16,11 +14,9 @@ import { TasksWidget } from './widgets/TasksWidget'
 import { Suggestions } from './widgets/Suggestions'
 import { Discover } from './widgets/Discover'
 import { PinnedArtifacts } from './widgets/PinnedArtifacts'
-import { OnThisMachine } from './widgets/OnThisMachine'
 import { DesktopLiveView } from './widgets/DesktopLiveView'
 import { BrowseMirror } from './widgets/BrowseMirror'
 import { ScheduleWidget } from './widgets/ScheduleWidget'
-import { SystemHealth } from './widgets/SystemHealth'
 import { TopBar } from '../../ui/TopBar'
 import { useIdentity, firstNameOf } from '../../app/identity'
 import { api, type ChatSessionSummary } from '../../lib/api'
@@ -29,7 +25,6 @@ import { sessionRecencyMs } from '../../lib/epoch'
 import { sessionTitle } from '../../lib/sessionTitle'
 import { StartedByApp } from '../chat/StartedByApp'
 import { FromChannel } from '../chat/FromChannel'
-import { spring, expr } from '../../design/motion'
 import { EntranceGroup, EntranceRegion } from '../../ui/motion'
 import { ComposerStage } from '../../ui/ComposerStage'
 import { useComposerData } from '../../lib/useComposerData'
@@ -37,13 +32,15 @@ import { WidgetBoundary } from '../../app/ErrorBoundary'
 import type { ComposerValue } from '../../ui/composer/types'
 import type { RouteProps } from '../../app/useQueryState'
 
-/** The dashboard — PersonalClaw's home. Redesigned bare & launcher-forward: no
- *  bento boxes. A command launcher up top (jump straight into a chat or a
- *  feature), then boundary-less bands of live signal under hairline section
- *  labels — content owns the space, chrome doesn't. The customizable grid +
- *  per-user layout persistence were retired (clean break); everyone gets this
- *  one content-first layout. Widget bodies + the shared DashboardLive feed are
- *  reused verbatim; only their card chrome is gone. */
+/** The dashboard — PersonalClaw's home. Bare and launcher-forward: no bento boxes. An Ask
+ *  composer up top with your recent chats under it, then boundary-less bands of the owner's work
+ *  under hairline section labels — content owns the space, chrome doesn't.
+ *
+ *  Home shows what needs the owner and what the owner can act on, and nothing that repeats
+ *  another surface: the header badges only counts that wait on the owner, and only above zero
+ *  (`HeroPulse`); the sidebar is the one way to each destination (Home draws no shortcut row of
+ *  its own); and the machine's telemetry lives in Settings › System (`settings/SystemPanel.tsx`),
+ *  with what is holding memory in Settings › Models. */
 export function DashboardPage(route: RouteProps) {
   const { name } = useIdentity()
   return (
@@ -51,13 +48,14 @@ export function DashboardPage(route: RouteProps) {
       <div className="flex h-full flex-col overflow-hidden">
         {/* The greeting is the page title — it lives in the header (no separate
             "Home" label needed), which reclaims the vertical space it used to
-            take at the top of the launcher below. The Hero Pulse status strip
-            (live counts + connectivity) sits right-aligned in the same header
-            from `lg` up — full labels at 2xl+, minimized icon+count pills in
-            between (HeroPulse degrades itself). Below `lg` even the minimized
+            take at the top of the launcher below. The Hero Pulse strip (the counts
+            that wait on the owner, each only above zero) sits right-aligned in the
+            same header from `lg` up — full labels at 2xl+, minimized icon+count pills
+            in between (HeroPulse degrades itself). Below `lg` even the minimized
             row would crush the greeting, so the header slot empties and the
             strip renders in the body under the launcher instead (same swap,
-            other side, in the scroll area below). */}
+            other side, in the scroll area below). With nothing waiting, the strip
+            renders nothing and the header is the greeting alone. */}
         <TopBar
           contentAligned
           left={(
@@ -82,15 +80,17 @@ export function DashboardPage(route: RouteProps) {
               `ui/motion/Entrance` — so a widget's data landing re-renders inside a
               mounted group instead of remounting it and re-running the cascade. */}
           <EntranceGroup className="mx-auto flex w-full flex-col gap-2xl px-l py-xl" style={{ maxWidth: 'var(--content-width)' }}>
-            {/* Every band on Home renders inside a boundary (here, in `Section` and around the
-                system rail), so a widget that throws shows "Couldn't show …" with Retry in its
-                place and the other bands keep working — it used to swap the WHOLE page for the
-                page-level error. */}
+            {/* Every band on Home renders inside a boundary (here, and in `Section`), so a
+                widget that throws shows "Couldn't show …" with Retry in its place and the other
+                bands keep working — it used to swap the WHOLE page for the page-level error. */}
             <EntranceRegion><WidgetBoundary what="the launcher"><Launcher {...route} /></WidgetBoundary></EntranceRegion>
 
             {/* Live signal strip — the header's Hero Pulse, relocated below the
-                launcher when even the minimized header row won't fit (< lg). */}
-            <EntranceRegion className="min-h-9 lg:hidden"><WidgetBoundary what="the status strip"><HeroPulse {...route} /></WidgetBoundary></EntranceRegion>
+                launcher when even the minimized header row won't fit (< lg). No
+                reserved height, and `empty:hidden`: on a day where nothing waits the strip
+                renders nothing, and a region holding nothing is still a flex item that
+                would spend a `gap-2xl` of blank space (the PinnedTiles trap below). */}
+            <EntranceRegion className="lg:hidden empty:hidden"><WidgetBoundary what="the status strip"><HeroPulse {...route} /></WidgetBoundary></EntranceRegion>
 
             {/* Pinned tiles band — the ADDITIVE half of the
                 dashboard-as-views registry. Renders the Overview view's artifact
@@ -173,16 +173,6 @@ export function DashboardPage(route: RouteProps) {
               </Section>
             </EntranceRegion>
 
-            {/* On this machine — which local models are
-                holding RAM right now, and the machine's memory pressure. Same shape as
-                Pinned artifacts: a hard-imported widget in a Section band, because the
-                bento tile registry was retired. */}
-            <EntranceRegion className="min-w-0">
-              <Section label="On this machine" icon={HardDrive}>
-                <OnThisMachine />
-              </Section>
-            </EntranceRegion>
-
             {/* Desktop live view — what the agent is
                 doing on this desktop: the attempt feed, plus the optional live-view mirror
                 and cursor-motion overlay. Observation only; the toggles change what this
@@ -208,72 +198,10 @@ export function DashboardPage(route: RouteProps) {
                 <ScheduleWidget {...route} />
               </Section>
             </EntranceRegion>
-
-            {/* System rail (narrow only) — the mobile home for the rail that docks
-                at the bottom edge from `lg` up. Below `lg` the dock is suppressed
-                (its `shrink-0` height would steal the viewport and clip the first
-                card), so the rail flows here as the last band, scrolling
-                with the content it used to overlap. Hidden from `lg` up, where the
-                docked island below takes over. */}
-            <EntranceRegion className="min-w-0 lg:hidden">
-              <SystemRailIsland {...route} />
-            </EntranceRegion>
           </EntranceGroup>
-        </div>
-        {/* System rail — docked to the dashboard's bottom edge, OUTSIDE the scroll
-            area above, ONLY from `lg` up. A flex sibling with `shrink-0` pins it to
-            the bottom while the scroll area owns `flex-1`, so the live system
-            indicators stay visible however far the content above scrolls. The outer
-            band is transparent and just provides the gutter; the rail itself is a
-            floating, rounded, frosted ISLAND — the same shell-chrome language as the
-            composer and ShellCorners (token border + rest-shadow + backdrop blur) —
-            instead of a flat full-bleed strip, so it reads as a sleek docked control
-            rather than a boxy footer.
-
-            🪤 BELOW `lg` THE DOCK IS SUPPRESSED (`hidden lg:block`) and the rail
-            renders as the final in-scroll band instead (the `lg:hidden`
-            EntranceRegion at the end of the group above). At ~390px SystemHealth's
-            labelled metrics wrap to ~6 rows, and a `shrink-0` sibling refuses to
-            yield that height — so the pinned rail took ~40% of the phone viewport and
-            clipped the first actionable card ("Needs you" → Reply) at its top edge.
-            Undocking at narrow widths hands the whole viewport back to
-            the scroll area, so every card and its actions are reachable; the rail
-            still ships, now at the natural end of the mobile scroll. This mirrors the
-            HeroPulse header⇄body swap in this same file: a control that is chrome on
-            a wide screen becomes a content band on a narrow one. */}
-        <div className="hidden shrink-0 px-l pb-m pt-xs lg:block">
-          <SystemRailIsland {...route} />
         </div>
       </div>
     </DashboardLiveProvider>
-  )
-}
-
-/** The system-stat rail as a self-contained frosted island — the shell-chrome
- *  language (token border + rest-shadow + backdrop blur) shared with the composer
- *  and ShellCorners. Rendered in TWO places by DashboardPage (mirroring the
- *  HeroPulse header⇄body swap): docked at the bottom edge from `lg` up, and as the
- *  final in-scroll band below `lg` — so a control that is chrome on a wide screen
- *  becomes a content band on a narrow one, instead of a pinned `shrink-0` footer
- *  stealing the phone viewport. `@container` makes the island the
- *  query context for the rail, so its width tracks --content-width (NOT the
- *  viewport) and SystemHealth's `@…` variants adapt to the space actually
- *  available. Reads live from the shared DashboardLive feed. */
-function SystemRailIsland(route: RouteProps) {
-  return (
-    <div
-      // The e2e visual-regression harness's MASK hook (`e2e/helpers.ts`,
-      // `expectRouteScreenshot`). Every metric `SystemHealth` renders here is a live host
-      // read — uptime, cpu%, mem, net rx/tx, load average — which legitimately differs
-      // between two screenshots of an unchanged tree, so the harness excludes this region
-      // from the pixel diff. By NAME rather than by CSS class: the classes above are
-      // styling and change when the design does, while identity should not.
-      data-testid="system-rail-island"
-      className="@container mx-auto flex w-full items-center rounded-lg border border-outline-variant/50 bg-surface-low/70 px-l py-s shadow-rest backdrop-blur-md"
-      style={{ maxWidth: 'var(--content-width)' }}
-    >
-      <WidgetBoundary what="the system rail"><SystemHealth {...route} /></WidgetBoundary>
-    </div>
   )
 }
 
@@ -287,17 +215,9 @@ function greetingFor(name: string | undefined): string {
 
 // ── Launcher hero ───────────────────────────────────────────────────────────
 // The front door: an Ask composer that launches a fresh chat seeded with the
-// typed text, a row of quick feature jumps, and recent-chat chips. (The greeting
-// moved to the page header.)
-
-const JUMPS: { label: string; icon: LucideIcon; go: string }[] = [
-  { label: 'Chat', icon: MessageSquarePlus, go: 'chat/new' },
-  { label: 'Tasks', icon: ListTodo, go: 'tasks' },
-  { label: 'Knowledge', icon: BookOpen, go: 'knowledge' },
-  { label: 'Projects', icon: FolderKanban, go: 'projects' },
-  { label: 'Files', icon: FileCode2, go: 'files' },
-  { label: 'Terminal', icon: TerminalSquare, go: 'terminal' },
-]
+// typed text, and recent-chat chips. (The greeting moved to the page header.)
+// No shortcut row: every destination it listed is in the sidebar, which is the
+// one path to each, and in the command palette.
 
 /** Dashboard launcher controls — enables the same agent/model/attach/mic/optimize
  *  affordances the new-chat composer has, so users don't wonder why the dashboard
@@ -357,24 +277,7 @@ function Launcher({ navigate }: RouteProps) {
         }}
       />
 
-      {/* Quick feature jumps + recent chats — flow inline, no boxes. */}
-      <div className="flex flex-wrap items-center gap-xs">
-        {JUMPS.map((j, i) => (
-          <motion.button
-            key={j.go}
-            type="button"
-            onClick={() => navigate(j.go)}
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0, transition: { ...spring.spatialDefault, delay: Math.min(i * 0.03, 0.2) } }}
-            whileHover={{ y: -expr(2, 0.3) }}
-            className="inline-flex items-center gap-xs rounded-pill bg-surface-low px-m py-s text-on-surface-var transition-colors hover:bg-surface-high hover:text-on-surface"
-            data-type="label-m"
-          >
-            <j.icon size={15} className="text-primary" /> {j.label}
-          </motion.button>
-        ))}
-      </div>
-
+      {/* Recent chats — flow inline, no boxes. */}
       {recent.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-l gap-y-xs">
           <span data-type="label-m" className="flex items-center gap-xs text-on-surface-low"><History size={12} /> Jump back in</span>

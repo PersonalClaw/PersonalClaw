@@ -153,7 +153,9 @@ describe('the shared residency derivations', () => {
   })
 
   it('escalates the tone as the level approaches the configured threshold', () => {
-    expect(pressureTone({ ...PRESSURE, used_pct: 10 })).toBe('var(--color-primary)')
+    // Normal use is information, not the agent: coral is kept for the agent, the primary action,
+    // focus and selection.
+    expect(pressureTone({ ...PRESSURE, used_pct: 10 })).toBe('var(--color-info)')
     expect(pressureTone({ ...PRESSURE, used_pct: 80 })).toBe('var(--color-warning)')
     expect(pressureTone({ ...PRESSURE, used_pct: 92, warn: true })).toBe('var(--color-danger)')
   })

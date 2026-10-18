@@ -222,15 +222,14 @@ describe('every list whose label states a total discloses its cap', () => {
     //
     // 🪤 THE RULE IS NARROWER THAN "EVERY WIDGET": disclose a residue only when the hidden items are
     // real, persistent things the user could otherwise reach — open tasks, their own pins, the models
-    // holding RAM on this machine, scheduled runs. All four have a destination that lists them.
+    // scheduled runs. All three have a destination that lists them.
     const widgets = join(SRC, 'pages/dashboard/widgets')
     const caps = cappedLists().filter((l) => l.rel.startsWith('pages/dashboard/widgets/'))
-    expect(caps.length, 'the widget caps must be found').toBeGreaterThanOrEqual(5)
+    expect(caps.length, 'the widget caps must be found').toBeGreaterThanOrEqual(4)
     const pins: Array<[string, RegExp]> = [
       ['pages/dashboard/widgets/TasksWidget.tsx', /<MoreRow total=\{visible\.length\} shown=\{6\} \/>/],
       ['pages/dashboard/widgets/ScheduleWidget.tsx', /<MoreRow total=\{visible\.length\} shown=\{6\} \/>/],
       ['pages/dashboard/widgets/PinnedArtifacts.tsx', /<MoreRow total=\{resolved\.length\} shown=\{6\} \/>/],
-      ['pages/dashboard/widgets/OnThisMachine.tsx', /<MoreRow total=\{rows\.length\} shown=\{5\} \/>/],
     ]
     for (const [rel, re] of pins) {
       expect(strip(readSource(join(SRC, rel))), `${rel} must disclose its cap`).toMatch(re)

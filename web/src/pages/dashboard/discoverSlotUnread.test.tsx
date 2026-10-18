@@ -25,7 +25,7 @@ import { join } from 'node:path'
 // render reads as 'Discover is off' — so a failed request did not merely say nothing, it made a
 // FALSE CLAIM ABOUT A SETTING."* This file holds the widget to the same standard, and the fix
 // borrows three shipped forms rather than inventing any: `doctorErr`'s split in `DashboardLive`,
-// `OnThisMachine`/`PinnedArtifacts`'s honest read-error slot, and `#/discover`'s own on-ramp.
+// `PinnedArtifacts`'s honest read-error slot, and `#/discover`'s own on-ramp.
 //
 // 🪤 The off-branch keeps the LABEL the page uses ("Open Settings"), not "Turn them on": the control
 // navigates, it does not toggle. Naming it for the toggle would be the copy defect one layer down.

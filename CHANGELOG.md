@@ -47,6 +47,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Changed
 
 - **The animated backdrop is off by default, so an idle chat no longer repaints every frame: Claw Arcade brings the wave field with its glow, the composer's glowing focus ring and the button sheen, and Retro Terminal brings a still field; if you already use one of them, pick its backdrop under Background in Settings → Design.**
+- **Home shows only what waits on you: the header counts approvals, tasks ready and inbox, and only when they are above zero; a "YOLO active" warning stays beside them while every tool call is approved without asking; the shortcut row is gone (its pages are in the sidebar, under "Everything", and in ⌘K); the machine's health moved to Settings › System; and what is holding memory is in Settings › Models.**
 - **Updating a git clone that uv installed needs uv 0.13.1 or newer, which `uv self update` gets.**
 - **`personalclaw setup` ends by naming `personalclaw service install`, which keeps the gateway running in the background and through reboots, on a Mac or on Linux with systemd.**
 - **Every CI job stops at its own time limit, sized from how long it has taken, so a hung job no longer holds a runner for hours.**

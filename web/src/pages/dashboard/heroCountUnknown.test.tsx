@@ -5,7 +5,8 @@ import { join } from 'node:path'
 
 // ── A count is a claim, and `0` is the most reassuring one the hero can make ──────────────────────
 //
-// `HeroPulse` is the FIRST thing the app shows, and it renders five counted lanes as numbers. Every
+// `HeroPulse` is the FIRST thing the app shows, and it rendered five counted lanes as numbers (it
+// counts three now, the ones that wait on the owner, and draws none at 0: `homeShowsOnlyWhatWaits`). Every
 // lane arrives as `[]` when its read fails, so an unreachable gateway rendered
 //
 //     0 loops running · 0 approvals waiting · 0 tasks ready · 0 inbox · 0 unread
@@ -62,37 +63,28 @@ async function mountHero() {
 describe('the hero strip never states a count it could not read', () => {
   beforeEach(() => { vi.resetModules(); sessionStorage.clear() })
 
-  it('a failed loops read renders a dash, not 0 — and says so to a screen reader', async () => {
-    mockApi({ uLoops: boom })
+  it.each([
+    ['approvals', 'approvals', /approvals waiting — couldn’t be read/],
+    ['tasks', 'readyTasks', /tasks ready — couldn’t be read/],
+    ['inbox', 'inboxOpen', /inbox — couldn’t be read/],
+  ])('a failed %s read renders a dash, not 0 — and says so to a screen reader', async (_lane, call, label) => {
+    mockApi({ [call]: boom })
     await mountHero()
-    const pill = await waitFor(() => screen.getByLabelText(/loops running — couldn’t be read/))
+    const pill = await waitFor(() => screen.getByLabelText(label))
     expect(pill.textContent, 'the dash stands in for the number').toContain('—')
     expect(pill.getAttribute('aria-label'), 'and no zero is spoken').not.toMatch(/^0 /)
   })
 
-  it('a failed notifications read renders a dash for unread', async () => {
-    mockApi({ notifications: boom })
-    await mountHero()
-    const pill = await waitFor(() => screen.getByLabelText(/unread — couldn’t be read/))
-    expect(pill.textContent).toContain('—')
-  })
-
-  it('a failed tasks read renders a dash for tasks ready', async () => {
-    mockApi({ readyTasks: boom })
-    await mountHero()
-    const pill = await waitFor(() => screen.getByLabelText(/tasks ready — couldn’t be read/))
-    expect(pill.textContent).toContain('—')
-  })
-
-  it('a GENUINELY empty lane still reads 0 — the other half, or this rail says nothing', async () => {
+  it('a GENUINELY empty lane draws nothing — not a dash, and not a 0', async () => {
     // 🪤 Without this the fix could have replaced every count with a dash and passed. An empty
-    // inbox is a real, measured fact and must keep saying so.
+    // lane is a real, measured fact; Home states it by drawing no pill for it (a zero is not
+    // drawn), never by a dash, which would say it could not be read.
     mockApi({})
     await mountHero()
-    await waitFor(() => expect(screen.getByLabelText('0 loops running')).toBeInTheDocument())
-    expect(screen.getByLabelText('0 unread')).toBeInTheDocument()
-    expect(screen.queryByText('—'), 'nothing is unknown when every read succeeded').toBeNull()
-    expect(empty.loops, 'the fixture really is empty').toHaveLength(0)
+    // The control that the reads landed: until they do, every pill is a dash.
+    await waitFor(() => expect(screen.queryByText('—'), 'nothing is unknown when every read succeeded').toBeNull())
+    expect(screen.queryByRole('button'), 'and nothing reads 0').toBeNull()
+    expect(empty.tasks, 'the fixture really is empty').toHaveLength(0)
   })
 })
 
@@ -100,18 +92,18 @@ describe('DashboardLive exposes the failure of every lane the hero counts', () =
   const code = readFileSync(join(process.cwd(), 'src/pages/dashboard/DashboardLive.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-  it('the three counted loaders capture their rejection instead of swallowing it', () => {
+  it('each counted loader captures its rejection instead of swallowing it', () => {
     // The load-bearing half: with `catch(() => {})` the error field could never be set, so the
     // dash branch above would be dead code and every DOM test here would go green against it.
-    for (const [slice, setter] of [['uLoops', 'setLoopsErr'], ['readyTasks', 'setTasksErr'], ['notifications', 'setNotificationsErr']]) {
-      // The setter is wrapped by the unmount `guard`, so the source reads `guard(setLoopsErr)(e)`
-      // rather than `setLoopsErr(e)` — matching the bare form silently never fires.
+    for (const [slice, setter] of [['approvals', 'setApprovalsErr'], ['readyTasks', 'setTasksErr'], ['inboxOpen', 'setInboxErr']]) {
+      // The setter is wrapped by the unmount `guard`, so the source reads `guard(setTasksErr)(e)`
+      // rather than `setTasksErr(e)` — matching the bare form silently never fires.
       expect(code, `${slice}'s rejection must reach ${setter}`).toMatch(new RegExp(`${slice}\\(\\)[\\s\\S]{0,240}?${setter}\\)\\(e\\)`))
     }
   })
 
   it('and publishes them on the context', () => {
-    for (const f of ['loopsErr', 'tasksErr', 'notificationsErr']) {
+    for (const f of ['approvalsErr', 'tasksErr', 'inboxErr']) {
       expect(code, `${f} is declared on the context type`).toMatch(new RegExp(`${f}: unknown`))
     }
   })

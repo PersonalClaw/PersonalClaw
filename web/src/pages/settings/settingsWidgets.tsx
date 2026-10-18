@@ -2,7 +2,7 @@ import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
   Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins, Route, Trophy,
   MonitorSmartphone, Plug2, FileType2, LayoutDashboard, Smartphone, Rss, Package, FlaskConical, KeyRound,
-  MessageCircle, Workflow, RefreshCcw,
+  MessageCircle, Workflow, RefreshCcw, Gauge,
 } from 'lucide-react'
 import { verifiedScope } from './AuditPanel'
 import type { LucideIcon } from 'lucide-react'
@@ -32,6 +32,7 @@ import {
   Switch, SegToggle, InlineSelect, type BentoSize,
 } from './bento'
 import { fvs } from '../../design/fontWeight'
+import { NO_READING, fixedReading, isReading } from '../../lib/readings'
 import { setAgentYolo } from './agentYolo'
 import { APPROVAL_MODES } from './approvalModes'
 import { hasSearchTool, SEARCH_TOOL, SEARCH_TOOL_APP } from './searchTool'
@@ -144,6 +145,9 @@ const useAudit = () => useQuery('settings:audit-verify', () => api.auditVerify()
 // tile therefore rendered `Level: —` from `level ?? '—'` on a failed `GET /api/config/log-level`: a
 // dash offered as the runtime's verbosity. It returns the full result now, like its thirty siblings.
 const useLogLevel = () => useQuery('settings:log-level', () => api.logLevel(), { persist: true })
+// The System card's one reading. Not persisted across a reload; within a session the cache paints
+// the last visit's figure until the refetch lands, so the card marks it stale while it revalidates.
+const useSystemReading = () => useQuery('settings:system-card', () => api.system(), { persist: false })
 const useVoice = () => useQuery('settings:voice', async () => {
   const [active, stt, tts] = await Promise.all([
     api.modelsActive(),
@@ -1090,6 +1094,24 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
           {v && (v.ok
             ? <><StatusPill label="Chain intact" tone="ok" />{typeof v.checked === 'number' && <div data-type="caption" className="mt-1.5 text-on-surface-low">{verifiedScope(v)} verified</div>}</>
             : <><StatusPill label="Chain broken" tone="warn" />{!!v.tampered && <div data-type="caption" className="mt-1.5 text-on-surface-low">{v.tampered} of {verifiedScope(v)} altered</div>}</>)}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'system', group: 'System', label: 'System', icon: Gauge, size: 'sm',
+    description: 'This machine, read live: cpu, memory, network, disk, load, uptime, and which local models hold memory.',
+    useSearchText() { return 'system health telemetry machine cpu memory mem network disk load uptime version triggers subagents yolo sparkline on this machine local models loaded unload memory pressure' },
+    render(query, go) {
+      const { data: s, stale, status, error, refresh } = useSystemReading()
+      const cpu = s && isReading(s.cpu_pct) ? `${Math.round(s.cpu_pct)}%` : NO_READING
+      const mem = s && isReading(s.mem_total_gb) && s.mem_total_gb > 0
+        ? `${fixedReading(s.mem_used_gb, 1)}/${s.mem_total_gb}GB` : NO_READING
+      return (
+        <BentoCard icon={Gauge} title="System" query={query} onClick={() => go('system')}
+          loading={s === undefined} stale={stale} failed={status === 'error'} error={error} onRetry={refresh}>
+          <div data-type="title-m" className="text-on-surface tabular-nums" style={fvs(550)}>CPU <Highlight text={cpu} query={query} /></div>
+          <div data-type="caption" className="mt-1 text-on-surface-low tabular-nums">Memory <Highlight text={mem} query={query} /></div>
         </BentoCard>
       )
     },

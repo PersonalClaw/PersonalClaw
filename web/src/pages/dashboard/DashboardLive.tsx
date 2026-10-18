@@ -2,10 +2,10 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { reportingWrite } from '../../app/reportingWrite'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
-import { api, isSwitchedOff } from '../../lib/api'
+import { api } from '../../lib/api'
 import type {
   PendingApproval, DashboardStatus, InboxItem, SkillProposal,
-  Loop, TaskItem, ScheduleRun, NotificationItem, SystemInfo, DiscoverResponse, DoctorReport,
+  Loop, TaskItem, ScheduleRun, DiscoverResponse,
 } from '../../lib/api'
 
 // ── Dashboard live feed ────────────────────────────────────────────────────
@@ -23,12 +23,11 @@ import type {
  *  slice: an unread flag nobody reads is the dead-guard shape this file's `*Err` note already
  *  rejects for the same reason. */
 export type ReadSlice =
-  | 'approvals' | 'inbox' | 'proposals' | 'loops' | 'tasks' | 'notifications' | 'schedule'
+  | 'approvals' | 'inbox' | 'proposals' | 'loops' | 'tasks' | 'schedule'
 
 /** Nothing read yet — the honest starting position, and the one this file used to lack. */
 const NOTHING_READ: Record<ReadSlice, boolean> = {
-  approvals: false, inbox: false, proposals: false, loops: false, tasks: false,
-  notifications: false, schedule: false,
+  approvals: false, inbox: false, proposals: false, loops: false, tasks: false, schedule: false,
 }
 
 export interface DashboardLiveData {
@@ -38,25 +37,26 @@ export interface DashboardLiveData {
   /** The three triage lanes' own read failures, each distinct from an empty lane. ActionCenter
    *  merges approvals+inbox+proposals into one queue; without these a swallowed lane silently
    *  under-reports (a missing PENDING TOOL APPROVAL reads as "all clear"). Same shape and reason as
-   *  `discoverErr`/`doctorErr` below. */
+   *  `discoverErr` below. */
   approvalsErr: unknown
   inboxErr: unknown
   proposalsErr: unknown
   loops: Loop[]
-  tasks: TaskItem[]
-  /** The three COUNTED lanes' own read failures, each distinct from a lane that is genuinely
-   *  empty. `HeroPulse` renders these three as numbers on the app's first screen, and `[]` is
-   *  what a swallowed rejection leaves behind — so without these the hero states "0 loops
-   *  running · 0 tasks ready · 0 unread" as fact when nothing was read. Same shape and the same
-   *  reason as `approvalsErr` above and `discoverErr`/`doctorErr` below; this finishes the
-   *  convergence those started, for the slices that have a consumer able to use them.
-   *
-   *  `schedule`/`status`/`system` deliberately still swallow: no consumer would read the field
-   *  yet, and an unread error field is the dead-guard shape the repo's rails already reject.
-   *  They are the next step, not an oversight. */
+  /** The loops read's own failure. Active work renders it with a Retry: without it a failed read
+   *  left `[]` behind and the band said "No active work" over loops it never saw. */
   loopsErr: unknown
+  tasks: TaskItem[]
+  /** The tasks lane's own read failure, distinct from a lane that is genuinely empty. `HeroPulse`
+   *  renders tasks ready as a number on the app's first screen, and `[]` is what a swallowed
+   *  rejection leaves behind — so without this the hero would state "0 tasks ready" as fact when
+   *  nothing was read. Same shape and the same reason as `approvalsErr` above and
+   *  `discoverErr` below.
+   *
+   *  `schedule`/`status` swallow: no consumer reads their failure, and an unread error field is
+   *  the dead-guard shape the repo's rails already reject. The hero stopped badging unread
+   *  notifications, which wait on nobody; the notifications read went with that pill, and the
+   *  shell's bell makes its own. */
   tasksErr: unknown
-  notificationsErr: unknown
   schedule: ScheduleRun[]
   /** The archive split, straight from the server. `didIds` are the fires that DID
    *  something; everything else was held by a gate. Kept beside the rows rather than re-derived in
@@ -64,11 +64,10 @@ export interface DashboardLiveData {
    *  `skipped_*` outcome lands. */
   scheduleDidIds: string[]
   scheduleSuppressed: number
+  /** The gateway's status. Home reads one field of it, `yolo`, so a YOLO session stays in sight.
+   *  The host metrics and the Doctor rollup are Settings › System's (`settings/SystemLive`), and
+   *  Home reads neither. */
   status: DashboardStatus | null
-  notifications: NotificationItem[]
-  /** Live system metrics (cpu/mem/net/disk/load) from /api/system. Polled on
-   *  the fast, visibility-gated cadence so the SystemHealth widget shows live rates. */
-  system: SystemInfo | null
   /** The curated Discover tips for the dashboard section + hub, or an empty
    *  feed when everything's been explored / the kill switch is off. Polled on SLOW_POLL. */
   discover: DiscoverResponse | null
@@ -76,20 +75,8 @@ export interface DashboardLiveData {
    *  yet" — and critically distinct from `enabled: false`, because the slot's off-branch names a
    *  SETTING. Without this the consumer cannot tell a dead endpoint from a user's own choice, and
    *  the only sentence it has to say is about the choice. Same shape and same reason as
-   *  `doctorErr` below. */
+   *  `doctorErr` in `settings/SystemLive`. */
   discoverErr: unknown
-  /** The doctor health rollup — cached 30s server-side, so
-   *  polled on SLOW_POLL. Powers the SystemHealth widget's one-line health signal. */
-  doctor: DoctorReport | null
-  /** The probe's own failure. Distinct from `doctor: null`, which also means "not polled yet" —
-   *  and critically distinct from a healthy report, because a health surface that goes quiet is
-   *  read as "nothing wrong". Consumers must render "unknown", never silence. */
-  doctorErr: unknown
-  /** The Doctor is switched off (`resilience.doctor_enabled`): its report read answered the decided
-   *  `{"enabled": false}`. A third state beside a report and a failure, and it must not render as
-   *  either — quiet reads as healthy on the SystemHealth strip, and "health unknown" says a probe
-   *  failed when none was asked to run. `doctor` is `null` while this is true. */
-  doctorOff: boolean
   /** Which slices have completed at least one read ATTEMPT — success **or** failure.
    *
    *  🔴 THE FAILED CASE WAS CONVERGED AND THE NOT-YET-READ CASE WAS NEVER MODELLED. Every `*Err`
@@ -117,6 +104,7 @@ export interface DashboardLiveData {
   retryApprovals: () => void
   retryInbox: () => void
   retryProposals: () => void
+  retryLoops: () => void
   /** Dismiss a Discover tip forever, then refetch the slice so it drops from the
    *  feed (propose-don't-write: this hides, never enables). */
   dismissDiscoverTip: (id: string) => void
@@ -135,7 +123,7 @@ export function useDashboardLive(): DashboardLiveData {
 }
 
 // Poll cadences (ms), for the slices the gateway does NOT signal. A slice whose every change
-// arrives as a frame (approvals, the Inbox, notifications) is not polled at all: it is read on
+// arrives as a frame (approvals, the Inbox) is not polled at all: it is read on
 // mount, on its frame, and after a socket drop — polling it as well is what put an idle Home tab
 // at 428 requests in 3 minutes (measured, day 8). Both polls also back off while nobody is using
 // the tab (`useVisiblePoll`).
@@ -147,7 +135,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const [inbox, setInbox] = useState<InboxItem[]>([])
   const [proposals, setProposals] = useState<SkillProposal[]>([])
   // Per-lane read failures for the three triage-queue lanes (ActionCenter merges them into one
-  // list). Paired with the arrays above the way `discoverErr`/`doctorErr` pair with their slices:
+  // list). Paired with the arrays above the way `discoverErr` pairs with its slice:
   // an array left at its last-good value cannot say "this lane failed to load", so a swallowed
   // approvals/inbox/proposals read used to vanish into ActionCenter's "All clear" — hiding, e.g.,
   // a pending TOOL APPROVAL. Tracked so the queue tells a failed lane from an empty one, and retries.
@@ -155,23 +143,17 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const [inboxErr, setInboxErr] = useState<unknown>(null)
   const [proposalsErr, setProposalsErr] = useState<unknown>(null)
   const [loops, setLoops] = useState<Loop[]>([])
+  const [loopsErr, setLoopsErr] = useState<unknown>(null)
   const [tasks, setTasks] = useState<TaskItem[]>([])
   const [schedule, setSchedule] = useState<ScheduleRun[]>([])
   const [scheduleDidIds, setScheduleDidIds] = useState<string[]>([])
   const [scheduleSuppressed, setScheduleSuppressed] = useState(0)
   const [status, setStatus] = useState<DashboardStatus | null>(null)
-  const [notifications, setNotifications] = useState<NotificationItem[]>([])
-  // The counted lanes' own failures — see the type's note: `[]` is what a swallowed rejection
-  // leaves, and HeroPulse turns these three into numbers on the first screen.
-  const [loopsErr, setLoopsErr] = useState<unknown>(null)
+  // The counted tasks lane's own failure — see the type's note: `[]` is what a swallowed
+  // rejection leaves, and HeroPulse turns it into a number on the first screen.
   const [tasksErr, setTasksErr] = useState<unknown>(null)
-  const [notificationsErr, setNotificationsErr] = useState<unknown>(null)
-  const [system, setSystem] = useState<SystemInfo | null>(null)
   const [discover, setDiscover] = useState<DiscoverResponse | null>(null)
   const [discoverErr, setDiscoverErr] = useState<unknown>(null)
-  const [doctor, setDoctor] = useState<DoctorReport | null>(null)
-  const [doctorErr, setDoctorErr] = useState<unknown>(null)
-  const [doctorOff, setDoctorOff] = useState(false)
 
   // Individual slice loaders — each swallows errors (a dead endpoint must not
   // blank the whole dashboard) and no-ops if the component has unmounted.
@@ -212,7 +194,10 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
     api.skillProposals().then((d) => { guard(setProposals)(d.proposals); guard(setProposalsErr)(null) }).catch((e) => guard(setProposalsErr)(e))
       .finally(() => markRead('proposals'))
   }, [markRead])
-  const loadLoops = useCallback(() => { api.uLoops().then((d) => { guard(setLoops)(d); guard(setLoopsErr)(null) }).catch((e) => guard(setLoopsErr)(e)).finally(() => markRead('loops')) }, [markRead])
+  const loadLoops = useCallback(() => {
+    api.uLoops().then((d) => { guard(setLoops)(d); guard(setLoopsErr)(null) }).catch((e) => guard(setLoopsErr)(e))
+      .finally(() => markRead('loops'))
+  }, [markRead])
   const loadTasks = useCallback(() => { api.readyTasks().then((d) => { guard(setTasks)(d); guard(setTasksErr)(null) }).catch((e) => guard(setTasksErr)(e)).finally(() => markRead('tasks')) }, [markRead])
   // 🔴 Keeps the archive split, which this call discarded. The backend has returned
   // `did_ids`/`suppressed` and the API types declared them — but the widget still saw only
@@ -227,29 +212,16 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
     }).catch(() => {}).finally(() => markRead('schedule'))
   }, [markRead])
   const loadStatus = useCallback(() => { api.status().then(guard(setStatus)).catch(() => {}) }, [])
-  const loadNotifications = useCallback(() => { api.notifications().then((d) => { guard(setNotifications)(d.notifications ?? []); guard(setNotificationsErr)(null) }).catch((e) => guard(setNotificationsErr)(e)).finally(() => markRead('notifications')) }, [markRead])
-  const loadSystem = useCallback(() => { api.system().then(guard(setSystem)).catch(() => {}) }, [])
   // 🔴 `catch(() => {})` left `discover` null, and the dashboard's Discover slot renders
   // "Discover tips are off." for `!discover` — so a dead endpoint (and every millisecond before
   // the first read lands) impersonated a SETTING THE USER NEVER TOUCHED. Measured on an empty home
   // with the read aborted: the slot said "Discover tips are off." while `#/discover`, on the very
-  // same rejection, said "Couldn't load your tips" with a Retry. Same story as `loadDoctor` below.
+  // same rejection, said "Couldn't load your tips" with a Retry. Same story as `settings/SystemLive`'s
+  // `loadDoctor`.
   const loadDiscover = useCallback(() => {
     api.discover().then((d) => { guard(setDiscover)(d); guard(setDiscoverErr)(null) })
       .catch((e) => guard(setDiscoverErr)(e))
   }, [])
-  // 🔴 `catch(() => {})` left `doctor` null, and the SystemHealth strip surfaces its health row
-  // ONLY when `!doctor.ok` — its own comment says "a healthy system stays quiet". So a failed
-  // PROBE impersonated health on the dashboard's health surface. `#/settings/doctor` already says
-  // "Couldn't load the doctor report" out loud for exactly this reason; the summary surfaces now
-  // get the same fact to work with.
-  const loadDoctor = useCallback(() => {
-    api.doctor().then((d) => {
-      const off = isSwitchedOff(d)
-      guard(setDoctorOff)(off); guard(setDoctor)(off ? null : d); guard(setDoctorErr)(null)
-    }).catch((e) => guard(setDoctorErr)(e))
-  }, [])
-
   // Dismiss persists server-side; on success refetch so the tip drops from the
   // feed (or the "explored everything" empty state shows).
   // The refetch was already gated on success — only the failure was silent, so the tip simply stayed
@@ -261,8 +233,8 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
 
   const refreshAll = useCallback(() => {
     loadApprovals(); loadInbox(); loadProposals(); loadLoops()
-    loadTasks(); loadSchedule(); loadStatus(); loadNotifications(); loadSystem(); loadDiscover(); loadDoctor()
-  }, [loadApprovals, loadInbox, loadProposals, loadLoops, loadTasks, loadSchedule, loadStatus, loadNotifications, loadSystem, loadDiscover, loadDoctor])
+    loadTasks(); loadSchedule(); loadStatus(); loadDiscover()
+  }, [loadApprovals, loadInbox, loadProposals, loadLoops, loadTasks, loadSchedule, loadStatus, loadDiscover])
 
   // Coalesce high-frequency work/status signals. `chat_status`/`sessions` fire on
   // every turn lifecycle change — during active streaming that's many events/sec —
@@ -298,7 +270,6 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
     // to the next poll, offering Approve/Reject on a call that had already been answered.
     if (t === 'approval' || t === 'approval_resolved') { soon('approvals', loadApprovals); soon('inbox', loadInbox) }
     else if (t.startsWith('inbox')) soon('inbox', loadInbox)
-    else if (t.startsWith('notification')) soon('notifications', loadNotifications)
     // The gateway's refresh hint: a loop started, paused, stopped or was deleted (`loops`); a task
     // was written (`tasks`); an automation changed (`crons`) or ran (`cron_history`). `history` is
     // the CHAT history, and the run feed below is not.
@@ -315,7 +286,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
     else if (t === 'update_progress' || t === 'chat_status' || t === 'sessions' || t.startsWith('subagent')) {
       refreshWork()
     }
-  }, [soon, loadApprovals, loadInbox, loadNotifications, loadLoops, loadTasks, loadSchedule, refreshWork])
+  }, [soon, loadApprovals, loadInbox, loadLoops, loadTasks, loadSchedule, refreshWork])
 
   useChatSocket(
     onMessage,
@@ -329,18 +300,18 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   // nothing signals. `immediate: false`: `refreshAll` IS the first read, and each poll firing on
   // mount as well fetched every endpoint twice before the page had painted.
   useEffect(() => { refreshAll() }, [refreshAll])
-  useVisiblePoll(() => { loadLoops(); loadSystem() }, FAST_POLL, { immediate: false })
+  useVisiblePoll(loadLoops, FAST_POLL, { immediate: false })
   useVisiblePoll(() => {
-    loadProposals(); loadTasks(); loadSchedule(); loadStatus(); loadDiscover(); loadDoctor()
+    loadProposals(); loadTasks(); loadSchedule(); loadStatus(); loadDiscover()
   }, SLOW_POLL, { immediate: false })
 
   const value: DashboardLiveData = {
     approvals, inbox, proposals, approvalsErr, inboxErr, proposalsErr,
-    loopsErr, tasksErr, notificationsErr, read,
+    loopsErr, tasksErr, read,
     loops, tasks, schedule, scheduleDidIds, scheduleSuppressed,
-    status, notifications, system,
-    discover, discoverErr, doctor, doctorErr, doctorOff,
-    retryApprovals: loadApprovals, retryInbox: loadInbox, retryProposals: loadProposals,
+    status,
+    discover, discoverErr,
+    retryApprovals: loadApprovals, retryInbox: loadInbox, retryProposals: loadProposals, retryLoops: loadLoops,
     dismissDiscoverTip, refreshAll,
   }
   return <DashboardLiveContext.Provider value={value}>{children}</DashboardLiveContext.Provider>

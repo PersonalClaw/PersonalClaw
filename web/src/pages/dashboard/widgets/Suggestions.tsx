@@ -81,7 +81,9 @@ export function Suggestions({ navigate }: RouteProps) {
           onClick={() => navigate(`chat/new?seed=${encodeURIComponent(s)}`)}
           className="group flex items-center gap-s rounded-lg bg-surface-low px-m py-s text-left transition-colors hover:bg-surface-high"
         >
-          <Sparkles size={13} className="shrink-0 text-primary" />
+          {/* Neutral, not coral: coral marks the agent's own activity, the primary action, focus
+              and selection, and a list bullet is none of those. */}
+          <Sparkles size={13} className="shrink-0 text-on-surface-low" />
           <span data-type="body-m" className="min-w-0 flex-1 text-on-surface-var group-hover:text-on-surface">{s}</span>
           <ArrowUpRight size={14} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />
         </motion.button>
