@@ -474,8 +474,9 @@ What closing it cost, because each item is a trap the next column would otherwis
 **What the closure surfaced:** eighteen findings — one **P0** (the spawned CLI
 persists full transcripts into the user's real `~/.claude/projects/…`, measured independently by
 two drives, which undermines the incognito guarantee), seven P1, seven P2, three P3. It also
-invalidated two rows of evidence elsewhere: `pending_approval_info: null` is **not** proof
-that no card was raised — which is exactly what kiro's approval-floor and unattended-run rows cite.
+invalidated two rows of evidence elsewhere: `pending_approval_info: null` (a field the chat list
+then served) is **not** proof that no card was raised — which is exactly what kiro's approval-floor
+and unattended-run rows cite.
 
 **A methodology note that cost a measurement.** One drive forcing an ACP error killed adapters *by
 name* machine-wide, hitting adapters that belonged to other gateways running at the same time. Kill

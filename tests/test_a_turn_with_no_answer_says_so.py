@@ -29,6 +29,7 @@ from personalclaw.agents.provider import AgentRuntimeDefinition
 from personalclaw.channel_transports.base import ChannelMessage
 from personalclaw.config import AppConfig
 from personalclaw.context import ContextBuilder
+from personalclaw.dashboard import chat_phase
 from personalclaw.dashboard.chat_regenerate import api_chat_session_regenerate
 from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.chat_session_map import TURN_TELEMETRY_KEY
@@ -203,7 +204,9 @@ async def test_a_turn_that_ran_steps_and_wrote_nothing_ends_in_the_notice_with_r
     assert [m["role"] for m in rows if m["role"] in ("assistant", "error")] == ["error"]
     (error,) = [m for m in rows if m["role"] == "error"]
     assert error["content"] == notice
-    assert chat._last_turn_outcome == "error", "the turn still reads as a finished answer"
+    assert (
+        chat_phase.served(chat)["last_outcome"] == "error"
+    ), "the turn still reads as a finished answer"
     assert {"session": chat.key, "outcome": "error"} in _frames(state, "chat_done")
     assert {"session": chat.key, "role": "error", "content": notice} in (
         _frames(state, "chat_message")
@@ -231,7 +234,7 @@ async def test_a_model_that_answers_when_asked_ends_the_turn_with_its_answer(tmp
     rows = _turn_rows(chat)
     assert [m["content"] for m in rows if m["role"] == "assistant"] == [REPLY]
     assert not [m for m in rows if m["role"] == "error"]
-    assert chat._last_turn_outcome == "complete"
+    assert chat_phase.served(chat)["last_outcome"] == "complete"
 
 
 @pytest.mark.asyncio
@@ -257,7 +260,7 @@ async def test_retry_on_the_notice_asks_the_same_question_again(tmp_path):
     assert [m["role"] for m in chat.messages if m["role"] in ("assistant", "error")] == [
         "assistant"
     ]
-    assert chat._last_turn_outcome == "complete"
+    assert chat_phase.served(chat)["last_outcome"] == "complete"
 
 
 @pytest.mark.asyncio
@@ -323,4 +326,4 @@ async def test_a_turn_an_automation_started_is_retried_as_that_turn(tmp_path):
         ("inject", automation),
         ("assistant", REPLY),
     ], "Retry ran an earlier turn, or lost the one before it"
-    assert chat._last_turn_outcome == "complete"
+    assert chat_phase.served(chat)["last_outcome"] == "complete"

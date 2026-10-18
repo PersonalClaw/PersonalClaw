@@ -38,6 +38,7 @@ from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
 from personalclaw.context import ContextBuilder
+from personalclaw.dashboard import chat_phase
 from personalclaw.dashboard.chat_runner import TURN_STOPPED
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import ConversationLog
@@ -330,7 +331,7 @@ def test_a_read_only_run_whose_timeout_passes_stops_its_turn_and_names_no_grant(
     in the gateway too. It has no write grant to end, and does not claim one."""
     with _Gateway(tmp_path, _ScriptedModel([_calls(READ, "call-1"), _says("Read it.")])) as gw:
         code = _type("-p", "what is in my inbox?", "--timeout", "1", "--port", str(gw.port))
-        ended = gw.turn_has_ended()._last_turn_outcome
+        ended = chat_phase.served(gw.turn_has_ended())["last_outcome"]
 
     out, err = capsys.readouterr()
     assert code == 1, err

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup, within } from '@testing-library/react'
+import { runState } from '../../test/runState'
 
 // ── Home shows only what waits on its owner ──────────────────────────────────────────────────────
 //
@@ -53,7 +54,7 @@ function baseline(): Record<string, () => Promise<unknown>> {
       pressure: { total_mb: 16384, used_mb: 4096, available_mb: 12288, used_pct: 25, warn_pct: 90, warn: false, source: 'meminfo' },
     }),
     chatSessions: () => Promise.resolve([
-      { key: 'chat-1-x', title: 'Weekly review', updated: '2026-10-17T09:00:00+00:00', running: false },
+      { key: 'chat-1-x', title: 'Weekly review', updated: '2026-10-17T09:00:00+00:00', run_state: runState({ session: 'chat-1-x' }) },
     ]),
     suggestions: () => Promise.resolve({ suggestions: ['Summarise this week'], refreshing: false, needs_model: '' }),
   }

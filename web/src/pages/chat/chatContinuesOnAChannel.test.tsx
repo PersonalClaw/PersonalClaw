@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { runState } from '../../test/runState'
 
 // ── A chat can continue on a channel, from the chat's own menu ──────────────────────────────────
 //
@@ -9,7 +10,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 
 const h = vi.hoisted(() => ({
   detail: {
-    key: 'chat-7-x', title: 'Launch plan', running: false, queue: [] as unknown[],
+    key: 'chat-7-x', title: 'Launch plan', get run_state() { return runState({ session: 'chat-7-x' }) }, queue: [] as unknown[],
     task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
     messages: [
       { role: 'user', content: 'Plan the launch week.', ts: '2026-09-26T09:00:00+00:00' },

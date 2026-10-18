@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { hydrateTurns, type HistMsg } from './chatTypes'
+import { runState } from '../../test/runState'
 
 // ── A turn's "Turn complete" line is still there after a reload ────────────────────────────────
 //
@@ -81,7 +82,7 @@ beforeEach(() => {
   }
   sessionStorage.clear()
   hd.detail = {
-    key: SESSION, title: SESSION, messages: transcript, running: false, queue: [], task_mode: 'agent',
+    key: SESSION, title: SESSION, messages: transcript, run_state: runState(), queue: [], task_mode: 'agent',
     approval: 'normal', memory_mode: 'persistent',
   }
 })

@@ -9,6 +9,7 @@ import type { UploadProgress } from './chunkedUpload'
 import { errEnvelope, errText } from './errText'
 import { withFreshSignIn } from './freshSignIn'
 import { withSecurityConsent } from './securityConsent'
+import type { WorkPhase } from './workPhase'
 import { isSignedOutRefusal, reportSignedOut, signedOutState } from './signedOut'
 import { basedOn, type Revisioned } from './staleWrite'
 import { activePersonaTheme } from '../design/personalities'
@@ -1487,10 +1488,32 @@ export interface RoutingSuggestion {
   score: number
   method: string
 }
+/** A chat's run state: what its turn is doing and how its last one ended — the last `work_phase`
+ *  payload the gateway sent it (`dashboard/chat_phase.py`), served as `run_state` on the chat list
+ *  and a chat's detail, and carried by every `work_phase` frame after it. `turn` is the running turn
+ *  (named by the time of the row that started it), `null` when nothing runs; `last_step_at` is when
+ *  its runtime last did anything; `seq` is the stream stamp a page compares with its snapshot's,
+ *  applying only a newer frame. Times are UTC instants; `since` and `last_step_at` are `null` when
+ *  nothing has happened yet. */
+export interface RunState {
+  work: string
+  session: string
+  kind: 'chat'
+  phase: WorkPhase
+  line: string
+  since: string | null
+  turn: { message_id: string; started_at: string } | null
+  last_step_at: string | null
+  stopping: boolean
+  steerable: boolean
+  last_outcome: 'complete' | 'stopped' | 'error' | 'interrupted' | null
+  queued_messages: number
+  seq: number
+}
 export interface ChatSession {
   key: string; title: string; agent: string; model: string; reasoning_effort: string
   acp_provider: string; acp_provider_agent: string; mode: string; workspace_dir: string
-  messages: number; running: boolean; stopping: boolean; pending_approval: boolean
+  messages: number; run_state: RunState
   memory_mode?: string; last_message?: string
   /** 🔴 ONCE DECLARED `number`, AND THE ENDPOINT HAS NEVER SENT ONE. Read from the wire:
    *  `POST /api/chat/sessions` returns `last_ts: ""`, and the sibling list (`ChatSessionSummary`,
@@ -1508,7 +1531,10 @@ export interface ChatSessionSummary {
   /** `messages` is the REAL count the conversation serves, or `null` when the server could
    *  not read the file (render nothing — see `sessionRowMeta`). */
   key: string; title: string; agent?: string; model?: string; messages: number | null
-  running?: boolean; created?: string; last_activity_ts?: string; last_ts?: string; pinned?: boolean
+  /** What its turn is doing (`RunState`): the last phase frame for a live chat, idle for one kept
+   *  only on disk. */
+  run_state: RunState
+  created?: string; last_activity_ts?: string; last_ts?: string; pinned?: boolean
   folder_id?: string; tags?: string[]; color_index?: number | null
   last_message?: string; prompt_preview?: string
   // Session origin: 'manual' (user-initiated) vs a worker started by a goal loop /
@@ -8973,7 +8999,7 @@ export const api = {
   deleteTagColumn: (id: string) => del(`/api/chat/tag-columns/${encodeURIComponent(id)}`),
   reorderTagColumns: (ids: string[]) => put('/api/chat/tag-columns/order', { ids }),
   dropSessionToColumn: (session: string, columnId: string) => post(`/api/chat/sessions/${encodeURIComponent(session)}/drop`, { column_id: columnId }),
-  chatSessionDetail: (key: string, read: ReadOptions = {}) => get<{ key: string; title: string; title_needs_model?: string; messages: ChatHistoryMsg[]; running?: boolean; steerable?: boolean; last_turn_outcome?: 'complete' | 'stopped' | 'error' | 'interrupted' | null; pending_approval?: boolean; pending_questions?: QuestionCardFrame[]; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string; pastes?: { seq: number; lines: number; content: string }[] }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
+  chatSessionDetail: (key: string, read: ReadOptions = {}) => get<{ key: string; title: string; title_needs_model?: string; messages: ChatHistoryMsg[]; run_state: RunState; pending_questions?: QuestionCardFrame[]; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string; pastes?: { seq: number; lines: number; content: string }[] }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
     /** Branch lineage: the parent's persisted HISTORY key (`dashboard:<key>`) when
      *  this session was branched, plus the parent's title resolved at read time. Served
      *  here — not carried in navigation state — so the breadcrumb survives a reload.
@@ -9521,7 +9547,7 @@ export const api = {
   // projects + task lists (Project → TaskList → Task hierarchy)
   projects: () => get<{ projects: ProjectItem[] }>('/api/projects').then((d) => d.projects),
   project: (id: string) => get<ProjectItem>(`/api/projects/${encodeURIComponent(id)}`),
-  projectLinked: (id: string) => get<{ loops: ProjectLinkedItem[]; code: ProjectLinkedItem[]; artifacts: { slug: string; name: string; kind: string }[]; chats: { key: string; title: string; running: boolean }[]; knowledge: ProjectKnowledgeItem[] }>(`/api/projects/${encodeURIComponent(id)}/linked`),
+  projectLinked: (id: string) => get<{ loops: ProjectLinkedItem[]; code: ProjectLinkedItem[]; artifacts: { slug: string; name: string; kind: string }[]; chats: { key: string; title: string; run_state: RunState }[]; knowledge: ProjectKnowledgeItem[] }>(`/api/projects/${encodeURIComponent(id)}/linked`),
   // The state-grouped Work board: runs + legacy loops + tasks in one board, per-section
   // isolated (a failed source degrades one section, the board still renders).
   projectWork: (id: string) => get<WorkBoard>(`/api/projects/${encodeURIComponent(id)}/work`),

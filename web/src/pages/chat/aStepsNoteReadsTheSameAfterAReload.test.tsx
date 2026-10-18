@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act, fireEvent, cleanup, within } from '@testing-library/react'
+import { runState, runningState } from '../../test/runState'
 
 // ── What the gateway said about a call reads the same live and after a reload ─────────────────────
 //
@@ -121,7 +122,7 @@ function persisted(): unknown[] {
 }
 
 const detail = (messages: unknown[], running: boolean) => ({
-  key: SESSION, title: SESSION, messages, running, queue: [], task_mode: 'ask',
+  key: SESSION, title: SESSION, messages, run_state: running ? runningState({ session: SESSION }) : runState({ session: SESSION }), queue: [], task_mode: 'ask',
   approval: 'normal', memory_mode: 'persistent',
 })
 

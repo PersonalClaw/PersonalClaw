@@ -24,6 +24,7 @@ from personalclaw.approval_brief import RISK_LABELS, derive_blast_radius
 from personalclaw.channel_delivery import APPROVAL_ENDINGS
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
+from personalclaw.dashboard import chat_phase
 from personalclaw.run_bounds import reach_note, session_folder
 from personalclaw.security import redact_field
 from personalclaw.sel import sel
@@ -641,6 +642,9 @@ class DashboardApprovalState:
         """
         self._pending_approvals[entry["id"]] = entry
         self.broadcast_ws("approval", entry)
+        # The chat it is asked in waits on the owner's yes now: its phase says so (`chat_phase`).
+        state: Any = self  # the DashboardState this registry is mixed into
+        chat_phase.waiting_changed(state, str(entry.get("session") or ""))
         self._push_approval(entry["id"])
         self._raise_approval_row(entry)
         # `ApprovalRequest`: declared, selectable in the hook UI. Emitted alongside
@@ -773,6 +777,9 @@ class DashboardApprovalState:
             )
         except Exception:
             self._log.warning("WS broadcast failed for approval resolution", exc_info=True)
+        # The chat it was asked in waits on it no more: its phase goes back to the step it is on.
+        state: Any = self  # the DashboardState this registry is mixed into
+        chat_phase.waiting_changed(state, str(entry.get("session") or session))
 
     #: How many ended approvals :meth:`ended_as` remembers. It is read by the waiter the moment
     #: its wait returns, so it only has to outlive that hop; the bound keeps a long-lived gateway's

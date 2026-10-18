@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { endedState, runState, runningState } from '../../test/runState'
 
 // ── A screen reader heard "Response complete." for turns that did not complete ──────────────
 //
@@ -12,8 +13,8 @@ import userEvent from '@testing-library/user-event'
 // And a queued turn the gateway started next never showed as streaming again.
 //
 // The gateway now says how a turn ended: the final `chat_done` carries `outcome` (complete /
-// stopped / error), the Stop answer says whether it `stopped` anything, and session detail
-// serves `last_turn_outcome` for a tab that missed the frame. This page announces THAT.
+// stopped / error), the Stop answer says whether it `stopped` anything, and session detail's run
+// state serves `last_outcome` for a tab that missed the frame. This page announces THAT.
 //
 // 🔑 What is asserted is what a screen reader would speak: every text change of a polite live
 // region, in order (`spoken`). A final DOM state can look right while the region said something
@@ -22,7 +23,7 @@ import userEvent from '@testing-library/user-event'
 const h = vi.hoisted(() => {
   // A chat with one earlier exchange: the transcript (and the live region inside it) is on screen.
   const detail = {
-    key: 'chat-7-x', title: 'chat-7-x', running: false,
+    key: 'chat-7-x', title: 'chat-7-x', get run_state() { return runState({ session: 'chat-7-x' }) },
     messages: [
       { role: 'user', content: 'first question', ts: '2026-09-26T09:59:00Z' },
       { role: 'assistant', content: 'first answer', ts: '2026-09-26T09:59:05Z' },
@@ -156,7 +157,7 @@ async function aRunningTurn(beforeTheTurn?: () => void) {
   page()
   await waitFor(() => expect(h.detailCalls.length).toBeGreaterThanOrEqual(1))
   beforeTheTurn?.()
-  await answerDetail(0, { running: true })
+  await answerDetail(0, { run_state: runningState() })
   await waitFor(() => expect(primaryAction()).toBe('Stop'))
   await waitFor(() => expect(lastTurnSaid()).toBe('Assistant is responding…'))
 }
@@ -237,11 +238,23 @@ describe('Stop', () => {
   })
 })
 
+describe('a turn her new message replaced', () => {
+  // A message sent while a turn runs can stop it and run in its place (cancel-and-replace): the
+  // stopped turn's `chat_done` says `superseded`. The region says that, not a bare stop, as the
+  // turn's status line used to.
+  it('is said as superseded by her message', async () => {
+    await aRunningTurn()
+    pushFrame('chat_done', { outcome: 'stopped', superseded: true, superseded_by: 'q-1' })
+    await waitFor(() => expect(primaryAction()).toBe('Send message'))
+    await waitFor(() => expect(spoken.at(-1)).toBe('Superseded by your new message…'))
+  })
+})
+
 describe('a queued turn the gateway starts', () => {
   it('shows as streaming again, and says so', async () => {
     page()
     await waitFor(() => expect(h.detailCalls.length).toBeGreaterThanOrEqual(1))
-    await answerDetail(0, { running: false })
+    await answerDetail(0, { run_state: runState() })
     await waitFor(() => expect(primaryAction()).toBe('Send message'))
 
     pushFrame('chat_user_message', { content: 'the queued one', ts: '2026-09-26T10:00:02Z' })
@@ -256,7 +269,7 @@ describe('a tab that missed the terminal frame', () => {
     // The socket drops; the turn ends while it is down; the reconnect re-reads the chat.
     act(() => { FakeSocket.last?.onclose?.() })
     await waitFor(() => expect(h.detailCalls.length).toBeGreaterThanOrEqual(2), { timeout: 5000 })
-    await answerDetail(h.detailCalls.length - 1, { running: false, last_turn_outcome: 'error' })
+    await answerDetail(h.detailCalls.length - 1, { run_state: endedState('error') })
     await waitFor(() => expect(primaryAction()).toBe('Send message'))
     expect(lastTurnSaid()).toBe('Response ended with an error.')
   })
@@ -275,7 +288,7 @@ describe('a tab that missed the terminal frame', () => {
     expect(h.detailCalls.length, 'the reconciler never read the chat').toBe(reads + 1)
     // …and the read lands once the transcript has been quiet past the settle grace.
     await act(async () => { vi.advanceTimersByTime(2_000) })
-    await answerDetail(reads, { running: false, last_turn_outcome: 'stopped' })
+    await answerDetail(reads, { run_state: endedState('stopped') })
     await act(async () => { await Promise.resolve() })
     expect(primaryAction()).toBe('Send message')
     expect(lastTurnSaid()).toBe('Response stopped.')
@@ -306,7 +319,7 @@ describe('a reply the gateway restart cut off', () => {
     await waitFor(() => expect(h.detailCalls.length).toBeGreaterThanOrEqual(1))
     const earlier = 'The reply stopped before it finished. Send your message again to retry.'
     await answerDetail(0, {
-      running: false,
+      run_state: runState(),
       messages: [
         { role: 'user', content: 'first question', ts: '2026-09-26T09:59:00Z' },
         { role: 'error', content: earlier, ts: '2026-09-26T09:59:05Z' },

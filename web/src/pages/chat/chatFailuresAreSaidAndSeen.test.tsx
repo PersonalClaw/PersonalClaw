@@ -3,6 +3,7 @@ import { render, screen, waitFor, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { TURN_ERROR_WITHOUT_REASON } from './turnError'
+import { runState, runningState } from '../../test/runState'
 
 // ── A failed turn is SAID and SEEN, and edit & resend never silently deletes turns ───────────
 //
@@ -20,7 +21,7 @@ import { TURN_ERROR_WITHOUT_REASON } from './turnError'
 
 const h = vi.hoisted(() => ({
   detail: {
-    key: 'chat-6-x', title: 'Some chat', messages: [] as unknown[], running: false,
+    key: 'chat-6-x', title: 'Some chat', messages: [] as unknown[], get run_state() { return runState({ session: 'chat-6-x' }) },
     queue: [] as unknown[], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
   },
   chatSessionDetail: vi.fn(),
@@ -245,7 +246,7 @@ describe('where a turn’s outcome lands', () => {
       const { api } = await import('../../lib/api')
       ;(api as unknown as Record<string, unknown>).createChatSession = () => Promise.resolve({ key: 'chat-new-1' })
       h.chatSessionDetail.mockResolvedValue({
-        ...h.detail, key: 'chat-new-1', running: true,
+        ...h.detail, key: 'chat-new-1', run_state: runningState({ session: 'chat-new-1' }),
         messages: [{ role: 'user', content: 'a very long paste', ts: '2026-09-25T10:00:00+00:00' }],
       })
       const user = userEvent.setup()

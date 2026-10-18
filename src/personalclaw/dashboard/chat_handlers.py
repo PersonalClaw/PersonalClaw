@@ -19,7 +19,7 @@ from personalclaw import approval_answer, approval_grants, session_keys
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, default_workspace_dir, resolve_session_workspace
-from personalclaw.dashboard import headless_run, running_turn
+from personalclaw.dashboard import chat_phase, headless_run, running_turn
 from personalclaw.dashboard.approval_state import (
     SESSION_APPROVAL_ACTIONS,
     _mark_permission_resolved,
@@ -43,6 +43,7 @@ from personalclaw.dashboard.chat_runner import (
 )
 from personalclaw.dashboard.chat_title import title_needs_model
 from personalclaw.dashboard.chat_utils import (
+    STEER_ACTIVITY_KIND,
     _build_stream_chunk,
     _emit_agent_assignment,
     _history_key_for,
@@ -324,7 +325,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
                 "activity_event",
                 {
                     "session": session.key,
-                    "kind": "status",
+                    "kind": STEER_ACTIVITY_KIND,
                     "text": f"Steering: {_redact_for_display(_c)[:80]}",
                 },
             )
@@ -343,6 +344,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
                     "queue_id": qid,
                 },
             )
+            chat_phase.restate(state, session)  # one more message waits behind the turn
         return web.json_response({"ok": True, "queued": True})
 
     if not message:
@@ -542,6 +544,8 @@ async def _maybe_cancel_and_replace(
             _history_key_for(session.key), force=False, preserve_queue=True
         )
         qid = session.queue_append(message, own_words=own_words, pastes=pastes, attended=True)
+        # One more message waits behind the turn, said before its page hears the turn is over.
+        chat_phase.restate(state, session)
         # The superseded turn was stopped by the message that replaced it.
         state.broadcast_ws(
             "chat_done",
@@ -795,7 +799,8 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
                 "agent": meta.get("agent", d.get("agent", "")),
                 "model": meta.get("model", ""),
                 "messages": d.get("messages", 0),
-                "running": False,
+                # Nothing runs for a chat kept only on disk, and no turn of it is on record here.
+                "run_state": chat_phase.idle_payload(name),
                 "created": meta.get("created_at") or d.get("created", ""),
                 "last_ts": "",
                 "last_activity_ts": (
@@ -1032,15 +1037,12 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             "title": session.title,
             # Why an untitled chat has no title yet, when it is that no model is chosen for it.
             "title_needs_model": title_needs_model(session),
-            "running": session.running,
-            "stopping": session._stopping,
-            # Whether the running turn takes a steer (`running_turn.set_steer_drains`): the
-            # composer offers Steer only then, and Queue otherwise.
-            "steerable": session.running and session._takes_steers,
-            # How the latest turn that left the session idle ended — what that turn's
-            # `chat_done` carried — or null when none has. A tab that missed the frame settles
-            # from this and says the same thing the frame would have.
-            "last_turn_outcome": session._last_turn_outcome or None,
+            # What its turn is doing — its phase, whether a stop is asked of it, whether it takes
+            # a steer — and how its last turn ended: the last phase frame it was sent
+            # (`chat_phase`). A tab that missed frames reads from this what one that heard them
+            # knows, and applies only a frame newer than its `seq`: the page's stall reconciler
+            # recovers a card whose `approval` frame it lost from the phase that waits on her OK.
+            "run_state": session.run_state,
             # What the context ring was last told (`DashboardState.say_context_usage`), so a page
             # opened after the turn draws the same ring; null until a turn has said anything.
             "context_usage": session.context_usage,
@@ -1116,11 +1118,6 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             # Branch lineage — see the resolution block above the return.
             "forked_from": forked_from,
             "forked_from_title": forked_from_title,
-            # True when the turn is parked on an unanswered tool approval. The chat
-            # page's idle-reconciler uses this to recover a permission card whose
-            # live `approval` WS frame was lost/early (the turn otherwise stalls
-            # silently — no `chat_done` fires while awaiting the human).
-            "pending_approval": any(not f.done() for f in session._approval_futures.values()),
             # The questions the turn waits on her answer to, as their cards: a page opened or
             # reloaded while one waits shows it (`owner_questions`).
             "pending_questions": state.owner_questions.pending_for(session.key),
@@ -1269,6 +1266,7 @@ def _open_stop_event(state: DashboardState, session: _ChatSession, opening: str)
     # same payload so consumers that read only content still see the stop event.
     stop_msg = json.dumps(stop_data)
     session.append("system", stop_msg, stop_msg)
+    chat_phase.restate(state, session)  # a stop is asked of the running turn
     state.push_sessions_update()
     return stop_id
 
@@ -1287,6 +1285,7 @@ def _close_stop_event(
     if session._stop_event_id in (stop_id, None):
         session._stop_event_id = None
         session._stop_state = "idle"
+    chat_phase.restate(state, session)  # the stop was answered
     state.push_sessions_update()
 
 
@@ -1766,6 +1765,7 @@ async def api_chat_session_queue_cancel(request: web.Request) -> web.Response:
     state.broadcast_ws(
         "queue_cancel", {"session": name, "queue_id": queue_id, "content": _redacted}
     )
+    chat_phase.restate(state, session)  # one fewer message waits behind the turn
     state.push_sessions_update()
     sel().log_tool_invocation(
         session_key=f"dashboard:{name}",

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { runState, runningState } from '../../test/runState'
 
 // ── "Speak replies aloud" speaks replies, and Speak's refusal names the real fix ─────────────
 //
@@ -149,7 +150,7 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllGlobals() })
 
 const ANSWER = 'Here is the reply, read out loud.'
-const base = { key: SESSION, title: SESSION, messages: [] as unknown[], running: false, queue: [], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent' }
+const base = { key: SESSION, title: SESSION, messages: [] as unknown[], run_state: runState(), queue: [], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent' }
 
 /** Open the chat and answer the read this opening issues. Returns the render, to close it with. */
 async function openWith(query: Record<string, string>, patch: Record<string, unknown> = {}) {
@@ -207,7 +208,7 @@ describe('Speak replies aloud', () => {
   })
 
   it('does not read out a reply to a message another tab sent', async () => {
-    await openWith({}, { running: true, messages: [{ role: 'user', content: 'from the other tab', ts: 't1' }], stream_seq: 0 })
+    await openWith({}, { run_state: runningState(), messages: [{ role: 'user', content: 'from the other tab', ts: 't1' }], stream_seq: 0 })
     streamTheReply()
     await new Promise((r) => setTimeout(r, 50))
     expect(h.voiceSynthesize).not.toHaveBeenCalled()
@@ -231,7 +232,7 @@ describe('Speak replies aloud', () => {
     h.sendChat.mockImplementationOnce(() => new Promise((resolve) => { answerTheSend = resolve }))
     const earlier = [{ role: 'user', content: 'from the other tab', ts: 't1' }]
     // The running turn's runtime pulls no message in, so the composer queues this one behind it.
-    const view = await openWith({ seed: 'And then this.' }, { running: true, steerable: false, messages: earlier, stream_seq: 0 })
+    const view = await openWith({ seed: 'And then this.' }, { run_state: runningState({ steerable: false }), messages: earlier, stream_seq: 0 })
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: 'Queue — sent when this turn ends' }))
     await waitFor(() => expect(h.sendChat).toHaveBeenCalled())
@@ -241,7 +242,7 @@ describe('Speak replies aloud', () => {
     await act(async () => { answerTheSend({ ok: true, queued: true }) })
     // Back on the chat, the queued message's own turn is running, and its reply finishes.
     await openWith({}, {
-      running: true, stream_seq: 0,
+      run_state: runningState(), stream_seq: 0,
       messages: [...earlier, { role: 'assistant', content: 'An earlier answer.' }, { role: 'user', content: 'And then this.', ts }],
     })
     streamTheReply()

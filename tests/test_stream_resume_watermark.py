@@ -99,7 +99,7 @@ async def test_a_mid_answer_snapshot_holds_exactly_the_chunks_stamped_at_or_belo
         assert [f["content"] for f in before] == ["one, ", "two, "]
         # The resume point is the newest stamp broadcast before the read, and the partial the
         # snapshot carries is exactly those chunks — no more, no fewer.
-        assert snap["running"] is True
+        assert snap["run_state"]["turn"] is not None
         assert snap["stream_seq"] == before[-1]["seq"]
         assert snap["messages"][-1] == {
             "role": "streaming",
@@ -139,7 +139,16 @@ async def test_chunk_stamps_are_process_wide_and_never_restart_across_turns_or_s
     stamps = [f["seq"] for f in _chunk_frames(state)]
     assert len(stamps) == 6
     assert stamps == sorted(stamps) and len(set(stamps)) == len(stamps), stamps
-    assert state.stream_seq == stamps[-1]
+    # One counter: a turn's phase frames are stamped from it too (`chat_phase`), between its
+    # chunks, so a page compares either against the same snapshot's stamps.
+    every = [
+        c.args[1]["seq"]
+        for c in state.broadcast_ws.call_args_list
+        if c.args[0] in ("chat_chunk", "work_phase")
+    ]
+    assert len(every) > len(stamps), "no phase frame was stamped"
+    assert every == sorted(every) and len(set(every)) == len(every), every
+    assert state.stream_seq == every[-1]
 
 
 def test_chunk_stamps_never_restart_across_a_gateway_restart(tmp_path):

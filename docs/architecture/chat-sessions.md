@@ -869,6 +869,17 @@ chat, channel thread, loop worker, webhook, subagent).
    Every exit from a turn, an error included, first settles the answer
    streamed so far (`_flush_segment`), so a partial answer is kept like a
    finished one.
+6. **What the turn is doing** — the turn says each phase it is in, as the
+   runner measures it, in a `work_phase` frame (`dashboard/chat_phase.py`, see
+   [work-phases.md](work-phases.md)): waiting to start as soon as it is
+   accepted, thinking, searching, the tool it runs, writing, waiting on her OK
+   or her answer, handing off to helpers. A running turn says its phase again
+   every 15 s, and every way a turn ends sends one last frame that says how.
+   The chat list, a chat's detail and a project's chats serve the last frame
+   as the chat's `run_state`, idle once nothing runs, so a page that opens or
+   reconnects mid-turn reads what the frames said; whether a turn runs, is
+   stopping, takes a steer or waits on her OK, and how the last one ended, is
+   read there and nowhere else.
 
 Around the engine:
 

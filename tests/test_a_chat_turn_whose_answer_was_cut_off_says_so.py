@@ -29,6 +29,7 @@ from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
 from personalclaw.config import AppConfig
 from personalclaw.context import ContextBuilder
+from personalclaw.dashboard import chat_phase
 from personalclaw.dashboard.chat_handlers import api_chat_session_approve
 from personalclaw.dashboard.chat_regenerate import api_chat_session_regenerate
 from personalclaw.dashboard.chat_runner import run_chat
@@ -192,7 +193,7 @@ async def test_a_cut_off_answer_ends_the_turn_in_its_error_with_what_arrived_kep
     assert (error["role"], error["content"]) == ("error", CUT_OFF)
     assert error["meta"] == {"cut_off": RECORD}
     # The failed-turn ending: an error, never "Response complete.", which offers Retry.
-    assert chat._last_turn_outcome == "error"
+    assert chat_phase.served(chat)["last_outcome"] == "error"
     assert {"session": chat.key, "outcome": "error"} in _frames(state, "chat_done")
     (shown,) = [
         c.args[0]
@@ -228,7 +229,7 @@ async def test_retry_on_the_cut_off_notice_asks_the_model_again(tmp_path):
                 chat = state.get_or_create_session()
                 await _ask(state, chat)
                 # Retry is offered on the notice the turn ended on.
-                assert chat._last_turn_outcome == "error"
+                assert chat_phase.served(chat)["last_outcome"] == "error"
                 assert _turn_rows(chat.messages)[-1]["content"] == CUT_OFF
                 async with TestClient(TestServer(_doors(state))) as client:
                     resp = await client.post(f"/api/chat/sessions/{chat.key}/regenerate")
@@ -241,7 +242,7 @@ async def test_retry_on_the_cut_off_notice_asks_the_model_again(tmp_path):
     (answer,) = _turn_rows(chat.messages)
     assert (answer["role"], answer["content"]) == ("assistant", whole)
     assert "finish_reason" not in (answer.get("meta") or {})
-    assert chat._last_turn_outcome == "complete"
+    assert chat_phase.served(chat)["last_outcome"] == "complete"
 
 
 @pytest.mark.asyncio

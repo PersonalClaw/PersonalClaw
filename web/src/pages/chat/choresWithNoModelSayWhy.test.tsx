@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { runState } from '../../test/runState'
 
 // ── With no model chosen for the chores, each chat surface they fill says why ──────────────────
 //
@@ -16,7 +17,7 @@ const TITLES_NEED = 'Titles and tags need a model: choose one in Settings → Mo
 
 const h = vi.hoisted(() => ({
   detail: {
-    key: 'chat-7-x', title: 'Reading a file', running: false, queue: [] as unknown[], task_mode: 'agent',
+    key: 'chat-7-x', title: 'Reading a file', get run_state() { return runState({ session: 'chat-7-x' }) }, queue: [] as unknown[], task_mode: 'agent',
     approval: 'normal', memory_mode: 'persistent',
     messages: [
       { role: 'user', content: 'How do I read a file in Python?', ts: '2026-10-02T09:00:00+00:00' },

@@ -25,6 +25,7 @@ from test_a_turn_with_no_answer_says_so import _ask_in_the_dashboard, _gateway, 
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
 from personalclaw.config import AppConfig
+from personalclaw.dashboard import chat_phase
 from personalclaw.hooks import HookManager
 from personalclaw.ledger import STEP_COMPLETED, STEP_FAILED
 from personalclaw.llm.events import (
@@ -248,7 +249,7 @@ async def test_a_chat_turn_out_of_room_ends_in_the_notice_and_is_not_resent(tmp_
     assert notice.startswith("The model ran out of output room before it answered (8,192 tokens)")
     rows = _turn_rows(chat)
     assert [m["content"] for m in rows if m["role"] == "error"] == [notice]
-    assert chat._last_turn_outcome == "error"
+    assert chat_phase.served(chat)["last_outcome"] == "error"
     assert len([m for m in chat.messages if m["role"] == "user"]) == 1, "it was resent"
 
 

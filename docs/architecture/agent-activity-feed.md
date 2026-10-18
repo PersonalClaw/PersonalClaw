@@ -56,12 +56,12 @@ The fold reads only endpoints the dashboard already reads:
 
 > The contract was first written with **three** sources. The fourth is deliberate and was
 > added during implementation: `waiting_approval` is in the declared state
-> vocabulary and is **not reachable** from the other three. A loop parked on a tool
-> approval still reports `status: 'running'`, and the session LIST endpoint
-> (`ChatSessionSummary`) carries no `pending_approval` field — only the per-session
-> detail shape does. Without `/api/approvals` the state would have shipped as an enum
-> member nothing ever writes. `/api/approvals` is public, already polled by
-> `DashboardLive`, and joins cleanly on `session` ↔ `Loop.session_key` / session `key`.
+> vocabulary and is **not reachable** from a loop. A loop parked on a tool approval
+> still reports `status: 'running'`. A chat's row says it through its run state's
+> phase, but only for its own running turn. Without `/api/approvals` the state would
+> have shipped as an enum member no loop ever reaches. `/api/approvals` is public,
+> already polled by `DashboardLive`, and joins cleanly on `session` ↔
+> `Loop.session_key` / session `key`.
 
 An attributed approval **outranks** the entity's own status, for the same reason:
 "busy" painted over "one click away from continuing" is the failure the surface exists
@@ -83,14 +83,29 @@ so every world agrees on what "stuck" looks like.
 widget already treats both as "in flight or awaiting them", and a stalled run painted
 as calm `working` is precisely the lie an ambient surface must not tell.
 
+### Chat phase → world state
+
+A chat's state comes from its row's `run_state`, the last `work_phase` payload the
+gateway sent for it ([work phases](work-phases.md)). While a turn runs, the state is
+its phase's `world` in `web/src/lib/workPhase.ts`, the one table of what each phase
+looks like. With no turn running, the chat is `idle`.
+
+| phase while a turn runs | world state |
+| --- | --- |
+| `queued` `thinking` `searching` `tool` `planning` `delegating` `streaming` `listening` `retrying` `waiting_model` | `working` |
+| `approval` | `waiting_approval` |
+| `input` | `needs_input` |
+
 ## WS envelopes are SIGNALS, NEVER PAYLOADS
 
 This is the load-bearing invariant, inherited verbatim from the DashboardLive contract
 (`web/src/pages/dashboard/DashboardLive.tsx`).
 
-`chat_status`, `sessions`, `subagent*`, `update_progress`, `approval` and
+`work_phase`, `sessions`, `subagent*`, `update_progress`, `approval` and
 `approval_resolved` each **nudge a debounced refetch** (600 ms, so a streaming turn's
-envelope storm collapses into one request). Not one field is ever read off an envelope.
+envelope storm collapses into one request). A running turn's `work_phase` is said on
+each change of phase and again every 15 s, so the scene is read again at least that
+often while something runs. Not one field is ever read off an envelope.
 A socket reopening after a drop forces a full catch-up refetch; a visibility-gated
 10 s poll covers the rest.
 
@@ -98,8 +113,8 @@ Why it matters: envelope shapes drift per producer, several producers emit the s
 type with different fields, and a stale process can emit a contradicting one. A surface
 that renders envelope payloads renders whichever producer spoke last.
 
-The rail is `web/src/lib/agentActivitySignals.test.tsx`. It delivers a `chat_status`
-carrying deliberately **misleading** `status`, `title`, `running`, `progress` and
+The rail is `web/src/lib/agentActivitySignals.test.tsx`. It delivers a `work_phase`
+carrying deliberately **misleading** `phase`, `line`, `title`, `progress` and
 `entities` fields and asserts the rendered scene came from the refetch — paired with a
 positive control that the refetch demonstrably happened, because "no bad field
 appeared" is vacuously true for a hook that did nothing at all.

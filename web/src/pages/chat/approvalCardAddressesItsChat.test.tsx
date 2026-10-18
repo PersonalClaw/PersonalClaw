@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { runningState } from '../../test/runState'
 
 // ── A chat's approval card answers by the CHAT's id, and ignores another chat's answer ──────────
 //
@@ -18,7 +19,7 @@ import userEvent from '@testing-library/user-event'
 
 const h = vi.hoisted(() => ({
   detail: {
-    key: 'chat-a', title: 'chat-a', messages: [] as unknown[], running: true,
+    key: 'chat-a', title: 'chat-a', messages: [] as unknown[], get run_state() { return runningState({ session: 'chat-a' }) },
     queue: [] as unknown[], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
   },
   approve: vi.fn(),

@@ -98,8 +98,6 @@ function census(): string[] {
 const OPERATION_FLAGS: Record<string, string> = {
   'pages/projects/ProjectsSection.tsx  api.createProject  name_locked: true':
     'A user who TYPED the name is the lock — it stops the LLM auto-renaming. Not frozen: the rename path re-writes it via `patch({name, name_locked: true})`.',
-  'pages/ChatPage.tsx  writeCachedDetail  running: false':
-    'A synthetic seed for a just-created session in the CLIENT query cache, not a stored record — and a fact about it (nothing is running yet). `writeCachedDetail` refuses running details outright.',
   'pages/settings/FeedbackPanel.tsx  writeQuery  enabled: false':
     'The CLIENT query cache, not a stored record: the producers read\'s own answer (`{"enabled": false}`) right after the user switched "Collect feedback" off, written instead of asked for. The stored field is the switch they just flipped, through its control.',
 }

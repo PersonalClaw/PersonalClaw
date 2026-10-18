@@ -7,9 +7,9 @@ said "complete" for all three. The gateway does know: the provider's stop reason
 a stop in progress, the turn's error flag. So it says so, in three places that must agree:
 
 * the final ``chat_done`` names its ``outcome``: ``complete``, ``stopped`` or ``error``;
-* session detail serves the same fact as ``last_turn_outcome``, committed before the frame goes
-  out, so a tab that missed the frame (a reconnect's re-read, the stall reconciler) reads the
-  answer the frame carried;
+* session detail serves the same fact as its run state's ``last_outcome``, committed before the
+  frame goes out, so a tab that missed the frame (a reconnect's re-read, the stall reconciler)
+  reads the answer the frame carried;
 * the Stop answer says whether it ``stopped`` a turn, and whether the chat's ``trust`` stands.
 
 A turn that is still running sends no ``chat_done`` at all. The deferred-compaction path sent one
@@ -131,8 +131,8 @@ async def test_a_finished_answer_ends_complete_on_its_frame_and_in_session_detai
 
     assert _frames(state, "chat_done") == [{"session": "s1", "outcome": "complete"}]
     detail = await _detail(state)
-    assert detail["running"] is False
-    assert detail["last_turn_outcome"] == "complete"
+    assert detail["run_state"]["turn"] is None
+    assert detail["run_state"]["last_outcome"] == "complete"
 
 
 @pytest.mark.asyncio
@@ -146,7 +146,7 @@ async def test_a_turn_cut_short_ends_stopped_not_complete(tmp_path, reason):
     await _turn(state, _session(state), "hello")
 
     assert _frames(state, "chat_done") == [{"session": "s1", "outcome": "stopped"}]
-    assert (await _detail(state))["last_turn_outcome"] == "stopped"
+    assert (await _detail(state))["run_state"]["last_outcome"] == "stopped"
 
 
 @pytest.mark.asyncio
@@ -178,7 +178,7 @@ async def test_a_failed_turn_ends_error(tmp_path, exc):
     # The same flag the autonudge re-arm and follow-up chips read: an agent error that ended
     # the turn with an error card is an errored turn for them too.
     assert session._last_turn_errored is True
-    assert (await _detail(state))["last_turn_outcome"] == "error"
+    assert (await _detail(state))["run_state"]["last_outcome"] == "error"
 
 
 @pytest.mark.asyncio
@@ -220,7 +220,7 @@ async def test_a_retry_notice_is_not_the_end_of_the_turn(tmp_path):
     notices = [m["content"] for m in session.messages if m.get("role") == "error"]
     assert notices and "retrying" in notices[0], session.messages
     assert _frames(state, "chat_done") == [{"session": "s1", "outcome": "complete"}]
-    assert (await _detail(state))["last_turn_outcome"] == "complete"
+    assert (await _detail(state))["run_state"]["last_outcome"] == "complete"
 
 
 # ── 2. a turn still running sends no terminal frame ──────────────────────────────────────
@@ -270,11 +270,11 @@ async def test_a_reply_answered_locally_says_its_own_outcome_not_the_previous_tu
     state = _failing(tmp_path, RuntimeError("upstream said no"))
     session = _session(state)
     await _turn(state, session, "hello")
-    assert (await _detail(state))["last_turn_outcome"] == "error"
+    assert (await _detail(state))["run_state"]["last_outcome"] == "error"
 
     await _turn(state, session, "/quit")
 
-    assert (await _detail(state))["last_turn_outcome"] == "complete"
+    assert (await _detail(state))["run_state"]["last_outcome"] == "complete"
 
 
 # ── 4. the Stop answer says whether it stopped anything ──────────────────────────────────

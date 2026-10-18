@@ -1,6 +1,6 @@
 # PersonalClaw Tool Reference
 
-Generated from the live tool registry (manifest apiVersion 1). Every registered in-process tool, grouped by provider, with its exact input schema and worked examples.
+Generated from the live tool registry (manifest apiVersion 2). Every registered in-process tool, grouped by provider, with its exact input schema and worked examples.
 
 **Never guess a tool signature — copy it from here.** A hallucinated parameter is the dominant driving failure; the arg names below are schema-verified against the registered tool by the drift test.
 

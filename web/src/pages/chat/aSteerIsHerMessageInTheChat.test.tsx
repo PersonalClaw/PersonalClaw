@@ -3,6 +3,7 @@ import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { hydrateTurns, turnText } from './chatTypes'
 import { MessageUser } from '../../ui/chat/MessageUser'
+import { runState, runningState } from '../../test/runState'
 
 // ── A message she steers into a running answer is her message in the chat, where it went in ─
 //
@@ -146,7 +147,7 @@ const before = (a: Element, b: Element) =>
 describe('a chat reopened after a steer', () => {
   it('shows her steer between the two parts of the answer, as steered', async () => {
     page()
-    await answerDetail({ messages: HISTORY, running: false })
+    await answerDetail({ messages: HISTORY, run_state: runState() })
 
     const first = await screen.findByText(FIRST)
     const steer = screen.getByText(STEER)
@@ -162,7 +163,7 @@ describe('a steer she sends while the answer streams', () => {
     // `?seed=` pre-fills the composer, so this drives the real send path without typing into
     // CodeMirror (which jsdom cannot lay out).
     page({ seed: STEER })
-    await answerDetail({ messages: [HISTORY[0]], running: true, steerable: true })
+    await answerDetail({ messages: [HISTORY[0]], run_state: runningState({ steerable: true }) })
     pushFrame('chat_chunk', { content: FIRST, seq: 1 })
     await user.click(await screen.findByRole('button', { name: 'Steer — send into the running turn' }))
 
@@ -192,7 +193,7 @@ describe('a steer she sends while the answer streams', () => {
   it('leaves the line above the composer once a steer the turn did not take is queued', async () => {
     const user = userEvent.setup()
     page({ seed: STEER })
-    await answerDetail({ messages: [HISTORY[0]], running: true, steerable: true })
+    await answerDetail({ messages: [HISTORY[0]], run_state: runningState({ steerable: true }) })
     await user.click(await screen.findByRole('button', { name: 'Steer — send into the running turn' }))
     await waitFor(() => expect(h.sendChat).toHaveBeenCalled())
     const ts = (h.sendChat.mock.calls[0][2] as { client_ts: string }).client_ts

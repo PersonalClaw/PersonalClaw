@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import type { ChatSessionSummary, ChatTag, RetagJob } from '../../lib/api'
 import type { WsMessage } from '../../lib/useChatSocket'
+import { runState, runningState } from '../../test/runState'
 
 // ── The chat history page reads again what went by while its socket was down ──────────────────────
 //
@@ -15,6 +16,7 @@ const RESTARTED = 'The gateway restarted before this reply finished. Send your m
 const TAGS: ChatTag[] = [{ id: 't0', name: 'Pricing', order: 0 }]
 const SESSION: ChatSessionSummary = {
   key: 's1', title: 'Quick sums', messages: 1, tags: ['t0'], origin: 'manual', lifecycle: 'active',
+  run_state: runState({ session: 's1' }),
 }
 
 const h = vi.hoisted(() => ({
@@ -90,7 +92,7 @@ afterEach(async () => {
 
 describe('the peek of a chat whose reply a restart cut off', () => {
   it('reads the chat again: the partial reply goes, and what ended it shows', async () => {
-    h.detail.mockResolvedValue({ key: 's1', title: 'Quick sums', messages: [question], running: true })
+    h.detail.mockResolvedValue({ key: 's1', title: 'Quick sums', messages: [question], run_state: runningState({ session: 's1' }) })
     historyPage({ peek: 's1' })
     await waitFor(() => expect(FakeSocket.all.length).toBeGreaterThan(0))
     latest().open()
@@ -99,7 +101,7 @@ describe('the peek of a chat whose reply a restart cut off', () => {
     expect(screen.getByText('Two plus two')).toBeTruthy()
 
     await restart(() => h.detail.mockResolvedValue({
-      key: 's1', title: 'Quick sums', running: false,
+      key: 's1', title: 'Quick sums', run_state: runState({ session: 's1' }),
       messages: [question, { role: 'error', content: RESTARTED, ts: '2026-09-29T10:00:04Z' }],
     }))
 
@@ -112,7 +114,7 @@ describe('the peek of a chat whose reply a restart cut off', () => {
 
 describe('a re-tag job the restart ended', () => {
   it('stops counting, and Generate Tags is offered again', async () => {
-    h.detail.mockResolvedValue({ key: 's1', title: 'Quick sums', messages: [question], running: false })
+    h.detail.mockResolvedValue({ key: 's1', title: 'Quick sums', messages: [question], run_state: runState({ session: 's1' }) })
     h.retagStatus.mockResolvedValue({ status: 'running', done: 3, total: 10, updated: 1 })
     historyPage()
     await waitFor(() => expect(FakeSocket.all.length).toBeGreaterThan(0))

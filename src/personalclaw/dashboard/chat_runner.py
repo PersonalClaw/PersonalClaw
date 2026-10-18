@@ -1,12 +1,13 @@
 """Core LLM runner — run_chat, segment flushing, prompt expansion."""
 
 import asyncio
+import functools
 import json
 import logging
 import time
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from personalclaw import (
     agent_cli_self_approval,
@@ -38,6 +39,7 @@ from personalclaw.constants import CHAT_TURN_IDLE_LIMIT
 from personalclaw.context_engine import assemble_context, check_headroom
 from personalclaw.context_headroom import HeadroomState, resolve_window
 from personalclaw.dashboard import (
+    chat_phase,
     chat_questions,
     chat_refusals,
     headless_run,
@@ -69,6 +71,7 @@ from personalclaw.dashboard.chat_title import _maybe_auto_title
 from personalclaw.dashboard.chat_utils import (
     _BLOCKED_SLASH_COMMANDS,
     _SLASH_COMMANDS,
+    LOOP_BREAKER_ACTIVITY_KIND,
     LOOP_WORK_APPS,
     MODEL_SUBSTITUTION_ACTIVITY_KIND,
     SLASH_FALLBACK_ACTIVITY_KIND,
@@ -266,8 +269,9 @@ def _skills_sent(decisions: list, headroom: object) -> list[dict]:
     return sent
 
 
-#: How a chat turn ended: the ``outcome`` of its final ``chat_done`` and session detail's
-#: ``last_turn_outcome``. A closed set, because the chat page says each one in its own words.
+#: How a chat turn ended: the ``outcome`` of its final ``chat_done`` and its run state's
+#: ``last_outcome`` (``chat_phase``). A closed set, because the chat page says each one in its own
+#: words.
 TURN_COMPLETE = "complete"
 TURN_STOPPED = "stopped"
 TURN_ERROR = "error"
@@ -2286,7 +2290,51 @@ def _settle_granted(
         logger.debug("could not settle the note for %s", tool, exc_info=True)
 
 
+#: A chat's turn engine: ``turn(state, session, message, ...)``.
+_TurnEngine = TypeVar("_TurnEngine", bound=Callable[..., Awaitable[None]])
+
+
+def _says_its_phases(turn: _TurnEngine) -> _TurnEngine:
+    """Say each turn the chat's turn engine runs as it goes (``chat_phase``): waiting to start from
+    the moment it is accepted, before the turn awaits anything, and how it ended in its last
+    ``work_phase`` frame, on every way out, an exception and a cancellation included. A nested run
+    (``_prompt_depth``) is the same turn, and a retry (``_retry``) carries it on."""
+
+    @functools.wraps(turn)
+    async def _said(
+        state: DashboardState,
+        session: _ChatSession,
+        message: str,
+        *args: Any,
+        _prompt_depth: int = 0,
+        _retry: bool = False,
+        **kw: Any,
+    ) -> None:
+        owns = _prompt_depth == 0
+        if owns:
+            # Named by the row that started it, which its dispatcher wrote before starting it.
+            at = in_flight_index(session, message)
+            started_by = str(session.messages[at].get("ts", "")) if at is not None else ""
+            (chat_phase.take_up if _retry else chat_phase.begin)(state, session, started_by)
+        # How a turn that left before its runner said how it ended, ended: stopped, unless it
+        # raised.
+        unsaid = TURN_STOPPED
+        try:
+            await turn(
+                state, session, message, *args, _prompt_depth=_prompt_depth, _retry=_retry, **kw
+            )
+        except Exception:
+            unsaid = TURN_ERROR
+            raise
+        finally:
+            if owns:
+                chat_phase.end(state, session, unsaid=unsaid)
+
+    return _said  # type: ignore[return-value]
+
+
 @memory_writes.runs_as_its_session
+@_says_its_phases
 async def run_chat(
     state: DashboardState,
     session: _ChatSession,
@@ -2320,15 +2368,15 @@ async def run_chat(
     ``_retry`` says this run sends the turn that just ended again (``_send_again`` below, drained
     by the queue): the same message, whose row is already in the transcript, and the same turn,
     so it opens no new checkpoint turn and is handed the same context the first attempt was.
+
+    Every turn says what it is doing as it runs (:func:`_says_its_phases`, ``chat_phase``), and
+    its last ``work_phase`` frame says how it ended.
     """
     # Reset the per-turn error flag; the except block sets it True on a crash.
     session._last_turn_errored, session._last_turn_refusal = False, None
     session._last_turn_declined = []  # what she declines this turn (`declined_calls.declined_step`)
     # No stop has been asked of this turn yet (`_ChatSession._stop_asked`).
     session._stop_asked = False
-    # This turn has not ended, so no outcome describes it yet. A reader of session detail must
-    # never find the previous turn's outcome and take it for this one's.
-    session._last_turn_outcome = ""
     # The text this turn's dispatcher appended to the buffer, captured before anything
     # below rewrites ``message`` (attachments, @prompt expansion, preambles). It is how
     # the history restore finds — and leaves out — the message now being sent.
@@ -2610,11 +2658,10 @@ async def run_chat(
     def _answered_locally() -> None:
         """This turn's reply was composed here, before any runtime was asked, and it is complete.
 
-        These replies return before the ``try`` below, so they never reach its terminal path;
-        without this, session detail would serve no outcome for a turn that plainly ended.
+        These replies return before the ``try`` below, so they never reach its terminal path; the
+        last phase frame its wrapper sends (:func:`_says_its_phases`) says it ended complete.
         """
-        session._last_turn_outcome = TURN_COMPLETE
-        state.push_sessions_update()
+        chat_phase.ended(session, TURN_COMPLETE)
 
     # ── Slash commands: detect early, before session acquisition ──
     first_word = message.split()[0] if message.strip() else ""
@@ -2825,6 +2872,9 @@ async def run_chat(
     _turn_agent = _deny_note = ""
     # ...and whether she denied a call since the turn was last carried on (`EVENT_CARRIED_ON`).
     _you_denied = False
+    # The sentence the turn ends on when its agent stopped after her Deny: a declined turn, which
+    # its last phase frame reads as done (`chat_phase.ended`).
+    _deny_ending = ""
     # The app that started this conversation (`started_by_app`), "" for one of yours. Read again by
     # the approval gate below, which must not let YOLO into an app's conversation.
     _app_chat = ""
@@ -2959,10 +3009,6 @@ async def run_chat(
         if getattr(session, "_task_mode", "agent") == "plan":
             acp_mode = "plan"
 
-        state.broadcast_ws(
-            "activity_event",
-            {"session": session.key, "kind": "status", "text": "Creating session…"},
-        )
         session.model = _normalize_model(session.model or "") or ""
         client, is_new, resumed = await state.sessions.get_or_create(
             session_key,
@@ -3604,10 +3650,8 @@ async def run_chat(
             if callable(announce_failover):
                 announce_failover()
             event_stream = client.stream(full_message)
-        state.broadcast_ws("chat_status", {"session": session.key, "status": "Thinking…"})
-        state.broadcast_ws(
-            "activity_event", {"session": session.key, "kind": "status", "text": "Thinking…"}
-        )
+        # Its model is asked now: the turn thinks (plans, in plan mode) until a step says more.
+        chat_phase.say(state, session, chat_phase.thinking(session))
 
         # ── Bidirectional sync: mirror user message to the linked channel thread ──
         #
@@ -3697,6 +3741,8 @@ async def run_chat(
                 event.tool_call_id = _tcid
             # What a bounded turn shows of its work starts its quiet clock again (`turn_deadline`).
             turn_deadline.saw(event.kind, str(getattr(event, "tool_call_id", "") or ""))
+            # ...and is its latest step, which its phase frames carry (`chat_phase`).
+            chat_phase.touch(session)
 
             # A refusal covers the requests the agent had already sent when it was decided, which
             # wait right behind it in the stream. Anything else the agent reports first (the
@@ -3735,6 +3781,8 @@ async def run_chat(
                         elif m.get("role") not in ("tool", "permission"):
                             break
                 in_tool_group = False
+                # Its answer streams: said once, on the first word after any other step.
+                chat_phase.writing(state, session)
                 safe_chunk, _ = redact_exfiltration_urls(event.text)
                 safe_chunk, _ = redact_credentials(safe_chunk)
                 assistant_text += safe_chunk
@@ -3823,6 +3871,8 @@ async def run_chat(
                         "input": _input_obj,
                     },
                 )
+                # The step it is: a search, a plan, or the tool its card names (`work_phase`).
+                chat_phase.step(state, session, _title, _kind)
                 session.append(
                     "tool",
                     _title,
@@ -4043,6 +4093,8 @@ async def run_chat(
                         **({"ok": bool(_tool_ok)} if _tool_ok is not None else {}),
                     },
                 )
+                # The step is over: the turn thinks again until its next one says more.
+                chat_phase.say(state, session, chat_phase.thinking(session))
                 # The call's line on the channel ends here, the way the call did — unless its
                 # approval already ended it (a refused call's result is its refusal).
                 await _end_mirror_line(event.tool_call_id or "", _line_status(_tmeta))
@@ -4201,7 +4253,11 @@ async def run_chat(
                         )
                         state.broadcast_ws(
                             "activity_event",
-                            {"session": session.key, "kind": "status", "text": _line},
+                            {
+                                "session": session.key,
+                                "kind": LOOP_BREAKER_ACTIVITY_KIND,
+                                "text": _line,
+                            },
                         )
                     _abort_msg = _acp_breaker.stop_sentence()
                     if _abort_msg and not _acp_breaker_aborted:
@@ -4213,7 +4269,11 @@ async def run_chat(
                         session.append("error", _abort_msg, "msg msg-err")
                         state.broadcast_ws(
                             "activity_event",
-                            {"session": session.key, "kind": "status", "text": _abort_msg},
+                            {
+                                "session": session.key,
+                                "kind": LOOP_BREAKER_ACTIVITY_KIND,
+                                "text": _abort_msg,
+                            },
                         )
                         session._last_turn_errored = True
                         try:
@@ -4785,10 +4845,6 @@ async def run_chat(
                         deny_effect=_deny_effect,
                         asked_for=_asked_for,
                     )
-                    # Push via global SSE AFTER registering the future, so the
-                    # session dict reflects pending_approval=true and Board cards
-                    # move into the Blocked lane without a browser refresh.
-                    state.push_sessions_update()
                     outcome = await asyncio.wait_for(fut, timeout=approval_window)
                 except asyncio.TimeoutError:
                     outcome = "rejected"
@@ -5209,6 +5265,7 @@ async def run_chat(
         if _unanswered and (_deny_note or _unanswered == turn_endings.UNANSWERED_SAYS_WHY):
             session._empty_response_retries = 0
             _why = _deny_note or turn_endings.wrote_nothing(_stop_reason, _turn_agent, _output_cap)
+            _deny_ending = _deny_note
             turn_endings.say_the_turn_has_no_answer(state, session, _why)
         elif _unanswered == turn_endings.UNANSWERED_BLANK:
             if _prompt_depth == 0 and session._empty_response_retries == 0:
@@ -5577,6 +5634,8 @@ async def run_chat(
             # stop this turn herself.
             ended_by_gateway=bool(state.stopping_for) and not session._stop_asked,
         )
+        # ...which its last phase frame says (`chat_phase.end`, below or in `_says_its_phases`).
+        chat_phase.ended(session, _turn_outcome, declined=_deny_ending)
         # No exit leaves an answer half-written: one still streaming here — a path that
         # returned or raised without settling it — is settled where it stood, before the
         # file-change flush below attaches this turn's chips to it.
@@ -5664,6 +5723,10 @@ async def run_chat(
         # Process queued messages (FIFO) — keep SSE stream alive. Not while the gateway stops: a
         # turn started now would only be cut off in its turn.
         if session._queue and not state.stopping_for:
+            # This turn is over, unless what runs next is this turn sent again (its retry): its
+            # last phase frame goes out before the next turn says it is waiting to start.
+            if not session._queue[0].get("retry"):
+                chat_phase.end(state, session)
             if session._stopping:
                 session.append(
                     "error",
@@ -5786,23 +5849,21 @@ async def run_chat(
             session.task = task
             state._background_tasks.add(task)
             task.add_done_callback(state._background_tasks.discard)
+            if retry:
+                # The same turn goes on in its retry, which ends it.
+                chat_phase.carry_on(state, session, task)
         else:
             session._stopping = False
             # A headless run's Trust ends with its turn, before anyone is told the turn has ended.
             headless_run.end_the_runs_trust(state, session, why="its turn ended")
             # Only send "done" when queue is empty — keeps SSE reader alive
             session.signal_done()
-            # Committed before the task is cleared: any session detail that reports the session
-            # idle also reports how the turn ended, so a tab that missed `chat_done` (a
-            # reconnect, the stall reconciler) reads the same outcome the frame carries.
-            session._last_turn_outcome = _turn_outcome
-            # Clear task reference BEFORE pushing session update so that
-            # session.running returns False immediately.  Without this,
-            # push_sessions_update() reports running=True because the task
-            # (this coroutine) hasn't finished its finally block yet.
+            # Its last phase frame, before the task is cleared and before `chat_done`: whatever
+            # reads the chat idle also reads how its turn ended (the run state's `last_outcome`),
+            # so a tab that missed the frame (a reconnect, the stall reconciler) reads the outcome
+            # it carries, and the chat list it pushes reads the chat idle.
+            chat_phase.end(state, session)
             session.task = None
-            # Push updated running state (now idle) + history refresh to SSE clients
-            state.push_sessions_update()
             state.broadcast_ws("chat_done", {"session": session.key, "outcome": _turn_outcome})
             state.push_refresh("history")
             # The gateway is stopping: a title, follow-ups, an offer and a plan draft are the next

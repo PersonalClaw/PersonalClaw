@@ -404,6 +404,19 @@ Settings → Updates still checks once when you press it, and `personalclaw upda
 when you run it by hand. This is a separate switch from `updates.auto`: one governs whether
 PersonalClaw *looks*, the other whether it *installs*.
 
+### Upgrading from 0.2.x
+
+- **The dashboard API is version 2.** A client that declares version 1 is refused; an open
+  dashboard tab needs only a reload. A script that read a chat's state reads its `run_state`
+  instead, on `GET /api/chat/sessions` rows, `GET /api/chat/sessions/{session}` and the chats of
+  `GET /api/projects/{id}/linked`: `running`, `stopping`, `stop_state`, `pending_approval`,
+  `pending_approval_info`, `waiting_for_input`, `steerable` and `last_turn_outcome` are gone.
+  `run_state.turn` is set while a turn runs, `run_state.stopping` and `run_state.steerable` say
+  whether a stop is asked of it and whether it takes a steer, `run_state.phase` is `approval`
+  while it waits on your OK, and `run_state.last_outcome` says how the last turn ended. On the
+  socket, the `work_phase` frame replaces `chat_status` and `turn_steerable`
+  ([work phases](../architecture/work-phases.md)).
+
 ### Upgrading from 0.1.x
 
 0.2.0 is a pre-1.0 clean break: state shapes changed with no automatic migration, several

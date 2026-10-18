@@ -93,6 +93,12 @@ class _Session:
         # restore per-turn counting for any session missing the slot, which is the exact
         # defect that made the circuit rung unreachable.
         self._acp_breaker = LoopBreaker()
+        # What the turn's phase frames read of a chat (`chat_phase`): its run state, set at the
+        # turn's start, whether a stop is asked of it, whether it takes a steer, its queue.
+        self._run = None
+        self._stopping = False
+        self._takes_steers = False
+        self.queue_depth = 0
 
     def append(self, role, text, cls):
         self.messages.append((role, text, cls))
@@ -124,6 +130,10 @@ class _State:
 
     def broadcast_ws(self, *a, **kw):
         pass
+
+    def next_stream_seq(self):
+        # The stamp a phase frame carries (`chat_phase`).
+        return 1
 
 
 def _ss():

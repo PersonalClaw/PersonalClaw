@@ -20,10 +20,11 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import { runState } from '../../test/runState'
 
 const h = vi.hoisted(() => ({
   detail: {
-    key: 'chat-6-x', title: 'Some chat', messages: [] as unknown[], running: false,
+    key: 'chat-6-x', title: 'Some chat', messages: [] as unknown[], get run_state() { return runState({ session: 'chat-6-x' }) },
     queue: [] as unknown[], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
   },
   chatSessionDetail: vi.fn(),

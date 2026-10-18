@@ -103,7 +103,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop
   // updates in place as the message streams — instead of dumping the whole
   // accumulating "thinking" prose into the rail.
   const [ticker, setTicker] = useState('')
-  // Bumped on EVERY WS frame for this plan session (incl. unrendered chat_status), so
+  // Bumped on EVERY WS frame for this plan session (incl. unrendered work_phase), so
   // the stall-retry timer treats a silent-but-alive planner as progress (see below).
   const [heartbeat, setHeartbeat] = useState(0)
   // Raw streamed prose since the last tool call, re-split each chunk to surface
@@ -162,9 +162,10 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop
     if (String(m.data?.session ?? '') !== planKey) return
     // ANY frame for this plan session proves the planner is alive — bump a heartbeat
     // so the stall-retry timer resets even during a long SILENT reasoning phase that
-    // emits no tool_call / chat_chunk (just chat_status "Thinking…"). Without this, a
-    // legitimate >3-min silent think falsely surfaced "Retry planning", and clicking it
-    // KILLS the healthy planner. chat_status stays unrendered (feed noise) but counts.
+    // emits no tool_call / chat_chunk (just its work_phase, which the gateway says again
+    // every fifteen seconds while the turn runs). Without this, a legitimate >3-min
+    // silent think falsely surfaced "Retry planning", and clicking it KILLS the healthy
+    // planner. work_phase stays unrendered (feed noise) but counts.
     setHeartbeat((h) => h + 1)
     if (m.type === 'tool_call') {
       // Prefer the concrete input (the file read, the search query, the command) —
@@ -182,7 +183,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop
         setTicker(lastSentence(sayBuf.current))
       }
     }
-    // chat_status (coarse "Thinking…" lines) is intentionally NOT surfaced — the
+    // work_phase (the coarse "Thinking" lines) is intentionally NOT surfaced — the
     // tool list + sentence ticker convey progress without the noise.
   }, null)  // a live feed: nothing replays it, and the plan session itself is polled below
 
@@ -285,7 +286,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop
     if (prev !== null && prev !== sessionSig) setLocalProgressMs(Date.now())
   }, [session, sessionSig])
   // Live planner chatter is unambiguously progress: ANY frame on the plan session's WS proves the
-  // planner is alive, including the silent `chat_status` beats that emit no tool call or prose.
+  // planner is alive, including the silent `work_phase` beats that emit no tool call or prose.
   // Kept separate from the session signature above because the two answer different questions —
   // one is "the server says the plan moved", the other is "the planner is talking right now" — and
   // conflating them is what let a mere page-load masquerade as activity.

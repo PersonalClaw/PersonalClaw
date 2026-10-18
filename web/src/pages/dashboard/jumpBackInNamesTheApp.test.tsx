@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, within } from '@testing-library/react'
+import { runState } from '../../test/runState'
 
 // ── "Jump back in" names the app that started a chat ─────────────────────────────────────────────
 //
@@ -13,8 +14,8 @@ vi.mock('../../lib/useChatSocket', () => ({ useChatSocket: () => {} }))
 vi.mock('../../ui/DotGlow', () => ({ DotGlow: () => null }))
 
 const SESSIONS = [
-  { key: 'chat-1-x', title: 'Weekly review', updated: '2026-09-26T09:00:00+00:00', running: false },
-  { key: 'chat-2-x', title: 'Inbox triage', updated: '2026-09-26T10:00:00+00:00', running: false,
+  { key: 'chat-1-x', title: 'Weekly review', updated: '2026-09-26T09:00:00+00:00', run_state: runState({ session: 'chat-1-x' }) },
+  { key: 'chat-2-x', title: 'Inbox triage', updated: '2026-09-26T10:00:00+00:00', run_state: runState({ session: 'chat-2-x' }),
     created_by_app: 'probe-alpha', created_by_app_name: 'Probe Alpha' },
 ]
 

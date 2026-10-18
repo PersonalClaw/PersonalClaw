@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act, cleanup, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { runState, runningState } from '../../test/runState'
 
 // ── An agent's question reaches her in the chat that asked it, and her answer goes back ──────────
 //
@@ -94,7 +95,7 @@ const CARD = {
 const PILL = { tool_call_id: 'toolu_01', tool: 'Which database should the service use?', kind: 'other', purpose: '', input_preview: '{}' }
 
 const detail = (messages: unknown[], running: boolean, extra: Record<string, unknown> = {}) => ({
-  key: SESSION, title: 'Set up the service', messages, running, queue: [], task_mode: 'agent',
+  key: SESSION, title: 'Set up the service', messages, run_state: running ? runningState({ session: SESSION }) : runState({ session: SESSION }), queue: [], task_mode: 'agent',
   approval: 'normal', memory_mode: 'persistent', ...extra,
 })
 

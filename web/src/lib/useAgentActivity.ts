@@ -4,6 +4,7 @@ import { useChatSocket, type WsMessage } from './useChatSocket'
 import { useVisiblePoll } from './useVisiblePoll'
 import { loopRoute } from './loopKind'
 import type { ChatSessionSummary, Loop, PendingApproval, SpawnedAgent } from './api'
+import { phaseWorld, workPhaseOf } from './workPhase'
 
 // ── AgentActivityFeed ────────────────────────────────
 // ONE typed read surface describing "what my agents are doing right now", so an
@@ -16,13 +17,14 @@ import type { ChatSessionSummary, Loop, PendingApproval, SpawnedAgent } from './
 //      reads. It adds no route, no query param and no private surface, so an
 //      app-contributed world can be handed the same
 //      shape with no new permission.
-//   2. **WS envelopes are SIGNALS, NEVER PAYLOADS.** `chat_status`, `sessions`,
+//   2. **WS envelopes are SIGNALS, NEVER PAYLOADS.** `work_phase`, `sessions`,
 //      `subagent*` and `update_progress` only nudge a debounced REFETCH. Not one
 //      field is ever read off an envelope. This is the DashboardLive contract
 //      (`pages/dashboard/DashboardLive.tsx`) and it is load-bearing: envelope
 //      shapes drift per producer, so a surface that renders them renders lies.
-//      `agentActivitySignals.test.tsx` delivers a `chat_status` carrying
-//      MISLEADING fields and asserts none of them reach a rendered entity.
+//      `agentActivitySignals.test.tsx` delivers a `work_phase` carrying
+//      MISLEADING fields and asserts none of them reach a rendered entity. A chat's
+//      state is read off the list's `run_state`, through `workPhase.ts`'s world map.
 
 /** What kind of thing is working. A world may style these differently but must
  *  handle all three — the fold emits every kind it finds. */
@@ -151,6 +153,13 @@ export function foldLoops(loops: Loop[], blocked: Set<string>): AgentActivityEnt
   })
 }
 
+/** A chat's world state, from its run state's phase (`workPhase.ts`): a chat with no turn running is
+ *  idle. */
+function sessionState(s: ChatSessionSummary): AgentActivityState {
+  const phase = s.run_state?.turn ? workPhaseOf(s.run_state.phase) : null
+  return phase ? phaseWorld(phase) : 'idle'
+}
+
 export function foldSessions(sessions: ChatSessionSummary[], blocked: Set<string>): AgentActivityEntity[] {
   // Archived sessions left the active list by the user's own decision (SESSION-
   // MANAGEMENT S2); resurrecting them in an ambient scene would undo that gesture.
@@ -158,16 +167,16 @@ export function foldSessions(sessions: ChatSessionSummary[], blocked: Set<string
   const kept: ChatSessionSummary[] = []
   const idle: ChatSessionSummary[] = []
   for (const s of live) {
-    if (s.running || blocked.has(s.key)) kept.push(s)
+    if (s.run_state?.turn || blocked.has(s.key)) kept.push(s)
     else idle.push(s)
   }
   idle.sort((a, b) => (b.last_activity_at ?? 0) - (a.last_activity_at ?? 0))
   return [...kept, ...idle.slice(0, IDLE_SESSION_LIMIT)].map((s) => ({
     id: `session:${s.key}`,
     kind: 'session' as const,
-    // Approval first for the same reason as loops: a streaming session parked on an
-    // approval reports `running: true`.
-    state: blocked.has(s.key) ? 'waiting_approval' : s.running ? 'working' : 'idle',
+    // Approval first for the same reason as loops: the registry's list names an approval
+    // the session's own state may not show yet.
+    state: blocked.has(s.key) ? 'waiting_approval' : sessionState(s),
     title: label(s.title, 'Chat'),
     refs: { link: `#/chat/${encodeURIComponent(s.key)}`, session: s.key },
   }))
@@ -234,9 +243,10 @@ export function useAgentActivity(): AgentActivityFeed {
     }).catch((e) => { if (alive.current) setError(e) })
   }, [])
 
-  // Coalesce the signal storm. `chat_status`/`sessions` fire on every turn lifecycle
-  // change — many per second while streaming — so a refetch per envelope would be a
-  // request storm. Debounced exactly like DashboardLive's `refreshWork`.
+  // Coalesce the signal storm. `work_phase`/`sessions` fire on every turn lifecycle
+  // change, and a running turn's phase again every fifteen seconds, so a refetch per
+  // envelope would be a request storm. Debounced exactly like DashboardLive's
+  // `refreshWork`.
   const debounce = useRef<number | undefined>(undefined)
   const signal = useCallback(() => {
     if (debounce.current) clearTimeout(debounce.current)
@@ -249,7 +259,7 @@ export function useAgentActivity(): AgentActivityFeed {
     // The envelope's TYPE is the only thing read. `m.data` is deliberately never
     // touched here — that is the whole contract. Do not "optimize" a field out of it.
     if (
-      t === 'chat_status' || t === 'sessions' || t === 'update_progress' ||
+      t === 'work_phase' || t === 'sessions' || t === 'update_progress' ||
       t.startsWith('subagent') || t === 'approval' || t === 'approval_resolved' ||
       // A loop's lifecycle rides the gateway's `refresh` hint. Signalled on the TYPE alone, per
       // the contract above: the hint is rare, so an unrelated kind costs one coalesced re-read.

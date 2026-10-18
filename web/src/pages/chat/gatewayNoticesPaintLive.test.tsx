@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
+import { runState, runningState } from '../../test/runState'
 
 // ── A line the gateway adds to a chat is painted when it is added ──────────────────────────────
 //
@@ -16,7 +17,7 @@ const RESTARTED =
 
 const h = vi.hoisted(() => {
   const detail = {
-    key: 'chat-7-x', title: 'chat-7-x', running: false,
+    key: 'chat-7-x', title: 'chat-7-x', get run_state() { return runState({ session: 'chat-7-x' }) },
     messages: [
       { role: 'user', content: 'first question', ts: '2026-09-26T09:59:00Z' },
       { role: 'assistant', content: 'first answer', ts: '2026-09-26T09:59:05Z' },
@@ -96,7 +97,7 @@ async function openRunning() {
     </AppearanceProvider>,
   )
   await waitFor(() => expect(h.detailCalls.length).toBeGreaterThanOrEqual(1))
-  await act(async () => { h.detailCalls[0].resolve({ ...h.detail, running: true }) })
+  await act(async () => { h.detailCalls[0].resolve({ ...h.detail, run_state: runningState() }) })
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeNull())
 }
 

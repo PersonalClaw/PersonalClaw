@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useState } from 'react'
 import { render, screen, waitFor, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { runState, runningState } from '../../test/runState'
 
 // ── A failed chat action says so, and leaves the page as it was ──────────────────────────────
 //
@@ -101,7 +102,7 @@ const TWO_EXCHANGES = [
   { role: 'assistant', content: 'Second answer', ts: '2026-09-26T10:01:05Z' },
 ]
 const detail = (messages: unknown[], extra: Record<string, unknown> = {}) => ({
-  key: SESSION, title: SESSION, messages, running: false, queue: [], task_mode: 'agent',
+  key: SESSION, title: SESSION, messages, run_state: runState(), queue: [], task_mode: 'agent',
   approval: 'normal', memory_mode: 'persistent', ...extra,
 })
 
@@ -184,7 +185,7 @@ describe('Edit & resend', () => {
     const user = userEvent.setup()
     await openChat()
     h.editResend.mockResolvedValue({ ok: true, rewound: 3 })
-    h.details.push(detail([{ role: 'user', content: 'First question, edited', ts: '2026-09-26T10:02:00Z' }], { running: true }))
+    h.details.push(detail([{ role: 'user', content: 'First question, edited', ts: '2026-09-26T10:02:00Z' }], { run_state: runningState() }))
     await user.click(screen.getAllByRole('button', { name: 'Edit & resend' })[0])
     const box = screen.getByRole('textbox', { name: 'Edit your message' })
     await user.clear(box)
@@ -244,7 +245,7 @@ describe('A second tab on the same chat', () => {
       ...TWO_EXCHANGES,
       { role: 'user', content: 'Asked in the other tab', ts: '2026-09-26T10:03:00Z' },
       { role: 'streaming', content: 'The answer so far', ts: '2026-09-26T10:03:01Z' },
-    ], { running: true, stream_seq: 1 }))
+    ], { run_state: runningState(), stream_seq: 1 }))
     act(() => { deliver('chat_chunk', { content: 'The answer so far', seq: 1 }) })
     await waitFor(() => expect(h.detailReads).toBe(readsAtRest + 1))
     expect(await screen.findByText('Asked in the other tab')).toBeTruthy()

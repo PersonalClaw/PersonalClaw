@@ -445,6 +445,10 @@ async def _route_to_session(
                     "queue_id": queue_id,
                 },
             )
+        # One more message waits behind the chat's turn, which its run state carries.
+        say_run_state = getattr(state, "say_run_state", None)
+        if callable(say_run_state):
+            say_run_state(session)
         if push is not None:
             push()
         return

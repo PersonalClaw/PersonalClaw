@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { hydrateTurns, type HistMsg } from './chatTypes'
+import { runState } from '../../test/runState'
 
 // ── A reply another model wrote says so, under the reply, after a reload too ──────────────────
 //
@@ -89,7 +90,7 @@ afterEach(() => { vi.unstubAllGlobals() })
 
 function openChat(messages: unknown[]) {
   h.chatSessionDetail.mockReset().mockResolvedValue({
-    key: 'chat-7-x', title: 'Pinned agent', messages, running: false, queue: [],
+    key: 'chat-7-x', title: 'Pinned agent', messages, run_state: runState({ session: 'chat-7-x' }), queue: [],
     task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
   })
   render(

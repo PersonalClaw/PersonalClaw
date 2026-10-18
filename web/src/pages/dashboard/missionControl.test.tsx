@@ -70,6 +70,7 @@ const LANES_FIXTURE = ['needs-approval', 'your-turn', 'working', 'idle'] as cons
 import { MissionControl, LANE_REFS, MISSION_CONTROL_VIEW_ID, questionOf } from './MissionControl'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { runningState } from '../../test/runState'
 
 // ── Fixtures ────────────────────────────────────────────────────────────────────────────────
 const approval = (over: Partial<PendingApproval> = {}): PendingApproval => ({
@@ -77,11 +78,9 @@ const approval = (over: Partial<PendingApproval> = {}): PendingApproval => ({
   session_title: '', agent: '', risk: '', grant_agent: '', source_label: 'chat', ...over,
 })
 
-/** A live session row, shaped the way `ChatSession.to_dict()` sends it — including the two fields
- *  `ChatSessionSummary` does not declare. */
+/** A live session row, shaped the way `ChatSession.to_dict()` sends it: its turn running. */
 const session = (over: Record<string, unknown> = {}) => ({
-  key: 'chat-1', title: 'nightly sweep', messages: 4,
-  running: true, stopping: false, pending_approval: false, ...over,
+  key: 'chat-1', title: 'nightly sweep', messages: 4, run_state: runningState({ session: 'chat-1' }), ...over,
 })
 
 /** A parked run's inbox row, shaped the way `workflows/needs_input.card_refs()` writes it. */
@@ -113,7 +112,7 @@ const questionCard = (item: InboxItem): LaneCard => ({
 })
 const sessionCard = (key: string, title: string): LaneCard => ({
   key: `session:${key}`, lane: 'working', origin: 'session', id: key, title, at: null,
-  session: { key, title, running: true, stopping: false, pending_approval: false },
+  session: { key, title, run_state: runningState({ session: key }) },
 })
 
 /** All four keys, always — `toLanes`' own contract. */
@@ -393,7 +392,7 @@ describe('the lane split comes from lib/attentionLanes, not from this view', () 
       expect(toLanes).toHaveBeenCalledWith(
         [item],
         [appr],
-        [{ key: 'chat-1', title: 'nightly sweep', running: true, stopping: false, pending_approval: false }],
+        [{ key: 'chat-1', title: 'nightly sweep', run_state: runningState({ session: 'chat-1' }) }],
         [],
         [],
         [],
@@ -456,20 +455,6 @@ describe('the lane split comes from lib/attentionLanes, not from this view', () 
     // Each list arrives whole and separate: no concatenation, no de-duplication done here.
     expect(gotItems).toEqual([mirror])
     expect(gotApprovals).toEqual([appr])
-  })
-
-  it('normalizes a session the list endpoint typed WITHOUT stopping/pending_approval', async () => {
-    // `ChatSessionSummary` declares neither field and types `running` as optional, while the wire
-    // carries all three for a live session. Absent must become `false`, not `undefined`: the
-    // sibling's input type declares them required, and a disk-only session is not running.
-    chatSessions.mockResolvedValue([{ key: 'chat-2', title: 'old chat', messages: 3 }])
-    render(<MissionControl />)
-
-    await waitFor(() => expect(toLanes).toHaveBeenCalled())
-    const activity = toLanes.mock.calls[toLanes.mock.calls.length - 1][2]
-    expect(activity).toEqual([
-      { key: 'chat-2', title: 'old chat', running: false, stopping: false, pending_approval: false },
-    ])
   })
 
   it('feeds the Working lane from the session activity, not from the attention store', async () => {

@@ -15,6 +15,7 @@ const TAGS: ChatTag[] = [
 ]
 const SESSION: ChatSessionSummary = {
   key: 's1', title: 'Raise prices?', messages: 3, tags: ['t0'], origin: 'manual', lifecycle: 'active',
+  run_state: runState({ session: 's1' }),
 }
 
 const { editSessionTags } = vi.hoisted(() => ({ editSessionTags: vi.fn() }))
@@ -36,6 +37,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
 })
 
 import { ChatPage } from '../ChatPage'
+import { runState } from '../../test/runState'
 
 /** Open the chat's Folder & tags menu and hand back the menu's tag row named `tag`. */
 async function tagRow(tag: string) {

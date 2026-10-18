@@ -13,6 +13,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A shell command that runs a read command or an interpreter many times, such as a long pipeline or a generated script, is checked for credential files in a fraction of a second, where 40 KB took about 13 seconds.**
 - **When the notifications can't be read, the bell says so, with a muted mark and Retry in its shade, where it showed no badge, as if nothing were unread, and its shade said "Loading…" for good.**
 
+### Changed
+
+- **The chat says what its agent is doing as the gateway measures it: waiting to start, thinking, searching your knowledge, the tool it runs, writing, or waiting on your OK or your answer, and a first message on a new chat shows at once.**
+- **The dashboard API is version 2, and a client built for version 1 is refused: chat sessions, a chat's detail and a project's chats report the chat's `run_state` in place of their running, stopping, approval and outcome flags, and the `work_phase` frame replaces `chat_status` and `turn_steerable`.**
+
 ## [0.2.2] — 2026-10-18
 
 A patch release on 0.2.1. A long shell command, such as one that writes a file from a here-document,

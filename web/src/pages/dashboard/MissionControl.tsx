@@ -88,7 +88,7 @@ const ATTENTION_KEY = 'dashboard:mission-control'
 interface Attention {
   items: InboxItem[]
   approvals: PendingApproval[]
-  activity: SessionActivity[]
+  activity: ActivityInput[]
   /** Every loop, whatever backs it (`GET /api/loops` lists run-backed loops too) — the Working
    *  lane's evidence for a loop no chat session carries. */
   loops: Loop[]
@@ -108,30 +108,19 @@ interface Attention {
  *  shipped a permanently empty lane wearing a confident label — which is strictly worse than no
  *  lane, because an empty "Working" asserts that nothing is running.
  *
- *  So running work is observed where it actually exists: the live chat sessions.
- *  `laneFor` never returns `'working'`, so this argument is the ONLY path to that lane.
- *
- *  🔴 MEASURED WIRE-vs-TYPE GAP. `GET /api/chat/sessions` serializes each live session through
- *  `ChatSession.to_dict()` (`dashboard/state.py:711`), which DOES carry `stopping` — but the
- *  frontend's `ChatSessionSummary` declares neither `stopping` nor `pending_approval`, and types
- *  `running` as optional. Two shapes of one entity disagreeing about three fields, the same defect
- *  `ChatSession.last_ts` carries a warning about. Normalizing here rather than widening the shared
- *  type keeps this inside one file; absent ⇒ `false` is the right default either way, because the
- *  fields are missing exactly for the disk-only sessions, which are by definition not running.
+ *  So running work is observed where it actually exists: the live chat sessions, each with its
+ *  `run_state` — the chat's last phase frame, which names a turn while one runs and says whether a
+ *  stop is asked of it. `laneFor` never returns `'working'`, so this argument is the ONLY path to
+ *  that lane.
  *
  *  The list's origin fields travel too: they say which loop a worker session belongs to, which is
  *  how Working shows a loop once rather than once more per worker (`toLanes`), and the preview
  *  fields are what a chat with no title yet is named by (`sessionTitle`). */
-export type SessionActivity = ActivityInput & { running: boolean; stopping: boolean; pending_approval: boolean }
-
-function activityOf(s: ChatSessionSummary): SessionActivity {
-  const wire = s as ChatSessionSummary & { stopping?: boolean; pending_approval?: boolean }
+function activityOf(s: ChatSessionSummary): ActivityInput {
   return {
     key: s.key,
     title: s.title,
-    running: Boolean(s.running),
-    stopping: Boolean(wire.stopping),
-    pending_approval: Boolean(wire.pending_approval),
+    run_state: s.run_state,
     origin: s.origin,
     source_id: s.source_id,
     source_label: s.source_label,
@@ -273,7 +262,7 @@ function endedText(err: unknown): string | null {
 
 /** The frames that change what this view shows. Push, not a poll: the registry broadcasts
  *  `approval`/`approval_resolved`, the Inbox `inbox*`, a session's run state `sessions`/
- *  `chat_status`, and the gateway's listing hint `refresh` names `workflow_runs` when a workflow
+ *  `work_phase`, and the gateway's listing hint `refresh` names `workflow_runs` when a workflow
  *  run starts, changes status or ends, and `loops` when a loop does — so a card appears,
  *  resolves or moves lane while the page is open, without a timer re-reading five endpoints on an
  *  idle tab. The two Working-lane lists had no frame here, so a run that finished or failed kept
@@ -282,15 +271,16 @@ function refreshesAttention(m: WsMessage): boolean {
   const type = m.type
   if (type === 'refresh') return refreshKinds(m).some((k) => k === 'workflow_runs' || k === 'loops')
   return type === 'approval' || type === 'approval_resolved' || type.startsWith('inbox')
-    || type === 'sessions' || type === 'chat_status'
+    || type === 'sessions' || type === 'work_phase'
 }
 
 export function MissionControl() {
   const { data, error, loading, refresh } = useQuery<Attention>(ATTENTION_KEY, readAttention)
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({})
 
-  // `sessions`/`chat_status` fire on every turn-lifecycle step while something streams, so a burst
-  // collapses into one re-read shortly after it settles; the same debounce Home applies to them.
+  // `sessions`/`work_phase` fire on every turn-lifecycle step while something streams, and a running
+  // turn's phase again every fifteen seconds, so a burst collapses into one re-read shortly after it
+  // settles; the same debounce Home applies to them.
   const debounce = useRef<number | undefined>(undefined)
   const onMessage = useCallback((m: WsMessage) => {
     if (!refreshesAttention(m)) return

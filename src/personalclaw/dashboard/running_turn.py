@@ -1,8 +1,9 @@
 """What a chat's running turn can be asked to do besides finish: take a steer, or move.
 
 **A steer.** A message sent into a running turn reaches it only when the turn's runtime pulls
-it in (``SessionManager.set_steer_drains``). The composer offers Steer only while that is so,
-and says Queue otherwise, so its words are what the message does (:func:`set_steer_drains`).
+it in (``SessionManager.set_steer_drains``). The composer offers Steer only while that is so —
+the chat's run state says it (``steerable``) — and says Queue otherwise, so its words are what the
+message does (:func:`set_steer_drains`).
 Every door sends one through :func:`steer`, and the runtime says when it takes one
 (``EVENT_STEER``): then, and only then, it is her row in the chat (:func:`take_steer`), where the
 turn took it. One the turn does not take runs next from the queue, and is written once, then.
@@ -47,7 +48,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.config.loader import AppConfig, resolve_session_workspace
-from personalclaw.dashboard import repeated_steps, turn_endings
+from personalclaw.dashboard import chat_phase, repeated_steps, turn_endings
 from personalclaw.dashboard.chat_queue import shown
 from personalclaw.dashboard.chat_utils import (
     _history_key_for,
@@ -166,10 +167,11 @@ def set_steer_drains(
     state: DashboardState, session: _ChatSession, session_key: str, takes: bool
 ) -> list[str]:
     """Declare whether the turn running now takes a steer (``SessionManager.set_steer_drains``,
-    whose answer it returns), and say so to every page of the chat."""
+    whose answer it returns), and say so to every page of the chat: its run state's ``steerable``
+    (``chat_phase``)."""
     stranded = state.sessions.set_steer_drains(session_key, takes)
     session._takes_steers = takes
-    state.broadcast_ws("turn_steerable", {"session": session.key, "steerable": takes})
+    chat_phase.restate(state, session)
     return stranded
 
 

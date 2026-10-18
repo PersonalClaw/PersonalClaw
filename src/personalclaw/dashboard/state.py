@@ -22,7 +22,7 @@ from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import DASHBOARD_PORT
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
-from personalclaw.dashboard import channel_links
+from personalclaw.dashboard import channel_links, chat_phase
 from personalclaw.dashboard.approval_state import DashboardApprovalState
 from personalclaw.dashboard.chat_queue import ChatQueue
 from personalclaw.dashboard.desktop_registry import DesktopRegistry
@@ -65,6 +65,7 @@ if TYPE_CHECKING:
         SessionManager,
         SubagentManager,
     )
+    from personalclaw.dashboard.chat_phase import ChatRun
     from personalclaw.dashboard.running_turn import Rebinding
     from personalclaw.dashboard.side_state import SideState
     from personalclaw.engagement_signals import EngagementStore
@@ -258,7 +259,7 @@ class _ChatSession(ChatQueue):
         "_last_turn_errored",
         "_last_turn_refusal",
         "_last_turn_declined",
-        "_last_turn_outcome",
+        "_run",
         "context_usage",
         "_followups_task",
         "_pending_variants",
@@ -472,11 +473,10 @@ class _ChatSession(ChatQueue):
         # The calls she declined in the latest turn (`declined_calls.declined_step`), cleared when a
         # turn starts: what would ask the agent again after the turn (a loop's cycle) reads them.
         self._last_turn_declined: list[dict[str, Any]] = []
-        # How the latest turn that left this session idle ended ("complete" | "stopped" | "error"
-        # | "interrupted", `chat_runner.terminal_outcome_for_turn`), or "" while none has since
-        # this process started it. Served as session detail's `last_turn_outcome`, and cleared
-        # when a turn starts, so it only ever describes a turn that is over.
-        self._last_turn_outcome: str = ""
+        # What the chat's turn is doing, as its last `work_phase` frame said it, with how its last
+        # turn ended (`chat_phase`): served as the chat's `run_state` by the list and its detail.
+        # None until a turn has run here.
+        self._run: "ChatRun | None" = None
         # What the chat's context ring was last told (`DashboardState.say_context_usage`):
         # ``{"pct", "window"}``, served as session detail's `context_usage` so a page opened
         # later draws the same ring. None until a turn has said anything.
@@ -728,6 +728,12 @@ class _ChatSession(ChatQueue):
         return self.task is not None and not self.task.done()
 
     @property
+    def run_state(self) -> dict[str, Any]:
+        """What its turn is doing, and how its last one ended, as every route that lists the chat
+        serves it: its last ``work_phase`` payload, idle once nothing runs (``chat_phase``)."""
+        return chat_phase.served(self)
+
+    @property
     def is_restricted(self) -> bool:
         """True when memory writes (consolidation, lessons) are blocked."""
         return self.memory_mode != "persistent"
@@ -767,6 +773,7 @@ class _ChatSession(ChatQueue):
         """
         if self.running:
             self.queue_append(prompt, own_words=own_words, attended=attended)
+            state.say_run_state(self)  # one more message waits behind the turn
             return False
         meta = None if own_words is None else {OWN_WORDS: own_words}
         self.append("user", prompt, "msg msg-u", meta=meta)
@@ -805,7 +812,6 @@ class _ChatSession(ChatQueue):
         has_options = False
         options: list[str] = []
         prompt_preview = ""
-        last_conv_role = ""
         last_activity_ts = ""
         found_conv = False
         for m in reversed(self.messages):
@@ -818,7 +824,6 @@ class _ChatSession(ChatQueue):
                 txt = m.get("content") or ""
                 if txt:
                     found_conv = True
-                    last_conv_role = role
                     redacted = _redact(txt)
                     last_msg = (redacted[:80] + "…") if len(redacted) > 80 else redacted
                     if role == "assistant":
@@ -830,40 +835,6 @@ class _ChatSession(ChatQueue):
                                 stripped[:240] + "…" if len(stripped) > 240 else stripped
                             )
             if found_conv and last_activity_ts:
-                break
-        pending_approval = any(not f.done() for f in self._approval_futures.values())
-        # waiting_for_input: turn ended (not running), no options, no approval,
-        # and the last conversational message is from the assistant (not user).
-        waiting_for_input = (
-            not self.running
-            and not has_options
-            and not pending_approval
-            and bool(self.messages)
-            and last_conv_role == "assistant"
-        )
-        # If an approval is pending, surface the tool metadata from the most
-        # recent unresolved permission message so the Board can show inline
-        # Approve/Trust/Reject buttons without a second API call.
-        #
-        # LANE ASSIGNMENT NOTE: The frontend's inferLane() uses the boolean
-        # `pending_approval` field (not `pending_approval_info`) to assign
-        # sessions to the "Needs Approval" lane. `pending_approval_info` is
-        # supplementary UI metadata (tool name, input, kind) for rendering
-        # inline action buttons — it does NOT drive lane placement.
-        pending_approval_info: dict[str, str] | None = None
-        if pending_approval:
-            for m in reversed(self.messages):
-                if m.get("role") != "permission":
-                    continue
-                meta = parse_cls_meta(m.get("cls") or "") or {}
-                if meta.get("resolved"):
-                    continue
-                pending_approval_info = {
-                    "tool": _redact(m.get("content") or ""),
-                    "tool_input": _redact(meta.get("tool_input", "")),
-                    "tool_kind": _redact(meta.get("tool_kind", "")),
-                    "request_id": _redact(meta.get("approval_id", meta.get("request_id", ""))),
-                }
                 break
         channel_thread, channel_id = self.channel_link
         return {
@@ -879,13 +850,9 @@ class _ChatSession(ChatQueue):
             "workspace_dir": self.workspace_dir,
             "project_id": self.project_id,
             "messages": self.message_count,
-            "running": self.running,
-            "stopping": self._stopping,
-            "pending_approval": pending_approval,
-            "pending_approval_info": pending_approval_info,
+            # What its turn is doing, and how its last one ended: its last phase frame.
+            "run_state": self.run_state,
             "last_activity_ts": last_activity_ts,
-            "waiting_for_input": waiting_for_input,
-            "stop_state": self._stop_state,
             "created": self.created_at,
             "last_ts": last_ts,
             "last_message": last_msg,
@@ -1245,6 +1212,21 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             usage["window"] = window.tokens
         session.context_usage = usage
         self.broadcast_ws("context_usage", {"session": session.key, **usage})
+
+    def say_run_state(self, session: _ChatSession) -> None:
+        """Something a chat's run state carries beside its phase changed (a message joined its
+        queue): said to every page of the chat when it did (``chat_phase``)."""
+        chat_phase.restate(self, session)
+
+    def say_waiting(self, session_key: str) -> None:
+        """An approval or a question naming the chat *session_key* was raised or ended: while its
+        turn runs, its phase is what it waits on (``chat_phase``)."""
+        chat_phase.waiting_changed(self, session_key)
+
+    def say_helpers(self, session_key: str, count: int) -> None:
+        """*count* helpers work for the chat *session_key* now: while its turn runs, it is handing
+        off to them (``chat_phase``)."""
+        chat_phase.helpers_at_work(self, session_key, count)
 
     async def tell_linked_channel(self, session_key: str, text: str) -> bool:
         """Say *text* on the channel thread a conversation is linked to, where its replies go.

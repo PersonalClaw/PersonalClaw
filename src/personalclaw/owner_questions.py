@@ -477,6 +477,7 @@ class OwnerQuestions:
         except Exception:
             # The question is what she is waiting on; losing it to the row is worse.
             logger.debug("question inbox row failed", exc_info=True)
+        self._say_waiting(asked.session)
         self._push_sessions()
 
     def _settle(self, asked: _Asked, outcome: Outcome) -> None:
@@ -541,6 +542,7 @@ class OwnerQuestions:
                 **ended,
             },
         )
+        self._say_waiting(asked.session)
         self._push_sessions()
         while len(self._asked) > _ENDED_KEPT:
             oldest = next((k for k, a in self._asked.items() if a.outcome is not None), None)
@@ -567,6 +569,16 @@ class OwnerQuestions:
             self._state.broadcast_ws(event, data)
         except Exception:
             logger.warning("could not send %s", event, exc_info=True)
+
+    def _say_waiting(self, chat: str) -> None:
+        """The chat's turn waits on her answer now, or no longer: its phase says which
+        (``DashboardState.say_waiting``)."""
+        say = getattr(self._state, "say_waiting", None)
+        if callable(say):
+            try:
+                say(chat)
+            except Exception:
+                logger.debug("could not say what chat %s waits on", chat, exc_info=True)
 
     def _push_sessions(self) -> None:
         push = getattr(self._state, "push_sessions_update", None)

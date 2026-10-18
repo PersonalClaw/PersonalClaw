@@ -67,12 +67,12 @@ from dataclasses import dataclass
 # three values (emitted, declared, negotiated) therefore cannot drift apart.
 
 #: The wire shape this build speaks. Bump per the rule in this module's docstring.
-API_VERSION = 1
+API_VERSION = 2
 
 #: The DECLARED floor of the supported window — an explicit minimum, deliberately
 #: not "whatever the code happens to tolerate". A client declaring anything below
 #: this is refused. It is also what an *absent* declaration resolves to.
-MIN_SUPPORTED_API_VERSION = 1
+MIN_SUPPORTED_API_VERSION = 2
 
 #: The header a client declares its version in, and the header the gate echoes the
 #: NEGOTIATED version back in. A browser ``WebSocket`` cannot set request headers,

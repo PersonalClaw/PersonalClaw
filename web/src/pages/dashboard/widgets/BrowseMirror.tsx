@@ -46,8 +46,8 @@ import { SlotEmptyState, WidgetRow } from './kit'
  *     credential could occupy — the agent never handles credentials.
  *
  *  🔑 THE SOCKET IS AN ARGUED EXCEPTION to DashboardLive's "no widget opens its own socket". That
- *  doctrine also says WS envelopes are SIGNALS, never payloads — true for the drifting, many-
- *  producer envelopes (`chat_status`/`sessions`). `browse_step` is the opposite: ONE producer
+ *  doctrine also says WS envelopes are SIGNALS, never payloads — true for envelopes like
+ *  `sessions`, which say only that something moved. `browse_step` is the opposite: ONE producer
  *  (browse/mirror.py), a fixed named shape, and NO GET slice to read the step stream back from — so
  *  the frame's fields ARE the data and must be read. It is also live only while an unattended browse
  *  runs (rare), so folding it into the shared feed would charge every dashboard visitor for a stream

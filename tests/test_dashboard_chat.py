@@ -16,6 +16,7 @@ from chat_test_helpers import (
     _make_state,
 )
 
+from personalclaw.dashboard import chat_phase
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.dashboard.step_notes import ABOUT_CALL, NOT_RUN, NOTE, note_on_call
 from personalclaw.history import ConversationLog
@@ -66,18 +67,7 @@ class TestChatSession:
         assert d["key"] == "s1"
         assert d["title"] == "Test Chat"
         assert d["messages"] == 1
-        assert d["running"] is False
-        assert d["pending_approval"] is False
-
-    def test_pending_approval_flag(self):
-        session = _ChatSession("s1")
-        loop = asyncio.new_event_loop()
-        fut: asyncio.Future[str] = loop.create_future()
-        session._approval_futures["test"] = fut
-        assert session.to_dict()["pending_approval"] is True
-        fut.set_result("approved")
-        assert session.to_dict()["pending_approval"] is False
-        loop.close()
+        assert d["run_state"] == chat_phase.idle_payload("s1")
 
     def test_owed_subagent_endings_initialized_empty(self):
         session = _ChatSession("s1")

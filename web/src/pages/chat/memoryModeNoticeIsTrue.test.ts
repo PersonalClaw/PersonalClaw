@@ -86,7 +86,7 @@ describe('a chat that is not persistent says what is kept', () => {
     expect(page).toMatch(/writeQuery\(detailKey\(key\), d, d\.memory_mode !== 'temporary'\)/)
     expect(page.match(/writeQuery\(detailKey\(/g)?.length, 'a second writer of the transcript cache').toBe(1)
     // The first message of a new chat is seeded with its mode, so that seed is not persisted either.
-    expect(page).toMatch(/messages: seedMessages, running: false, memory_mode: memoryMode \}/)
+    expect(page).toMatch(/messages: seedMessages, run_state: idleRunState\(created\.key\), memory_mode: memoryMode \}/)
     // A chat that is gone drops what the page held of it.
     expect(page).toMatch(/status === 404\) \{ invalidateKeys\(detailKey\(sessionId\)\); setMissing\(true\) \}/)
   })

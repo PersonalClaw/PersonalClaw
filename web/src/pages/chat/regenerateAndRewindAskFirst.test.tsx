@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { runState } from '../../test/runState'
 
 // ── Regenerate and Rewind ask first, in Retry's own dialog ─────────────────────────────────────
 //
@@ -78,7 +79,7 @@ const TRANSCRIPT = [
   { role: 'assistant', content: 'Next is the launch checklist.', ts: '2026-09-26T10:01:05Z' },
 ]
 const detail = () => ({
-  key: SESSION, title: SESSION, messages: TRANSCRIPT, running: false, queue: [], task_mode: 'agent',
+  key: SESSION, title: SESSION, messages: TRANSCRIPT, run_state: runState(), queue: [], task_mode: 'agent',
   approval: 'normal', memory_mode: 'persistent',
 })
 

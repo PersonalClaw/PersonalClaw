@@ -35,7 +35,7 @@
  *     `PendingApproval` carries no status at all — being in the list IS pending.
  *
  *     So Working is fed from the sources that actually observe running work: `ChatSession`
- *     (`GET /api/chat/sessions`), whose `running`/`stopping` booleans are real evidence, the loop
+ *     (`GET /api/chat/sessions`), whose `run_state` is the chat's last phase frame, the loop
  *     listing (`GET /api/loops`) and the running workflow runs (`GET /api/workflows/runs`). Each
  *     is an optional argument, so `toLanes(items, approvals)` stays valid; pass nothing and
  *     Working is honestly empty rather than filled by a timestamp heuristic. **`laneFor` never
@@ -79,13 +79,14 @@ export type AttentionInput = Pick<
  *  approval card (`app/PendingApprovalCard`), which reads the call off it. */
 export type ApprovalInput = ApprovalCardInput & Pick<PendingApproval, 'ts'>
 
-/** The only in-flight evidence on the wire (see fact 3). `running`/`stopping` are observed, not
- *  inferred. Optional: omit it and Working is empty rather than guessed.
+/** The only in-flight evidence on the wire (see fact 3). `run_state` is observed, not inferred: the
+ *  chat's last phase frame, which names a turn while one runs and says whether a stop is asked of
+ *  it. Optional: omit it and Working is empty rather than guessed.
  *
  *  `origin`/`source_id` are the list's own answer to "whose session is this" (`_origin_of`: a
  *  loop's stage worker, its task workers and its planner all carry `origin: 'loop'` and the loop's
  *  id), and the rest are what `sessionTitle` names a chat by. */
-export type ActivityInput = Pick<ChatSession, 'key' | 'title' | 'running' | 'stopping' | 'pending_approval'>
+export type ActivityInput = Pick<ChatSession, 'key' | 'title' | 'run_state'>
   & Partial<Pick<ChatSessionSummary, 'origin' | 'source_id' | 'source_label' | 'prompt_preview' | 'last_message' | 'created' | 'last_activity_ts' | 'last_ts'>>
 
 /** `GET /api/loops` rows — the second in-flight evidence (see `toLanes`). A RUN-BACKED loop (one
@@ -551,11 +552,10 @@ export function toLanes(
     })
   }
 
-  // ── Running work. `pending_approval` sessions are deliberately NOT mirrored into Needs-approval:
-  // `GET /api/approvals` already carries that row with the `tool_input` needed to decide, and a
-  // boolean cannot say WHICH tool is waiting. A session that is neither running nor stopping
-  // contributes nothing — an idle session is not an attention item, and Idle is fed only by the
-  // informational inbox kinds.
+  // ── Running work. A session waiting on an approval is deliberately NOT mirrored into
+  // Needs-approval: `GET /api/approvals` already carries that row with the `tool_input` needed to
+  // decide. A session with no turn running contributes nothing — an idle session is not an
+  // attention item, and Idle is fed only by the informational inbox kinds.
   //
   // 🔴 A LOOP'S SESSIONS ARE ITS LOOP, NEVER A CARD OF THEIR OWN. Only the stage worker's key was
   // skipped, so a Code loop running a per-task worker read twice: its own card, and a second one
@@ -569,9 +569,10 @@ export function toLanes(
     if (s === null || typeof s !== 'object') continue
     const key = typeof s.key === 'string' ? s.key : ''
     if (key === '') continue
-    if (s.running !== true && s.stopping !== true) continue
-    // `stopping` still counts as working: it is winding down, not idle.
-    const doing = s.stopping === true ? 'stopping' : 'running'
+    const rs = s.run_state
+    if (!rs || rs.turn === null || rs.turn === undefined) continue
+    // A turn a stop is asked of still counts as working: it is winding down, not idle.
+    const doing = rs.stopping === true ? 'stopping' : 'running'
     const loopId = (s.origin === 'loop' && typeof s.source_id === 'string' && s.source_id)
       || loopBySessionKey.get(key) || ''
     if (loopId !== '') {

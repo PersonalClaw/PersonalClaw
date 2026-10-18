@@ -216,6 +216,7 @@ holds every GET route to this.
 |---|---|---|
 | Provider boundary | [provider-boundary.md](provider-boundary.md) | `llm/`, `sdk/`, `media_catalogs.py` |
 | Chat & sessions | [chat-sessions.md](chat-sessions.md) | `session.py`, `dashboard/chat_*.py`, `history.py`, `context.py` |
+| Work phases | [work-phases.md](work-phases.md) | `work_phase.py`, `workref.py`, `dashboard/chat_phase.py`, `web/src/lib/workPhase.ts` |
 | Loops & projects | [loops.md](loops.md) | `loop/`, `planning/`, `grill.py`, `projects.py` |
 | Knowledge & memory | [knowledge-memory.md](knowledge-memory.md) | `knowledge/`, `vector_memory.py`, `memory_service.py` |
 | Tasks & triggers | [tasks-triggers.md](tasks-triggers.md) | `tasks/`, `triggers/`, `schedule.py`, `event_triggers.py` |
