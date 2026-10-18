@@ -21,7 +21,8 @@ glance against these.
 
 ## What changed
 
-<!-- One paragraph. What behavior/code changed and why. -->
+<!-- One paragraph. What behavior/code changed and why.
+New tests follow docs/maintainers/testing.md: a variation is its own test or a table row. -->
 
 ## Change class
 
