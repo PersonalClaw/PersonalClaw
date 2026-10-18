@@ -1,0 +1,23 @@
+# The quarantine: the one way a known failure is waived (#3947). Rules: tests/quarantine.py.
+#
+# At most 10 entries, each a [[entry]] table with exactly these fields:
+#
+#   nodeid   the test's pytest id: "tests/test_x.py::test_y", "...::TestClass::test_y" or
+#            "...::test_y[case]"; a parametrized test is listed case by case
+#   issue    the number of the issue that tracks the fix
+#   assignee the GitHub login of the person who owns the fix
+#   expires  a TOML date, at most 30 days out; on that date the entry has expired: renew it with
+#            a reason, or fix the test
+#   reason   one line: what fails, and why it is waived rather than fixed today
+#
+# A quarantined test still runs: its failure is recorded as a quarantined failure, not a red, and
+# a pass stays a pass. A rail or a security-marked test is never quarantined, and an expected
+# failure this list does not name (an xfail mark, pytest.xfail()) is red. The weekly CI health
+# report (#3948) reads this file for the quarantine's status, so its shape changes there too.
+#
+# [[entry]]
+# nodeid = "tests/test_example.py::test_it"
+# issue = 4000
+# assignee = "someone"
+# expires = 2026-11-01
+# reason = "fails one run in five on a slow runner"

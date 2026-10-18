@@ -655,6 +655,48 @@ has no command yet; the catalogue's `run-job` and `run` verbs will call it.
   runs in, and scheduling. A local result never stands in for GitHub's, and no workflow reads what
   it writes.
 
+## The quarantine
+
+The one way a known failure is waived is an entry of `tests/quarantine.toml` (#3947). The rules
+live in `tests/quarantine.py`, which `tests/conftest.py` loads in every session:
+
+- **At most 10 entries,** each an `[[entry]]` table with exactly `nodeid`, `issue` (the number
+  of the issue that tracks the fix), `assignee` (the GitHub login of who owns it), `expires` (a
+  date at most 30 days out, read in UTC) and `reason` (one line).
+- **Never a rail or a `security`-marked test.** An entry for a rail (`tests/rails/`) or a
+  security test stops the session. The marker is read from the source, on the module, a class or
+  the test, and again on each collected item the list names, so a mark a hook adds is refused too.
+- **A list that breaks a rule stops the session, and no test runs:** an eleventh entry, an
+  entry expired or more than 30 days out, a missing issue, assignee or reason, a reason of more
+  than one line, an unknown field or key, a test listed twice, or an id that names no test pytest
+  collects (a renamed test takes its entry with it). The source is read before collection; what
+  only collection shows (a mark a hook adds, a parametrized case that is gone) is refused then,
+  under xdist too, before any test runs; a run of part of a module (`file::test`, `--lf`) judges
+  none of its entries by what it left out. Either way the session ends with exit 4 and the
+  reason. On an entry's `expires` date it has expired, and CI goes red with no change to the
+  repository: renew it with a reason, or fix the test.
+- **A quarantined test still runs.** It is marked `xfail(strict=False)` at collection, so its
+  failure is recorded as a quarantined failure, in the terminal summary and as the junit
+  property `quarantine_issue`, instead of a red, and a pass stays a pass despite
+  `xfail_strict = true`. An open issue alone waives nothing.
+- **Nothing else waives a failure.** `tests/waiver_guard.py` reads the list on its own, imports
+  nothing from `tests/quarantine.py`, and fails every test pytest waived as an expected failure
+  that the list does not name: a source `xfail` mark, strict or not, `pytest.xfail()` in a test
+  or a fixture, or a quarantine bug that waives more than it lists. A known gap a test pins is
+  asserted as it stands (the miss), so closing the gap reds it, as a strict `xfail` did.
+
+The contract row `the-quarantine-is-capped-assigned-and-expiring` holds each rule the source
+shows with a planted entry, and three controls that must pass: ten entries, an entry expiring in
+exactly 30 days, and one case of a parametrized test. `tests/test_quarantine.py` holds the
+session's half: what collection refuses, how a quarantined test ends, that an empty list changes
+no test's outcome, and the guard. It is `security`-marked, so no entry may waive the tests that
+prove the list's rules. The file's shape is a contract with the weekly CI health report (#3948),
+which reads it for the quarantine's status: a field changes in both together.
+
+Not yet built: the rerun that classifies each failure as a flake or a repeated failure needs
+`tools/ci run-job` (#3909), and the web half (Vitest, Playwright's `failOnFlakyTests`) comes
+with it. Until then a flaky failure is red, as the first result always is.
+
 ## Supply chain
 
 The actions, images and tools the workflows and Dockerfiles fetch are named exactly, so a run

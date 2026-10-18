@@ -30,6 +30,7 @@ from typing import Any
 import ci_masking
 import private_walkers
 import pytest
+import quarantine
 import security_census
 import timeout_marks
 import yaml
@@ -5390,6 +5391,207 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
 )
 
 ROWS = (*ROWS, EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS)
+
+
+# ── The quarantine is capped, assigned and expiring ─────────────────────────────────────────
+#
+# The one way a known failure is waived is an entry of tests/quarantine.toml (#3947): at most 10,
+# each with an issue, an assignee, a one-line reason and an expiry at most 30 days out, and never
+# a rail or a security-marked test. The rules and the session hook live in tests/quarantine.py;
+# the suite's session refuses a list that breaks one, and this row holds each rule the source
+# shows with a planted entry. What only collection shows (a mark a hook adds, a case that is
+# gone) and the guard that reds every other waiver are held by tests/test_quarantine.py.
+
+#: The day the scaffold's list is read on, so its dates do not move with the calendar.
+_QUARANTINE_DAY = __import__("datetime").date(2026, 10, 18)
+_QUARANTINED = "tests/test_known.py"
+_QUARANTINE_MIXED = "tests/test_mixed.py"
+
+
+def _quarantine_entry(
+    nodeid: str | None,
+    *,
+    issue: str = "4000",
+    assignee: str = '"someone"',
+    expires: str = "2026-10-28",
+    reason: str = '"fails one run in five on a slow runner"',
+    extra: str = "",
+) -> str:
+    named = f'nodeid = "{nodeid}"\n' if nodeid is not None else ""
+    return (
+        f"[[entry]]\n{named}issue = {issue}\nassignee = {assignee}\n"
+        f"expires = {expires}\nreason = {reason}\n{extra}\n"
+    )
+
+
+def _quarantine_listing(text: str) -> Callable[[Path], None]:
+    """Replace the whole list, for a plant that is not one more entry."""
+    return lambda root: _write(root, quarantine.LIST, text)
+
+
+def _quarantine_scaffold(root: Path) -> None:
+    """A tree where the rule holds: one listed test, a rail, a security-marked module, twelve
+    plain tests to plant entries for, and a module with a test of each other kind."""
+    body = "".join(f"def test_{n}():\n    pass\n\n\n" for n in range(12))
+    _write(root, _QUARANTINED, body)
+    _write(root, "tests/rails/test_rail.py", "def test_it():\n    pass\n")
+    _write(root, "tests/test_guard.py", _MARKED)
+    _write(
+        root,
+        _QUARANTINE_MIXED,
+        "import pytest\n\n\n"
+        "@pytest.mark.security\ndef test_guarded():\n    pass\n\n\n"
+        "@pytest.mark.security\nclass TestGuarded:\n    def test_it(self):\n        pass\n\n\n"
+        "class TestMarked:\n    pytestmark = [pytest.mark.security]\n\n"
+        "    def test_it(self):\n        pass\n\n\n"
+        "class TestAnnotated:\n    pytestmark: list = [pytest.mark.security]\n\n"
+        "    def test_it(self):\n        pass\n\n\n"
+        '@pytest.mark.parametrize("n", [1, 2])\ndef test_cases(n):\n    pass\n\n\n'
+        "def helper():\n    pass\n",
+    )
+    _write(root, quarantine.LIST, _quarantine_entry(f"{_QUARANTINED}::test_0"))
+
+
+def _quarantine_check(root: Path) -> list[str]:
+    day = quarantine.today() if root == REPO else _QUARANTINE_DAY
+    return quarantine.problems(root, day)
+
+
+def _plant_entry(name: str, nodeid: str | None, expect: str, **fields: str) -> Control:
+    return Control(
+        name, _append(quarantine.LIST, _quarantine_entry(nodeid, **fields)), expect=expect
+    )
+
+
+_ONE = f"{_QUARANTINED}::test_1"
+
+QUARANTINE_IS_CAPPED_ASSIGNED_AND_EXPIRING = Row(
+    name="the-quarantine-is-capped-assigned-and-expiring",
+    check=_quarantine_check,
+    scaffold=_quarantine_scaffold,
+    controls=(
+        Control(
+            "an eleventh entry",
+            _append(
+                quarantine.LIST,
+                "".join(_quarantine_entry(f"{_QUARANTINED}::test_{n}") for n in range(1, 11)),
+            ),
+            expect="holds 11 entries",
+        ),
+        _plant_entry("an expired entry", _ONE, "expired on 2026-10-17", expires="2026-10-17"),
+        _plant_entry(
+            "an entry on its expiry date", _ONE, "expired on 2026-10-18", expires="2026-10-18"
+        ),
+        _plant_entry(
+            "an entry more than 30 days out", _ONE, "more than 30 days out", expires="2026-11-18"
+        ),
+        _plant_entry(
+            "an expiry written as text", _ONE, "expires must be a date", expires='"2026-10-28"'
+        ),
+        _plant_entry(
+            "an expiry that is a date and a time",
+            _ONE,
+            "expires must be a date",
+            expires="2026-10-28T00:00:00Z",
+        ),
+        _plant_entry("an entry without an issue", _ONE, "no issue", issue="0"),
+        _plant_entry("an issue that is true", _ONE, "no issue", issue="true"),
+        _plant_entry("an issue below one", _ONE, "no issue", issue="-5"),
+        _plant_entry("an entry without an assignee", _ONE, "no assignee", assignee='""'),
+        _plant_entry("an assignee that is not a login", _ONE, "no assignee", assignee='"-someone"'),
+        _plant_entry("an assignee and a newline", _ONE, "no assignee", assignee='"someone\\n"'),
+        _plant_entry("an entry without a reason", _ONE, "no reason", reason='" "'),
+        _plant_entry("a reason of two lines", _ONE, "one line", reason='"slow\\nand flaky"'),
+        _plant_entry(
+            "an entry with an unknown field", _ONE, "unknown field owner", extra='owner = "x"\n'
+        ),
+        _plant_entry("an entry without a nodeid", None, "no nodeid"),
+        Control(
+            "a test listed twice",
+            _append(quarantine.LIST, _quarantine_entry(f"{_QUARANTINED}::test_0")),
+            expect="listed twice",
+        ),
+        Control(
+            "a key the list does not know",
+            _quarantine_listing('owner = "x"\n' + _quarantine_entry(f"{_QUARANTINED}::test_0")),
+            expect="unknown key owner",
+        ),
+        Control(
+            "an entry that is not an array of tables",
+            _quarantine_listing(_quarantine_entry(_ONE).replace("[[entry]]", "[entry]")),
+            expect="array of tables",
+        ),
+        Control(
+            "a list that does not parse",
+            _append(quarantine.LIST, "[[entry]\n"),
+            expect="does not parse",
+        ),
+        _plant_entry("an entry for a rail", "tests/rails/test_rail.py::test_it", "is a rail"),
+        _plant_entry(
+            "an entry for a test of a security-marked module",
+            "tests/test_guard.py::test_it",
+            "security-marked (its module)",
+        ),
+        _plant_entry(
+            "an entry for a security-marked test",
+            f"{_QUARANTINE_MIXED}::test_guarded",
+            "is security-marked: a security test",
+        ),
+        _plant_entry(
+            "an entry for a test of a security-decorated class",
+            f"{_QUARANTINE_MIXED}::TestGuarded::test_it",
+            "security-marked (its class)",
+        ),
+        _plant_entry(
+            "an entry for a test of a class whose pytestmark is security",
+            f"{_QUARANTINE_MIXED}::TestMarked::test_it",
+            "security-marked (its class)",
+        ),
+        _plant_entry(
+            "an entry for a test of a class whose annotated pytestmark is security",
+            f"{_QUARANTINE_MIXED}::TestAnnotated::test_it",
+            "security-marked (its class)",
+        ),
+        _plant_entry(
+            "an entry for a test that is gone", f"{_QUARANTINED}::test_renamed", "no such test"
+        ),
+        _plant_entry(
+            "an entry whose file is spelt in another case",
+            "tests/test_Known.py::test_1",
+            "does not exist",
+        ),
+        _plant_entry(
+            "an entry for a function that is not a test",
+            f"{_QUARANTINE_MIXED}::helper",
+            "not a test pytest collects",
+        ),
+        _plant_entry(
+            "an entry for a parametrized test without its case",
+            f"{_QUARANTINE_MIXED}::test_cases",
+            "without its case",
+        ),
+        Control(
+            "ten valid entries pass: the cap is ten",
+            _append(
+                quarantine.LIST,
+                "".join(_quarantine_entry(f"{_QUARANTINED}::test_{n}") for n in range(1, 10)),
+            ),
+            fails=False,
+        ),
+        Control(
+            "an entry expiring in exactly 30 days passes",
+            _append(quarantine.LIST, _quarantine_entry(_ONE, expires="2026-11-17")),
+            fails=False,
+        ),
+        Control(
+            "an entry for one case of a parametrized test passes",
+            _append(quarantine.LIST, _quarantine_entry(f"{_QUARANTINE_MIXED}::test_cases[1]")),
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, QUARANTINE_IS_CAPPED_ASSIGNED_AND_EXPIRING)
 
 
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)

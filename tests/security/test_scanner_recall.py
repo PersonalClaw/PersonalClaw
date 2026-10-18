@@ -362,6 +362,17 @@ def _assert_terminal(report, rule: str, spelling: str) -> None:
     assert report.verdict is Verdict.DANGEROUS, f"{spelling}: verdict was {report.verdict.value}"
 
 
+def _assert_not_yet_terminal(report, rule: str, spelling: str) -> None:
+    """A known gap, pinned as it stands: the payload is not terminal under the named rule, by the
+    same test :func:`_assert_terminal` makes. The day it is, the gap is closed and this reds:
+    move the payload to an assertion that it is terminal, and delete the pin."""
+    fired = sorted({f.rule for f in report.findings if f.severity is Verdict.DANGEROUS})
+    assert not (rule in fired and report.verdict is Verdict.DANGEROUS), (
+        f"{spelling}: {rule!r} fires and the verdict is DANGEROUS, so the gap is closed: "
+        "assert it terminal and delete this pin"
+    )
+
+
 # ── the rail ─────────────────────────────────────────────────────────────────
 
 
@@ -840,9 +851,12 @@ class TestRedsOnAWeakenedNativeRule:
 
 
 class TestKnownRecallGapsAreTrackedNotForgotten:
-    """Holes measured while fixing #2607 and deliberately left open. Each is ``xfail`` with
-    ``strict=True``, so the day one is closed this test reds and the gap gets deleted from
-    the list rather than quietly outliving its fix. An unmarked comment would not do that.
+    """Holes measured while fixing #2607 and deliberately left open. Each test asserts the miss
+    as it stands, so the day one is closed its test reds and the gap gets deleted from the list
+    rather than quietly outliving its fix. An unmarked comment would not do that. Nor is it an
+    ``xfail`` mark any more: outside the quarantine an expected failure is red
+    (tests/waiver_guard.py), and a pin that asserts the miss also reds on a scan that errors,
+    where an ``xfail`` would have waived it.
 
     Two gaps have been retired that way: ``disk_wipe``'s redirect branch (#2610), now asserted
     positively in :class:`TestTheDiskWipeRedirectBranchIsReachable`, and native destruction
@@ -854,23 +868,17 @@ class TestKnownRecallGapsAreTrackedNotForgotten:
     the native rules to classify. Closing them wants the same AST treatment applied to the
     ARGUMENTS of an execution sink — a different rule from the ones this file now asserts."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="The shell band is text-matched, so splitting the command across a "
-        "concatenation defeats it. The native AST family does not reach this: the destruction "
-        "is `rm`'s, and no Python call site names a target to classify.",
-    )
-    def test_a_concatenation_split_payload_is_terminal(self, tmp_path):
+    def test_a_concatenation_split_payload_is_not_yet_terminal(self, tmp_path):
+        """The shell band is text-matched, so splitting the command across a concatenation
+        defeats it. The native AST family does not reach this: the destruction is `rm`'s, and
+        no Python call site names a target to classify."""
         report = _scan(tmp_path, {"m.py": 'import os\nos.system("rm -" + "rf /")\n'})
-        _assert_terminal(report, "destructive_root", "concatenation-split payload")
+        _assert_not_yet_terminal(report, "destructive_root", "concatenation-split payload")
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="An argv list never forms the `rm<space>-rf` token sequence the regex needs. "
-        "Same root cause as above: the destructive call is the spawned `rm`, not a Python one.",
-    )
-    def test_an_argv_list_payload_is_terminal(self, tmp_path):
+    def test_an_argv_list_payload_is_not_yet_terminal(self, tmp_path):
+        """An argv list never forms the `rm<space>-rf` token sequence the regex needs. Same root
+        cause as above: the destructive call is the spawned `rm`, not a Python one."""
         report = _scan(
             tmp_path, {"m.py": 'import subprocess\nsubprocess.run(["rm", "-rf", "/"])\n'}
         )
-        _assert_terminal(report, "destructive_root", "argv-list payload")
+        _assert_not_yet_terminal(report, "destructive_root", "argv-list payload")
