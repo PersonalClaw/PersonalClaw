@@ -74,6 +74,7 @@ jobs:
         with:
           version: "0.13.1"
           python-version: "3.12.15"
+          prune-cache: true
       - name: Build sdist + wheel (with web/dist)
         # `uv build` (not `uv pip install --system build` + `python -m build`): the
         # runner's /usr python is PEP-668 externally managed, so --system errors.
@@ -250,6 +251,7 @@ jobs:
         with:
           version: "0.13.1"
           python-version: "3.12.15"
+          prune-cache: true
       - name: Build client sdist + wheel
         # uv build, not --system pip: the runner python is PEP-668 externally managed.
         run: |
@@ -612,6 +614,7 @@ jobs:
         with:
           version: "0.13.1"
           python-version: "3.12.15"
+          prune-cache: true
       - name: Create .venv for the bundled backend build
         # Same reasoning as desktop-linux: the spec collect_submodules()s
         # openai/anthropic/slack_sdk, which are extras and must be importable here, the
@@ -709,6 +712,7 @@ jobs:
         with:
           version: "0.13.1"
           python-version: "3.12.15"
+          prune-cache: true
       - name: Create .venv for the bundled backend build
         # Plain `.` is not enough: personalclaw-backend.spec collect_submodules()s
         # openai/anthropic/slack_sdk into the frozen bundle, and those are extras —

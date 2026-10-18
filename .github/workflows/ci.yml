@@ -301,6 +301,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.12.15"
           enable-cache: true
+          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: the apps' SDK contract, against this core
@@ -334,6 +335,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.12.15"
           enable-cache: true
+          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
       # `harness/` and `scripts/` are repo-inner dev infra beside src/ (self-verification,
@@ -596,6 +598,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.12.15"
           enable-cache: true
+          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
       # The real-daemon leg (tests/test_durable_spawn.py::TestRealTmux) is
@@ -783,6 +786,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.13.16"
           enable-cache: true
+          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: Install tmux (durable sessions — real-daemon test leg)
@@ -923,6 +927,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.12.15"
           enable-cache: true
+          prune-cache: true
       - name: build the wheel (with the SPA above)
         run: uv build --wheel --out-dir dist
       - name: verify the wheel contract (contents · install from the wheel alone · boot · serve)
@@ -972,6 +977,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.12.15"
           enable-cache: true
+          prune-cache: true
       # The config's `webServer` starts `../.venv/bin/personalclaw`, so the gateway must import
       # even though this spec serves `dist/` itself.
       - name: Install (locked)
@@ -1048,6 +1054,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.12.15"
           enable-cache: true
+          prune-cache: true
       # The harness starts `../.venv/bin/personalclaw`, so the gateway must be importable.
       - name: Install (locked)
         run: uv sync --locked --extra dev
@@ -1223,6 +1230,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.12.15"
           enable-cache: true
+          prune-cache: true
       # The harness starts `../.venv/bin/personalclaw`, so the gateway must be importable.
       - name: Install (locked)
         run: uv sync --locked --extra dev
@@ -1303,6 +1311,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.12.15"
           enable-cache: true
+          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
       # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828). Node is here for
@@ -1360,6 +1369,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.12.15"
           enable-cache: true
+          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: pytest (adversarial scanner corpus)
@@ -1400,6 +1410,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.12.15"
           enable-cache: true
+          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
       # One process, pytest's default: these rails are tiny.
@@ -1486,6 +1497,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.12.15"
           enable-cache: true
+          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: harness validate (spec shape + reference resolution)
@@ -1535,6 +1547,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.12.15"
           enable-cache: true
+          prune-cache: true
       - name: Build the client (proves packaging metadata is valid)
         # `uv build` runs the build backend in its own isolated env — no
         # `pip install --system` against the runner's PEP-668 /usr (which errors).

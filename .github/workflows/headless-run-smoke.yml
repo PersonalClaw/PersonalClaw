@@ -48,6 +48,7 @@ jobs:
           version: "0.13.1"
           python-version: "3.12.15"
           enable-cache: true
+          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
 
