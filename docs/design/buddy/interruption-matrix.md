@@ -16,9 +16,8 @@ other cell for cell, so a cell changes in both or the test fails.
   file situations, the file event in every other situation, and every other cell whose whole
   outcome is a play reaction. Their tests come with their work ([#3894], [#3895]).
 - In v0.3.0 a later cell's event has no outcome of its own. A file dragged over the buddy changes
-  nothing, a click on the character's face while its card is open changes nothing, and with no
-  reaction to count them, repeated clicks are plain clicks that do what their situation's click
-  cell says.
+  nothing, a click on the orb while its card is open changes nothing, and with no reaction to count
+  them, repeated clicks are plain clicks that do what their situation's click cell says.
 - Three shipping cells gain a play clause when play lands. The data keeps those clauses in
   `later_clauses`, and the table shows them under
   [Play clauses in the shipping cells](#play-clauses-in-the-shipping-cells).
@@ -44,69 +43,69 @@ Every cell below ships in v0.3.0.
 | Work fails | error alert, as an alert arriving |
 | The connection is lost | stays hidden; offline is shown the next time it appears |
 | The connection is back | stays hidden; everything is re-read |
-| Listening starts | compact on the listening face |
+| Listening starts | compact on the listening orb |
 | Listening ends | cannot occur here |
 | The pointer rests on it for hoverExpand | peek |
-| A click on the character | cannot occur here |
-| Quick repeated hits on the character | cannot occur here |
+| A click on the orb | cannot occur here |
+| Quick repeated hits on the orb | cannot occur here |
 | The owner goes idle for absence | no change |
 | The owner returns | compact with the return summary when anything happened while away, else stays hidden |
 | No interaction for collapse | cannot occur here |
-| A drag starts on the character | cannot occur here |
+| A drag starts on the orb | cannot occur here |
 
 ### Peek: the pointer rests on the top-edge zone
 
 | Event | Outcome |
 |---|---|
 | Work starts | compact |
-| The focused work changes phase | peek, the face shows the new phase |
+| The focused work changes phase | peek, the orb shows the new phase |
 | Other work changes phase | no change |
 | An alert arrives | expanded on the alert |
 | The shown alert is answered here | cannot occur here |
 | The shown alert is answered elsewhere, expires or is withdrawn | no change (the queue drops it) |
 | The focused work finishes | finished |
 | Work fails | error alert |
-| The connection is lost | peek on the offline face after offlineGrace |
-| The connection is back | peek on the true face |
+| The connection is lost | peek on the offline orb after offlineGrace |
+| The connection is back | peek on the true pose |
 | Listening starts | listening |
 | Listening ends | cannot occur here |
 | The pointer rests on it for hoverExpand | expanded |
-| A click on the character | expanded |
-| Quick repeated hits on the character | expanded (hits count as play only once it is open) |
+| A click on the orb | expanded |
+| Quick repeated hits on the orb | expanded (hits count as play only once it is open) |
 | The owner goes idle for absence | hidden |
 | The owner returns | cannot occur here |
 | No interaction for collapse | hidden after peekLeave once the pointer has left the zone |
-| A drag starts on the character | dragging (undocks) |
+| A drag starts on the orb | dragging (undocks) |
 
 ### Compact: work is running and the owner is active
 
 | Event | Outcome |
 |---|---|
 | Work starts | compact; the in-sight count grows, focus stays |
-| The focused work changes phase | compact; face and line change with one phase beat |
+| The focused work changes phase | compact; orb and line change with one phase beat |
 | Other work changes phase | compact; only its in-sight entry changes, no motion |
-| An alert arrives | expanded on the alert; the face makes the attention move |
+| An alert arrives | expanded on the alert; the orb plays the alert's entrance |
 | The shown alert is answered here | cannot occur here |
 | The shown alert is answered elsewhere, expires or is withdrawn | no change (the queue drops it) |
 | The focused work finishes | finished; focus moves to the next live work after the hold |
 | Work fails | error alert |
-| The connection is lost | compact on the offline face and line after offlineGrace |
-| The connection is back | everything is re-read; the true face returns |
+| The connection is lost | compact on the offline orb and line after offlineGrace |
+| The connection is back | everything is re-read; the true pose returns |
 | Listening starts | listening |
 | Listening ends | cannot occur here |
 | The pointer rests on it for hoverExpand | expanded |
-| A click on the character | expanded |
-| Quick repeated hits on the character | expanded |
+| A click on the orb | expanded |
+| Quick repeated hits on the orb | expanded |
 | The owner goes idle for absence | hidden (respect absence) |
 | The owner returns | cannot occur here |
 | No interaction for collapse | no change (compact folds away only when nothing is live) |
-| A drag starts on the character | dragging (undocks) |
+| A drag starts on the orb | dragging (undocks) |
 
 ### Expanded: the card is open, no alert
 
 | Event | Outcome |
 |---|---|
-| Work starts | expanded; a new face joins the in-sight row |
+| Work starts | expanded; a new orb joins the in-sight row |
 | The focused work changes phase | the step track moves on: the new step replaces the last |
 | Other work changes phase | only its in-sight line changes |
 | An alert arrives | alert; the run moves into the in-sight row |
@@ -116,13 +115,13 @@ Every cell below ships in v0.3.0.
 | Work fails | error alert |
 | The connection is lost | the card shows offline and greys the last known step after offlineGrace |
 | The connection is back | everything is re-read; the card updates in place |
-| Listening starts | listening; the card keeps its content under the listening face |
+| Listening starts | listening; the card keeps its content under the listening orb |
 | Listening ends | cannot occur here |
 | The pointer rests on it for hoverExpand | no change |
 | The owner goes idle for absence | hidden |
 | The owner returns | cannot occur here |
 | No interaction for collapse | compact, after the countdown line has run for collapseCountdown |
-| A drag starts on the character | dragging (undocks with the card closed) |
+| A drag starts on the orb | dragging (undocks with the card closed) |
 
 ### Alert shown: an approval, a question or an error
 
@@ -141,12 +140,12 @@ Every cell below ships in v0.3.0.
 | Listening starts | listening holds the alert (never answers it); it returns when listening ends |
 | Listening ends | cannot occur here |
 | The pointer rests on it for hoverExpand | no change |
-| A click on the character | no play during an alert; only its controls act |
-| Quick repeated hits on the character | nothing: no play during an alert |
+| A click on the orb | no play during an alert; only its controls act |
+| Quick repeated hits on the orb | nothing: no play during an alert |
 | The owner goes idle for absence | the alert stays (alerts are sticky) |
 | The owner returns | the alert is still there |
 | No interaction for collapse | never: alerts stay until answered |
-| A drag starts on the character | dragging, carrying the alert (a docked alert undocks as a floating one) |
+| A drag starts on the orb | dragging, carrying the alert (a docked alert undocks as a floating one) |
 
 ### Finished: the done beat and its hold
 
@@ -160,46 +159,46 @@ Every cell below ships in v0.3.0.
 | The shown alert is answered elsewhere, expires or is withdrawn | no change (the queue drops it) |
 | The focused work finishes | the hold extends; the line counts the finished work |
 | Work fails | the hold ends within one beat; error alert |
-| The connection is lost | after the beat, the offline face |
+| The connection is lost | after the beat, the offline orb |
 | The connection is back | no change |
 | Listening starts | the hold ends within one beat; listening |
 | Listening ends | cannot occur here |
 | The pointer rests on it for hoverExpand | expanded on the finished work, with Open |
-| A click on the character | expanded on the finished work, with Open |
-| Quick repeated hits on the character | expanded on the finished work |
+| A click on the orb | expanded on the finished work, with Open |
+| Quick repeated hits on the orb | expanded on the finished work |
 | The owner goes idle for absence | hidden; the work stays in the return summary |
 | The owner returns | cannot occur here |
 | No interaction for collapse | after finishedHold: compact when other work is live, else hidden |
-| A drag starts on the character | dragging |
+| A drag starts on the orb | dragging |
 
-### Floating: the undocked character, awake
+### Floating: the undocked orb, awake
 
 | Event | Outcome |
 |---|---|
-| Work starts | the face wakes into the working look (no bubble) |
-| The focused work changes phase | the face shows the new phase with one beat |
+| Work starts | the orb wakes into the working look (no bubble) |
+| The focused work changes phase | the orb shows the new phase with one beat |
 | Other work changes phase | no change |
 | An alert arrives | a one-line bubble with the alert badge; a click opens the alert card beside it |
 | The shown alert is answered here | cannot occur here |
 | The shown alert is answered elsewhere, expires or is withdrawn | no change (the queue drops it) |
-| The focused work finishes | the done beat on the face, no bubble |
+| The focused work finishes | the done beat on the orb, no bubble |
 | Work fails | error alert in the bubble |
-| The connection is lost | the offline face after offlineGrace |
-| The connection is back | the true face |
+| The connection is lost | the offline orb after offlineGrace |
+| The connection is back | the true pose |
 | Listening starts | listening |
 | Listening ends | cannot occur here |
 | The pointer rests on it for hoverExpand | a hover card with the line and the in-sight count |
-| A click on the character | the card opens beside the character |
-| The owner goes idle for absence | sleeping (dozing: eyes closed, dimmed), never hidden |
+| A click on the orb | the card opens beside the orb |
+| The owner goes idle for absence | sleeping (dozing: still and dimmed), never hidden |
 | The owner returns | cannot occur here |
-| No interaction for collapse | the open card closes; the character stays |
-| A drag starts on the character | dragging |
+| No interaction for collapse | the open card closes; the orb stays |
+| A drag starts on the orb | dragging |
 
 ### Sleeping or dozing: floating with nothing live, or the owner away
 
 | Event | Outcome |
 |---|---|
-| Work starts | the wake beat, then the working face |
+| Work starts | the wake beat, then the working orb |
 | The focused work changes phase | cannot occur here |
 | Other work changes phase | no change |
 | An alert arrives | wakes within one beat into the alert bubble |
@@ -211,12 +210,12 @@ Every cell below ships in v0.3.0.
 | The connection is back | no change |
 | Listening starts | wakes within one beat into listening |
 | Listening ends | cannot occur here |
-| The pointer rests on it for hoverExpand | opens one eye; the line shows on hover |
-| A click on the character | wakes and opens the card |
+| The pointer rests on it for hoverExpand | brightens a little; the line shows on hover |
+| A click on the orb | wakes and opens the card |
 | The owner goes idle for absence | no change |
 | The owner returns | wakes with the return summary in the bubble when anything happened |
 | No interaction for collapse | no change |
-| A drag starts on the character | wakes into dragging |
+| A drag starts on the orb | wakes into dragging |
 
 ### Listening: push-to-talk capture is live
 
@@ -235,36 +234,36 @@ Every cell below ships in v0.3.0.
 | Listening starts | cannot occur here |
 | Listening ends | within one beat, the queued alert if any, else what was under listening |
 | The pointer rests on it for hoverExpand | no change |
-| A click on the character | only Stop acts (it stops the capture); no play |
-| Quick repeated hits on the character | nothing |
+| A click on the orb | only Stop acts (it stops the capture); no play |
+| Quick repeated hits on the orb | nothing |
 | The owner goes idle for absence | cannot occur here |
 | The owner returns | cannot occur here |
 | No interaction for collapse | no change |
-| A drag starts on the character | dragging, still on the listening face |
+| A drag starts on the orb | dragging, still on the listening orb |
 
-### Dragging: the owner is moving the character
+### Dragging: the owner is moving the orb
 
 | Event | Outcome |
 |---|---|
-| Work starts | the face changes on the next frame |
-| The focused work changes phase | the face changes; no beat until the release |
+| Work starts | the orb changes on the next frame |
+| The focused work changes phase | the orb changes; no beat until the release |
 | Other work changes phase | no change |
 | An alert arrives | the badge shows at once; the bubble opens on release |
 | The shown alert is answered here | cannot occur here |
 | The shown alert is answered elsewhere, expires or is withdrawn | no change (the queue drops it) |
 | The focused work finishes | no beat during the drag |
 | Work fails | the badge shows at once; the bubble opens on release |
-| The connection is lost | the face changes |
-| The connection is back | the face changes |
-| Listening starts | the listening face, still dragged |
-| Listening ends | back to the dragged true face |
+| The connection is lost | the orb changes |
+| The connection is back | the orb changes |
+| Listening starts | the listening orb, still dragged |
+| Listening ends | back to the true pose, still dragged |
 | The pointer rests on it for hoverExpand | cannot occur here |
-| A click on the character | cannot occur here |
-| Quick repeated hits on the character | cannot occur here |
+| A click on the orb | cannot occur here |
+| Quick repeated hits on the orb | cannot occur here |
 | The owner goes idle for absence | cannot occur here |
 | The owner returns | cannot occur here |
 | No interaction for collapse | cannot occur here |
-| A drag starts on the character | cannot occur here |
+| A drag starts on the orb | cannot occur here |
 
 ### Hidden by the owner: for an hour, or until tomorrow
 
@@ -280,15 +279,15 @@ Every cell below ships in v0.3.0.
 | Work fails | nothing shows here; the other surfaces still tell |
 | The connection is lost | nothing shows |
 | The connection is back | nothing shows |
-| Listening starts | the listening face shows: the one thing hiding never hides |
+| Listening starts | the listening orb shows: the one thing hiding never hides |
 | Listening ends | hidden again |
 | The pointer rests on it for hoverExpand | nothing (no peek while hidden by the owner) |
-| A click on the character | cannot occur here |
-| Quick repeated hits on the character | cannot occur here |
+| A click on the orb | cannot occur here |
+| Quick repeated hits on the orb | cannot occur here |
 | The owner goes idle for absence | no change |
 | The owner returns | no change |
 | No interaction for collapse | no change |
-| A drag starts on the character | cannot occur here |
+| A drag starts on the orb | cannot occur here |
 
 ### Offline: PersonalClaw cannot be reached
 
@@ -307,11 +306,11 @@ Every cell below ships in v0.3.0.
 | Listening starts | listening, with the offline mark |
 | Listening ends | back to offline |
 | The pointer rests on it for hoverExpand | expanded on the offline card: since when, and Open PersonalClaw |
-| A click on the character | expanded on the offline card |
+| A click on the orb | expanded on the offline card |
 | The owner goes idle for absence | hidden, or dozing when floating |
-| The owner returns | the offline face |
+| The owner returns | the offline orb |
 | No interaction for collapse | compact, then hidden |
-| A drag starts on the character | dragging |
+| A drag starts on the orb | dragging |
 
 ## Later work
 
@@ -334,22 +333,22 @@ its return, the hit chain ends at annoyed ([#4570]), so the click and hits cells
 | The focused work finishes | the reaction ends within one beat; finished |
 | Work fails | the reaction ends within one beat; error alert |
 | The connection is lost | the reaction ends within one beat; offline |
-| The connection is back | the reaction ends within one beat; the true face |
+| The connection is back | the reaction ends within one beat; the true pose |
 | Listening starts | the reaction ends within one beat; listening |
 | Listening ends | cannot occur here |
 | The pointer rests on it for hoverExpand | the reaction carries on |
-| A click on the character | the next hit while the reaction still plays: poked, then annoyed, then dizzy |
-| Quick repeated hits on the character | escalates to dizzy; after dizzy, hits only blink for playCooldown |
+| A click on the orb | the next hit while the reaction still plays: poked, then annoyed, then dizzy |
+| Quick repeated hits on the orb | escalates to dizzy; after dizzy, hits only blink for playCooldown |
 | A file is dragged over it | the reaction ends; file |
 | The owner goes idle for absence | the reaction ends; hidden or dozing |
 | The owner returns | cannot occur here |
 | No interaction for collapse | the reaction finishes, then the collapse happens |
-| A drag starts on the character | the reaction ends; dragging |
+| A drag starts on the orb | the reaction ends; dragging |
 
 ### File held over it, or the drop choice is open
 
-Later work: drop and quick ask ([#3895]). Settled for its return, the drop is the claw's catch,
-never a swallow ([#4570]), so the drop's words here change with [#3895].
+Later work: drop and quick ask ([#3895]). Settled for its return, the drop is a catch, never a
+swallow ([#4570]), so the drop's words here change with [#3895].
 
 | Event | Outcome |
 |---|---|
@@ -366,13 +365,13 @@ never a swallow ([#4570]), so the drop's words here change with [#3895].
 | Listening starts | the choice is held; listening; then the choice returns |
 | Listening ends | the choice returns |
 | The pointer rests on it for hoverExpand | no change |
-| A click on the character | a click on a choice does that choice (Ask about it, Add to Knowledge, Put it aside) |
-| Quick repeated hits on the character | nothing |
-| A file is dragged over it | drop: the swallow beat, then the choice; leave: the mouth closes, back to what was under it |
+| A click on the orb | a click on a choice does that choice (Ask about it, Add to Knowledge, Put it aside) |
+| Quick repeated hits on the orb | nothing |
+| A file is dragged over it | drop: the swallow beat, then the choice; leave: the drop target closes, back to what was under it |
 | The owner goes idle for absence | the choice stays until collapse |
 | The owner returns | no change |
 | No interaction for collapse | the choice closes and the file is put aside: nothing was done with it |
-| A drag starts on the character | cannot occur here |
+| A drag starts on the orb | cannot occur here |
 
 ### The drop in the shipping situations
 
@@ -400,11 +399,11 @@ reaction.
 
 | Situation | Event | Outcome |
 |---|---|---|
-| Expanded | A click on the character | play: hit one (poked); a click on a control does that control |
-| Expanded | Quick repeated hits on the character | play: annoyed, then dizzy |
-| Floating | Quick repeated hits on the character | play: poked, annoyed, then dizzy |
-| Sleeping or dozing | Quick repeated hits on the character | play: a startled wake, then floating |
-| Offline | Quick repeated hits on the character | play is allowed (offline is not an alert) |
+| Expanded | A click on the orb | play: hit one (poked); a click on a control does that control |
+| Expanded | Quick repeated hits on the orb | play: annoyed, then dizzy |
+| Floating | Quick repeated hits on the orb | play: poked, annoyed, then dizzy |
+| Sleeping or dozing | Quick repeated hits on the orb | play: a startled wake, then floating |
+| Offline | Quick repeated hits on the orb | play is allowed (offline is not an alert) |
 
 ### Play clauses in the shipping cells
 

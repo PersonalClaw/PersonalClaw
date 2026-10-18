@@ -5,10 +5,10 @@ the context menu and the tray reach the common ones ([#3901]).
 
 | Setting | Default | Effect | Home |
 |---|---|---|---|
-| Buddy status | off | on: the buddy window, and the buddy's faces on the tray, the dock and alert notifications; turning it on or off applies live to every buddy surface, with no restart | owner knob (config, with the gateway's reader) |
+| Buddy status | off | on: the buddy window, and the buddy's still orbs on the tray, the dock and alert notifications; turning it on or off applies live to every buddy surface, with no restart | owner knob (config, with the gateway's reader) |
 | Where it starts | docked at the top edge | docked or floating at the last place it was left | this machine (the shell's store) |
 | Its place | — | the floating position and the display, kept per machine | this machine (the shell's store) |
-| Surfaces | the window, the tray face and the dock face on; notifications for alerts follow the notification rules | which surfaces show the buddy's state | owner knob |
+| Surfaces | the window, the tray's still orb and the dock's on; notifications for alerts follow the notification rules | which surfaces show the buddy's state | owner knob |
 | Hide from screen sharing and screenshots | on | the buddy window is excluded from screen capture, so an approval's brief never shows in a share | this machine |
 | Focus shortcut | none | a key chord that opens the buddy and gives it keyboard focus | owner knob, with the push-to-talk chord grammar; still open against the keyboard model ([`interactions.md`](interactions.md#keyboard-and-focus)) |
 | When I'm away | hide after the absence time | docked: hides after `absence`; floating: dozes; alerts still appear | owner knob |

@@ -581,8 +581,8 @@ release.
 
 | Token | Value | What it times | Read by | Under reduced motion |
 |---|---|---|---|---|
-| `gaze` | a spring: natural frequency about 6.7 rad/s, damping ratio 0.5 at bounciness 1 rising to 1.0 at 0 | the eyes, then the head, turning toward the pointer | the renderer | none: the gaze does not follow |
-| `followRange` | 30% of the face's width | how far the gaze turns before it stops | the renderer | none: the gaze does not follow |
+| `gaze` | a spring: natural frequency about 6.7 rad/s, damping ratio 0.5 at bounciness 1 rising to 1.0 at 0 | the orb's lean (the side its dots crowd to) turning toward the pointer | the renderer | none: the gaze does not follow |
+| `followRange` | 30% of the orb's width | how far the gaze turns before it stops | the renderer | none: the gaze does not follow |
 | `followIdle` | 4 s | with no pointer movement this long, the gaze returns to centre | the renderer | none: the gaze does not follow |
 | `pointerAway` | 400 ms | the gaze returns to centre over this long after the pointer leaves | the renderer | none: the gaze does not follow |
 | `gazeHandback` | 300 ms to 1 s | control fades back from a held pose to the gaze over this long | the renderer | none: the gaze does not follow |

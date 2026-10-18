@@ -6,9 +6,9 @@ routes: it adds no authority, and anything that acts needs an explicit click or 
 | Input | Hidden | Peek | Compact | Expanded | Floating | Alert shown |
 |---|---|---|---|---|---|---|
 | Pointer rests on the top-edge zone | peek | stays | — | — | — | — |
-| Pointer rests on the character for `hoverExpand` | — | expanded | expanded | stays | a hover card with the line | stays |
-| Click on the character | — | expanded | expanded | — | opens the card beside it | nothing; only its controls act |
-| Drag the character | — | undocks | undocks | undocks, card closed | moves | moves, carrying the alert |
+| Pointer rests on the orb for `hoverExpand` | — | expanded | expanded | stays | a hover card with the line | stays |
+| Click on the orb | — | expanded | expanded | — | opens the card beside it | nothing; only its controls act |
+| Drag the orb | — | undocks | undocks | undocks, card closed | moves | moves, carrying the alert |
 | Drop near the top centre | — | — | — | — | docks | docks, carrying the alert |
 | Right-click | — | the menu | the menu | the menu | the menu | the menu |
 | ⌘Enter (buddy focused) | — | — | — | — | — | approves the focused request; a broad-reach one asks to confirm first |
@@ -52,7 +52,7 @@ item that turns Buddy status off, the clear way out ([#3901]).
 
 - The buddy window's one line is a polite live region; an alert is announced once when it arrives,
   as `Needs you: <the line>`, and never again while it waits.
-- The character is decorative (`aria-hidden`); its state is always in words beside it.
+- The orb is decorative (`aria-hidden`); its state is always in words beside it.
 - Every control has a name that includes what it acts on, as the app's approval prompt already
   does: `Allow <tool>`, and `Deny <tool>` followed by what declining does when declining ends the
   turn ([#3899]).
@@ -61,9 +61,9 @@ item that turns Buddy status off, the clear way out ([#3901]).
 
 ## Pointer and click-through
 
-The window passes every click through except inside the character's shape and the open card, so the
-owner can use what is underneath it. The shape is tested on every pointer move only while the buddy
-is visible.
+The window passes every click through except inside the orb's shape and the open card, so the owner
+can use what is underneath it. The shape is tested on every pointer move only while the buddy is
+visible.
 
 ## Later work
 
@@ -75,7 +75,7 @@ With play, two rows of the table above change:
 
 | Input | Hidden | Peek | Compact | Expanded | Floating | Alert shown |
 |---|---|---|---|---|---|---|
-| Click on the character | — | expanded | expanded | a play hit | opens the card beside it | nothing (no play) |
+| Click on the orb | — | expanded | expanded | a play hit | opens the card beside it | nothing (no play) |
 | Quick repeated hits | — | expanded | expanded | annoyed, then dizzy | annoyed, then dizzy | nothing |
 
 A click on a control or on the badge is never a hit, and the context menu gains Play reactions on or
@@ -98,8 +98,8 @@ file always goes through the same scan as any other upload.
 
 When the drop returns, a dropped file is never sent without a separate explicit click, and before
 anything runs each choice shows where it goes, the permission it acts under and how to undo it
-([#3895]). Settled for its return: the drop is the claw's own catch, which closes around the file
-and holds it up while the choice opens, never a swallow ([#4570]).
+([#3895]). Settled for its return: the drop is a catch, never a swallow ([#4570]). For the orb, its
+spread dots close around the file and hold it up while the choice opens.
 
 ### Quick ask
 

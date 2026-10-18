@@ -1,17 +1,29 @@
 # Choosing the rig
 
-How the character is drawn and moved is decided by a measured spike, not by preference ([#3887]).
-Each candidate draws the same placeholder character through the same transitions, inside the buddy
-window and the web app: the change into each of the four families (quiet, active, waiting and
-blocked) and the focused status card opening.
+How the buddy's orb is drawn and moved is decided by a measured spike, not by preference
+([#3887]). The orb is drawn the way the chat's agent orb is ([`agent-orb.md`](../agent-orb.md),
+[`character.md`](character.md#constraints)), so each candidate below extends the agent orb's
+drawing with what the buddy adds rather than drawing and rigging a character, and the spike
+confirms that set before it runs. Every candidate goes through the same transitions, inside the
+buddy window and the web app: the change into each of the four families (quiet, active, waiting
+and blocked) and the focused status card opening.
 
 ## Candidates
 
-1. **Code-drawn SVG**, moved by the motion presets: each layer is an SVG element whose transforms
-   the spring presets drive.
-2. **Code-drawn canvas**, moved by the same presets.
-3. **A state-machine animation runtime** with an authored file holding the states and inputs.
-4. **Pre-rendered frames** (a sprite atlas) played per state.
+What the buddy adds to the agent orb's drawing: the buddy's sizes; the badge's marks beyond the
+agent orb's three (the working mark, the check, the microphone and the offline mark) and its
+unfolding into words; the wash; the neutral it takes where nothing is alive; the system states
+(idle, restarting and offline); its own still frames for the quiet, waiting and blocked families;
+the presence poses; the answers' nod and shake; the gesture vocabulary; and the still frames the
+tray and the dock show. The poses and gestures move the dots as well as the whole orb: quiet's dots
+are sparse, an approval's draw in tight, an error's sink toward the lower edge, and done's swirl
+once ([`character.md`](character.md#the-poses)). Each candidate is a way to add all of it:
+
+1. **The drawing extended in place:** the buddy's poses, sizes and moves join the agent orb's own
+   states inside the drawing, and the badge and the wash are drawn with the dots.
+2. **The drawing inside a code-drawn layer:** the agent orb's drawing gains only parameters for its
+   dots' density and arrangement, which the motion presets drive, and the badge, the wash and the
+   whole-orb moves sit in an SVG layer around it, moved by the same presets.
 
 ## What is measured
 
@@ -27,18 +39,22 @@ blocked) and the focused status card opening.
 | Reduced motion | the system setting on | a still pose per state, no movement at all |
 | Reads at 18 px | the tray and the peek | the state is legible |
 | Authoring cost | the hours to add one new pose | recorded |
-| Licence | the runtime's and the tooling's | compatible with the project's licence and its asset-licence list |
+| Licence | anything the extension adds to the agent orb's drawing, and its tooling | compatible with the project's licence and its asset-licence list |
 
 ## Starting position
 
-The character is drawn in code first, so the tokens retint it and the dials scale it, and the motion
-presets already used across the app move it. An authored-file runtime is chosen only if it wins on
-the numbers and a designer will own the file. Pre-rendered frames are an export of the chosen rig
-(the portable sprite sheet), not the rig.
+The buddy reuses the agent orb's drawing, so its rig is an extension of that drawing, not a
+character rig: it keeps the agent orb's states, and its colour while an agent is alive, and adds
+what the [candidates](#candidates) list. It stays in code, so the tokens retint it and the dials
+scale it, and the motion presets already used across the app move what the buddy adds. The agent
+orb tunes its two sizes, 20 and 64 px, as drawings of their own; the spike settles which of the
+buddy's sizes share them and which need a tuned drawing of their own. Pre-rendered frames are an
+export of the chosen rig (the portable sprite sheet), not the rig.
 
-The spike chooses the smallest rig that renders the four families and the focused card within the
-at-rest and animating CPU bars, smallest by the bundle-size measure. The decision, its numbers and
-the rejected candidates with the measure each lost on are recorded in `decisions/rig.md` ([#3887]).
+The spike chooses the smallest extension that renders the four families and the focused card within
+the at-rest and animating CPU bars, smallest by the bundle-size measure. The decision, its numbers
+and the rejected candidates with the measure each lost on are recorded in `decisions/rig.md`
+([#3887]).
 
 ## Later work
 

@@ -172,7 +172,7 @@ A restrained dark neutral ramp with a single committed coral accent and a warm g
 - **Surface ramp** (#131314 → #1b1b1b → #1e1f20 → #282a2c → #333537): elevation by tone, not shadow. Panels, cards, hover fills, and the highest tier for pressed/selected chrome.
 - **Ink** (#e3e3e3): primary text. **Ink Variant** (#c4c7c5): secondary text and idle icons. **Ink Low** (#9a9b9c): metadata only, never body copy.
 - **Outline Variant** (#444746): hairline dividers and input strokes; full-strength outline (#8e918f) is reserved for focus/emphasis.
-- **Buddy Body** (`--color-buddy-body`, and `buddy-body` in the front matter): the desktop buddy's body at rest, a warm neutral where every surface above is a cool grey, with one value for light and one for dark. The name is set here, and the two values come with the buddy's character, which the maintainer chooses at the buddy's first gate ([#3830](https://github.com/PersonalClaw/PersonalClaw/issues/3830)): that task adds them under this name to the front matter, `tokens.css` and the token registry, checked for contrast against both canvases ([`docs/design/buddy/character.md`](../docs/design/buddy/character.md#the-choice)).
+- **The desktop buddy** has no colour of its own. Its orb takes the agent orb's colour, the scheme's primary (`--color-primary`), while an agent is alive ([`docs/design/agent-orb.md`](../docs/design/agent-orb.md#the-component)), and Ink Variant (`--color-on-surface-var`), the idle-icon neutral above, where nothing is alive. So no buddy token joins this ramp, the front matter, `tokens.css` or the token registry ([`docs/design/buddy/character.md`](../docs/design/buddy/character.md#constraints)).
 
 ### Semantic
 - **OK Green** (#0ebc5f), **Warn Orange** (#ff8d41), **Danger Red** (#f55e57), **Info Blue** (#4e8ff8) — status pills, alerts, destructive actions. Aliased as success/warning/error; never used decoratively.
@@ -181,7 +181,7 @@ A restrained dark neutral ramp with a single committed coral accent and a warm g
 **The One Voice Rule.** Coral is the only accent allowed to mean "the agent" — selection, focus, primary action, live activity. If coral appears where nothing is active, actionable, or alive, remove it.
 **The Tone-Not-Line Rule.** Depth and grouping come from the surface ramp; borders are 1px hairlines (#444746) or nothing. Never a colored side-stripe.
 
-The desktop buddy keeps the One Voice Rule and the Glow-Is-Alive Rule (§4): its body takes coral only while an agent is alive, and the semantic colours reach it only as a badge or a wash, never as its whole body ([`docs/design/buddy/character.md`](../docs/design/buddy/character.md#constraints)).
+The desktop buddy keeps the One Voice Rule and the Glow-Is-Alive Rule (§4): its orb takes coral only while an agent is alive and draws no glow, and the semantic colours reach it only as a badge or a wash, never as the whole orb ([`docs/design/buddy/character.md`](../docs/design/buddy/character.md#constraints)).
 
 ## 3. Typography
 

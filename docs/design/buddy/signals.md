@@ -1,6 +1,6 @@
 # The signals the buddy reads
 
-The buddy is a new face on signals PersonalClaw already has, but three of them do not exist in one
+The buddy is a new view of signals PersonalClaw already has, but three of them do not exist in one
 place yet. Each is built once, for every surface that tells the owner what is happening: the chat's
 thinking indicator, Mission Control, the tray, the menu-bar app, the phone companion, notifications
 and the buddy.
@@ -20,8 +20,8 @@ green in one view, coral in another, and "needs you" is blue for loops but orang
   every phase.
 - Four visual families carry urgency, and the line carries the exact phase. Chat, the tray, the
   buddy and the phone use the same mapping and the same owner-facing text, and colour and animation
-  never carry the phase alone. Each surface's own looks (the tray's six faces, the agent orb's
-  states) are variants inside the four families.
+  never carry the phase alone. Each surface's own looks (the agent orb's states, which the buddy's
+  orb shares, and the tray's six still orbs) are variants inside the four families.
 
 | Phase | Meaning | Family | Tone |
 |---|---|---|---|
@@ -70,7 +70,7 @@ a plan review and a bridge confirmation. One list route and one change event. Ea
 
 The list keeps one order, consequence then age, and every surface keeps it: the buddy's
 one-at-a-time alert queue, Home's Needs You, the tray and the phone. The compact and phone
-compositions show it with text, never by the character's colour or pose. An item that is answered
+compositions show it with text, never by the orb's colour or pose. An item that is answered
 or expires leaves the list, and no surface keeps an action that could still send it.
 
 What mute does to the buddy's alerts is still open. The design says what quiet hours do, and
