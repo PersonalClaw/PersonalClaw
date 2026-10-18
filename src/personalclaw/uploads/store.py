@@ -62,6 +62,12 @@ _COPY_CHUNK = 1024 * 1024
 _COMPLETING: set[str] = set()
 _COMPLETING_LOCK = threading.Lock()
 
+# Held while a part's record is saved and while a drop takes an upload's folder away, both in
+# worker threads, so a record is never written into a folder a drop has just taken: writing it
+# would make the folder again, and the dropped upload would come back. Every store over the
+# same folder shares it, as they share _COMPLETING.
+_RECORDING = threading.Lock()
+
 
 @dataclass
 class UploadSession:
@@ -104,9 +110,10 @@ class UploadStore:
 
     Each session is a directory ``<root>/<id>/`` holding ``meta.json`` + either the
     part files (separate mode) or the single growing ``assembled`` file (append
-    mode). Its record is read and written on the event loop only; parts for one id arrive
-    serialized by the client, different ids are independent dirs, and an upload being
-    completed is held by :meth:`completing` while its files are worked on in a thread."""
+    mode). A part's record is saved, and a dropped upload's folder taken away, in a worker
+    thread, one at a time in the process (``_RECORDING``); parts for one id arrive serialized
+    by the client, different ids are independent dirs, and an upload being completed is held by
+    :meth:`completing` while its files are worked on in a thread."""
 
     def __init__(self, root: Path):
         self.root = Path(root)
@@ -216,23 +223,41 @@ class UploadStore:
                 # cancelled, or the network dropped) leaves no file: a resume sends it again.
                 tmp.unlink(missing_ok=True)
                 raise
-        if not (self._dir(sid) / "meta.json").is_file():
-            # Dropped while this part streamed in (its files went with it). Recording the part
-            # would write the session's record again and bring the dropped upload back.
-            raise UploadError("upload session not found", 404)
-        if not sess.append_mode:
-            os.replace(tmp, part_path)
-
-        if written > expected:
-            # A part bigger than declared → the client is lying about size; abort.
-            raise UploadError("part exceeds declared part size", 400)
-
-        if index not in sess.received:
-            sess.received.append(index)
-            sess.received.sort()
-        sess.updated_at = time.time()
-        self._save_meta(sess)
+        # Recording the part writes the session's record, which waits on the disk (0.31 s caught
+        # on a busy one), so in a worker thread.
+        await asyncio.to_thread(self._record_part, sess, index, tmp, part_path, written, expected)
         return sess
+
+    def _record_part(
+        self,
+        sess: UploadSession,
+        index: int,
+        tmp: Path,
+        part_path: Path,
+        written: int,
+        expected: int,
+    ) -> None:
+        """Keep part *index* that has arrived (*written* bytes of the *expected*) and save the
+        session's record. Under :data:`_RECORDING`, which a drop holds while it takes the
+        upload's folder away, so a drop asked meanwhile waits for this, and this finds a dropped
+        upload gone rather than writing its record again."""
+        with _RECORDING:
+            if not (self._dir(sess.id) / "meta.json").is_file():
+                # Dropped while this part streamed in (its files went with it). Recording the
+                # part would write the session's record again and bring the dropped upload back.
+                raise UploadError("upload session not found", 404)
+            if not sess.append_mode:
+                os.replace(tmp, part_path)
+
+            if written > expected:
+                # A part bigger than declared → the client is lying about size; abort.
+                raise UploadError("part exceeds declared part size", 400)
+
+            if index not in sess.received:
+                sess.received.append(index)
+                sess.received.sort()
+            sess.updated_at = time.time()
+            self._save_meta(sess)
 
     def is_complete(self, sess: UploadSession) -> bool:
         return sorted(sess.received) == list(range(sess.total_parts))
@@ -304,16 +329,26 @@ class UploadStore:
         removed in a worker thread."""
         if self._is_completing(sid):
             raise UploadError("upload is being completed", 409)
-        here = self._dir(sid)
-        if not (here / "meta.json").is_file():
-            return False
-        dropped = self.root / f".dropped-{uuid.uuid4().hex}"
-        try:
-            here.rename(dropped)
-        except FileNotFoundError:
+        dropped = await asyncio.to_thread(self._take_away, sid)
+        if dropped is None:
             return False
         await asyncio.to_thread(shutil.rmtree, dropped, ignore_errors=True)
         return True
+
+    def _take_away(self, sid: str) -> Path | None:
+        """Rename upload *sid*'s folder out of its place, under :data:`_RECORDING`, so a part's
+        record being saved is saved first (:meth:`_record_part`). Returns where it went, or
+        ``None`` when there is no such upload."""
+        with _RECORDING:
+            here = self._dir(sid)
+            if not (here / "meta.json").is_file():
+                return None
+            dropped = self.root / f".dropped-{uuid.uuid4().hex}"
+            try:
+                here.rename(dropped)
+            except FileNotFoundError:
+                return None
+            return dropped
 
     def sweep(self, ttl_secs: int = _SESSION_TTL_SECS) -> int:
         """Delete session dirs idle longer than ``ttl_secs``. Returns count swept."""

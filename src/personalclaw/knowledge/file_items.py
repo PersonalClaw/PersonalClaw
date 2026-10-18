@@ -168,7 +168,8 @@ async def store_file_item(
     guessed = guess_mime(filename)
     mime_type = mime if (mime and mime.split("/", 1)[0].lower() == item_type) else guessed
     item_id = str(uuid4())
-    files_dir = Path(knowledge_files_dir())
+    # Resolving the home and making the folder wait on the disk, so in a worker thread too.
+    files_dir = Path(await asyncio.to_thread(knowledge_files_dir))
     ext = Path(filename).suffix.lower()
     dest = files_dir / f"{item_id}{ext}"
     thumb = files_dir / f"{item_id}.thumb.webp" if item_type == "image" else None

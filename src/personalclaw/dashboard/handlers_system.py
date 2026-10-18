@@ -111,7 +111,25 @@ async def api_healthz(request: web.Request) -> web.Response:
     a container/compose healthcheck: flipping it would restart-loop a gateway that is working,
     including during the window when ``pip install --upgrade`` replaces the package directory
     under a running process. Callers that care assert on ``root_ok``.
+
+    Both are read from the disk, so in a worker thread (:func:`_identity`).
     """
+    home_id, root_ok = await asyncio.to_thread(_identity)
+    return web.json_response(
+        {
+            "status": "ok",
+            "version": personalclaw.__version__,
+            "pid": os.getpid(),
+            "home_id": home_id,
+            "root_ok": root_ok,
+        }
+    )
+
+
+def _identity() -> tuple[str | None, bool]:
+    """The health check's ``home_id`` and ``root_ok``. Resolving the home and the serving root
+    walks the file system and waits on the disk: on the event loop, on a busy disk, it stopped
+    every other request for 0.13 s, so :func:`api_healthz` calls this in a worker thread."""
     root = _serving_root()
     try:
         # The one resolver, so the fingerprint is of the home the rest of the process actually
@@ -120,15 +138,7 @@ async def api_healthz(request: web.Request) -> web.Response:
         home_id = home_gateway.home_id(config_loader.config_dir())
     except (OSError, RuntimeError):  # pragma: no cover — an unresolvable home must not 500 here
         home_id = None
-    return web.json_response(
-        {
-            "status": "ok",
-            "version": personalclaw.__version__,
-            "pid": os.getpid(),
-            "home_id": home_id,
-            "root_ok": bool(root is not None and root.exists()),
-        }
-    )
+    return home_id, bool(root is not None and root.exists())
 
 
 def _safe_surfaces_flag() -> bool:
