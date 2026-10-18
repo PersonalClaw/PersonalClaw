@@ -17,7 +17,9 @@ count printed while workers continue running.
 ## Local and CI invocation delta
 
 The local gate runs `make test`, which is `.venv/bin/python -m pytest -n auto
---dist worksteal` with the repository addopts' 120-second timeout and no coverage.
+--dist worksteal` with the repository addopts' 120-second timeout and no coverage. A test that
+needs another cap carries `pytest.mark.timeout(N)` and an entry, with its reason, in
+`tests/timeout-marks.toml` (see `tests/README.md`).
 The worker cap resolves `auto` to three workers for these measurements. A bare
 `python -m pytest` names no workers, so it runs the suite in one process.
 

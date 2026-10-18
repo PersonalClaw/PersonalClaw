@@ -29,6 +29,7 @@ import ci_masking
 import private_walkers
 import pytest
 import security_census
+import timeout_marks
 import yaml
 from rails_repo import REPO
 
@@ -4364,6 +4365,150 @@ DCO_CHECKS_WITH_THE_BASE_BRANCHS_CHECK = _toolchain_row(
 )
 
 ROWS = (*ROWS, DCO_CHECKS_WITH_THE_BASE_BRANCHS_CHECK)
+
+
+# ── Every timeout mark is listed with its reason ────────────────────────────────────────────
+#
+# A test that needs a cap other than the suite's default says so with `pytest.mark.timeout(N)`,
+# and each such site is listed in tests/timeout-marks.toml with its cap and why (#3926). The
+# walker and the list's reader live in tests/timeout_marks.py.
+
+_MARKED_TEST = "tests/test_slow.py"
+_SCAFFOLD_MARKS = (
+    "[[mark]]\n"
+    'site = "tests/test_slow.py::test_it_is_slow"\n'
+    "cap = 300\n"
+    'reason = "the scaffold\'s listed mark"\n'
+    "\n[[mark]]\n"
+    'site = "tests/test_slow.py::_SHARED"\n'
+    "cap = 240\n"
+    'reason = "a mark a decorator reuses, by a name bound to a constant"\n'
+)
+
+
+def _timeout_scaffold(root: Path) -> None:
+    """A tree where the rule holds: one listed decorator, one listed mark held in a name whose cap
+    is a module constant, and a test with no mark."""
+    _write(
+        root,
+        _MARKED_TEST,
+        "import pytest\n\n_CAP = 200 + 40\n_SHARED = pytest.mark.timeout(_CAP)\n\n\n"
+        "@pytest.mark.timeout(300)\ndef test_it_is_slow():\n    pass\n\n\n"
+        "@_SHARED\ndef test_it_shares_a_cap():\n    pass\n\n\n"
+        "def test_it_is_quick():\n    pass\n",
+    )
+    _write(root, timeout_marks.LIST, _SCAFFOLD_MARKS)
+
+
+EVERY_TIMEOUT_MARK_IS_LISTED = Row(
+    name="every-timeout-mark-is-listed-with-its-reason",
+    check=timeout_marks.violations,
+    scaffold=_timeout_scaffold,
+    controls=(
+        Control(
+            "an unlisted decorator",
+            _append(
+                "tests/test_planted.py",
+                "import pytest\n\n\n@pytest.mark.timeout(90)\ndef test_new():\n    pass\n",
+            ),
+            expect="tests/test_planted.py::test_new sets a 90 s timeout",
+        ),
+        Control(
+            "a conftest hook that adds a mark",
+            _append(
+                "tests/conftest.py",
+                "import pytest\n\n\ndef pytest_collection_modifyitems(items):\n"
+                "    for item in items:\n"
+                "        item.add_marker(pytest.mark.timeout(60))\n",
+            ),
+            expect="tests/conftest.py::pytest_collection_modifyitems sets a 60 s timeout",
+        ),
+        Control(
+            "a module's pytestmark",
+            _append(
+                "tests/test_planted.py",
+                "import pytest\n\npytestmark = [pytest.mark.anyio, pytest.mark.timeout(500)]\n",
+            ),
+            expect="tests/test_planted.py::pytestmark sets a 500 s timeout",
+        ),
+        Control(
+            "a mark through `from pytest import mark as m`",
+            _append(
+                "tests/test_planted.py",
+                "from pytest import mark as m\n\n\n@m.timeout(70)\ndef test_aliased():\n    pass\n",
+            ),
+            expect="test_aliased sets a 70 s timeout",
+        ),
+        Control(
+            "a mark on a method of a test class",
+            _append(
+                "tests/test_planted.py",
+                "import pytest\n\n\nclass TestThing:\n    @pytest.mark.timeout(80)\n"
+                "    def test_m(self):\n        pass\n",
+            ),
+            expect="tests/test_planted.py::TestThing.test_m sets a 80 s timeout",
+        ),
+        _plant(
+            "a cap changed without its entry",
+            _MARKED_TEST,
+            "@pytest.mark.timeout(300)",
+            "@pytest.mark.timeout(600)",
+            expect="sets 600 s where tests/timeout-marks.toml lists 300 s",
+        ),
+        _plant(
+            "a module constant moved under a mark that reuses it",
+            _MARKED_TEST,
+            "_CAP = 200 + 40",
+            "_CAP = 200 + 400",
+            expect="::_SHARED sets 600 s where",
+        ),
+        _plant(
+            "an entry left behind after its mark is deleted",
+            _MARKED_TEST,
+            "@pytest.mark.timeout(300)\n",
+            "",
+            expect="test_it_is_slow is listed in tests/timeout-marks.toml but sets no timeout",
+        ),
+        _plant(
+            "an entry with no reason",
+            timeout_marks.LIST,
+            'reason = "the scaffold\'s listed mark"',
+            'reason = "  "',
+            expect="with no reason",
+        ),
+        Control(
+            "a site listed twice",
+            _append(
+                timeout_marks.LIST,
+                '\n[[mark]]\nsite = "tests/test_slow.py::test_it_is_slow"\ncap = 300\n'
+                'reason = "again"\n',
+            ),
+            expect="is listed twice",
+        ),
+        Control(
+            "a cap the row cannot read",
+            _append(
+                "tests/test_planted.py",
+                "import os\n\nimport pytest\n\n\n"
+                "@pytest.mark.timeout(int(os.environ.get('T', '9')))\n"
+                "def test_env():\n    pass\n",
+            ),
+            expect="sets a cap the row cannot read",
+        ),
+        Control("the list removed", _remove(timeout_marks.LIST), expect="is missing"),
+        Control(
+            "a test with another mark, and a test that sets a subprocess timeout, pass",
+            _append(
+                "tests/test_planted.py",
+                "import subprocess\n\nimport pytest\n\n\n@pytest.mark.slow\ndef test_a():\n"
+                "    subprocess.run(['true'], timeout=5)\n",
+            ),
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, EVERY_TIMEOUT_MARK_IS_LISTED)
 
 
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
