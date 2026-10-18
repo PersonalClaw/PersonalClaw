@@ -82,7 +82,6 @@ from personalclaw.workflows import (
     store,
     task_projection,
 )
-from personalclaw.workflows.bindings import item_prefixes
 from personalclaw.workflows.effects import EffectRecord, EffectStatus, effect_history
 from personalclaw.workflows.engine import NodeResult, node_commits_effects
 from personalclaw.workflows.failure_taxonomy import with_breaker_window
@@ -428,21 +427,10 @@ class RunController:
             self.record_output(path, node.id, store.read_output(self.run.id, path))
 
     def record_output(self, path: str, node_id: str, value: Any) -> None:
-        """Enter one step's settled output where bindings read it: under its node id, and, for a
-        step inside a fan-out item, under its instance path too, so a sibling in the SAME item
-        reads it rather than whichever item last wrote that id (`BindingContext.scoped_to`)."""
-        if not node_id:
-            return
-        self._outputs[node_id] = value
-        if item_prefixes(path):
-            self._instance_outputs[path] = (node_id, value)
+        node_bindings.record_output(self, path, node_id, value)  # by id, and by path in an item
 
     def forget_output(self, path: str, node_id: str) -> None:
-        """Take a reset step's output out of where bindings read it, by id and by instance path,
-        so nothing resolves a stale value between the reset and the re-run."""
-        if node_id:
-            self._outputs.pop(node_id, None)
-        self._instance_outputs.pop(path, None)
+        node_bindings.forget_output(self, path, node_id)
 
     # ── public lifecycle ──
 

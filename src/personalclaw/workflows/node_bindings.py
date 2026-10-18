@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from personalclaw.knowledge import session_brief
 from personalclaw.workflows import deliverable, input_secrets, store
-from personalclaw.workflows.bindings import BindingContext, BindingError
+from personalclaw.workflows.bindings import BindingContext, BindingError, item_prefixes
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     LoopMode,
@@ -71,6 +71,25 @@ def _session_brief(ctl: RunController) -> Any:
         logger.debug("run %s: session brief unavailable", ctl.run.id, exc_info=True)
         ctl._brief = session_brief.SessionBrief(project=project)
     return ctl._brief
+
+
+def record_output(ctl: RunController, path: str, node_id: str, value: Any) -> None:
+    """Enter one step's settled output where bindings read it: under its node id, and, for a
+    step inside a fan-out item, under its instance path too, so a sibling in the SAME item
+    reads it rather than whichever item last wrote that id (`BindingContext.scoped_to`)."""
+    if not node_id:
+        return
+    ctl._outputs[node_id] = value
+    if item_prefixes(path):
+        ctl._instance_outputs[path] = (node_id, value)
+
+
+def forget_output(ctl: RunController, path: str, node_id: str) -> None:
+    """Take a reset step's output out of where bindings read it, by id and by instance path,
+    so nothing resolves a stale value between the reset and the re-run."""
+    if node_id:
+        ctl._outputs.pop(node_id, None)
+    ctl._instance_outputs.pop(path, None)
 
 
 def context_for(ctl: RunController, item: ReadyNode) -> BindingContext:
@@ -425,6 +444,8 @@ def record_branch_outputs(ctl: RunController) -> None:
         # the frontier routed it (`tick._visit_branch`), not from whichever item wrote it last.
         ctx = base.scoped_to(path)
         taken = taken_case(node, path, ctx) if states[path] in SUCCESS_STATES else None
+        # Whether the taken case has ended is judged on this item's own outputs too: a router
+        # inside the case routes on its item's steps, not on whichever item wrote them last.
         if taken is None or (
             derive_state(
                 taken[2],
@@ -434,6 +455,7 @@ def record_branch_outputs(ctl: RunController) -> None:
                 outputs=ctl._outputs,
                 inputs=ctl.run.inputs,
                 iterations=ctl._iterations,
+                instance_outputs=ctl._instance_outputs,
             )
             not in SUCCESS_STATES
         ):

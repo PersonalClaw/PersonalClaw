@@ -264,6 +264,7 @@ def _ended(states: dict[str, InstanceState], *, cause: str = "") -> str:
         instances=instances,
         _declined_edges=set(),
         _outputs={},
+        _instance_outputs={},
         _iterations={},
         run=SimpleNamespace(inputs={}),
     )
