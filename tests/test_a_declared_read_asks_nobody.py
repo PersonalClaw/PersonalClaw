@@ -36,28 +36,17 @@ PersonalClaw's own constructors do not build, run as every other read does.
 
 from __future__ import annotations
 
-import ast
 import asyncio
-from pathlib import Path
 
 import pytest
-import source_index
+from a_declared_read_asks_nobody_shared import _OneCall, _Recording
 
 from personalclaw import mcp_core
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.native.tools import InProcessMcpToolProvider
 from personalclaw.agents.provider import AgentRuntimeDefinition
-from personalclaw.llm.events import (
-    EVENT_COMPLETE,
-    EVENT_PERMISSION_REQUEST,
-    EVENT_TEXT_CHUNK,
-    EVENT_TOOL_CALL,
-    EVENT_TOOL_RESULT,
-    AgentEvent,
-)
+from personalclaw.llm.events import EVENT_PERMISSION_REQUEST, EVENT_TOOL_RESULT
 from personalclaw.tool_providers.base import RiskLevel, ToolProvider, ToolResult
-
-_SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
 #: Every module whose tools the in-process provider builds: core's own and the categories the
 #: `mcp-core` server aggregates.
@@ -88,72 +77,6 @@ _PREVIEWED = [
 
 
 # ── the declaration and the flag agree, on every constructor ─────────────────────────────
-
-
-def _tool_definition_calls() -> list[tuple[str, ast.Call]]:
-    """Every call that builds a ``ToolDefinition`` in the package, under any alias it is
-    imported as (the runtime builds its meta-tools as ``_TD``)."""
-    found: list[tuple[str, ast.Call]] = []
-    for path, tree in source_index.package_trees():
-        names = {"ToolDefinition"} | {
-            alias.asname
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
-            for alias in node.names
-            if alias.name == "ToolDefinition" and alias.asname
-        }
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                func = node.func
-                called = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
-                if called in names:
-                    found.append((f"{path.relative_to(_SRC)}:{node.lineno}", node))
-    return found
-
-
-def _is_safe_literal(expr: ast.expr) -> bool:
-    return isinstance(expr, ast.Attribute) and expr.attr == "SAFE"
-
-
-def _is_level_literal(expr: ast.expr) -> bool:
-    return isinstance(expr, ast.Attribute) and expr.attr in ("SAFE", "CAUTION", "DESTRUCTIVE")
-
-
-def test_the_census_finds_the_tool_definitions():
-    """The floor: a walk that found none would pass every rule below on nothing."""
-    assert len(_tool_definition_calls()) >= 40
-
-
-def test_every_tool_core_defines_states_what_it_does_and_whether_it_asks():
-    """A tool that states nothing is a tool nobody decided about. The defaults fail closed (a
-    change that asks), which is safe, but silent: a new read that forgets to say so asks in a
-    chat and is declined in every headless run, so the rail makes the decision explicit."""
-    silent = [
-        where
-        for where, call in _tool_definition_calls()
-        if not {"risk_level", "requires_approval"} <= {kw.arg for kw in call.keywords}
-    ]
-    assert not silent, f"definitions that leave risk_level or requires_approval unsaid: {silent}"
-
-
-def test_a_tool_that_declares_a_read_asks_nobody():
-    """A literal `SAFE` comes with a literal `requires_approval=False`, and a declaration that is
-    computed decides whether the tool asks from the same value, never a hard-coded `True`."""
-    wrong = []
-    for where, call in _tool_definition_calls():
-        kw = {k.arg: k.value for k in call.keywords}
-        risk, asks = kw.get("risk_level"), kw.get("requires_approval")
-        if risk is None or asks is None:
-            continue  # the rule above names these
-        if _is_safe_literal(risk):
-            if not (isinstance(asks, ast.Constant) and asks.value is False):
-                wrong.append(f"{where}: declares SAFE but asks")
-        elif not _is_level_literal(risk):
-            risk_names = {n.id for n in ast.walk(risk) if isinstance(n, ast.Name)}
-            asks_names = {n.id for n in ast.walk(asks) if isinstance(n, ast.Name)}
-            if not risk_names & asks_names:
-                wrong.append(f"{where}: its declaration is computed but whether it asks is not")
-    assert not wrong, wrong
 
 
 @pytest.mark.asyncio
@@ -195,42 +118,6 @@ async def test_the_named_reads_ask_nobody_and_a_change_still_asks():
 
 
 # ── the gate, with no policy answering for it ────────────────────────────────────────────
-
-
-class _Recording(InProcessMcpToolProvider):
-    """A real registry's definitions, which are what is under test, recording each call it
-    would have made."""
-
-    def __init__(self, module: str) -> None:
-        super().__init__(module=module, provider_name="under-test")
-        self.invoked: list[str] = []
-
-    async def invoke(self, tool_name, arguments):
-        self.invoked.append(tool_name)
-        return ToolResult(success=True, output="ran")
-
-
-class _OneCall:
-    """A model that calls one tool, then answers."""
-
-    supports_tools = True
-    _model = "scripted"
-
-    def __init__(self, tool: str, args: str) -> None:
-        self._turns = [
-            [
-                AgentEvent(kind=EVENT_TOOL_CALL, tool_call_id="c1", title=tool, tool_input=args),
-                AgentEvent(kind=EVENT_COMPLETE),
-            ],
-            [AgentEvent(kind=EVENT_TEXT_CHUNK, text="done"), AgentEvent(kind=EVENT_COMPLETE)],
-        ]
-        self.calls = 0
-
-    async def complete(self, messages, *, tools=None, model=None, reasoning_effort=""):
-        turn = self._turns[min(self.calls, len(self._turns) - 1)]
-        self.calls += 1
-        for ev in turn:
-            yield ev
 
 
 async def _turn(module: str, tool: str, args: str, **runtime_kw):

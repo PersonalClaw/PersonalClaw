@@ -38,288 +38,42 @@ disagree in either direction, so a stale entry is caught too. Modelled on
 
 from __future__ import annotations
 
-import ast
 import json
-import pathlib
 from unittest.mock import AsyncMock, patch
 
+import chat_session_resurrection_audit_shared
 import pytest
-import source_index
 from aiohttp.test_utils import TestClient, TestServer
+from chat_session_resurrection_audit_shared import (
+    _CLIENT_NAMED_MUST_GUARD,
+    _CREATES_BY_DESIGN,
+    _OWNER,
+    SRC,
+    scan_source,
+)
 from chat_test_helpers import _make_app, _make_state
 
-SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "personalclaw"
-
-#: The one owner. A client-named writer must call this before creating anything.
-_OWNER = "session_key_exists"
-
-#: The creator whose miss-branch mints a blank session — the mechanism being audited.
-_CREATOR = "get_or_create_session"
+_isolate_home = chat_session_resurrection_audit_shared._isolate_home
 
 
 # ── CLIENT-NAMED: the session name arrives from a REQUEST, so existence must be
-#    proved first. Every key here is additionally asserted to call the owner. ──
-_CLIENT_NAMED_MUST_GUARD: dict[str, str] = {
-    "dashboard/chat_handlers.py::api_chat": (
-        "POST /api/chat — `body['session']` is client-supplied; the resurrection this "
-        "module is named for"
-    ),
-    "dashboard/chat_handlers.py::api_chat_session_resume": (
-        "POST /api/chat/sessions/{session}/resume — `match_info['session']` / "
-        "`body['key']` are client-supplied; the second resurrection"
-    ),
-}
 
 # ── CREATES-BY-DESIGN: minting on a miss is the point. Either no name is passed at
-#    all (the callee auto-generates ``chat-N-<ts>``), or the name is SERVER-derived
-#    from a resource that owns it (a cron job, a loop, a plan, an API client id), or
-#    the site sits BEHIND an existence check that is the check. ──
-_CREATES_BY_DESIGN: dict[str, str] = {
-    # ── no name at all → the callee mints `chat-N-<ts>` ──
-    "channel_inbound.py::_route_to_session": (
-        "no name — an unlinked channel thread mints a session, then link_channel binds it"
-    ),
-    "dashboard/handlers/investigate.py::api_investigate": "no name — investigate mints its own",
-    "gateway.py::GatewayOrchestrator._deliver_result": "no name — result delivery mints its own",
-    "dashboard/chat_fork.py::api_chat_session_fork": (
-        "name=None — a fork mints a NEW key; the PARENT it reads is resolved and 404s"
-    ),
-    "dashboard/chat_fork.py::api_chat_session_fork_rewound": ("name=None — same as the fork above"),
-    # ── the explicit create route ──
-    "dashboard/chat_handlers.py::api_chat_session_create": (
-        "POST /api/chat/sessions IS the create verb — this is the one route whose job "
-        "is to mint a key, and it is what a client uses instead of naming a dead one. "
-        "Its `body['name']` IS client-supplied (measured: naming a hard-deleted key "
-        "here does re-materialise it), so this row is a JUDGMENT, not a mechanical "
-        "fact: a create verb cannot distinguish 'hard-deleted' from 'never existed' "
-        "(no tombstone is kept), so refusing an unknown name would break creation "
-        "outright. And the hazard the two guarded writers carry is *implicit* "
-        "continuation — a send or a resume asserts 'this session exists, continue it' "
-        "— where an explicit create asserts the opposite. A name that IS a kept chat's "
-        "opens that chat (it is rehydrated first), so no blank session is minted over a "
-        "kept transcript. The dashboard never sends a session KEY here (ChatPage's "
-        "ensureSession and a document's comment chat both omit `name`)"
-    ),
-    # ── SERVER-derived key: the owning resource's identity IS the session name, so a
-    #    miss means 'this resource has no session yet', never 'the client typed a key' ──
-    "dashboard/schedule_inject.py::inject_schedule_result_to_session": (
-        "name=`cron-{job.id}` — derived from the cron job that owns the session"
-    ),
-    "loop/manager.py::start": "name=`session_key(loop_id)` — derived from the loop",
-    "loop/manager.py::spawn_task_worker": (
-        "name=`task_session_key(loop.id, task.id)` — derived from the loop task"
-    ),
-    "planning/runner.py::run_planner_pass": "name=`skey` — derived from the planner pass",
-    "dashboard/approval_state.py::DashboardApprovalState._channel_chat": (
-        "name = a conversation a channel runs itself, linked to the channel's thread before its "
-        "turn runs (`holds_channel_chat`), and reached only when nothing of it is persisted: its "
-        "first turn is still running, and the channel writes that turn under the same key"
-    ),
-    "inbound/openai_dialect.py::handle_chat_completions": (
-        "name=`session_key_for(client_id, tag)` — namespaced by the AUTHENTICATED client "
-        "id, and create-on-first-use is this dialect's whole contract (it has no delete "
-        "verb of its own, so there is no deleted state for a client to resurrect through)"
-    ),
-    # ── behind the existence check, or driven BY the log ──
-    "dashboard/chat_persistence.py::_rehydrate_session_from_history": (
-        "reached only AFTER resolve_history_key + get_metadata confirmed the key is "
-        "persisted — this site IS the existence check the owner delegates to"
-    ),
-    "dashboard/chat_persistence.py::restore_recent_sessions": (
-        "iterates keys the conversation log itself listed, so existence is a given"
-    ),
-}
 
 
 # ── the scanner ───────────────────────────────────────────────────────────────
 
 
-def scan_source(source: str | ast.Module, rel: str, creators: dict, guards: dict) -> None:
-    """Record every ``get_or_create_session`` / owner call site in one module.
-
-    Split out so the mechanism can be exercised against SYNTHETIC source (see
-    :func:`test_the_scanner_sees_a_planted_unguarded_writer`). A census whose only test
-    is "the tree currently measures N" cannot distinguish "no unguarded writers" from
-    "the matcher is broken", and that distinction is the whole point.
-    """
-    tree = source if isinstance(source, ast.Module) else ast.parse(source)
-
-    class V(ast.NodeVisitor):
-        def __init__(self) -> None:
-            self.q: list[str] = []
-
-        def visit_FunctionDef(self, n) -> None:  # noqa: ANN001
-            self.q.append(n.name)
-            self.generic_visit(n)
-            self.q.pop()
-
-        visit_AsyncFunctionDef = visit_FunctionDef
-
-        def visit_ClassDef(self, n) -> None:  # noqa: ANN001
-            self.q.append(n.name)
-            self.generic_visit(n)
-            self.q.pop()
-
-        def visit_Call(self, n: ast.Call) -> None:
-            f = n.func
-            callee = (
-                f.attr
-                if isinstance(f, ast.Attribute)
-                else (f.id if isinstance(f, ast.Name) else "")
-            )
-            key = f"{rel}::{'.'.join(self.q) or '<module>'}"
-            if callee == _CREATOR:
-                creators.setdefault(key, []).append(n.lineno)
-            elif callee == _OWNER:
-                guards.setdefault(key, []).append(n.lineno)
-            self.generic_visit(n)
-
-    V().visit(tree)
-
-
-def scan() -> tuple[dict[str, list[int]], dict[str, list[int]], int]:
-    """``({creator_key: lines}, {guard_key: lines}, files_scanned)`` over the tree."""
-    creators: dict[str, list[int]] = {}
-    guards: dict[str, list[int]] = {}
-    scanned = 0
-    for path, tree in source_index.package_trees():
-        scan_source(tree, path.relative_to(SRC).as_posix(), creators, guards)
-        scanned += 1
-    return creators, guards, scanned
-
-
-#: Vacuity floor for the walk. The tree has ~950 modules; a scan that walks a handful
-#: has lost its root, and "no unmapped call sites" would read as an improvement.
-FILES_SCANNED_FLOOR = 800
-
-#: The ``{session}``-addressed route population, derived from the real route table.
-#: A FLOOR: the family this audit reasons about ("every other writer to a session")
-#: is exactly this set, and a derivation that stopped finding it would make the
-#: classification above look complete when it had simply gone blind. Re-measured at 50
-#: on this tree: 47 chat-session routes + 3 ``/api/skills/ephemeral/{session}`` routes.
-SESSION_ROUTE_FLOOR = 45
-
-
 # ── vacuity: a census that measures nothing must not read as clean ────────────
 
 
-def test_the_census_is_not_vacuous():
-    """Every assertion below is only as good as the walk that produced it."""
-    creators, guards, scanned = scan()
-    assert scanned >= FILES_SCANNED_FLOOR, (
-        f"the census walked only {scanned} modules (floor {FILES_SCANNED_FLOOR}) — the "
-        f"scan lost its root, so 'no unguarded writer' would read as an improvement. "
-        f"Check SRC={SRC}."
-    )
-    assert creators, (
-        f"no `{_CREATOR}` call site found ANYWHERE — the matcher is broken, and the "
-        f"allowlists below are being compared against an empty set"
-    )
-    assert guards, (
-        f"no `{_OWNER}` call site found anywhere — either the owner was deleted (and "
-        f"then the two client-named writers resurrect again) or the matcher is broken"
-    )
-
-
-def test_the_session_route_family_is_still_derivable():
-    """The floor under "47 of the other 49 already refuse".
-
-    This audit's scope claim is about the ``{session}``-addressed route FAMILY. That
-    family is derived from the real route table rather than hand-listed, so this asserts
-    the derivation still finds it — otherwise a future reader could conclude the family
-    is two routes wide because the walk broke.
-    """
-    routes = _session_routes()
-    assert len(routes) >= SESSION_ROUTE_FLOOR, (
-        f"only {len(routes)} '{{session}}'-addressed routes derived (floor "
-        f"{SESSION_ROUTE_FLOOR}). The route-table walk lost its target, so this audit's "
-        f"scope claim is unverified. Routes found: {sorted(routes)}"
-    )
-    # The two writers this module exists for must be IN the derived family, not assumed.
-    assert ("POST", "/api/chat/sessions/{session}/resume") in routes, sorted(routes)
-
-
-def _session_routes() -> set[tuple[str, str]]:
-    """``{(method, path)}`` for every ``{session}``-addressed route, from the AST of the
-    modules that register them. Derived, not hand-listed."""
-    out: set[tuple[str, str]] = set()
-    for rel in (
-        "dashboard/routes.py",
-        "dashboard/session_bulk.py",
-        "dashboard/session_starters.py",
-    ):
-        tree = source_index.tree(SRC / rel)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-                continue
-            attr = node.func.attr
-            if not attr.startswith("add_"):
-                continue
-            method = attr[4:].upper()
-            if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
-                continue
-            if not node.args:
-                continue
-            p = node.args[0]
-            if isinstance(p, ast.Constant) and isinstance(p.value, str) and "{session}" in p.value:
-                out.add((method, p.value))
-    return out
-
-
 # ── the classification ratchet ────────────────────────────────────────────────
-
-
-def test_every_session_creator_call_site_is_classified():
-    """Every ``get_or_create_session`` site is in exactly one allowlist.
-
-    A new/unmapped site reds CI by name, forcing the author to decide whether the
-    session name can arrive from a request (→ it must call the owner) or is minted /
-    server-derived (→ creates-by-design).
-    """
-    creators, _guards, _scanned = scan()
-    allow = set(_CLIENT_NAMED_MUST_GUARD) | set(_CREATES_BY_DESIGN)
-
-    unmapped = sorted(set(creators) - allow)
-    assert not unmapped, (
-        f"Unmapped `{_CREATOR}` call site(s) — classify each in "
-        f"tests/test_chat_session_resurrection_audit.py as CLIENT-NAMED (the session "
-        f"name comes from a request → call "
-        f"chat_persistence.{_OWNER} first and 404 `session_not_found` on a miss) or "
-        f"CREATES-BY-DESIGN (no name, or a server-derived one):\n"
-        + "\n".join(
-            f"  {k}  ({', '.join(f'{k.split('::')[0]}:{ln}' for ln in creators[k])})"
-            for k in unmapped
-        )
-    )
-
-    stale = sorted(allow - set(creators))
-    assert not stale, (
-        f"Stale allowlist entr(y/ies) — no such `{_CREATOR}` site exists anymore; remove "
-        f"from the allowlist:\n" + "\n".join(f"  {k}" for k in stale)
-    )
 
 
 def test_the_two_allowlists_are_disjoint():
     """A site cannot be both client-named and creates-by-design."""
     both = set(_CLIENT_NAMED_MUST_GUARD) & set(_CREATES_BY_DESIGN)
     assert not both, f"sites in both allowlists: {sorted(both)}"
-
-
-def test_every_client_named_writer_actually_calls_the_owner():
-    """The teeth. Classification alone would be a comment; this is the check.
-
-    A handler listed as CLIENT-NAMED must call
-    ``chat_persistence.session_key_exists`` in the SAME function that reaches
-    ``get_or_create_session``. Deleting the guard while leaving the allowlist entry in
-    place reds here — which is the failure mode a hand-maintained list cannot catch.
-    """
-    _creators, guards, _scanned = scan()
-    missing = sorted(set(_CLIENT_NAMED_MUST_GUARD) - set(guards))
-    assert not missing, (
-        f"client-named writer(s) reach `{_CREATOR}` without asking `{_OWNER}` first, so a "
-        f"hard-deleted session key can be written back into existence:\n"
-        + "\n".join(f"  {k}  — {_CLIENT_NAMED_MUST_GUARD[k]}" for k in missing)
-    )
 
 
 # ── the vacuity floors for the ratchet, proved against source ─────────────────
@@ -461,19 +215,6 @@ def test_a_new_unguarded_writer_planted_into_the_real_module_is_unmapped():
 # The oracle is never the route under test. Existence is asserted from
 # ``state._sessions`` and from the on-disk JSONL, plus a SECOND endpoint
 # (``GET /api/chat/sessions/{key}``) — not from the send route's own reply.
-
-
-@pytest.fixture(autouse=True)
-def _isolate_home(tmp_path, monkeypatch):
-    """Every write lands in tmp_path — never the real ``~/.personalclaw``."""
-    import personalclaw.config.loader as cfg
-    import personalclaw.dashboard.state as st
-    import personalclaw.session_workspace as ws
-
-    monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
-    monkeypatch.setattr(st, "config_dir", lambda: tmp_path)
-    monkeypatch.setattr(ws, "config_dir", lambda: tmp_path)
-    return tmp_path
 
 
 def _seed_persisted_chat(state):

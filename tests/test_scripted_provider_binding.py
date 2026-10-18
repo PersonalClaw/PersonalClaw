@@ -29,7 +29,8 @@ import sys
 import types
 
 import pytest
-import source_index
+import scripted_provider_binding_shared
+from scripted_provider_binding_shared import RETIRED_ENV_NAMES
 
 import personalclaw.llm as _llm_pkg
 from personalclaw.llm.capabilities import Capability, ProviderCapability
@@ -44,10 +45,11 @@ from personalclaw.llm.registry import (
     ProviderRegistry,
     ProviderResolutionError,
     get_default_registry,
-    reset_default_registry,
     scripted_provider_enabled,
     sync_entries_from_config,
 )
+
+_isolated_registry_and_home = scripted_provider_binding_shared._isolated_registry_and_home
 
 # ── The sibling's provider, stubbed ───────────────────────────────────────────
 
@@ -143,21 +145,6 @@ def _write_config(providers: list[dict]) -> None:
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
-
-
-@pytest.fixture(autouse=True)
-def _isolated_registry_and_home(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    """No shared registry state, no real home, no inherited opt-in.
-
-    ``reset_default_registry()`` runs on BOTH sides: this suite runs under xdist
-    beside everything else, and a leaked ``scripted`` type would make an unrelated
-    test's provider resolution pick up a fixture.
-    """
-    monkeypatch.delenv(SCRIPTED_PROVIDER_ENV, raising=False)
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    reset_default_registry()
-    yield
-    reset_default_registry()
 
 
 @pytest.fixture
@@ -412,11 +399,6 @@ def test_the_omitted_capabilities_are_named_so_the_omission_is_deliberate():
 # defects, since it accepts any constructor call and needs no script file.
 
 
-#: Env-var spellings the tree deliberately NARRATES as dead (the drift these rails were written
-#: after). Kept because the story is why the rails exist; asserted to be read by nothing.
-RETIRED_ENV_NAMES = frozenset({"PERSONALCLAW_SCRIPTED_LLM"})
-
-
 def test_the_registry_and_the_fixture_name_the_SAME_env_var() -> None:
     """One switch for the pair, asserted rather than promised.
 
@@ -474,29 +456,6 @@ def test_the_harness_spells_the_env_var_the_SAME_way() -> None:
             f"otherwise fix it. A wrong name in a comment leaves the gate working and its "
             f"stated reason false — which is the state this test was written after finding."
         )
-
-
-def test_no_retired_env_name_is_still_read_by_anything() -> None:
-    """The floor under the allowlist above: a retirement has to be real.
-
-    Without this, `RETIRED_ENV_NAMES` is a way to make the drift sweep quiet — declare the
-    stale name and the assertion goes green while a module still reads it. So the retirement is
-    checked against the shipped source rather than trusted.
-    """
-    root = pathlib.Path(__file__).resolve().parents[1]
-    src = root / "src"
-    live = sorted(
-        p.name
-        for p in source_index.package_files()
-        if p.is_relative_to(src)
-        for n in RETIRED_ENV_NAMES
-        if n in source_index.text(p)
-    )
-    assert not live, (
-        f"these shipped modules still name a RETIRED env var {sorted(RETIRED_ENV_NAMES)}: "
-        f"{live}. It is not retired; either the allowlist is wrong or the module is."
-    )
-    assert RETIRED_ENV_NAMES, "the retirement list is empty — the sweep above allows nothing extra"
 
 
 def test_the_factory_builds_the_REAL_fixture_through_the_registry(

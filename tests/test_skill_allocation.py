@@ -13,8 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-import source_index
+import skill_allocation_shared
 
 from personalclaw.context import ContextBuilder
 from personalclaw.learning.surfacing import Candidate, Tier, allocate, count_tokens
@@ -28,6 +27,8 @@ from personalclaw.skills.allocation import (
     resolve_tier,
 )
 from personalclaw.skills.loader import SkillsLoader
+
+_usage_store_stays_in_tmp = skill_allocation_shared._usage_store_stays_in_tmp
 
 # A body big enough that no realistic budget could hold it: ~42,000 tokens.
 _HUGE_BODY = "\n".join(
@@ -43,20 +44,6 @@ def _write_skill(base: Path, name: str, frontmatter: str, body: str) -> Path:
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(f"---\n{frontmatter}\n---\n{body}\n", encoding="utf-8")
     return skill_dir
-
-
-@pytest.fixture(autouse=True)
-def _usage_store_stays_in_tmp(tmp_path, monkeypatch):
-    """The turn-time use counter writes beside the skills dir — keep it in tmp.
-
-    `SkillUsageStore()` resolves its own path from `skills_dir()`, so an unpatched run
-    would record uses into whatever home the process resolves. Conftest's
-    ``_isolate_real_home_writers`` already redirects that, but a test that exercises the use
-    counter should not depend on another fixture for its isolation.
-    """
-    counter_home = tmp_path / "usage-home"
-    counter_home.mkdir()
-    monkeypatch.setattr("personalclaw.skills.usage.skills_dir", lambda: counter_home)
 
 
 def _builder(tmp_path: Path) -> ContextBuilder:
@@ -378,32 +365,6 @@ class TestTheCapsArePerSkillAndInAggregate:
         assert resolve_tier("") == "standard"
         assert resolve_tier("  HEAVY ") == "heavy"
         assert resolve_tier("enormous", name="x") == "standard"
-
-    def test_every_bundled_skill_fits_the_cap_its_declared_tier_grants(self):
-        """A ratchet on the shipped library: no bundled skill loads reduced by default.
-
-        A skill that outgrows its declared tier must either shrink or declare a bigger
-        tier; discovering it as a silent reduction in a user's turn is the wrong place.
-        """
-        from personalclaw.skills.allocation import full_block
-        from personalclaw.skills.loader import parse_frontmatter
-
-        bundled = Path(__file__).resolve().parents[1] / "src/personalclaw/skills/bundled"
-        over: list[str] = []
-        skills = [
-            p
-            for p in source_index.under(source_index.package_any_files(), bundled)
-            if p.name == "SKILL.md"
-        ]
-        for path in skills:
-            raw = source_index.text(path)
-            tier = resolve_tier(parse_frontmatter(raw).get("context_tier", ""))
-            body = SkillsLoader.strip_frontmatter(raw).strip()
-            tokens = count_tokens(full_block(path.parent.name, body))
-            if tokens > CONTEXT_TIERS[tier]:
-                over.append(f"{path.parent.name}: {tokens} tokens > {tier} cap")
-        assert not over, over
-        assert len(skills) >= 15, "vacuity floor: skills were found"
 
 
 # ── Continued cost ──

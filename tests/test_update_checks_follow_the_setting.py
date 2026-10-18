@@ -14,7 +14,6 @@ says exactly that (`web/src/pages/settings/updatesPanelCheckNow.test.tsx`).
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import json
 import socket
@@ -25,12 +24,13 @@ from unittest.mock import MagicMock
 
 import aiohttp
 import pytest
-import source_index
+import update_checks_follow_the_setting_shared
 
-import personalclaw
 from personalclaw import self_update
 from personalclaw.dashboard.handlers import updates
 from personalclaw.net.git import talks_to_remote
+
+_fresh_update_state = update_checks_follow_the_setting_shared._fresh_update_state
 
 _NEWER = [
     {"tag_name": "v9.9.9", "name": "9.9.9", "body": "What 9.9.9 brings.", "prerelease": False}
@@ -133,23 +133,6 @@ class _Network:
 
     def nothing_tried(self) -> bool:
         return self.sessions == 0 and not self.remote_git and not self.lookups
-
-
-@pytest.fixture(autouse=True)
-def _fresh_update_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """A neutral git environment, no check run yet, and the cached answer put back afterwards."""
-    monkeypatch.setenv("HOME", str(tmp_path / "user"))
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
-    monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
-    monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
-    monkeypatch.setattr(updates, "_last_update_check", 0.0)
-    monkeypatch.setattr(updates, "_local_version", "0.2.0")
-    saved = dict(updates._update_info)
-    updates._update_info.update({"available": False, "changes": "", "checked": False})
-    yield
-    updates._update_info.clear()
-    updates._update_info.update(saved)
 
 
 def _home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **block: object) -> Path:
@@ -520,48 +503,3 @@ async def test_a_staged_install_proceeds_with_checks_on(monkeypatch, tmp_path) -
 
 
 # ── one gate ─────────────────────────────────────────────────────────────────
-
-
-class _Readers(ast.NodeVisitor):
-    """``(function, line)`` for every read of a ``check_enabled`` attribute, by its function."""
-
-    def __init__(self) -> None:
-        self.found: list[tuple[str, int]] = []
-        self._where: list[str] = ["<module>"]
-
-    def _enter(self, node: ast.AST, name: str) -> None:
-        self._where.append(name)
-        self.generic_visit(node)
-        self._where.pop()
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self._enter(node, node.name)
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self._enter(node, node.name)
-
-    def visit_Attribute(self, node: ast.Attribute) -> None:
-        if node.attr == "check_enabled":
-            self.found.append((self._where[-1], node.lineno))
-        self.generic_visit(node)
-
-
-def test_one_function_decides_whether_an_update_check_may_reach_out() -> None:
-    """Three places read the setting each for itself, and the one that forgot it (a checkout's
-    commits-behind count) fetched with checks off. Now one function answers, read when it is
-    asked; the only other read is the value the Updates screen shows its switch with."""
-    root = Path(personalclaw.__file__).parent
-    readers: set[tuple[str, str]] = set()
-    for path in source_index.package_files():
-        rel = path.relative_to(root.resolve()).as_posix()
-        text = source_index.text(path)
-        if rel.startswith("config/") or "check_enabled" not in text:
-            continue
-        visitor = _Readers()
-        visitor.visit(source_index.tree(path))
-        readers |= {(rel, where) for where, _line in visitor.found}
-    assert readers, "the scan found no reader at all: it is not reading the tree"
-    assert readers == {
-        ("self_update.py", "may_check_for_updates"),
-        ("dashboard/handlers/updates.py", "update_status"),
-    }, sorted(readers)

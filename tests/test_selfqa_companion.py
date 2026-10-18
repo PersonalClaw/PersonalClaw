@@ -25,6 +25,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+import selfqa_companion_shared
 
 import personalclaw.inbox_providers.native_source as ns
 from personalclaw.action_providers.base import ActionContext
@@ -43,10 +44,11 @@ from personalclaw.selfqa.triage import (
     IMPACT_TEST,
     IMPACT_USER,
     CommitTriage,
-    classify_paths,
     triage_commit,
 )
 from personalclaw.workflows.journal import Journal, ledger
+
+watch_state = selfqa_companion_shared.watch_state
 
 BUNDLED = Path(__file__).resolve().parents[1] / "src/personalclaw/workflows/bundled/self-qa"
 
@@ -94,19 +96,6 @@ def commit(repo: Path, rel: str, body: str, message: str) -> str:
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", message)
     return _git(repo, "rev-parse", "HEAD")
-
-
-@pytest.fixture(autouse=True)
-def watch_state(tmp_path, monkeypatch):
-    """Isolate the watcher's state file per test.
-
-    `watch.state_path()` derives from `config_dir()`, which conftest redirects once per
-    SESSION — shared state across tests in this file would make "first sight" true exactly
-    once and every later test's quiet/fire verdicts depend on ordering.
-    """
-    path = tmp_path / "selfqa-state" / "commit_watch.state.json"
-    monkeypatch.setattr(watch_mod, "state_path", lambda: path)
-    return path
 
 
 @pytest.fixture
@@ -519,29 +508,6 @@ class TestClauseTwoLedgerOnlySkip:
         output = json.loads(result.stdout)
         assert len(output["verdicts"]) == 5, "every commit still gets a verdict"
         assert len(output["impactful"]) == 2, "the cap did not bound the scenarios"
-
-    @pytest.mark.parametrize(
-        "paths,expected",
-        [
-            (["tests/test_a.py"], IMPACT_TEST),
-            (["src/x/test_a.py"], IMPACT_TEST),
-            (["web/src/a.test.ts"], IMPACT_TEST),
-            (["conftest.py"], IMPACT_TEST),
-            (["docs/a.md"], IMPACT_NONE),
-            (["README.md"], IMPACT_NONE),
-            ([".github/workflows/ci.yml"], IMPACT_NONE),
-            ([], IMPACT_NONE),
-            (["src/personalclaw/a.py"], IMPACT_USER),
-            (["web/src/App.tsx"], IMPACT_USER),
-            # One shipped line among a hundred test lines is still a shipped line.
-            (["tests/test_a.py", "src/personalclaw/a.py"], IMPACT_USER),
-            (["tests/test_a.py", "docs/a.md"], IMPACT_TEST),
-        ],
-    )
-    def test_the_classifier_verdicts(self, paths, expected):
-        impact, rationale = classify_paths(paths)
-        assert impact == expected, (paths, rationale)
-        assert rationale.strip() and "\n" not in rationale
 
 
 # ── The other half: the skip is VISIBLE IN THE RUNS SURFACE ──────────────────

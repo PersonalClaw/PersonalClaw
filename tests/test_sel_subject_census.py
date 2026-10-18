@@ -20,96 +20,13 @@ So a new path that audits a shell call or a file write cannot leave out what it 
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
-import source_index
+from sel_subject_census_shared import _problem
 
 from personalclaw.audit_subject import COMMAND, FILE_PATH, kind_of_subject
 from personalclaw.file_scope import PATH_TOOLS
 from personalclaw.run_bounds import FILE_WRITES
-from personalclaw.task_modes import PLATFORM_SHELL, SHELL_TITLE_PREFIXES, SHELL_TOOL_NAMES
-
-SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
-
-#: Every name a call's row records a command or a path for, by name alone.
-_SUBJECT_NAMES = frozenset(SHELL_TOOL_NAMES) | frozenset(FILE_WRITES)
-
-
-def _literal(node: ast.expr | None) -> str | None:
-    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
-
-
-def _fixed_head(node: ast.expr | None) -> str | None:
-    """An f-string name's literal head when no subject tool's name can be completed from it."""
-    if not isinstance(node, ast.JoinedStr) or not node.values:
-        return None
-    head = _literal(node.values[0])
-    if not head or head.lower().startswith(SHELL_TITLE_PREFIXES):
-        return None
-    if any(name.startswith(head) for name in _SUBJECT_NAMES):
-        return None
-    return head
-
-
-def _problem(call: ast.Call) -> str:
-    """Why this audit row would leave out what its call ran, or ``""`` when it cannot."""
-    keywords = {k.arg: k.value for k in call.keywords if k.arg}
-    if "tool_input" in keywords:
-        return ""
-    name, kind = keywords.get("tool_name"), keywords.get("tool_kind")
-    kind_text = _literal(kind) if kind is not None else ""
-    if kind_text is None:
-        return "its tool's kind is read at run time, and it hands over none of the call's arguments"
-    fixed = shown = _literal(name)
-    if fixed is None:
-        fixed = _fixed_head(name)
-        if fixed is None:
-            return "its tool is named at run time, and it hands over none of the call's arguments"
-        shown = f"{fixed}…"
-    if kind_of_subject(fixed, kind_text):
-        return f"{shown!r} is a tool whose row records what it ran, and no arguments come with it"
-    return ""
-
-
-def _audit_calls() -> list[tuple[str, int, ast.Call]]:
-    found: list[tuple[str, int, ast.Call]] = []
-    for path, tree in source_index.package_trees():
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "log_tool_invocation"
-            ):
-                found.append((str(path.relative_to(SRC)), node.lineno, node))
-    return found
-
-
-def test_every_audited_tool_call_hands_the_log_what_it_ran():
-    calls = _audit_calls()
-    problems = [f"{where}:{line}: {why}" for where, line, call in calls if (why := _problem(call))]
-    assert not problems, (
-        "these audit rows would name a tool and not what it ran — hand the call's arguments over "
-        "(`tool_input=`), or `tool_input=None` for a row about no call:\n  " + "\n  ".join(problems)
-    )
-
-
-def test_the_census_reads_the_whole_surface():
-    """Vacuity floor: a census that found a handful of calls would pass the test above."""
-    calls = _audit_calls()
-    handing = [c for _, _, c in calls if any(k.arg == "tool_input" for k in c.keywords)]
-    assert len(calls) >= 200, len(calls)
-    assert len(handing) >= 40, len(handing)
-    files = {where for where, _, _ in calls}
-    for host in (
-        "dashboard/chat_runner.py",
-        "subagent.py",
-        "llm_helpers.py",
-        "eval/runner.py",
-        "acp/ungated.py",
-        "dashboard/handlers/tools.py",
-        "mcp_shared.py",
-    ):
-        assert host in files, f"the census no longer reads {host}"
+from personalclaw.task_modes import PLATFORM_SHELL, SHELL_TOOL_NAMES
 
 
 def _parsed(source: str) -> ast.Call:

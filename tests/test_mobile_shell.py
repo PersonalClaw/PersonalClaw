@@ -28,10 +28,9 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-MOBILE = REPO_ROOT / "mobile"
+from mobile_shell_shared import MOBILE, REPO_ROOT
+
 SHELL = MOBILE / "www" / "shell"
 CAP_CONFIG = MOBILE / "capacitor.config.json"
 NETWORK_MJS = SHELL / "network.mjs"
@@ -337,21 +336,3 @@ def test_the_generated_native_projects_are_not_committed():
     ignored = (MOBILE / ".gitignore").read_text(encoding="utf-8")
     for entry in ("/ios/", "/android/", "Pods/"):
         assert entry in ignored, f"mobile/.gitignore does not ignore {entry}"
-
-
-def test_the_mobile_tier_is_wired_the_way_the_ci_rail_requires():
-    """A companion to ``tests/rails/test_ci_tier_enforcement.py``, stated from this change's side.
-
-    That file enforces the general rule; this one records that ``mobile`` is deliberately a
-    workspace member *because* of it. Keeping the shell outside the workspace graph would have
-    kept 37 node cases out of every gate — the exact gap that rail was written to close.
-    """
-    root = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-    assert "mobile" in root["workspaces"]
-    assert root["scripts"]["test:mobile"] == "npm run test --workspace=mobile"
-    manifest = json.loads((MOBILE / "package.json").read_text(encoding="utf-8"))
-    assert manifest["scripts"]["test"] == "node --test test/*.test.mjs"
-    # The native builds are NOT a CI tier: they need Xcode and the Android SDK.
-    ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "npm run test:mobile" in ci
-    assert "cap build" not in ci, "a native build in CI would need Xcode and the Android SDK"

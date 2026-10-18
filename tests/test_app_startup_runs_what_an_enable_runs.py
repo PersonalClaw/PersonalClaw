@@ -600,26 +600,3 @@ def test_startup_has_no_loader_of_its_own():
     assert by_hand == set(), f"startup does part of an app's load by itself again: {by_hand}"
     assert "start_installed" in called, called
     assert "load" in _calls(inspect.getsource(app_runtime.start_installed))
-
-
-def test_a_provider_has_no_switch_of_its_own():
-    """A provider is switched by switching its app. A providers route that toggled the instances
-    left the app's code loaded, and it sat outside the owner-only app routes: an app that declared
-    ``/api/providers`` could switch another app's code on through it."""
-    import ast
-    import inspect
-
-    from personalclaw.providers import routes
-
-    registered = {
-        node.args[0].value
-        for node in ast.walk(ast.parse(inspect.getsource(routes.register_routes)))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr.startswith("add_")
-        and node.args
-        and isinstance(node.args[0], ast.Constant)
-    }
-    assert "/api/providers/{name}/availability" in registered, registered  # it reads the routes
-    switches = sorted(r for r in registered if r.rsplit("/", 1)[-1] in {"enable", "disable"})
-    assert switches == [], f"a provider has a switch of its own again: {switches}"

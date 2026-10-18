@@ -18,22 +18,13 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock
 
+import onboarding_state_shared
 import pytest
 
 from personalclaw import onboarding as ob
 from personalclaw.dashboard import handlers_system as hs
 
-
-@pytest.fixture(autouse=True)
-def _isolate_home(monkeypatch, tmp_path):
-    """Point the whole config home at a tmp dir so the real home is never touched.
-
-    ``PERSONALCLAW_HOME`` rather than a ``config_dir`` patch: the store resolves its path
-    through ``entity_routes._entity_settings_path`` -> ``config_dir()`` on every call, and
-    the env var is the one lever every such caller honours.
-    """
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    return tmp_path
+_isolate_home = onboarding_state_shared._isolate_home
 
 
 def _store_path(home):
@@ -692,27 +683,6 @@ async def test_post_rejects_unparseable_json_with_400(_isolate_home):
     r.json = AsyncMock(side_effect=ValueError("boom"))
     resp = await hs.api_onboarding_state(r)
     assert resp.status == 400
-
-
-def test_post_route_is_registered():
-    """The handler must be reachable — a store with no route is inert."""
-    import ast
-    from pathlib import Path
-
-    import personalclaw.dashboard.routes as route_table
-
-    tree = ast.parse(Path(route_table.__file__).read_text(encoding="utf-8"))
-    posts = {
-        node.args[0].value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "add_post"
-        and node.args
-        and isinstance(node.args[0], ast.Constant)
-        and isinstance(node.args[0].value, str)
-    }
-    assert "/api/onboarding/state" in posts
 
 
 def test_onboarding_is_not_wired_into_config(_isolate_home):

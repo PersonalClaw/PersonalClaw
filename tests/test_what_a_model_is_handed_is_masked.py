@@ -1037,7 +1037,7 @@ def test_a_trigger_that_is_a_model_turn_hands_the_agent_the_name():
 def test_a_workflow_stage_gets_the_name_and_an_action_step_the_value(tmp_path, monkeypatch):
     """One run, one reference, two steps: the stage's agent is handed the name, and the action
     that runs its config itself is handed the value."""
-    from test_workflows_stage_completion import _FakeSubagents
+    from workflows_stage_completion_shared import _FakeSubagents
 
     from personalclaw.workflows import store
     from personalclaw.workflows.controller import EngineServices, RunController

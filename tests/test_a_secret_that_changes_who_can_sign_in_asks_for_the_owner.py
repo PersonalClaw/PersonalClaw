@@ -15,52 +15,24 @@ Every request goes through the production token middleware (``signed_in_sessions
 
 from __future__ import annotations
 
-import inspect
 import os
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import a_secret_that_changes_who_can_sign_in_asks_for_the_owner_shared
 import pytest
-import source_index
+from a_secret_that_changes_who_can_sign_in_asks_for_the_owner_shared import BYPASS, SIGN_IN_NAMES
 from aiohttp import web
 from signed_in_sessions import OLD, client_for, guarded_app, owner_presence_rows, sign_in
 
-import personalclaw
 from personalclaw.auth.credentials import TOTP_SECRET_KEY
-from personalclaw.config.credentials import credential_names, owner_id_credential
-from personalclaw.config.loader import CRED_OWNER_ID
-from personalclaw.dashboard import token_auth
+from personalclaw.config.credentials import credential_names
 from personalclaw.dashboard.handlers import devices as devices_h
 from personalclaw.dashboard.handlers import secrets as secrets_h
-from personalclaw.inbound.auth import client_surfaces, token_env_key
 from personalclaw.packs import connectors
-from personalclaw.secrets_vault import SIGN_IN_ENVIRONMENT, is_sign_in_key, project_secret_key
+from personalclaw.secrets_vault import project_secret_key
 
-BYPASS = "PERSONALCLAW_BYPASS_LOCAL_NETWORKS"
-
-#: One name of each kind, each from the module that reads it.
-SIGN_IN_NAMES = {
-    "the local-network bypass": BYPASS,
-    "the authenticator's seed": TOTP_SECRET_KEY,
-    "an inbound surface's token": token_env_key("mcp"),
-    "a channel owner's id": owner_id_credential("telegram"),
-    "the id every channel shared": CRED_OWNER_ID,
-    "whether sign-in is asked for": "PERSONALCLAW_AUTH_MODE",
-    "the first password a container enrolls": "PERSONALCLAW_LOGIN_PASSWORD",
-}
-
-
-@pytest.fixture(autouse=True)
-def _clean_state(monkeypatch):
-    token_auth.use_persistent_secret()
-    token_auth.revoke_all_sessions()
-    # A stored secret is mirrored into this process's environment: give every name back as it was.
-    for name in {*SIGN_IN_NAMES.values(), "GITHUB_TOKEN"}:
-        monkeypatch.setenv(name, "")
-        monkeypatch.delenv(name)
-    yield
-    token_auth.revoke_all_sessions()
+_clean_state = a_secret_that_changes_who_can_sign_in_asks_for_the_owner_shared._clean_state
 
 
 @pytest.fixture()
@@ -185,23 +157,3 @@ def test_a_connector_pack_may_not_name_one():
             connectors._save_credentials([name], {name: "planted-value-1"})
         assert name not in credential_names(), f"a pack stored {kind}"
     assert connectors._save_credentials(["GITHUB_TOKEN"], {"GITHUB_TOKEN": "x"}) == ["GITHUB_TOKEN"]
-
-
-def test_the_names_are_the_ones_the_gateway_reads():
-    """Each sign-in name comes from the module that reads it; the environment's are literals, so
-    each must still be read somewhere in the gateway, or it is a name that changes nothing."""
-    for surface in client_surfaces():
-        assert is_sign_in_key(token_env_key(surface))
-    assert is_sign_in_key(owner_id_credential("discord"))
-    assert not is_sign_in_key("GITHUB_TOKEN")
-    assert not is_sign_in_key("PERSONALCLAW_OWNER")
-    root = Path(inspect.getfile(personalclaw)).parent
-    sources = {
-        path: source_index.text(path)
-        for path in source_index.under(source_index.package_files(), root.resolve())
-        if path.name != "secrets_vault.py"
-    }
-    for name in SIGN_IN_ENVIRONMENT:
-        assert is_sign_in_key(name)
-        readers = [path for path, text in sources.items() if f'"{name}"' in text]
-        assert readers, f"{name} is listed as a sign-in setting, but the gateway never reads it"

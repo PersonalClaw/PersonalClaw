@@ -27,8 +27,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import guardrails_ladder_shared
 import pytest
-import source_index
 from aiohttp.test_utils import make_mocked_request
 
 from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
@@ -38,42 +38,10 @@ from personalclaw.guardrails import autonomy as au
 from personalclaw.guardrails import ladder as ld
 from personalclaw.guardrails import rungs as rg
 
+_clean_registries = guardrails_ladder_shared._clean_registries
+_isolated_home = guardrails_ladder_shared._isolated_home
+
 APP_KEY = "app:acme.acme-file-task"
-
-
-@pytest.fixture(autouse=True)
-def _isolated_home(tmp_path, monkeypatch):
-    """A throwaway home for the rung store, the reversal store, the SEL, tasks and the inbox.
-
-    ``PERSONALCLAW_HOME`` as well as the patched ``config_dir``: several stores bind
-    ``config_dir`` at import (``tasks.native``), so the env var is what actually keeps their
-    writes out of the real home.
-    """
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
-    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: home)
-    cfg = home / "config.json"
-    cfg.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: cfg)
-    from personalclaw import sel as sel_mod
-
-    sel_mod.SecurityEventLog._instance = None
-    sel_mod.SecurityEventLog._initialized = False
-    yield home
-    sel_mod.SecurityEventLog._instance = None
-    sel_mod.SecurityEventLog._initialized = False
-
-
-@pytest.fixture(autouse=True)
-def _clean_registries():
-    """Restore the action-provider registry — these tests install a fake app provider."""
-    from personalclaw.action_providers.registry import _providers
-
-    before = dict(_providers)
-    yield
-    _providers.clear()
-    _providers.update(before)
 
 
 # ── a real-effect app action: it files a task and can delete it again ──────────
@@ -373,32 +341,6 @@ def test_the_proposal_scan_offers_a_rung_and_grants_NOTHING(_isolated_home):
         if (r.get("refs") or {}).get("action_type") == APP_KEY
     ]
     assert len(rows) == 1
-
-
-def test_nothing_but_the_api_handler_grants_a_rung():
-    """The upward path has exactly ONE call site, asserted from the source.
-
-    A grant is the only thing in this subsystem that increases what runs unattended. Pinning
-    the call site is what keeps "promotion is always a click" true as the tree grows — a
-    background job that called `grant_rung` would satisfy every other test in this file.
-    """
-    import ast
-
-    root = Path(au.__file__).resolve().parent.parent
-    callers: set[str] = set()
-    for path, tree in source_index.package_trees():
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            name = (
-                func.id
-                if isinstance(func, ast.Name)
-                else func.attr if isinstance(func, ast.Attribute) else ""
-            )
-            if name == "grant_rung":
-                callers.add(str(path.relative_to(root)))
-    assert callers == {"dashboard/handlers/autonomy.py"}, callers
 
 
 # ── the refusals: a grant is validated, never trusted ──────────────────────────────────

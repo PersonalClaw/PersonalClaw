@@ -24,9 +24,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from chat_plan_mode_shared import _app as _plan_app
+from chat_plan_mode_shared import _no_dispatch, _seed
 from chat_test_helpers import _make_state
-from test_chat_plan_mode import _app as _plan_app
-from test_chat_plan_mode import _no_dispatch, _seed
 from test_native_runtime import _ScriptedModel
 
 from personalclaw import channel_inbound, channel_trust

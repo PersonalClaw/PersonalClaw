@@ -15,17 +15,19 @@ order, determinism/tie-break, and fail-open behavior on every input it reads.
 
 from __future__ import annotations
 
-import ast
 import json
 from pathlib import Path
 
 import pytest
+import routing_policy_shared
+from routing_policy_shared import BRIDGE
 from table_rows import row
 
 from personalclaw.llm.registry import ProviderEntry, get_default_registry
 from personalclaw.routing import policy
 
-BRIDGE = Path(__file__).resolve().parents[1] / "src/personalclaw/providers/provider_bridge.py"
+_ollama_is_installed = routing_policy_shared._ollama_is_installed
+
 
 LOCAL = "ollama-models:qwen3:8b"
 LOCAL_TINY = "ollama-models:tinyllm:1b"
@@ -53,12 +55,6 @@ def _enable(monkeypatch: pytest.MonkeyPatch, mode: str = "heuristic", pin: str =
 #: This machine, and another one, as an entry's endpoint names them.
 _HERE = "http://localhost:11434"
 _ELSEWHERE = "http://192.0.2.10:11434"
-
-
-@pytest.fixture(autouse=True)
-def _ollama_is_installed(ollama_app):
-    """The entries here are the bundled Ollama app's, a model server that runs its models where
-    it is: only its type makes an endpoint on this machine a model here."""
 
 
 def _entry(name: str, endpoint: str) -> None:
@@ -332,30 +328,6 @@ def test_local_is_where_the_entry_sends_never_what_it_is_called(
 
 
 # ── 4. the call site is real (not merely defined) ───────────────────────────────
-
-
-def _bridge_function(name: str) -> ast.FunctionDef:
-    tree = ast.parse(BRIDGE.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == name:
-            return node
-    raise AssertionError(f"{name} not found in provider_bridge.py")
-
-
-def test_route_refs_is_called_inside_resolve_provider_for_use_case() -> None:
-    """The anti-dead-control rail: ``route_refs`` must be INVOKED at the resolution seam.
-
-    Asserted on the AST of ``resolve_provider_for_use_case`` itself, so moving the call to a
-    helper that nothing runs, or reducing it to a bare import, fails here.
-    """
-    fn = _bridge_function("resolve_provider_for_use_case")
-    called = {
-        node.func.id
-        for node in ast.walk(fn)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-    }
-    assert "route_refs" in called, "resolve_provider_for_use_case does not CALL route_refs"
-    assert "routing_active" in called, "the routing seam does not check per-use-case enablement"
 
 
 def test_the_seam_sits_after_the_override_and_native_bypasses() -> None:

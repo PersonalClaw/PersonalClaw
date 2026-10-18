@@ -2344,12 +2344,55 @@ NO_TEST_WALKS_A_SOURCE_ROOT_ITSELF = Row(
             ),
         ),
         Control(
+            "an rglob of the package from rails_repo's REPO fails",
+            lambda root: _write(
+                root,
+                "tests/rails/test_walks_from_repo.py",
+                "from rails_repo import REPO\n\n\ndef test_it():\n"
+                "    assert list((REPO / 'src' / 'personalclaw').rglob('*.py'))\n",
+            ),
+        ),
+        Control(
+            "an rglob of a package path a helper module binds fails",
+            lambda root: (
+                _write(
+                    root,
+                    "tests/walk_roots_shared.py",
+                    "from pathlib import Path\n\n"
+                    "SRC = Path(__file__).resolve().parents[1] / 'src' / 'personalclaw'\n",
+                ),
+                _write(
+                    root,
+                    _WALKER,
+                    "from walk_roots_shared import SRC\n\n\ndef test_it():\n"
+                    "    assert list(SRC.rglob('*.py'))\n",
+                ),
+            ),
+        ),
+        Control(
             "an exemption that names no walk any more fails",
             lambda root: _write(
                 root,
                 next(iter(private_walkers.NOT_THROUGH_THE_INDEX)).split("::")[0],
                 "def test_it():\n    pass\n",
             ),
+        ),
+        Control(
+            "a walk of a tests/ path a helper module binds passes",
+            lambda root: (
+                _write(
+                    root,
+                    "tests/walk_roots_shared.py",
+                    "from pathlib import Path\n\nTESTS = Path(__file__).resolve().parent\n",
+                ),
+                _write(
+                    root,
+                    _WALKER,
+                    "from walk_roots_shared import TESTS\n\n\ndef test_it():\n"
+                    "    assert list(TESTS.rglob('*.py'))\n",
+                ),
+            ),
+            fails=False,
         ),
         Control(
             "a walk of tests/ is not a source root, and passes",
@@ -3949,9 +3992,8 @@ ROWS = (*ROWS, NOTHING_IS_MASKED_UNSEEN)
 #
 # A test that checks the source tree runs once per CI run, in the rails job, and never in a
 # suite shard (tools/ci/shards.py leaves tests/rails out of every plan). tools/ci/rails_census.py
-# decides which modules are rails from their source. A security-marked module stays where it is,
-# and a rail that still holds behaviour tests may wait outside while the pending-split list
-# (tools/ci/rails-pending-split.txt) names it: a list that only shrinks.
+# decides which modules are rails from their source. A security-marked module stays where it is;
+# a module with tree tests and behaviour tests is split, its tree half under tests/rails.
 
 _A_RAIL = "import source_index\n\n\ndef test_it():\n    assert source_index.package_files()\n"
 _NOT_A_RAIL = "def test_it():\n    assert 1 + 1 == 2\n"
@@ -3963,8 +4005,8 @@ _MIXED = (
 
 
 def _rails_scaffold(root: Path) -> None:
-    """A tree where the rule holds: a rail in tests/rails, a suite module beside it, a
-    security-marked rail left in place, and a mixed module that the pending list names."""
+    """A tree where the rule holds: a rail in tests/rails, a suite module beside it, and a
+    security-marked rail left in place."""
     _write(root, "tests/rails/test_a_rail.py", _A_RAIL)
     _write(root, "tests/test_behaviour.py", _NOT_A_RAIL)
     _write(
@@ -3972,21 +4014,19 @@ def _rails_scaffold(root: Path) -> None:
         "tests/security/test_guarded.py",
         "import pytest\n\npytestmark = pytest.mark.security\n\n" + _A_RAIL,
     )
-    _write(root, "tests/test_waits.py", _MIXED)
-    _write(root, rails_census.PENDING_SPLIT, "# pending\ntests/test_waits.py\n")
 
 
 EVERY_RAIL_LIVES_IN_TESTS_RAILS = Row(
-    name="every rail lives in tests/rails, or waits on the pending-split list",
+    name="every rail lives in tests/rails",
     check=rails_census.violations,
     scaffold=_rails_scaffold,
     controls=(
         Control(
-            "a rail outside tests/rails that the list does not name fails",
+            "a rail outside tests/rails fails",
             lambda root: _write(root, "tests/test_new_rail.py", _A_RAIL),
         ),
         Control(
-            "a mixed module the list does not name fails",
+            "a mixed module fails: it is split",
             lambda root: _write(root, "tests/test_new_mixed.py", _MIXED),
         ),
         Control(
@@ -3994,21 +4034,13 @@ EVERY_RAIL_LIVES_IN_TESTS_RAILS = Row(
             lambda root: _write(root, "tests/rails/test_behaviour_here.py", _NOT_A_RAIL),
         ),
         Control(
-            "a listed module that is no longer a rail fails: the list only shrinks",
-            lambda root: _write(root, "tests/test_waits.py", _NOT_A_RAIL),
-        ),
-        Control(
-            "a listed module that is gone fails",
-            lambda root: (root / "tests/test_waits.py").unlink(),
-        ),
-        Control(
-            "a list longer than its ceiling fails",
+            "a security-marked rail outside tests/rails passes",
             lambda root: _write(
                 root,
-                rails_census.PENDING_SPLIT,
-                "\n".join(f"tests/test_w{i}.py" for i in range(rails_census.PENDING_CEILING + 1))
-                + "\n",
+                "tests/test_also_guarded.py",
+                "import pytest\n\npytestmark = pytest.mark.security\n\n" + _A_RAIL,
             ),
+            fails=False,
         ),
         Control(
             "a second rail in tests/rails passes",

@@ -29,217 +29,27 @@ from __future__ import annotations
 
 import ast
 import asyncio
-from pathlib import Path
 
 import pytest
-import source_index
+from model_reach_census_shared import (
+    ASKS,
+    _functions,
+    direct_embeds,
+    media_generators,
+    names_used,
+    plain_pools,
+    reads_their_input,
+    registry_builds,
+    scope_carrying_pools,
+    stdio_dispatches,
+)
 
-import personalclaw
 from personalclaw import memory_writes
-
-SRC = Path(personalclaw.__file__).parent
-
-#: The functions that hand work to a model, each asking the one question (or, for the image and
-#: video tools, the helper that asks it). Closed: a new seam is added here with its question.
-SEAMS: dict[str, tuple[str, ...]] = {
-    "embedding_providers/registry.py": ("embed_fn_for", "embed_many_fn_for"),
-    "vector_memory.py": ("VectorMemoryStore._try_embed",),
-    "providers/provider_bridge.py": ("metered", "resolve_provider_for_use_case", "_turn_failover"),
-    "providers/image_input.py": ("resolve_image_reader",),
-    "mcp_artifacts.py": (
-        "_other_model_refusal",
-        "_image_generate",
-        "_video_generate",
-        "regenerate_image_at_slug",
-    ),
-    "llm_helpers.py": ("_one_shot_completion",),
-}
-
-#: What asking looks like: the one question, its raising form, the model the work stays on, or
-#: the media tools' helper that asks it — each spelled as the seam spells it, so a name another
-#: object happens to carry (a provider entry's ``own_model``) is not taken for asking.
-ASKS = frozenset(
-    {
-        "memory_writes.model_may_read",
-        "memory_writes.require_model",
-        "memory_writes.own_model",
-        "_other_model_refusal",
-    }
-)
-
-#: Where a provider's embedding is called directly: the seam that asks, and the owner's Settings
-#: test of a model (a fixed word, outside any chat).
-EMBEDS_DIRECTLY = frozenset({"embedding_providers/registry.py", "providers/model_test.py"})
-
-#: Where a model provider is built from the model registry: the resolution seam (every build for
-#: anything but a person's own turn passes ``metered``), the embedding seam, and the owner's
-#: Settings test of a model.
-BUILDS_MODELS = frozenset(
-    {
-        "providers/provider_bridge.py",
-        "embedding_providers/registry.py",
-        "providers/model_test.py",
-    }
-)
-
-
-#: The readings that run as reading what the person gave the chat: an attachment read for its
-#: text, from wherever its reading starts, and a screen they shared, described. Closed.
-READS_THEIR_INPUT: dict[str, tuple[str, ...]] = {
-    "dashboard/attachment_extract.py": ("AttachmentExtractor._begin", "AttachmentExtractor.get"),
-    "dashboard/chat_runner.py": ("_describe_screen_frame",),
-}
-
-
-def _sources() -> dict[str, ast.Module]:
-    """Every module of the package, parsed, from the suite's one source index."""
-    return {str(path.relative_to(SRC)): tree for path, tree in source_index.package_trees()}
-
 
 # ── the detectors, each a function of one module's tree ─────────────────────────────────────
 
 
-def plain_pools(tree: ast.Module) -> list[int]:
-    """Lines that make a worker pool which does not carry the caller's context: a plain
-    ``ThreadPoolExecutor`` however it is spelled or aliased, or a class built on it other than
-    the one that carries the scope."""
-    aliases = {"ThreadPoolExecutor"}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "concurrent.futures":
-            aliases |= {a.asname or a.name for a in node.names if a.name == "ThreadPoolExecutor"}
-    found: list[int] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            func = node.func
-            if (isinstance(func, ast.Name) and func.id in aliases) or (
-                isinstance(func, ast.Attribute) and func.attr == "ThreadPoolExecutor"
-            ):
-                found.append(node.lineno)
-        elif isinstance(node, ast.ClassDef) and node.name != "ScopeCarryingExecutor":
-            for base in node.bases:
-                named = base.id if isinstance(base, ast.Name) else getattr(base, "attr", "")
-                if named in aliases or named == "ThreadPoolExecutor":
-                    found.append(node.lineno)
-    return found
-
-
-def scope_carrying_pools(tree: ast.Module) -> int:
-    return sum(
-        1
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "ScopeCarryingExecutor"
-    )
-
-
-def _functions(tree: ast.Module) -> dict[str, ast.AST]:
-    """Every function in the module by its qualified name (``Class.method`` for a method)."""
-    out: dict[str, ast.AST] = {}
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            out[node.name] = node
-        elif isinstance(node, ast.ClassDef):
-            for item in node.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    out[f"{node.name}.{item.name}"] = item
-    return out
-
-
-def names_used(node: ast.AST) -> set[str]:
-    """Every name the function reads or calls: each bare name, each attribute name, and each
-    attribute with the name it is read from (``memory_writes.model_may_read``)."""
-    used: set[str] = set()
-    for sub in ast.walk(node):
-        if isinstance(sub, ast.Name):
-            used.add(sub.id)
-        elif isinstance(sub, ast.Attribute):
-            used.add(sub.attr)
-            if isinstance(sub.value, ast.Name):
-                used.add(f"{sub.value.id}.{sub.attr}")
-    return used
-
-
-def direct_embeds(tree: ast.Module) -> list[int]:
-    """Lines that call a provider's embedding (``.embed``, ``.embed_batch``, ``.get_embed_fn``)
-    on anything but ``self``: a holder's own wrapper method calls through the seam."""
-    return [
-        node.lineno
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr in {"embed", "embed_batch", "get_embed_fn"}
-        and not (isinstance(node.func.value, ast.Name) and node.func.value.id == "self")
-    ]
-
-
-def registry_builds(tree: ast.Module) -> list[int]:
-    """Lines that build a model provider from the model registry: ``registry.build(...)`` or
-    ``get_default_registry().build(...)``."""
-    found: list[int] = []
-    for node in ast.walk(tree):
-        if not (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "build"
-        ):
-            continue
-        recv = node.func.value
-        if (isinstance(recv, ast.Name) and recv.id == "registry") or (
-            isinstance(recv, ast.Call)
-            and isinstance(recv.func, ast.Name)
-            and recv.func.id == "get_default_registry"
-        ):
-            found.append(node.lineno)
-    return found
-
-
-def media_generators(tree: ast.Module) -> list[str]:
-    """Functions that resolve the bound image or video model and generate with it."""
-    out: list[str] = []
-    for name, fn in _functions(tree).items():
-        used = names_used(fn)
-        if used & {"active_image_gen", "active_video_gen"} and used & {"generate", "edit"}:
-            out.append(name)
-    return out
-
-
-def reads_their_input(tree: ast.Module) -> list[str]:
-    """Functions that run work as reading what the person gave the chat."""
-    return [
-        name
-        for name, fn in _functions(tree).items()
-        if "memory_writes.reading_their_input" in names_used(fn)
-    ]
-
-
-def stdio_dispatches(tree: ast.Module) -> list[str]:
-    """The function each stdio tool server started in the module hands its calls to."""
-    out: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        named = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
-        if named != "run_mcp_stdio_loop":
-            continue
-        dispatch = node.args[3] if len(node.args) > 3 else None
-        for kw in node.keywords:
-            if kw.arg == "call_tool_fn":
-                dispatch = kw.value
-        out.append(ast.unparse(dispatch) if dispatch is not None else "")
-    return out
-
-
 # ── the scope reaches every worker thread ───────────────────────────────────────────────────
-
-
-def test_every_worker_pool_carries_the_scope_of_the_work_it_is_handed():
-    trees = _sources()
-    found = {rel: lines for rel, tree in trees.items() if (lines := plain_pools(tree))}
-    assert found == {}, f"a worker pool that drops which chat its work is for: {found}"
-    carried = sum(scope_carrying_pools(tree) for tree in trees.values())
-    assert carried >= 15, f"floor: the census read the tree ({carried} scope-carrying pools)"
 
 
 @pytest.mark.parametrize(
@@ -287,31 +97,6 @@ def test_a_worker_of_the_pool_knows_the_chat_its_work_is_for():
 # ── the seams ask the one question ──────────────────────────────────────────────────────────
 
 
-def test_every_seam_that_hands_work_to_a_model_asks_the_one_question():
-    trees = _sources()
-    missing: list[str] = []
-    for rel, names in SEAMS.items():
-        functions = _functions(trees[rel])
-        for name in names:
-            assert name in functions, f"the seam {rel}::{name} no longer exists; update SEAMS"
-            if not names_used(functions[name]) & ASKS:
-                missing.append(f"{rel}::{name}")
-    assert missing == [], f"a seam that hands work to a model without asking: {missing}"
-
-
-def test_no_seam_asks_an_older_question_instead():
-    """``writes_refused`` answers whether work may WRITE memory. A seam that asked it instead of
-    the one question would let a chat's words reach a model the moment the two answers part."""
-    trees = _sources()
-    older = [
-        f"{rel}::{name}"
-        for rel, names in SEAMS.items()
-        for name in names
-        if "memory_writes.writes_refused" in names_used(_functions(trees[rel])[name])
-    ]
-    assert older == []
-
-
 def test_the_seam_census_finds_a_seam_that_does_not_ask():
     asks = ast.parse(
         "def seam(ref):\n    if not memory_writes.model_may_read(ref):\n        return\n"
@@ -325,35 +110,6 @@ def test_the_seam_census_finds_a_seam_that_does_not_ask():
 
 
 # ── nothing reaches a model around them ─────────────────────────────────────────────────────
-
-
-def test_nothing_calls_an_embedding_model_except_through_the_seam():
-    trees = _sources()
-    found = {rel: lines for rel, tree in trees.items() if (lines := direct_embeds(tree))}
-    stray = {rel: lines for rel, lines in found.items() if rel not in EMBEDS_DIRECTLY}
-    assert stray == {}, f"an embedding model called around the one question: {stray}"
-    assert "embedding_providers/registry.py" in found, "floor: the census sees the seam's own calls"
-
-
-def test_nothing_builds_a_model_provider_except_the_seams():
-    trees = _sources()
-    found = {rel: lines for rel, tree in trees.items() if (lines := registry_builds(tree))}
-    stray = {rel: lines for rel, lines in found.items() if rel not in BUILDS_MODELS}
-    assert stray == {}, f"a model provider built around the seams: {stray}"
-    assert "providers/provider_bridge.py" in found, "floor: the census sees the resolution seam"
-
-
-def test_every_function_that_makes_media_with_the_bound_model_asks():
-    trees = _sources()
-    makers = {rel: names for rel, tree in trees.items() if (names := media_generators(tree))}
-    unasked = [
-        f"{rel}::{name}"
-        for rel, names in makers.items()
-        for name in names
-        if not names_used(_functions(trees[rel])[name]) & ASKS
-    ]
-    assert unasked == [], f"an image or video model reached without asking: {unasked}"
-    assert len(makers.get("mcp_artifacts.py", [])) == 3, f"floor: {makers}"
 
 
 @pytest.mark.parametrize(
@@ -383,12 +139,6 @@ def test_the_media_census_finds_a_maker_that_does_not_ask():
 # ── the scope reaches the tool process an agent CLI runs ────────────────────────────────────
 
 
-def test_every_tool_server_an_agent_cli_runs_serves_each_call_as_its_chat():
-    trees = _sources()
-    found = {rel: names for rel, tree in trees.items() if (names := stdio_dispatches(tree))}
-    assert found == {"mcp_core.py": ["_call_as_its_session"]}, found
-
-
 def test_the_server_census_finds_a_server_that_does_not():
     source = 'run_mcp_stdio_loop("other", "1.0.0", list_tools, call_tool)\n'
     assert stdio_dispatches(ast.parse(source)) == ["call_tool"]
@@ -397,12 +147,6 @@ def test_the_server_census_finds_a_server_that_does_not():
 
 
 # ── the one exception: what the person gives the chat ───────────────────────────────────────
-
-
-def test_only_what_the_person_gives_the_chat_is_read_by_the_model_set_up_for_it():
-    trees = _sources()
-    found = {rel: names for rel, tree in trees.items() if (names := reads_their_input(tree))}
-    assert found == {rel: list(names) for rel, names in READS_THEIR_INPUT.items()}, found
 
 
 def test_the_exception_census_finds_a_reading_that_takes_it():

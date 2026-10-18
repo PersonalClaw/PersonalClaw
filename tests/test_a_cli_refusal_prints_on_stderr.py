@@ -15,107 +15,13 @@ program parses (the eval child, the optimize action), the function is named belo
 
 from __future__ import annotations
 
-import ast
 import os
 import subprocess
 import sys
 import textwrap
-from dataclasses import dataclass
-from pathlib import Path
 
 import pytest
-import source_index
-
-import personalclaw
-
-PACKAGE = Path(personalclaw.__file__).parent
-
-#: Functions whose stdout before a failing status is their real output, and why.
-REPORTS_WITH_A_STATUS = {
-    ("apps/quality.py", "main"): "the verification report is the output; 1 says what failed",
-    ("cli_commands.py", "_security"): "`security verify` reports the log; 1 says it is tampered",
-    ("cli_doctor.py", "_doctor"): "the doctor's report ends on its verdict and what to fix",
-    ("inbound/auth.py", "_show_token"): "`inbound token show` answers either way; 1 = none works",
-    ("evals/child.py", "main"): "the result line is the protocol its parent reads on stdout",
-    ("evals/optimize.py", "main"): "JSON on stdout is the bash action's protocol, errors too",
-}
-
-
-@dataclass(frozen=True)
-class _Site:
-    module: str
-    function: str
-    line: int
-    text: str
-
-
-def _nonzero_exit(stmt: ast.stmt) -> bool:
-    def code(node: ast.AST | None) -> int | None:
-        return node.value if isinstance(node, ast.Constant) and type(node.value) is int else None
-
-    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
-        func = stmt.value.func
-        if isinstance(func, ast.Attribute) and func.attr == "exit":
-            if isinstance(func.value, ast.Name) and func.value.id == "sys" and stmt.value.args:
-                return code(stmt.value.args[0]) not in (None, 0)
-    if isinstance(stmt, ast.Raise) and isinstance(stmt.exc, ast.Call):
-        if getattr(stmt.exc.func, "id", "") == "SystemExit" and stmt.exc.args:
-            return code(stmt.exc.args[0]) not in (None, 0)
-    if isinstance(stmt, ast.Return):
-        return code(stmt.value) not in (None, 0)
-    return False
-
-
-def _stdout_print(stmt: ast.stmt) -> bool:
-    return (
-        isinstance(stmt, ast.Expr)
-        and isinstance(stmt.value, ast.Call)
-        and getattr(stmt.value.func, "id", "") == "print"
-        and not any(k.arg == "file" for k in stmt.value.keywords)
-    )
-
-
-def _own_nodes(fn: ast.FunctionDef | ast.AsyncFunctionDef):
-    """``fn`` and its nodes, without those of a function nested in it (walked on its own)."""
-    stack: list[ast.AST] = [fn]
-    while stack:
-        node = stack.pop()
-        yield node
-        for child in ast.iter_child_nodes(node):
-            if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-                stack.append(child)
-
-
-def _refusals_on_stdout(source: str | ast.Module, module: str) -> set[_Site]:
-    """Each stdout print in a block that runs straight into a non-zero exit, in *source* (text,
-    or its tree)."""
-    sites: set[_Site] = set()
-    tree = source if isinstance(source, ast.Module) else ast.parse(source)
-    for fn in ast.walk(tree):
-        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for node in _own_nodes(fn):
-            blocks = [getattr(node, f, None) for f in ("body", "orelse", "finalbody")]
-            blocks += [h.body for h in getattr(node, "handlers", []) or []]
-            for block in blocks:
-                if not (isinstance(block, list) and block and isinstance(block[0], ast.stmt)):
-                    continue
-                for i, stmt in enumerate(block):
-                    if not _nonzero_exit(stmt):
-                        continue
-                    j = i - 1
-                    while j >= 0 and _stdout_print(block[j]):
-                        sites.add(_Site(module, fn.name, block[j].lineno, ast.unparse(block[j])))
-                        j -= 1
-    return sites
-
-
-def _package_sites() -> set[_Site]:
-    sites: set[_Site] = set()
-    for path, tree in source_index.package_trees():
-        module = path.relative_to(PACKAGE).as_posix()
-        sites |= _refusals_on_stdout(tree, module)
-    return sites
+from a_cli_refusal_prints_on_stderr_shared import _refusals_on_stdout
 
 
 def test_the_detector_finds_a_refusal_and_nothing_else():
@@ -151,23 +57,6 @@ def test_the_detector_finds_a_refusal_and_nothing_else():
         ("refuses_with_a_hint", "print('❌ Not a usable version')"),
         ("refuses_with_a_hint", "print('   Give a release version')"),
     }
-
-
-def test_no_command_prints_a_refusal_on_stdout():
-    unexpected = sorted(
-        (s for s in _package_sites() if (s.module, s.function) not in REPORTS_WITH_A_STATUS),
-        key=lambda s: (s.module, s.line),
-    )
-    assert not unexpected, "a refusal printed on stdout (give it file=sys.stderr):\n" + "\n".join(
-        f"  {s.module}:{s.line} in {s.function}: {s.text}" for s in unexpected
-    )
-
-
-def test_every_named_report_is_still_there():
-    """A named function that no longer reports before a failing status excuses nothing, so a
-    stale entry is removed rather than left to excuse the next refusal written there."""
-    reporting = {(s.module, s.function) for s in _package_sites()}
-    assert set(REPORTS_WITH_A_STATUS) <= reporting, set(REPORTS_WITH_A_STATUS) - reporting
 
 
 def test_token_with_no_gateway_puts_nothing_on_stdout(tmp_path):

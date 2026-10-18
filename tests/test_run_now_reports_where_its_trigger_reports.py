@@ -10,9 +10,7 @@ as for a fire.
 
 from __future__ import annotations
 
-import ast
 import asyncio
-import inspect
 import os
 from typing import Any
 
@@ -196,22 +194,3 @@ async def test_a_run_now_that_only_started_its_work_says_nothing_yet(home, monke
     await asyncio.sleep(0.1)
 
     assert handle.sent == [] and state.notes == []
-
-
-def test_every_run_of_yours_hands_the_dispatch_its_state():
-    """A caller that passes no state reports nowhere, which is the defect again one caller later.
-    Three callers: your Run now, your answer to a parked run, and the restart review's Run now."""
-    callers = 0
-    for module in (trigger_runs, handlers):
-        for node in ast.walk(ast.parse(inspect.getsource(module))):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-            if name != "_dispatch_store_action":
-                continue
-            callers += 1
-            assert "state" in {k.arg for k in node.keywords}, ast.unparse(node)
-    # Three callers remain since webhook fires and view refreshes moved to the fire dispatch. The
-    # floor is that count, so a caller the scan stops seeing fails here instead of passing empty.
-    assert callers >= 3, f"found only {callers} callers; the scan is not seeing them"

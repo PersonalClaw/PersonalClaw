@@ -12,14 +12,11 @@ Every case here is a real zone across a real change, from a fixed clock.
 
 from __future__ import annotations
 
-import ast
-import pathlib
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
-import source_index
 
 from personalclaw import schedule as schedule_mod
 from personalclaw.triggers import arm
@@ -165,28 +162,3 @@ def test_a_skip_date_across_a_change_is_read_on_that_day():
 
 
 # ── one owner ────────────────────────────────────────────────────────────────────────────────
-
-SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "personalclaw"
-
-
-def _constructions(path: pathlib.Path) -> list[int]:
-    tree = source_index.tree(path)
-    return [
-        node.lineno
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "croniter"
-    ]
-
-
-def test_a_cron_is_stepped_in_one_place():
-    """Stepping one anywhere else hands croniter an aware start again. `is_valid` and `match`
-    (attribute calls) are not steps, and stay where they are."""
-    elsewhere = {
-        path.relative_to(SRC).as_posix(): lines
-        for path in source_index.package_files()
-        if path.name != "cron_clock.py" and (lines := _constructions(path))
-    }
-    assert elsewhere == {}
-    assert _constructions(SRC / "cron_clock.py"), "the scan found the one place it steps"

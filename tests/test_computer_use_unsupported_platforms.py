@@ -45,13 +45,17 @@ import pathlib
 import platform
 import sys
 
+import computer_use_unsupported_platforms_shared
 import pytest
+from computer_use_unsupported_platforms_shared import PENDING
 
-from personalclaw.computer_use import driver_host, enable_state, linux_driver, macos_driver, service
+from personalclaw.computer_use import driver_host, enable_state, macos_driver, service
 from personalclaw.computer_use import tools as ct
-from personalclaw.computer_use import unsupported_platform, windows_driver
+from personalclaw.computer_use import unsupported_platform
 from personalclaw.errors import ERROR_CODES
 from personalclaw.manifest_meta import TOOL_META
+
+_isolated = computer_use_unsupported_platforms_shared._isolated
 
 ARMED_APP = "TextEdit"
 CODE = unsupported_platform.ERR_PLATFORM_UNSUPPORTED
@@ -59,11 +63,6 @@ CODE = unsupported_platform.ERR_PLATFORM_UNSUPPORTED
 #: The repository's ``src``, seeded into the spawned child so it runs this tree.
 SRC = str(pathlib.Path(__file__).resolve().parents[1] / "src")
 
-#: ``(module, platform.system() value, the API its refusal must name)``.
-PENDING = (
-    (windows_driver, "Windows", "UI Automation"),
-    (linux_driver, "Linux", "AT-SPI"),
-)
 
 #: The seven driver operations, derived from the tool surface rather than tabulated — a second
 #: list is a second place to forget one, and a forgotten op would read here as "covered".
@@ -74,25 +73,6 @@ OPS = tuple(service._driver_op(spec) for spec in ct.TOOL_SURFACE)
 _NEEDS_DARWIN = pytest.mark.skipif(
     platform.system() != "Darwin", reason="an unsimulated macOS answer needs a macOS host"
 )
-
-
-@pytest.fixture(autouse=True)
-def _isolated(tmp_path, monkeypatch):
-    """Redirect the keystone to ``tmp_path`` and clear the snapshot store, every test.
-
-    Unconditional, like the dispatch suite's: a test that resolved the real keystone would read
-    the developer's own arming state, and the refusal messages quote the resolved path.
-
-    A home of its own too, named in the environment, because the dispatch runs the driver in a
-    real child process: a PersonalClaw interpreter, which resolves its home from what it inherits.
-    """
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
-    monkeypatch.setenv(enable_state.ENABLE_PATH_ENV, str(tmp_path / "enable.json"))
-    enable_state.reset_enable_state()
-    service.reset_snapshots()
-    yield
-    enable_state.reset_enable_state()
-    service.reset_snapshots()
 
 
 def _arm(tmp_path, *apps: str) -> None:
@@ -223,27 +203,6 @@ def test_the_import_scanner_detects_an_os_library():
     assert _offending_imports("import comtypes\nfrom gi.repository import Atspi\n") == [
         "comtypes",
         "gi.repository",
-    ]
-
-
-@pytest.mark.parametrize(("module", "_system", "_api"), PENDING)
-def test_a_pending_driver_re_derives_no_wording(module, _system, _api):
-    """One refusal, two modules. Neither platform module may build its own envelope or its own
-    ``DriverError``: two copies of a WHAT/WHY/FIX drift the moment one is edited, which is the
-    family the structural-duplication ratchet counts. The sentence lives in
-    ``unsupported_platform`` and these modules supply only the two facts that differ."""
-    tree = ast.parse(pathlib.Path(module.__file__).read_text(encoding="utf-8"))
-    built = [
-        node.func.id
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-    ]
-    assert "DriverError" not in built
-    assert not [
-        d
-        for d in ast.walk(tree)
-        if isinstance(d, ast.Dict)
-        and any(isinstance(k, ast.Constant) and k.value == "error" for k in d.keys)
     ]
 
 

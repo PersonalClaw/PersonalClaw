@@ -36,21 +36,12 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 
-import pytest
-import yaml
+from desktop_macos_signature_gate_shared import GATE_SCRIPT_NAME, MAKEFILE, REPO_ROOT
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-MAKEFILE = REPO_ROOT / "Makefile"
-RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 DESKTOP_PACKAGE_JSON = REPO_ROOT / "desktop" / "package.json"
 GATE = REPO_ROOT / "scripts" / "verify_macos_app_signature.sh"
 AFTER_PACK = REPO_ROOT / "desktop" / "afterPack.js"
-
-#: The gate's filename, referenced by both callers. Kept as one constant so a rename has to
-#: update this file too rather than quietly unwiring one of the two call sites.
-GATE_SCRIPT_NAME = "scripts/verify_macos_app_signature.sh"
 
 
 def _make_recipe(target: str) -> list[str]:
@@ -73,13 +64,6 @@ def _desktop_build_config() -> dict:
     config = json.loads(DESKTOP_PACKAGE_JSON.read_text(encoding="utf-8"))["build"]
     assert config, "desktop/package.json has no build block — these rails would pass vacuously"
     return config
-
-
-def _desktop_mac_job() -> dict:
-    workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
-    job = workflow["jobs"]["desktop-mac"]
-    assert job.get("steps"), "desktop-mac has no steps — these rails would pass vacuously"
-    return job
 
 
 # ── the gate exists and is runnable ────────────────────────────────────────────────────────
@@ -183,32 +167,3 @@ def test_desktop_dist_verifies_the_built_app() -> None:
         f"desktop-dist must invoke {GATE_SCRIPT_NAME} after the build, so a developer on a Mac "
         "that holds a Developer identity cannot produce a mis-signed app silently"
     )
-
-
-def test_the_release_mac_job_verifies_the_app_inside_the_dmg() -> None:
-    """CI never reproduced the foreign-identity bug (no keychain) but WOULD reproduce the seal bug.
-
-    The stale linker seal comes from Electron itself, not from the keychain, so an
-    identity-less runner produces it too. Checking the copy inside the mounted dmg is what
-    holds local and CI artifacts to one standard.
-    """
-    steps = _desktop_mac_job()["steps"]
-    runs = "\n".join(step.get("run", "") for step in steps)
-    assert GATE_SCRIPT_NAME in runs, (
-        f"release.yml's desktop-mac job must invoke {GATE_SCRIPT_NAME} on the app it mounts "
-        "from the dmg; otherwise a stale-linker-seal regression ships an uninstallable dmg"
-    )
-
-
-@pytest.mark.parametrize("forbidden", ["assert_macos_app_unsigned"])
-def test_no_call_site_still_names_the_retired_gate(forbidden: str) -> None:
-    """The gate was renamed when it stopped being only an "is it unsigned" check.
-
-    A call site left on the old name is a build that dies at the invocation — or worse, a
-    reader who believes the old, authority-only contract still applies.
-    """
-    for path in (MAKEFILE, RELEASE_WORKFLOW):
-        assert forbidden not in path.read_text(encoding="utf-8"), (
-            f"{path.relative_to(REPO_ROOT)} still references the retired {forbidden!r}; the gate "
-            f"is now {GATE_SCRIPT_NAME}"
-        )

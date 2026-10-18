@@ -22,11 +22,9 @@ import logging
 from pathlib import Path
 
 import pytest
-import source_index
 
 from personalclaw import after_turn_review as atr
 from personalclaw.guardrails.audit import (
-    CALLERS,
     UNATTRIBUTED,
     AttemptRecord,
     caller_scope,
@@ -174,19 +172,6 @@ class TestTheVocabularyIsClosed:
             )
         assert read_recent()[0]["caller"] == "", "an unknown caller is dropped, not stored"
         assert any("unknown caller" in r.message for r in caplog.records)
-
-    def test_every_member_of_the_vocabulary_has_a_production_binder(self):
-        """No declared-but-unbound member. A vocabulary entry nothing binds is an inert
-        surface, and this repo's whole inert-surface census exists because that keeps
-        happening. Readers in ``tests/`` deliberately do not count."""
-        found: set[str] = set()
-        for path in source_index.package_files():
-            text = source_index.text(path)
-            for name in CALLERS:
-                if f'caller_scope("{name}")' in text:
-                    found.add(name)
-        assert found, "vacuity guard: the scan matched nothing at all"
-        assert found == set(CALLERS), f"unbound caller(s): {sorted(set(CALLERS) - found)}"
 
 
 def _shipped_default_level() -> int:

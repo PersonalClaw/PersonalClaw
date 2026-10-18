@@ -9,10 +9,9 @@ behaves exactly as it does today.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
-import source_index
+from identity_shared import REPO
 
 from personalclaw.identity import (
     DEFAULT_USER_NAME,
@@ -22,8 +21,6 @@ from personalclaw.identity import (
     operator_name,
     slugify_username,
 )
-
-REPO = Path(__file__).resolve().parents[1]
 
 
 class TestSlugify:
@@ -91,20 +88,6 @@ class TestOneSlugSuggester:
     """
 
     TS_MODULE = REPO / "web" / "src" / "app" / "identity.tsx"
-
-    def test_exactly_one_frontend_slug_implementation(self):
-        """NEGATIVE CONTROL. A second NFKD folder under ``web/src`` means a second
-        convention was minted — which is how this change's predecessor ended up with a
-        Python function and a TypeScript function claiming the same job."""
-        folders = sorted(
-            p.relative_to(REPO).as_posix()
-            for p in source_index.web_files()
-            if p.suffix.startswith(".ts") and "NFKD" in source_index.text(p)
-        )
-        assert folders == [self.TS_MODULE.relative_to(REPO).as_posix()], (
-            "the display-name→handle rule must have ONE home "
-            f"(web/src/app/identity.tsx); found {folders}"
-        )
 
     def test_the_frontend_cap_still_equals_this_modules(self):
         src = self.TS_MODULE.read_text(encoding="utf-8")

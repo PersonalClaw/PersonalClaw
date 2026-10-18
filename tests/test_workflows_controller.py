@@ -23,7 +23,7 @@ import asyncio
 import time
 
 import pytest
-import source_index
+import workflows_controller_shared
 
 from personalclaw.workflows import journal as J
 from personalclaw.workflows import node_bindings, store
@@ -42,22 +42,14 @@ from personalclaw.workflows.models import (
 from personalclaw.workflows.step_usage import NOTHING_SENT
 from personalclaw.workflows.tick import Limits
 
+_isolated_home = workflows_controller_shared._isolated_home
+
 pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
-
-
-@pytest.fixture(autouse=True)
-def _isolated_home(tmp_path, monkeypatch):
-    """Every test gets its own config dir. Destructive-by-nature tests (retention sweeps)
-    must never see a real home."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
-    return home
 
 
 def _make_run(spec: dict, inputs: dict | None = None, **kw) -> WorkflowRun:
@@ -494,37 +486,6 @@ class TestPerNodeStallWindow:
 
         root = Node.from_dict({"kind": "sequence", "id": "r", "children": []})
         assert liveness._node_stall_window(_Fake(root), "root.children[9]") == 300
-
-    def test_every_shipped_template_override_is_now_honoured(self) -> None:
-        """The four real declarations, read from the bundled library rather than restated — a
-        hand-copied list would stop tracking the templates it is meant to protect."""
-        import json
-
-        declared: list[tuple[str, int]] = []
-        bundled = source_index.REPO / "src/personalclaw/workflows/bundled"
-        for path in source_index.package_any_files():
-            if path.name != "workflow.json" or path.parent.parent != bundled:
-                continue
-            spec = json.loads(source_index.text(path))
-
-            def walk(node: object) -> None:
-                if isinstance(node, dict):
-                    cfg = node.get("config")
-                    if isinstance(cfg, dict) and "timeout_stall_secs" in cfg:
-                        declared.append((path.parent.name, int(cfg["timeout_stall_secs"])))
-                    for value in node.values():
-                        walk(value)
-                elif isinstance(node, list):
-                    for value in node:
-                        walk(value)
-
-            walk(spec)
-
-        assert (
-            declared
-        ), "no bundled template declares timeout_stall_secs — did the key get renamed?"
-        for name, want in declared:
-            assert self._window({"timeout_stall_secs": want}) == want, name
 
 
 class TestWaitAndGates:

@@ -19,29 +19,14 @@ import socket
 import time
 from unittest.mock import patch
 
+import companion_discovery_shared
 import pytest
 
 from personalclaw.companion import discovery as disc
 
+_isolate = companion_discovery_shared._isolate
+
 LAN_HOST = "192.168.1.37"
-
-
-@pytest.fixture(autouse=True)
-def _isolate(tmp_path):
-    """Point config_dir/config_path at a temp home and reset the module's process state.
-
-    ``discovery`` holds a process-global advertiser (the gateway has exactly one), so a test
-    that left one running would leak a live socket — and an announcement — into the next.
-    """
-    cfg = tmp_path / "config.json"
-    cfg.write_text("{}", encoding="utf-8")
-    with (
-        patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
-        patch("personalclaw.config.loader.config_path", return_value=cfg),
-    ):
-        disc.shutdown()
-        yield tmp_path
-        disc.shutdown()
 
 
 def _service(name: str = "Living room Mac", port: int = 10166) -> disc.ServiceInfo:
@@ -535,27 +520,6 @@ def test_discovery_off_leaves_the_manual_pairing_path_working(_isolate, stub_adv
     assert expires_at > time.time()
     assert enrollment.redeem_code(code) is True
     assert enrollment.redeem_code(code) is False
-
-
-def test_pairing_cannot_depend_on_discovery():
-    """Structural: the auth layer must not import discovery, so it can never gate pairing.
-
-    "Degradable" is only true if it cannot be made untrue by a later edit. If enrollment
-    ever imported this module, turning discovery off would become a way to break pairing.
-    """
-    import ast
-    import pathlib
-
-    from personalclaw.auth import enrollment
-
-    tree = ast.parse(pathlib.Path(enrollment.__file__).read_text(encoding="utf-8"))
-    modules: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            modules.append(node.module)
-        elif isinstance(node, ast.Import):
-            modules += [a.name for a in node.names]
-    assert not [m for m in modules if "companion" in m], modules
 
 
 def test_discovery_module_never_touches_the_auth_rail():

@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-import source_index
+from tools_handler_shared import _disable, _install_provider, _RecordingProvider
 
 import personalclaw.dashboard.handlers.tools as tools_mod
 from personalclaw.mcp_client import McpClientRegistry
@@ -381,60 +381,12 @@ async def test_toggle_accepts_a_real_bool_and_known_tool(monkeypatch):
 # store was always correct, and asserting it again would have passed before the fix.
 
 
-class _RecordingProvider:
-    """A provider that records whether it was reached. Reaching it IS the bug."""
-
-    def __init__(
-        self,
-        tool_name: str,
-        provider_tag: str = "personalclaw-artifacts",
-        risk: str = "destructive",
-    ) -> None:
-        from personalclaw.tool_providers.base import RiskLevel, ToolDefinition
-
-        self.name = provider_tag
-        self.invoked: list[tuple[str, dict]] = []
-        self._defs = [
-            ToolDefinition(
-                name=tool_name,
-                description="d",
-                provider=provider_tag,
-                risk_level=RiskLevel(risk),
-            )
-        ]
-
-    async def list_tools(self):
-        return self._defs
-
-    async def invoke(self, name, arguments):
-        from personalclaw.tool_providers.base import ToolResult
-
-        self.invoked.append((name, dict(arguments or {})))
-        return ToolResult(success=True, output="[]")
-
-
-def _install_provider(monkeypatch, provider):
-    monkeypatch.setattr(
-        "personalclaw.tool_providers.registry.get_provider",
-        lambda name: provider if name == provider.name else None,
-    )
-    monkeypatch.setattr("personalclaw.tool_providers.registry.list_providers", lambda: [provider])
-
-
 def _install_platform(monkeypatch, provider):
     """Put *provider* in the PLATFORM slot of the route's surface — the one that owns `bash` in
     production — with nothing registered. A stand-in for the platform's own tools has to go there:
     the route resolves a name over the surface in order, platform first, as an agent does."""
     monkeypatch.setattr(tools_mod, "_platform_provider_for_invoke", lambda: (provider, ""))
     monkeypatch.setattr("personalclaw.tool_providers.registry.list_providers", lambda: [])
-
-
-def _disable(monkeypatch, *keys: str):
-    """Point the preference store at an explicit disabled set (no real home touched)."""
-    monkeypatch.setattr("personalclaw.tool_providers.tool_prefs.load_disabled", lambda: set(keys))
-    monkeypatch.setattr(
-        "personalclaw.tool_providers.tool_prefs.load_disabled_providers", lambda: set()
-    )
 
 
 @pytest.mark.asyncio
@@ -555,36 +507,6 @@ async def test_a_disabled_provider_refuses_its_whole_toolset(monkeypatch):
     resp = await tools_mod.api_tool_invoke(_InvokeRequest({"tool": "artifact_list"}))
     assert resp.status == 403
     assert prov.invoked == []
-
-
-def test_only_two_execution_paths_exist_and_both_are_gated():
-    """The census. This fix is complete only if no THIRD path calls a provider ungated.
-
-    `runtime.py` dispatches through an index built with the disabled filter already
-    applied at assembly, and `handlers/tools.py` now checks before dispatch. A new
-    `.invoke(` on a tool provider needs its own gate, and this reds until it has one.
-    """
-    import pathlib
-    import re
-
-    src = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
-    # File → how many dispatch sites it holds. Files and counts, deliberately NOT line
-    # numbers: an edit anywhere above a call site would move its line and red this test
-    # for a reason that has nothing to do with gating. A SECOND `.invoke(` appearing in an
-    # already-listed file is still caught, because the count changes.
-    hits: dict[str, int] = {}
-    for py in source_index.package_files():
-        for line in source_index.text(py).splitlines():
-            if re.search(r"\b(prov|provider)\.invoke\(", line):
-                rel = py.relative_to(src).as_posix()
-                hits[rel] = hits.get(rel, 0) + 1
-    assert hits == {
-        "agents/native/runtime.py": 1,
-        "dashboard/handlers/tools.py": 1,
-    }, (
-        "the set of tool-execution call sites changed — a new one needs the same "
-        f"tool_prefs gate before it dispatches. Found: {hits}"
-    )
 
 
 # ── #506: the route's risk_level GATES execution, it does not only stamp the audit ─────

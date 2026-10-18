@@ -19,12 +19,15 @@ import zlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import screen_context_shared
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_state
 
 from personalclaw.dashboard import screen_context
 from personalclaw.usage_ledger import Attribution
+
+_clean_slots = screen_context_shared._clean_slots
 
 
 def _png_bytes(marker: bytes = b"SCREENMARK") -> bytes:
@@ -95,14 +98,6 @@ def _marker_hits(root, marker: bytes) -> list[str]:
         if any(n in blob for n in needles):
             hits.append(str(p))
     return hits
-
-
-@pytest.fixture(autouse=True)
-def _clean_slots():
-    """No slot leaks between tests — the registry is process-global by design."""
-    screen_context.clear_all()
-    yield
-    screen_context.clear_all()
 
 
 # ── The slot itself ───────────────────────────────────────────────────────────
@@ -183,54 +178,6 @@ class TestSlot:
         for i in range(screen_context._MAX_SESSIONS + 12):
             screen_context.stage(f"s{i}", f)
         assert screen_context.live_sessions() == screen_context._MAX_SESSIONS
-
-    def test_module_holds_no_file_write_path(self):
-        """The ephemerality guarantee, asserted structurally.
-
-        A future edit that gave this module a write path would be the leak, so the
-        module is checked for one. It catches the change at the moment it is made
-        rather than after some later test happens to notice bytes on disk.
-
-        Asserted over the **AST**, not the source text. A substring scan cannot tell
-        a call from prose, so it reddens on a docstring that merely NAMES a
-        filesystem API — meaning documenting this guarantee would break the test
-        asserting it. Walking the tree looks at calls and imports only, so the
-        module's docstrings stay free to discuss disk at length.
-        """
-        import ast
-        import pathlib
-
-        tree = ast.parse(pathlib.Path(screen_context.__file__).read_text())
-
-        called = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
-                if name:
-                    called.add(name)
-        writes = called & {
-            "open",
-            "write_bytes",
-            "write_text",
-            "atomic_write",
-            "mkdir",
-            "touch",
-            "unlink",
-            "rename",
-            "replace",
-        }
-        assert not writes, f"screen_context gained a disk call: {sorted(writes)}"
-
-        imported = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                imported.update(a.name.split(".")[0] for a in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                imported.add(node.module.split(".")[0])
-        # No filesystem/db module is even reachable from here, so a write path cannot
-        # be smuggled in behind an alias the call scan above would not recognise.
-        fs = imported & {"pathlib", "os", "io", "shutil", "tempfile", "sqlite3", "pickle"}
-        assert not fs, f"screen_context gained a filesystem import: {sorted(fs)}"
 
 
 # ── Delivery routing: the capability branch ───────────────────────────────────

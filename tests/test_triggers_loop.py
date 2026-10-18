@@ -23,7 +23,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-import source_index
 
 from personalclaw.triggers import claims as C
 from personalclaw.triggers import loop as L
@@ -1082,27 +1081,3 @@ def test_a_queued_fire_still_drains_through_the_session(tmp_path):
     asyncio.run(L.tick_once(store, runner=runner, sessions=manager, base_dir=tmp_path, now=NOW))
     assert seen == ["j"]
     assert manager.dequeue(WK.session_key_for("j")) is None
-
-
-def test_nothing_in_the_tree_creates_a_trigger_session(tmp_path):
-    """The census behind the fix, so the reasoning cannot rot.
-
-    If a future change DOES start creating trigger sessions, this reds — and at that point the
-    direct-execution branch should be revisited rather than left as a second path. That is the
-    point of pinning it: the branch exists because this is true, not as belt-and-braces.
-    """
-    import pathlib
-    import re
-
-    src = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
-    creators = []
-    for py in source_index.package_files():
-        for n, line in enumerate(source_index.text(py).splitlines(), 1):
-            if "get_or_create(" not in line or "def get_or_create" in line:
-                continue
-            if re.search(r"session_key_for|cron:|trigger", line):
-                creators.append(f"{py.relative_to(src).as_posix()}:{n}")
-    assert creators == [], (
-        "something now creates a session for a trigger key — revisit "
-        f"`_execute_delivery`'s direct-run branch instead of keeping two paths: {creators}"
-    )

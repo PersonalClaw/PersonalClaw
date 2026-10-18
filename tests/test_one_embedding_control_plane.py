@@ -28,9 +28,8 @@ migrates nothing -- so the coupling was simply wrong and is NOT reproduced on th
 from __future__ import annotations
 
 import inspect
-from pathlib import Path
 
-import source_index
+from one_embedding_control_plane_shared import REPO, RETIRED_PATHS
 
 from personalclaw.dashboard import handlers, routes, server
 from personalclaw.dashboard.handlers import memory as mem_mod
@@ -44,16 +43,6 @@ RETIRED_HANDLERS = (
     "api_memory_delete_model",
     "api_memory_activate_model",
 )
-RETIRED_PATHS = (
-    "/api/memory/embedding-status",
-    "/api/memory/enable-embeddings",
-    "/api/memory/disable-embeddings",
-    "/api/memory/embedding-models",
-    "/api/memory/delete-model",
-    "/api/memory/activate-model",
-)
-
-REPO = Path(__file__).resolve().parents[1]
 
 
 def test_no_retired_handler_survives_on_the_barrel():
@@ -139,16 +128,3 @@ def test_every_retired_capability_still_has_a_reachable_home():
     api_ts = (REPO / "web/src/lib/api.ts").read_text(encoding="utf-8")
     for wrapper in ("/api/models/local/", "/api/models/downloads", "/api/models/active/"):
         assert wrapper in api_ts, f"{wrapper} has no frontend wrapper"
-
-
-def test_no_frontend_reference_to_the_retired_plane_remains():
-    """The census that justified the deletion, kept executable so it cannot rot."""
-    web = REPO / "web/src"
-    hits = [
-        f"{path.relative_to(REPO)}:{token}"
-        for path in source_index.web_files()
-        if path.suffix.startswith(".ts") and path.is_relative_to(web)
-        for token in RETIRED_PATHS
-        if token in source_index.text(path)
-    ]
-    assert hits == [], f"a frontend caller appeared: {hits}"

@@ -17,17 +17,14 @@ being true:
 
 from __future__ import annotations
 
-import ast
 import re
-from pathlib import Path
 
 import pytest
-import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_state
+from session_share_shared import _share_call_sites
 
-import personalclaw
 from personalclaw import memory_writes
 from personalclaw.artifacts.native import NativeArtifactProvider
 from personalclaw.dashboard import session_export as se
@@ -317,49 +314,6 @@ async def test_share_reports_unavailable_artifacts_instead_of_500ing(routed, mon
 
 
 # ── never auto-published: an AST census of every call site ─────────────────────
-
-
-def _share_call_sites(sources: dict[str, str | ast.Module]) -> set[tuple[str, str]]:
-    """``{(file, enclosing function)}`` for every call to ``share_session``.
-
-    Counts both ``session_share.share_session(...)`` and a bare ``share_session(...)``, so
-    an ``from ... import share_session`` cannot slip past the attribute form.
-    """
-    found: set[tuple[str, str]] = set()
-    for label, src in sources.items():
-        tree = src if isinstance(src, ast.Module) else ast.parse(src)
-        parents: dict[ast.AST, str] = {}
-        for fn in ast.walk(tree):
-            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                for node in ast.walk(fn):
-                    parents.setdefault(node, fn.name)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            f = node.func
-            name = (
-                f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else ""
-            )
-            if name == "share_session":
-                found.add((label, parents.get(node, "<module>")))
-    return found
-
-
-def _core_sources() -> dict[str, str | ast.Module]:
-    """Every package module's tree, from the suite's one source index."""
-    root = Path(personalclaw.__file__).resolve().parent
-    return {str(p.relative_to(root)): tree for p, tree in source_index.package_trees()}
-
-
-def test_share_has_exactly_one_call_site():
-    """The "never auto-published" proof. A behavioural test only covers the paths it
-    drives; this covers the ones it doesn't — a heartbeat tick, a post-turn hook or a
-    "share it while we're here" convenience reds HERE rather than quietly publishing
-    conversations in production.
-    """
-    assert _share_call_sites(_core_sources()) == {
-        ("dashboard/session_starters.py", "api_session_share")
-    }
 
 
 def test_the_call_site_census_has_teeth():

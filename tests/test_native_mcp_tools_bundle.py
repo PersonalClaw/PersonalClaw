@@ -23,10 +23,8 @@ for core modules that reach into it.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
-import source_index
 
 from personalclaw.apps.manifest import AppManifest
 from personalclaw.apps.native_contract import NATIVE_DIR, load_bundle_module
@@ -310,14 +308,3 @@ def test_an_invalid_tool_name_is_refused_without_a_lookup(provider_module):
     result = asyncio.run(provider_module.McpToolProvider(lambda: _Reg()).invoke("not-mcp", {}))
     assert result.success is False and "Invalid MCP tool name" in (result.error or "")
     assert looked_up == []
-
-
-def test_the_bundle_is_the_only_copy():
-    """No second MCP adapter in core: the bundle is the one implementation of this surface."""
-    src = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
-    offenders = [
-        str(p.relative_to(src))
-        for p in source_index.package_files()
-        if "apps/native/" not in p.as_posix() and "def create_mcp_provider" in source_index.text(p)
-    ]
-    assert offenders == [], offenders

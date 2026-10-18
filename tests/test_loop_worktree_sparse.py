@@ -29,79 +29,20 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import threading
 
+import loop_worktree_sparse_shared
 import pytest
+from loop_worktree_sparse_shared import _git, _repo, _tree
 
 from personalclaw.loop import worktree as wt
+
+_wt_root = loop_worktree_sparse_shared._wt_root
 
 # `shutil.which`, not `wt.git_available()`: that probe reads git's version with git's child
 # environment, built from the owner's settings, and a module-level mark runs at collection,
 # before any test chose a home.
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
-
-
-@pytest.fixture(autouse=True)
-def _wt_root(tmp_path, monkeypatch):
-    """Worktrees under a temp config dir, and the per-process caches cleared — both
-    ``_FILE_COUNT_CACHE`` and ``_TRACKED_DIRS_CACHE`` are keyed by workspace abspath, so
-    a leftover entry from another test's tmp_path would answer for this one."""
-    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path / "pclaw")
-    wt._FILE_COUNT_CACHE.clear()
-    wt._TRACKED_DIRS_CACHE.clear()
-    yield
-    wt._FILE_COUNT_CACHE.clear()
-    wt._TRACKED_DIRS_CACHE.clear()
-
-
-def _git(cwd, *args):
-    return subprocess.run(
-        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-
-def _repo(tmp_path, name="repo", extra: dict[str, str] | None = None) -> str:
-    """A repo with three top-level dirs plus a root file, committed.
-
-    The root file matters: cone mode keeps root-level files hydrated, which is what
-    makes a scoped worktree still usable (a real task needs pyproject/Makefile), and a
-    test that never checks it would not notice if that stopped being true.
-    """
-    d = tmp_path / name
-    for sub in ("src", "docs", "web"):
-        (d / sub).mkdir(parents=True, exist_ok=True)
-    (d / "src" / "app.py").write_text("print('app')\n")
-    (d / "src" / "util.py").write_text("X = 1\n")
-    (d / "docs" / "guide.md").write_text("# guide\n")
-    (d / "web" / "main.ts").write_text("export const a = 1;\n")
-    (d / "README.md").write_text("# root\n")
-    for rel, body in (extra or {}).items():
-        p = d / rel
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(body)
-    _git(d, "init", "-q")
-    # The identity its owner configured, which every commit PersonalClaw makes here carries.
-    _git(d, "config", "user.name", "t")
-    _git(d, "config", "user.email", "t@example.com")
-    _git(d, "add", "-A")
-    _git(d, "commit", "-qm", "init")
-    return str(d)
-
-
-def _tree(path: str) -> set[str]:
-    """Repo-relative files present in the WORKING TREE (not the index)."""
-    out: set[str] = set()
-    for root, dirs, files in os.walk(path):
-        if ".git" in dirs:
-            dirs.remove(".git")
-        for f in files:
-            out.add(os.path.relpath(os.path.join(root, f), path).replace(os.sep, "/"))
-    return out
 
 
 # ── scope derivation ──────────────────────────────────────────────────────────
@@ -235,27 +176,6 @@ class TestConfigGate:
 
         (home / "config.json").write_text(json.dumps({"loops": {"worktree_sparse": True}}))
         assert wt.sparse_enabled() is True, "fail-open masked the real read"
-
-
-def test_sdlc_scheduler_calls_the_scoped_batch_api():
-    """The call site, by AST — the whole value is that the SDLC fan-out uses the
-    batched, scoped API. A green suite over ``worktree.py`` alone would not notice
-    ``sdlc`` still calling ``add_worktree`` one task at a time in its loop."""
-    import ast
-    import inspect
-    import textwrap
-
-    from personalclaw.loop.kinds import sdlc
-
-    tree = ast.parse(textwrap.dedent(inspect.getsource(sdlc.CodeKind._schedule_parallel)))
-    calls = {
-        ast.unparse(n.func)
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-    }
-    assert "worktree.add_worktrees" in calls, calls
-    assert "worktree.scope_for_task" in calls, calls
-    assert "worktree.add_worktree" not in calls, "serial per-task creation is still here"
 
 
 # ── sparse hydration ──────────────────────────────────────────────────────────
@@ -666,31 +586,3 @@ class TestReusePool:
         assert wt.reset_worktree(ws, "t-cone") is True
         assert wt.sparse_scope(path) == ["src"]
         assert "docs/guide.md" not in _tree(path)
-
-
-def test_a_redo_resets_the_worktree_then_falls_back_to_teardown():
-    """The reuse pool's real CALL SITE, by AST: the redo its owner chose for a task whose work
-    conflicted (``loop.conflicts._redo``), the one place a task's worktree is finished with and
-    reused. Asserting on ``worktree.py`` alone would not notice the redo never adopting it — and
-    the ``remove_worktree`` call must still be REACHABLE, because it is the documented teardown
-    fallback for any reset failure."""
-    import ast
-    import inspect
-    import textwrap
-
-    from personalclaw.loop import conflicts
-
-    tree = ast.parse(textwrap.dedent(inspect.getsource(conflicts._redo)))
-    # Named, not only called: both run off the event loop, handed to ``asyncio.to_thread``.
-    named = [ast.unparse(n) for n in ast.walk(tree) if isinstance(n, ast.Attribute)]
-    assert "worktree.reset_worktree" in named, named
-    assert "worktree.remove_worktree" in named, "the teardown fallback is gone"
-    # The teardown must be GUARDED by the reset's failure, not run unconditionally.
-    guarded = [
-        n
-        for n in ast.walk(tree)
-        if isinstance(n, ast.If)
-        and "worktree.reset_worktree" in ast.unparse(n.test)
-        and "worktree.remove_worktree" in ast.unparse(n.body)
-    ]
-    assert guarded, "remove_worktree is not gated on a failed reset"

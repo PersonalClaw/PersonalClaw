@@ -54,14 +54,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import source_index
+from state_survival_shared import _FIXTURE_DIR, _FIXTURES_DIR, FIXTURE_NAME
 
 from personalclaw import seed as seed_mod
 
-FIXTURE_NAME = "six-month-home"
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-_FIXTURES_DIR = _REPO_ROOT / "src" / "personalclaw" / "tests_fixtures"
-_FIXTURE_DIR = _FIXTURES_DIR / FIXTURE_NAME
 _MANIFEST_PATH = _FIXTURES_DIR / f"{FIXTURE_NAME}.manifest.json"
 
 # The six stores the change enumerates by name. ``memory_markdown`` is the seventh entry
@@ -435,33 +431,6 @@ def test_every_manifest_path_exists_in_the_committed_fixture(manifest: dict[str,
     for name, entry in manifest["stores"].items():
         target = _FIXTURE_DIR / entry["path"]
         assert target.exists(), f"{name}: the fixture has no {entry['path']}"
-
-
-def test_the_committed_fixture_ships_no_sqlite_sidecar_and_no_machine_path() -> None:
-    """Read off the repo tree, not a seeded home — this is about what SHIPS.
-
-    Every store here opens with ``PRAGMA journal_mode=WAL``, so writes sit in a ``-wal``
-    sidecar until checkpointed. Committing the bare ``.db`` without a checkpoint ships a
-    fixture that boots EMPTY, which would make the survival test pass against nothing;
-    committing the sidecar ships a file that is not state. A leaked absolute path would
-    resolve on exactly one machine.
-    """
-    fixture = source_index.under(source_index.package_any_files(), _FIXTURE_DIR)
-    dbs = sorted(p.name for p in fixture if p.suffix == ".db")
-    assert dbs == ["knowledge.db", "loops.db", "memory.db"], f"unexpected db set: {dbs}"
-
-    strays = sorted(
-        p.name for p in fixture if p.name.endswith(("-wal", "-shm", ".db-journal", ".lock"))
-    )
-    assert not strays, f"these must not ship: {strays}"
-
-    for path in fixture:
-        blob = path.read_bytes()
-        for needle in (b"/Users/", b"/home/", b"/private/tmp", b"/var/folders"):
-            assert needle not in blob, (
-                f"{path.relative_to(_FIXTURE_DIR)} embeds the absolute path "
-                f"{needle.decode()!r} from the machine that generated it"
-            )
 
 
 def test_the_fixture_ships_the_same_marker_as_every_other_fixture() -> None:

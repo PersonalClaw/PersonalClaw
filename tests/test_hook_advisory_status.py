@@ -24,13 +24,9 @@ below:
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
-import pytest
-import source_index
+import hook_advisory_status_shared
 
-import personalclaw.action_providers as action_providers_mod
-from personalclaw.action_providers.base import ActionResult
 from personalclaw.hooks import (
     ENFORCEMENT_ADVISORY,
     HOOK_EVENT_PRE_TOOL_USE,
@@ -42,22 +38,7 @@ from personalclaw.hooks import (
 from personalclaw.triggers.history import HOOK_STATUS_TO_OUTCOME, hook_to_record
 from personalclaw.triggers.models import Outcome
 
-
-class _ExitTwoProvider:
-    """A bash-shaped provider that asks to block: exit 2 → `ActionResult.blocked`."""
-
-    async def execute(self, config, ctx, timeout=30):
-        return ActionResult(success=False, blocked=True, exit_code=2, stderr="denied")
-
-
-@pytest.fixture(autouse=True)
-def _isolated(monkeypatch, tmp_path):
-    """Never the real home: `run_script_hook` consults the incident switch, the denylist and the
-    rung ladder, each of which reads config."""
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
-    monkeypatch.setattr(
-        action_providers_mod, "get_action_provider", lambda name: _ExitTwoProvider()
-    )
+_isolated = hook_advisory_status_shared._isolated
 
 
 def _store(tmp_path, event: str = HOOK_EVENT_PRE_TOOL_USE) -> tuple[ScriptHookStore, ScriptHook]:
@@ -118,26 +99,6 @@ def test_gating_fire_records_blocked(tmp_path):
     store, hook = _store(tmp_path)
     asyncio.run(store.fire_for_ids(HOOK_EVENT_PRE_TOOL_USE, [hook.id], tool_name="write_file"))
     assert hook.last_status == "blocked"
-
-
-def test_only_gating_callers_exist():
-    """A census, not a style check: `enforced=True` is asserted by `fire_for_ids` on behalf of its
-    callers, so a caller that does NOT gate on exit 2 would make the status a lie again.
-
-    The one blocking event, `PreToolUse`, is fired through `fire_for_ids` at one step
-    (`pre_tool_hooks`), whose exit 2 refuses the call. The chat runner fires the turn's other
-    lifecycle events through it, none of which can block, and never `PreToolUse`. A third caller
-    fails here and must prove it gates (or use `fire()`)."""
-    import ast
-
-    root = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
-    callers = {p for p in source_index.package_files() if ".fire_for_ids(" in source_index.text(p)}
-    assert {p.name for p in callers} == {"chat_runner.py", "pre_tool_hooks.py"}
-    step = source_index.text(root / "pre_tool_hooks.py")
-    assert "HOOK_EVENT_PRE_TOOL_USE" in step and "== _BLOCKS" in step, "the step must gate exit 2"
-    chat_runner = source_index.tree(root / "dashboard" / "chat_runner.py")
-    names = {n.id for n in ast.walk(chat_runner) if isinstance(n, ast.Name)}
-    assert "HOOK_EVENT_PRE_TOOL_USE" not in names, "the chat runner fires the pre-tool hooks itself"
 
 
 # ── the trigger surface: what an operator reads ──

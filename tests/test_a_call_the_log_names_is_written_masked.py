@@ -15,14 +15,12 @@ decoder and the real hook chain; no agent CLI runs.
 
 from __future__ import annotations
 
-import ast
 import logging
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import source_index
+from a_call_the_log_names_is_written_masked_shared import _offenders
 from test_acp_permission_authority import _context_builder, _drive, _make_state, _session
 from test_acp_permission_authority import _set_stream as _stream
 
@@ -33,8 +31,6 @@ from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, LLME
 _KEY = "AKIAIOSFODNN7EXAMPLE"
 #: A shell call's title, as an agent CLI sends it: the command, with a key in a header.
 _TITLE = f"Running: curl -H 'X-Api-Key: {_KEY}' https://api.example.com/v1/notes"
-
-_SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
 
 def _said(caplog, words: str) -> list[str]:
@@ -187,51 +183,6 @@ async def test_a_call_an_evaluation_refused_is_logged_masked(caplog):
 
 # ── the rail: no log line hands a call's own title or input over raw ───────────────────────
 
-#: The attributes a tool call's event carries its title and its arguments in.
-_CALL_TEXT = {"title", "tool_input"}
-#: The names a call's event goes by where a log line reads it.
-_EVENT_NAMES = {"event", "ev", "call"}
-#: What may stand between them and the log: the title's writer, the audit text it is built on,
-#: and a size (a length is not the text).
-_MASKERS = {"log_title", "audit_text", "len"}
-
-_LOG_METHODS = {"debug", "info", "warning", "warn", "error", "exception", "critical", "log"}
-
-
-def _is_log_call(node: ast.Call) -> bool:
-    func = node.func
-    if not isinstance(func, ast.Attribute) or func.attr not in _LOG_METHODS:
-        return False
-    owner = func.value
-    name = owner.id if isinstance(owner, ast.Name) else getattr(owner, "attr", "")
-    return "log" in name.lower()
-
-
-def _raw_call_text(node: ast.AST, masked: bool = False) -> list[str]:
-    """Each ``event.title``/``event.tool_input`` in *node* that reaches the log unmasked."""
-    if isinstance(node, ast.Call):
-        name = getattr(node.func, "id", "") or getattr(node.func, "attr", "")
-        masked = masked or name in _MASKERS
-    if (
-        isinstance(node, ast.Attribute)
-        and node.attr in _CALL_TEXT
-        and isinstance(node.value, ast.Name)
-        and node.value.id in _EVENT_NAMES
-        and not masked
-    ):
-        return [ast.unparse(node)]
-    return [hit for child in ast.iter_child_nodes(node) for hit in _raw_call_text(child, masked)]
-
-
-def _offenders(source: str | ast.Module, where: str) -> list[str]:
-    hits = []
-    tree = source if isinstance(source, ast.Module) else ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and _is_log_call(node):
-            for arg in [*node.args[1:], *(k.value for k in node.keywords)]:
-                hits += [f"{where}:{node.lineno}: {raw}" for raw in _raw_call_text(arg)]
-    return hits
-
 
 def test_the_rail_finds_a_raw_title_and_passes_a_masked_one():
     """The positive control: a census that flags nothing on a raw title proves nothing."""
@@ -239,18 +190,3 @@ def test_the_rail_finds_a_raw_title_and_passes_a_masked_one():
     masked = 'logger.warning("refused %r", log_title(event.title))\nlog.info("%d", len(ev.title))\n'
     assert len(_offenders(raw, "probe")) == 2
     assert _offenders(masked, "probe") == []
-
-
-def test_no_log_line_writes_a_calls_title_or_input_raw():
-    files = list(source_index.package_files())
-    assert len(files) > 300, "the census must read the whole package"
-    found = [
-        hit
-        for path in files
-        for hit in _offenders(source_index.tree(path), str(path.relative_to(_SRC)))
-    ]
-    assert not found, (
-        "a log line writes a tool call's title or arguments as it came; write it through "
-        "`audit_subject.log_title` (the title) or `audit_text` (anything longer):\n  "
-        + "\n  ".join(found)
-    )

@@ -20,10 +20,13 @@ The load-bearing claims:
 from __future__ import annotations
 
 import pytest
+import workflows_event_envelope_shared
 
 from personalclaw.workflows import store
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import NodeInstance, RunStatus, WorkflowRun
+
+_isolated_home = workflows_event_envelope_shared._isolated_home
 
 pytestmark = pytest.mark.anyio
 
@@ -31,14 +34,6 @@ pytestmark = pytest.mark.anyio
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
-
-
-@pytest.fixture(autouse=True)
-def _isolated_home(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
-    return home
 
 
 SPEC = {
@@ -138,27 +133,6 @@ class TestEnvelope:
         done = [p for n, p in events if n == "workflow_node_done"]
         assert done, "expected node_done events"
         assert all("node_epoch" in p for p in done)
-
-    async def test_no_call_site_publishes_a_bare_epoch_key(self) -> None:
-        """Regression, found by this suite. `workflow_node_started` passed the NODE's epoch as
-        `epoch`, overriding the envelope's RUN epoch — so `node_started` and `node_done` for
-        the same node reported different run epochs, and a consumer folding the lower one
-        would treat the next real event as superseded and silently stop updating.
-
-        A node's epoch belongs under `node_epoch`. Asserted structurally because the payload
-        dicts are spread into the envelope, so a re-introduction would be invisible."""
-        from tests.controller_sources import controller_source
-
-        # The controller AND its responsibility modules: a payload built in one of them is spread
-        # into the same envelope. `_publish` itself sets the envelope epoch; no OTHER line may pass
-        # one in a payload.
-        source = controller_source()
-        offenders = [
-            line.strip()
-            for line in source.splitlines()
-            if '"epoch":' in line and "self._run_epoch()" not in line
-        ]
-        assert not offenders, f"payload sets a bare epoch, overriding the envelope: {offenders}"
 
     async def test_a_payload_field_is_never_clobbered_by_the_envelope(self) -> None:
         """The envelope is a floor, not an override — a call site that sets a field wins.

@@ -13,61 +13,20 @@ increments it — so seven writerless counters stayed green for as long as they 
 below is the assertion that was missing.
 """
 
-import ast
 import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import source_index
+from stats_shared import _WRITERS
 
 from personalclaw.stats import Stats
 
 _SRC = Path(__file__).resolve().parent.parent / "src" / "personalclaw"
 
-# The counters, and the runtime path that writes each. Grouped so a failure names the subsystem.
-_WRITERS = {
-    "sessions_created": "inc_session_created",
-    "sessions_cleaned": "inc_session_cleaned",
-    "subagents_spawned": "inc_subagent_spawned",
-    "subagents_completed": "inc_subagent_completed",
-    "subagents_failed": "inc_subagent_failed",
-    "input_tokens": "inc_input_tokens",
-    "output_tokens": "inc_output_tokens",
-    "cache_creation_tokens": "inc_cache_creation_tokens",
-    "cache_read_tokens": "inc_cache_read_tokens",
-    "total_turns": "inc_turns",
-    "total_duration_ms": "inc_duration_ms",
-}
-
-
-def _called_methods() -> set[str]:
-    """Every ``.method(...)`` name invoked anywhere in src/personalclaw, excluding stats.py itself.
-
-    Parsed rather than grepped: a grep for the method name also matches its own ``def`` line and
-    any mention in a comment, which is how a writerless counter can look wired.
-    """
-    names: set[str] = set()
-    for path, tree in source_index.package_trees():
-        if path.name == "stats.py":
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-                names.add(node.func.attr)
-    return names
-
 
 class TestStatsWriters(unittest.TestCase):
     """The contract that keeps a dead counter from shipping as a measurement."""
-
-    def test_every_counter_has_a_writer(self) -> None:
-        called = _called_methods()
-        orphans = {counter: helper for counter, helper in _WRITERS.items() if helper not in called}
-        assert not orphans, (
-            f"Counter(s) whose incrementer is never called on any runtime path: {orphans}. "
-            "A counter with no writer renders a confident 0 forever. Either wire the call site "
-            "or delete the counter — do not ship it as an aspirational field."
-        )
 
     def test_every_counter_is_declared_in_the_writer_map(self) -> None:
         # The other direction: a NEW counter added to Stats must declare its writer here, so it

@@ -27,7 +27,7 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from test_a_declared_read_asks_nobody import _OneCall
+from a_declared_read_asks_nobody_shared import _OneCall
 
 from personalclaw import session_restrictions
 from personalclaw.agents.native.runtime import NativeAgentRuntime

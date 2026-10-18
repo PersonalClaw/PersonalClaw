@@ -37,54 +37,17 @@ test guards the call sites. Recorded so the next author knows it was a decision,
 
 from __future__ import annotations
 
-import inspect
-
 import pytest
-import source_index
-
-#: Every module that resolves an action provider and RUNS it. Discovered by grepping
-#: `get_action_provider(` across `src/`, then reading each hit to see whether it executes.
-#: `dashboard/handlers/hooks.py` is excluded on purpose: it resolves providers to build the
-#: `/api/action-providers` catalog and never calls `execute`, verified by
-#: `test_the_catalog_site_does_not_execute` below.
-EXECUTION_SITES: tuple[tuple[str, str], ...] = (
-    ("personalclaw.hooks", "the lifecycle-hook fire path"),
-    ("personalclaw.gateway", "the clock/file/event/webhook/view trigger fire path"),
-    # Your Run now, the restart review's Run now and your answer to a run's question: attended,
-    # carrying `manual_refusal`. Every other run this module starts (a webhook's, a view's, a Run
-    # now an agent, an app or a program asks for) is a fire, dispatched through the gateway seam
-    # (`test_only_your_run_reaches_the_hand_dispatch`).
-    ("personalclaw.dashboard.handlers.trigger_runs", "the run-by-hand path"),
-    # Approving an inbox proposal whose apply case is `action` dispatches a provider
-    # directly (not through `triggers.tools.run`), so it is a real execution site. User-clicked,
-    # so it carries `manual_refusal` — the manual Run path's gate — rather than the unattended
-    # denylist seam; `test_the_denylist_seam_list_covers_every_unattended_execution_site`
-    # therefore lists it beside that documented exemption.
-    ("personalclaw.proposals_contract", "the inbox proposal apply path"),
-    # A TTL dashboard tile re-runs its bound data nodes with nobody watching, so it is a
-    # real UNATTENDED execution site and joins the denylist seams below rather than claiming an
-    # exemption. Its providers are additionally narrowed to a read-only allowlist
-    # (`tile_refresh.DATA_PROVIDERS`) — a second fence, not a substitute for these gates.
-    ("personalclaw.dashboard.tile_refresh", "the chatless tile-refresh path"),
-    # "Run now" on a scheduled research report dispatches the report provider
-    # directly, so it is a real execution site. User-clicked, so it carries `manual_refusal`
-    # — the same gate and the same documented exemption as the trigger Run path above.
-    ("personalclaw.dashboard.handlers.research_reports", "the manual report Run path"),
-    # The trivial-tier auto-execution dispatches a provider per approved proposal with
-    # nobody watching, so it is a real UNATTENDED execution site and joins the denylist seams
-    # below rather than claiming an exemption. Its providers are additionally narrowed to a
-    # frozen capability set (`autoexec.AUTO_CAPABLE_PROVIDERS`) and its actions bounded by a
-    # per-run cap and the budget floor — more fences, not a substitute for these gates.
-    ("personalclaw.proactive.autoexec", "the triage auto-execution path"),
-    # Every action step of a workflow run, whatever started the run and whatever lookup the
-    # engine was handed: a run is unattended work, so it is a denylist seam below. It resolves
-    # through a name it is handed (`getter = get_action_provider`), which the census finds by the
-    # name, not by a literal call (`test_the_census_sees_a_lookup_under_another_name`).
-    ("personalclaw.workflows.engine", "a workflow run's action step"),
+from action_provider_chokepoints_shared import (
+    DENYLIST_SEAMS,
+    EXECUTION_SITES,
+    MANUAL_SEAM,
+    REVERSAL_SITE,
+    WORKFLOW_LOOKUPS,
+    _enforce_action_calls,
+    _reaches_the_registry,
+    _source,
 )
-
-
-REVERSAL_SITE = "personalclaw.guardrails.ladder"
 
 #: Any one of these, present in the module, satisfies the invariant. A LIST rather than one name
 #: because the sites legitimately differ: an unattended fire is gated by the kill switch, a manual
@@ -100,35 +63,6 @@ POLICY_CHECKS: tuple[str, ...] = (
     "firepath",
 )
 
-
-#: The unattended dispatch seams, each of which must call `enforce_action`
-#: BEFORE it reaches a provider. This is narrower than `EXECUTION_SITES` by exactly one entry —
-#: the manual Run path, exempted below — and the two lists are cross-checked by
-#: `test_the_denylist_seam_list_covers_every_unattended_execution_site` so a FOURTH unattended
-#: seam cannot appear without joining this one.
-#:
-#: 🔴 Why a rail and not trust: the third seam was written as `gateway.py:701`
-#: (`_run_action_job`), which retired with `ScheduleService`. The successor
-#: (`_fire_store_trigger`) kept the kill switch and gained the rung ladder but silently lost the
-#: denylist — measured at 1 / 1 / 0 `enforce_action` calls across hooks / event_triggers / gateway
-#: while gateway is the busiest of the three (every clock, file, webhook and chained trigger).
-#: It is restored; this rail is what stops the next retirement dropping it again.
-DENYLIST_SEAMS: tuple[tuple[str, str], ...] = (
-    ("personalclaw.hooks", "script hooks"),
-    ("personalclaw.gateway", "clock / file / webhook / chained / data-event triggers"),
-    ("personalclaw.dashboard.tile_refresh", "TTL dashboard tiles"),
-    ("personalclaw.proactive.autoexec", "trivial-tier triage auto-execution"),
-    ("personalclaw.workflows.engine", "workflow action steps"),
-)
-
-#: The run-by-hand dispatch, yours alone. A webhook's outside caller, a view's refresh and an
-#: agent's `automation_run` used to reach it with nobody answering: a webhook whose action said
-#: `personalclaw stop` stopped the gateway, and an agent's runs were recorded as yours, which the
-#: hourly cap and the failure streak pass over. Each of them is a fire now, admitted and dispatched
-#: through the gateway seam above, which holds it to the denylist under the automation's own
-#: unattended identity; only a run you start yourself reaches this dispatch, attended and gated by
-#: `manual_refusal`. Asserted in `test_only_your_run_reaches_the_hand_dispatch`.
-MANUAL_SEAM = "personalclaw.dashboard.handlers.trigger_runs"
 
 #: The ONE site that resolves an action provider to UNDO an action rather than to run one.
 #: Exempt from the execution invariant, and asserted separately by
@@ -151,40 +85,6 @@ USER_CLICKED_SEAMS: tuple[str, ...] = (
     # denylist — and the per-member assertion below holds it to carrying `manual_refusal`.
     "personalclaw.dashboard.handlers.research_reports",
 )
-
-
-#: The workflow modules that look a step's provider up only to read it, each with the one thing it
-#: reads: whether the provider is registered at all, and whether its action is a model turn.
-WORKFLOW_LOOKUPS: dict[str, str] = {
-    "personalclaw.workflows.preflight": "is None",
-    "personalclaw.workflows.node_bindings": "hands_config_to_a_model",
-}
-
-
-def _source(module_name: str) -> str:
-    import importlib
-
-    return inspect.getsource(importlib.import_module(module_name))
-
-
-def _enforce_action_calls(module_name: str) -> list:
-    """Every `enforce_action(...)` CALL node in a module, found via AST.
-
-    AST rather than a substring search because the property under test is a property of the
-    CALL — that it passes `session_key=` — and the three seams spell the call across one, four
-    and five lines. A regex that happened to match today's formatting would stop seeing the call
-    the moment someone reflowed it, and a rail that matches nothing reads exactly like a pass.
-    """
-    import ast
-
-    tree = ast.parse(_source(module_name))
-    return [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "enforce_action"
-    ]
 
 
 @pytest.mark.parametrize("module_name,label", DENYLIST_SEAMS)
@@ -241,81 +141,6 @@ def test_each_user_clicked_seam_is_a_documented_denylist_exemption(module_name):
         f"{module_name} is exempt from the denylist because a human initiates it and "
         "`manual_refusal` gates it. That gate is gone, so the exemption no longer holds."
     )
-
-
-#: The functions that call the hand dispatch, each after it has established that you asked: `/run`
-#: once `run_source.of_request` says the run is yours, your answer once `approval_answer` let it
-#: through, and the restart review's decision once `approval_answer` let it through.
-HAND_DISPATCH_CALLERS: dict[str, str] = {
-    "_run_yours": "run_source.yours",
-    "api_trigger_answer": "forbidden",
-    "api_trigger_review": "forbidden",
-}
-
-
-def test_only_your_run_reaches_the_hand_dispatch():
-    """🔴 The run-by-hand dispatch asks no denylist, because you answer what a run of yours runs.
-    So it must be yours alone, and these are the properties that keep it so:
-
-    * the dispatch is called from the three functions above and no other, each AFTER the check
-      that says the asker is you;
-    * `/run` reaches it only through `_run_yours`, chosen when `run_source.yours` says so, and a
-      run anyone else asks for (`_run_asked`) goes through the gateway's fire dispatch
-      (`run_admitted`), which asks `enforce_action`, and never through the hand dispatch;
-    * the dispatch itself takes no asker: nothing can hand it someone else's run to judge.
-    """
-    import ast
-
-    from personalclaw.dashboard.handlers import trigger_runs, triggers
-
-    src = _source(MANUAL_SEAM)
-    assert "manual_refusal" in src, "your own Run now is no longer gated"
-    tree = ast.parse(src)
-    functions = {
-        node.name: node
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    dispatch = functions["_dispatch_store_action"]
-    taken = {a.arg for a in dispatch.args.args + dispatch.args.kwonlyargs}
-    assert "runs_for" not in taken and "source" not in taken, sorted(taken)
-
-    def _calls(node: ast.AST, name: str) -> list[ast.Call]:
-        found = []
-        for call in ast.walk(node):
-            if not isinstance(call, ast.Call):
-                continue
-            func = call.func
-            called = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-            if called == name:
-                found.append(call)
-        return found
-
-    callers: dict[str, ast.AST] = {}
-    for module in (trigger_runs, triggers):
-        for node in ast.walk(ast.parse(inspect.getsource(module))):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _calls(
-                node, "_dispatch_store_action"
-            ):
-                if node.name != "_dispatch_store_action":
-                    callers[node.name] = node
-    assert set(callers) == set(HAND_DISPATCH_CALLERS), sorted(callers)
-    for name, check in HAND_DISPATCH_CALLERS.items():
-        if check == "run_source.yours":
-            continue
-        node = callers[name]
-        first_dispatch = min(c.lineno for c in _calls(node, "_dispatch_store_action"))
-        guards = [c.lineno for c in _calls(node, check)]
-        assert guards and min(guards) < first_dispatch, f"{name} dispatches before {check}"
-
-    run_store = functions["_run_store"]
-    assert _calls(run_store, "_run_yours") and _calls(run_store, "_run_asked")
-    assert _calls(run_store, "yours"), "/run no longer asks whose run it is"
-    asked = functions["_run_asked"]
-    assert not _calls(asked, "_dispatch_store_action"), "a run nobody answers took the hand path"
-    assert _calls(asked, "run_admitted") and _calls(asked, "admit_fire")
-    gateway = _enforce_action_calls("personalclaw.gateway")
-    assert gateway, "the fire dispatch a run nobody answers takes no longer asks the denylist"
 
 
 @pytest.mark.parametrize("module_name,label", EXECUTION_SITES)
@@ -396,30 +221,6 @@ def test_the_would_execute_preview_site_only_reads_the_declaration():
     assert "runner=None" in src, "the dry fire must be dispatched with no runner"
 
 
-def _reaches_the_registry(source: str | object) -> bool:
-    """Whether *source* reaches the provider registry's lookup at all: calls it, imports it under
-    any name, or hands the name on (`getter = get_action_provider`). Read from the syntax tree, so
-    an alias is a site and a mention in a comment or a docstring is not.
-
-    A literal-call search misses a module that looks its provider up through a name it is handed,
-    as the workflow engine does (`getter = get_action_provider`): `get_action_provider(` never
-    appears in it, so such a site would run providers with nothing here asking it for a check.
-    """
-    import ast
-
-    tree = source if isinstance(source, ast.Module) else ast.parse(str(source))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id == "get_action_provider":
-            return True
-        if isinstance(node, ast.Attribute) and node.attr == "get_action_provider":
-            return True
-        if isinstance(node, ast.ImportFrom) and any(
-            alias.name == "get_action_provider" for alias in node.names
-        ):
-            return True
-    return False
-
-
 def test_the_census_sees_a_lookup_under_another_name():
     """The census's own falsification: each way of reaching the lookup is a site, and words about
     it are not."""
@@ -433,73 +234,6 @@ def test_the_census_sees_a_lookup_under_another_name():
         assert _reaches_the_registry(source), source
     words = '"""Looks a provider up as get_action_provider(name) does."""\n# get_action_provider\n'
     assert not _reaches_the_registry(words)
-
-
-def test_the_site_list_is_not_STALE():
-    """🔴 The test that makes the list above trustworthy.
-
-    A hardcoded list of call sites rots the moment someone adds one — and a rotted list reads as
-    "all sites are checked" while silently covering fewer. So the list is verified against the tree:
-    every module that reaches `get_action_provider`, by any name (`_reaches_the_registry`), must be
-    either an execution site or a documented exemption.
-    """
-    import pathlib
-
-    root = pathlib.Path(inspect.getfile(__import__("personalclaw"))).parent
-    callers: set[str] = set()
-    for path, tree in source_index.package_trees():
-        if _reaches_the_registry(tree):
-            rel = path.relative_to(root).with_suffix("")
-            # A package's `__init__` is the package (`personalclaw.action_providers`).
-            parts = rel.parts[:-1] if rel.name == "__init__" else rel.parts
-            callers.add(".".join(("personalclaw", *parts)))
-
-    known = {m for m, _ in EXECUTION_SITES} | {
-        REVERSAL_SITE,
-        "personalclaw.dashboard.handlers.hooks",
-        # The would-execute preview — reads `supports_dry_run` only; the properties that
-        # earn the exemption are asserted in `test_the_would_execute_preview_site_only_reads_the_
-        # declaration` above, so this entry cannot become a silent bypass.
-        "personalclaw.dashboard.handlers.doctor",
-        # The create-time existence check (#779) — `triggers.tools.create` resolves a provider to
-        # ask ONE question, "is this name registered?", and refuses the row before it exists when
-        # the answer is no. The result is never bound and nothing executes; the properties that
-        # earn the exemption are asserted in
-        # `test_the_create_time_provider_check_only_asks_existence` below.
-        "personalclaw.triggers.tools",
-        # The delegating provider -- the one resolve in this set that lives INSIDE a
-        # provider rather than at a fire path. Every other entry in `EXECUTION_SITES` is a seam
-        # a trigger/hook/tile arrives at, and the gate belongs there: `selfqa-commit-watch` is
-        # only reachable THROUGH the gateway file-trigger path, which already carries the
-        # denylist and the kill switch, so a second gate here would fence an already-fenced
-        # call. The properties that earn the exemption are asserted in
-        # `test_the_delegating_provider_only_hands_off_to_a_frozen_name` below.
-        "personalclaw.action_providers.selfqa_watch_provider",
-        # The grant copy — `triggers.grants` resolves a provider to read ONE attribute,
-        # `display_name`, for the words the owner reads when a grant is asked for or a run is
-        # refused ("not allowed to use the “Bash Command” action"). It decides nothing and runs
-        # nothing; the properties that earn the exemption are asserted in
-        # `test_the_grant_copy_only_reads_the_display_name` below.
-        "personalclaw.triggers.grants",
-        # The rung router -- `guardrails.rungs.can_be_undone` resolves each provider of an
-        # action type to read ONE declaration, `reversal_kinds`, so a rung that promises undo
-        # is only ever given to an action every provider of which can be taken back. It runs
-        # nothing and undoes nothing; the properties that earn the exemption are asserted in
-        # `test_the_rung_router_only_reads_the_undo_declaration` below.
-        "personalclaw.guardrails.rungs",
-        # A workflow step's two read-only lookups: preflight asks whether a step's provider is
-        # registered, and the binding pass whether its action is a model turn
-        # (`hands_config_to_a_model`). Neither runs anything; the properties that earn the
-        # exemption are asserted in `test_the_workflow_lookups_only_read_a_declaration` below.
-        *WORKFLOW_LOOKUPS,
-        "personalclaw.action_providers.registry",  # defines it
-        "personalclaw.action_providers",  # re-exports it
-    }
-    unaccounted = callers - known
-    assert not unaccounted, (
-        "these modules reach an action provider but are not in EXECUTION_SITES: "
-        f"{sorted(unaccounted)}. Add them (with a policy check) or document the exemption."
-    )
 
 
 @pytest.mark.parametrize("module_name", sorted(WORKFLOW_LOOKUPS))

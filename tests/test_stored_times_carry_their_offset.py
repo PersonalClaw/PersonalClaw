@@ -16,16 +16,18 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
-import pathlib
 import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
-import source_index
+import stored_times_carry_their_offset_shared
+from stored_times_carry_their_offset_shared import zone_less_writers
 
 from personalclaw.knowledge.source_engine import SourceEngine
 from personalclaw.knowledge.store import KnowledgeStore
+
+_isolated_home = stored_times_carry_their_offset_shared._isolated_home
 
 GATEWAY_ZONE = "America/Toronto"
 CLIENT_ZONE = "America/Los_Angeles"
@@ -39,11 +41,6 @@ def gateway_zone(monkeypatch):
         time.tzset()
         yield
     time.tzset()
-
-
-@pytest.fixture(autouse=True)
-def _isolated_home(tmp_path, monkeypatch):
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
 
 
 def read_elsewhere(stamp: str, zone: str = CLIENT_ZONE) -> float:
@@ -451,53 +448,6 @@ def test_the_consolidation_floor_measures_from_the_last_consolidated_write(gatew
 
 # ── the writers that drop the zone, census ─────────────────────────────────────────────────────
 
-SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "personalclaw"
-
-
-def _is_zone_less_clock(node: ast.AST) -> bool:
-    """``datetime.now()`` or ``datetime.fromtimestamp(x)``: this machine's wall clock, no zone."""
-    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-        return False
-    if node.keywords:
-        return False
-    if node.func.attr == "now":
-        return not node.args
-    if node.func.attr == "fromtimestamp":
-        return len(node.args) == 1
-    return False
-
-
-def _receivers(node: ast.AST) -> list[ast.AST]:
-    """The values an expression can evaluate to: both sides of an ``or``, both arms of an ``if``."""
-    if isinstance(node, ast.BoolOp):
-        return [v for value in node.values for v in _receivers(value)]
-    if isinstance(node, ast.IfExp):
-        return _receivers(node.body) + _receivers(node.orelse)
-    return [node]
-
-
-def zone_less_writers(tree: ast.AST) -> list[int]:
-    """Lines that turn a zone-less clock reading into text: ``….isoformat()`` on one, or a
-    ``strftime`` that spells a date-time with no zone."""
-    lines = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-            continue
-        if node.func.attr == "isoformat" and any(
-            _is_zone_less_clock(r) for r in _receivers(node.func.value)
-        ):
-            lines.append(node.lineno)
-        elif (
-            node.func.attr == "strftime"
-            and node.args
-            and isinstance(node.args[0], ast.Constant)
-            and isinstance(node.args[0].value, str)
-            and node.args[0].value.startswith("%Y-%m-%dT%H:%M")
-            and not node.args[0].value.endswith(("Z", "%z"))
-        ):
-            lines.append(node.lineno)
-    return lines
-
 
 def test_the_census_sees_a_writer_that_drops_the_zone():
     snippet = (
@@ -514,13 +464,3 @@ def test_the_census_sees_a_writer_that_drops_the_zone():
         "ok5 = datetime.now().strftime('%Y-%m-%d')\n"
     )
     assert zone_less_writers(ast.parse(snippet)) == [3, 4, 5, 6]
-
-
-def test_no_writer_turns_a_zone_less_clock_reading_into_a_stored_or_served_time():
-    found = {
-        path.relative_to(SRC).as_posix(): lines
-        for path, tree in source_index.package_trees()
-        if (lines := zone_less_writers(tree))
-    }
-    assert len(source_index.package_files()) > 500, "the census read the tree"
-    assert found == {}

@@ -26,15 +26,12 @@ keep it from forking again:
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
-import source_index
+from rendering_registry_parity_shared import _WEB, _code_only, _sink_counts
 
 from personalclaw.artifacts.models import ALLOWED_KINDS
 
-_REPO = Path(__file__).resolve().parent.parent
-_WEB = _REPO / "web" / "src"
 _REGISTER = _WEB / "ui" / "content" / "registerBuiltins.ts"
 
 # web is optional in some checkouts (backend-only installs); skip cleanly then.
@@ -99,70 +96,6 @@ def test_no_kind_is_claimed_by_two_content_types():
     )
 
 
-# The dead capability Sets the engine deleted — must never be re-declared anywhere.
-_FORBIDDEN_DECL = re.compile(r"\b(IFRAME_KINDS|EDITABLE_KINDS)\b\s*=")
-
-
-def _web_sources() -> list[Path]:
-    return [p for p in source_index.web_files() if p.suffix in {".ts", ".tsx"}]
-
-
-def _code_only(text: str) -> str:
-    """`text` with TS/TSX comment bodies blanked out, string literals preserved.
-
-    🪤 The scans below look for a literal token. A bare ``in`` test counts the token where an
-    author merely NAMES it — and the file that most needs to name ``dangerouslySetInnerHTML`` is
-    the sanitizer's own test suite, which explains in prose that it "injects the output exactly
-    as `dangerouslySetInnerHTML` does". That docstring plus one inline comment made
-    ``ui/content/sanitize.test.ts`` the sole offender, so the rail reported a sanitizer-bypass
-    risk in the very file proving the sanitizer works.
-
-    A state machine rather than a regex, because both regex shortcuts are wrong here: stripping
-    ``//`` to end-of-line also truncates any line holding a ``https://`` URL, which silently
-    HIDES a real token later on that line (a false negative in a security rail), and stripping
-    ``/* */`` first corrupts a ``"/*"`` inside a string. Tracking the three states — in-string,
-    in-line-comment, in-block-comment — is the only version with neither hole.
-
-    Comment characters are replaced with spaces rather than deleted so reported line numbers and
-    offsets stay faithful to the file as the author wrote it.
-    """
-    out = []
-    i, n = 0, len(text)
-    quote = None  # the open string/template delimiter, or None
-    while i < n:
-        c = text[i]
-        if quote:
-            out.append(c)
-            if c == "\\" and i + 1 < n:  # an escape consumes the next char, quote or not
-                out.append(text[i + 1])
-                i += 2
-                continue
-            if c == quote:
-                quote = None
-            i += 1
-            continue
-        if c in "\"'`":
-            quote = c
-            out.append(c)
-            i += 1
-            continue
-        if c == "/" and i + 1 < n and text[i + 1] == "/":
-            while i < n and text[i] != "\n":
-                out.append(" ")
-                i += 1
-            continue
-        if c == "/" and i + 1 < n and text[i + 1] == "*":
-            while i < n and not (text[i] == "*" and i + 1 < n and text[i + 1] == "/"):
-                out.append("\n" if text[i] == "\n" else " ")
-                i += 1
-            out.append("  ")
-            i += 2
-            continue
-        out.append(c)
-        i += 1
-    return "".join(out)
-
-
 def test_the_comment_stripper_hides_prose_without_hiding_code():
     """Pin `_code_only`, because the rails above are only as honest as it is.
 
@@ -189,147 +122,6 @@ def test_the_comment_stripper_hides_prose_without_hiding_code():
     ]
     for src in kept:
         assert T in _code_only(src), f"real code was hidden — the rail would go vacuous: {src!r}"
-
-
-def test_no_resurrected_capability_sets():
-    """The IFRAME_KINDS / EDITABLE_KINDS dispatch Sets stay deleted (registry owns this)."""
-    offenders = []
-    for p in _web_sources():
-        if _FORBIDDEN_DECL.search(_code_only(source_index.text(p))):
-            offenders.append(str(p.relative_to(_WEB)))
-    assert not offenders, (
-        "content-type capability Sets were re-introduced (the registry's edit/sandbox "
-        f"capabilities replace them): {offenders}"
-    )
-
-
-#: The ways a string becomes live markup in the web app, each matched in CODE only
-#: (`_code_only`), so an author naming one in a comment is not a site.
-_MARKUP_SINKS = {
-    "renderer import": re.compile(
-        r"""from\s+['"](?:react-markdown|rehype-raw|remark-rehype|hast-util-raw|"""
-        r"""hast-util-to-jsx-runtime|mdast-util-to-hast|micromark|marked|markdown-it|dompurify|"""
-        r"""sanitize-html)['"]"""
-    ),
-    "markup into the page": re.compile(
-        # The prop being SET (`=` in JSX, `:` in an object), so an author naming it in prose
-        # that `_code_only` cannot tell from code (after a regex literal) is not a site.
-        r"dangerouslySetInnerHTML\s*[=:]|\.(?:inner|outer)HTML\s*=(?!=)|insertAdjacentHTML\s*\("
-        r"|createContextualFragment\s*\(|document\.write(?:ln)?\s*\("
-    ),
-    "parsed into a document": re.compile(r"\bparseFromString\s*\("),
-    "a document for a frame or file": re.compile(
-        r"""\bsrcDoc=|setAttribute\(\s*['"]srcdoc['"]|type:\s*['"]text/html"""
-    ),
-}
-
-#: Every site, by file and count, and why it is safe. A new one anywhere fails
-#: `test_every_markup_path_is_a_listed_one` until someone decides it belongs here; one that
-#: disappears fails it too, so the census stays true.
-_MARKUP_PATHS: dict[str, tuple[dict[str, int], str]] = {
-    "ui/Markdown.tsx": (
-        {"renderer import": 2, "markup into the page": 1},
-        "THE renderer (react-markdown, and rehype-raw behind the pass that lets only "
-        "attribute-free formatting tags reach it); the one inner-HTML site is highlight.js "
-        "output, which escapes every character of the code it is handed",
-    ),
-    "pages/skills/SkillInspector.tsx": (
-        {"markup into the page": 1},
-        "highlight.js output for a skill file's source",
-    ),
-    "ui/content/renderers.tsx": (
-        {"markup into the page": 2, "a document for a frame or file": 2},
-        "an svg or document ARTIFACT after the fail-closed allowlist sanitizer "
-        "(ui/content/sanitize.ts); html and widget artifacts in a sandboxed blob frame",
-    ),
-    "ui/content/sanitize.ts": (
-        {"parsed into a document": 2},
-        "the sanitizer's own parse into an inert document; nothing it parses is attached",
-    ),
-    "ui/widget/MermaidBlock.tsx": (
-        {"markup into the page": 2},
-        "clearing the node, then mermaid's SVG rendered with securityLevel 'strict'",
-    ),
-    "ui/widget/widgetSrcdoc.ts": (
-        {"markup into the page": 1},
-        "inside the sandboxed widget document's own script: an escaped error message",
-    ),
-    "ui/widget/WidgetFrame.tsx": (
-        {"a document for a frame or file": 4},
-        "the sandboxed widget frame (a blob, an opaque origin), its open-in-tab wrapper and "
-        "its download",
-    ),
-    "ui/widget/ReactWidgetFrame.tsx": (
-        {"a document for a frame or file": 3},
-        "the sandboxed React widget frame and its open-in-tab wrapper",
-    ),
-    "pages/artifacts/ArtifactCard.tsx": (
-        {"a document for a frame or file": 1},
-        "an artifact card's sandboxed, inert preview frame",
-    ),
-    "pages/files/browse/FilePreviews.tsx": (
-        {"a document for a frame or file": 1},
-        "an HTML file's preview in a sandboxed blob frame",
-    ),
-    "ui/content/exporters.ts": (
-        {"a document for a frame or file": 1},
-        "a document export's download (a file, not a page)",
-    ),
-    "pages/settings/MemoryPanel.tsx": (
-        {"a document for a frame or file": 1},
-        "the memory graph export's download (a file, not a page)",
-    ),
-}
-
-
-def _sink_counts(code: str) -> dict[str, int]:
-    counts = {name: len(pattern.findall(code)) for name, pattern in _MARKUP_SINKS.items()}
-    return {name: n for name, n in counts.items() if n}
-
-
-def _app_sources() -> list[Path]:
-    """The web app's own sources: tests plant these strings on purpose, and a doc is data."""
-    return [p for p in _web_sources() if not re.search(r"\.(test|spec)\.tsx?$|\.doc\.ts$", p.name)]
-
-
-def _markup_census() -> dict[str, dict[str, int]]:
-    """Every app source's markup sites, by kind."""
-    census = {}
-    for p in _app_sources():
-        found = _sink_counts(_code_only(source_index.text(p)))
-        if found:
-            census[str(p.relative_to(_WEB))] = found
-    return census
-
-
-def test_the_markup_census_finds_the_known_paths():
-    """Not vacuously green: the scan reaches web/src and sees the renderer itself."""
-    census = _markup_census()
-    assert len(census) >= 10, census
-    assert census.get("ui/Markdown.tsx", {}).get("renderer import") == 2, census
-
-
-def test_every_markup_path_is_a_listed_one():
-    """Text the app did not write renders through `ui/Markdown.tsx`; nothing else turns a
-    string into live markup unless it is listed here with its reason."""
-    expected = {rel: sites for rel, (sites, _why) in _MARKUP_PATHS.items()}
-    assert _markup_census() == expected, (
-        "A string reaches live markup somewhere new (or a listed site moved or went away). "
-        "Stored or remote text must render through ui/Markdown.tsx; a genuinely different path "
-        "(a sandboxed frame, a sanitizer for an HTML content type) goes on _MARKUP_PATHS with "
-        "its reason."
-    )
-
-
-def test_only_a_chat_reply_runs_widgets():
-    """`widgets` is the one way a `<widget>` in rendered text becomes a sandboxed program. The
-    agent's chat reply is where the model is given that contract; nothing else opts in."""
-    opted_in = {}
-    for p in _app_sources():
-        n = len(re.findall(r"<Markdown\b[^\n>]*\swidgets\b", _code_only(source_index.text(p))))
-        if n:
-            opted_in[str(p.relative_to(_WEB))] = n
-    assert opted_in == {"pages/ChatPage.tsx": 3}
 
 
 def test_each_sink_detector_recognises_what_it_is_for():

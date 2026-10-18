@@ -150,8 +150,9 @@ repository file) and none boots a gateway, a browser or a container, or reaches 
 local child such as `git`, and an in-process `TestServer`, are fine. `python -m tools.ci rails
 census` prints each verdict with its reason. The "every rail lives in tests/rails" row of the
 contract table fails on a rail outside `tests/rails/` and on a non-rail inside it. Two kinds of
-module stay where they are: a security-marked one, and a rail that still holds behaviour tests,
-named in `tools/ci/rails-pending-split.txt` until its split. That list only shrinks.
+module stay where they are only while they are one: a security-marked one stays whatever it
+reads, and a module with both tree tests and behaviour tests is split, its tree half in
+`tests/rails/test_<name>_tree.py` and what both halves use in a helper module beside the suite.
 
 A rail names the repository from `REPO` in `tests/rails/rails_repo.py`, not from `parents[n]`
 of its own file. A rail imports no behaviour test module: a name both need lives in a helper

@@ -15,15 +15,12 @@ The knowledge, lexicon and code-index stores keep one shared connection the same
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import collections
 import threading
 import time
-from pathlib import Path
 
 import pytest
-import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -31,8 +28,6 @@ from personalclaw.dashboard.handlers import memory as mem_handlers
 from personalclaw.memory_service import MemoryService
 from personalclaw.sqlite_compat import SharedConnection, connect_shared, sqlite3
 from personalclaw.vector_memory import VectorMemoryStore
-
-_SRC = Path(__file__).resolve().parents[1] / "src"
 
 _ENTITIES = 40
 
@@ -178,58 +173,6 @@ def test_every_store_that_shares_one_connection_opens_a_shared_one(tmp_path, mon
         ("code index", code.db),
     ):
         assert isinstance(conn, SharedConnection), f"the {name} store's connection is not shared"
-
-
-#: Modules that open a connection for several threads and serialize EVERY use of it with a lock of
-#: their own, around whole transactions. Nothing else may open one without ``connect_shared``.
-_OWN_LOCK = {
-    "personalclaw/session_search.py",
-    "personalclaw/learning/staging.py",
-}
-
-
-def _raw_shared_opens(source: str | ast.Module) -> int:
-    """How many ``connect(..., check_same_thread=False)`` calls ``source`` makes."""
-    count = 0
-    tree = source if isinstance(source, ast.Module) else ast.parse(source)
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-        if name != "connect":
-            continue
-        for kw in node.keywords:
-            if (
-                kw.arg == "check_same_thread"
-                and isinstance(kw.value, ast.Constant)
-                and kw.value.value is False
-            ):
-                count += 1
-    return count
-
-
-def test_a_connection_shared_between_threads_is_opened_shared():
-    """The rail: a store that keeps one connection for several threads opens it with
-    ``connect_shared`` (or serializes every use itself, and is listed above)."""
-    # Positive control on the predicate: it must still see the raw form it exists to refuse.
-    assert _raw_shared_opens("sqlite3.connect(p, check_same_thread=False)") == 1
-    assert _raw_shared_opens("connect_shared(p, isolation_level=None)") == 0
-
-    found: dict[str, int] = {}
-    for path, tree in source_index.package_trees():
-        rel = path.relative_to(_SRC).as_posix()
-        if rel == "personalclaw/sqlite_compat.py":
-            continue  # where the shared connection is made
-        n = _raw_shared_opens(tree)
-        if n:
-            found[rel] = n
-    # And on the population: the two lock-holding modules are found, so the scan is not vacuous.
-    assert _OWN_LOCK <= set(found), f"the scan no longer finds the lock-holding modules: {found}"
-    stray = sorted(set(found) - _OWN_LOCK)
-    assert (
-        stray == []
-    ), f"these open a connection for several threads without connect_shared: {stray}"
 
 
 # ── the connection itself behaves like any other ───────────────────────────────────────────────

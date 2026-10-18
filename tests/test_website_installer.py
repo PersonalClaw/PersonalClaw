@@ -83,12 +83,23 @@ import subprocess
 import tomllib
 
 import pytest
+import website_installer_shared
+from website_installer_shared import (
+    _INSTALLER,
+    _ROOT,
+    REQUIRE_ENV,
+    SERVED_URL,
+    _live_leg,
+    code_only,
+    fetch_guards,
+    header_block,
+    header_claims,
+    jobs,
+)
 
-_ROOT = pathlib.Path(__file__).resolve().parents[1]
-_INSTALLER = _ROOT / "deploy" / "website" / "install.sh"
+installer_text = website_installer_shared.installer_text
+
 _PIN = _ROOT / "deploy" / "website" / "install.sh.sha256"
-_CI = _ROOT / ".github" / "workflows" / "ci.yml"
-_BREADTH = _ROOT / ".github" / "workflows" / "breadth.yml"
 _PYPROJECT = _ROOT / "pyproject.toml"
 _CHANGELOG = _ROOT / "CHANGELOG.md"
 #: The user-facing install guide — where the verify recipe is documented, because a verify path
@@ -97,8 +108,6 @@ _GUIDE = _ROOT / "docs" / "guides" / "getting-started.md"
 _DEPLOY_README = _ROOT / "deploy" / "website" / "README.md"
 _REPO_README = _ROOT / "README.md"
 
-#: The URL the one-liner is served from. The live legs in ``breadth.yml`` must name it.
-SERVED_URL = "https://personalclaw.dev/install"
 
 #: The host that serves the script. A digest fetched from HERE would be worthless against a
 #: compromise of this host: it would serve the script and the matching digest. The documented
@@ -130,10 +139,6 @@ VERIFY_HEADING = "Verify the one-liner"
 #: spirit of :data:`LONG_STANDING_CI_JOBS`.
 LONG_STANDING_RELEASES = frozenset({"0.1.0", "0.1.1", "0.1.2", "0.1.3"})
 
-#: Turns "the tool this case needs is absent" from a skip into a failure. Set by the
-#: ``lint`` job, which installs shellcheck and dash first. NOT set on a contributor's
-#: laptop, where reding the suite over a missing linter would be hostile.
-REQUIRE_ENV = "PERSONALCLAW_REQUIRE_INSTALL_PROOF"
 
 #: The installer's single dispatching statement. Load-bearing for `curl | sh` safety: see
 #: :class:`TestTruncatedDownloadFailsClosed`.
@@ -163,73 +168,8 @@ SANDBOX_TOOLS = ("cat", "uname", "printf")
 #: claim below vacuous, and nothing else would say so.
 FORBIDDEN_TOOLS = ("curl", "wget", "uv")
 
-#: Job ids long enough in these workflows that their absence means the parser broke rather
-#: than that CI changed. The vacuity floor for :func:`jobs`.
-LONG_STANDING_CI_JOBS = frozenset({"lint", "test", "web", "rails", "harness", "client"})
-LONG_STANDING_BREADTH_JOBS = frozenset({"install-smoke", "audit", "security-corpus", "coverage"})
-
 
 # ── parsers (text in, answer out — so the vacuity tests can drive them) ───────────────
-
-
-def jobs(text: str) -> dict[str, str]:
-    """Job id → the block of ``text`` belonging to it.
-
-    A job id is the only key at two-space indent in a workflow: a job's own keys
-    (``runs-on``, ``env``, ``steps``) sit at four and steps deeper still, so the scan needs
-    no YAML.
-    """
-    found: dict[str, list[str]] = {}
-    current: str | None = None
-    in_jobs = False
-    for line in text.splitlines():
-        if re.match(r"^jobs:\s*$", line):
-            in_jobs = True
-            continue
-        if not in_jobs:
-            continue
-        if line.strip() and not line.startswith(" ") and not line.startswith("#"):
-            break  # back to a top-level key: the jobs mapping ended
-        header = re.match(r"^ {2}([A-Za-z][\w-]*):\s*(#.*)?$", line)
-        if header:
-            current = header.group(1)
-            found[current] = []
-            continue
-        if current is not None:
-            found[current].append(line)
-    return {k: "\n".join(v) for k, v in found.items()}
-
-
-def header_block(text: str) -> str:
-    """The leading comment block of a shell script (the shebang and every ``#`` line after).
-
-    Stops at the first line that is neither a comment nor blank, so only the header — the
-    part that makes claims about CI — is returned.
-    """
-    out: list[str] = []
-    for line in text.splitlines():
-        if line.startswith("#") or not line.strip():
-            out.append(line)
-            continue
-        break
-    return "\n".join(out)
-
-
-def header_claims(text: str) -> set[tuple[str, str]]:
-    """``(workflow filename, job id)`` pairs claimed by a script's header.
-
-    A claim is a ``*.yml`` filename and a backtick-quoted identifier on the SAME header
-    line — the shape the header uses to tabulate its coverage. Derived rather than pinned:
-    rewording the prose is free, naming a job that does not exist is not.
-    """
-    claims: set[tuple[str, str]] = set()
-    for line in header_block(text).splitlines():
-        workflows = re.findall(r"\b([A-Za-z][\w.-]*\.yml)\b", line)
-        ids = re.findall(r"`([A-Za-z][\w-]*)`", line)
-        for wf in workflows:
-            for job in ids:
-                claims.add((wf, job))
-    return claims
 
 
 def top_level_calls(text: str, funcs: set[str]) -> list[tuple[int, str]]:
@@ -398,11 +338,6 @@ def _tool_or_skip(tool: str) -> str:
         pytest.fail(msg)
     pytest.skip(msg)
     raise AssertionError("unreachable")  # pragma: no cover
-
-
-@pytest.fixture(scope="module")
-def installer_text() -> str:
-    return _INSTALLER.read_text(encoding="utf-8")
 
 
 @pytest.fixture(scope="module")
@@ -1004,265 +939,8 @@ class TestHeaderClaimsAreTrue:
             "checkable. Either tabulate the real jobs or make no claim."
         )
 
-    def test_every_workflow_the_header_names_exists(self, installer_text: str) -> None:
-        for wf, _job in sorted(header_claims(installer_text)):
-            assert (
-                _ROOT / ".github" / "workflows" / wf
-            ).is_file(), f"the header claims coverage in {wf}, which does not exist"
-
-    def test_every_job_the_header_names_exists(self, installer_text: str) -> None:
-        for wf, job in sorted(header_claims(installer_text)):
-            text = (_ROOT / ".github" / "workflows" / wf).read_text(encoding="utf-8")
-            present = jobs(text)
-            assert job in present, (
-                f"the header claims {wf} job `{job}` covers the installer, but {wf} has "
-                f"no such job (it has: {sorted(present)}). This is exactly the defect the "
-                "file was carrying: an advertised job that was never written."
-            )
-
 
 # ── rail wiring: the live leg must exist, and must not be able to pass vacuously ─────
-
-
-def code_only(body: str) -> str:
-    """``body`` with whole-line ``#`` comments removed.
-
-    Every "the leg does X" assertion below must read the leg's actual YAML and shell, not its
-    prose. This job is heavily commented and those comments NAME the things being asserted —
-    ``UV_TOOL_DIR``, ``install.sh.sha256``, even ``continue-on-error`` (in a comment
-    explaining why it must not be used). Matching against the raw body let the commentary
-    satisfy the assertions: measured, ``test_it_redirects_uv_tool_dirs`` passed on a comment,
-    and the ``continue-on-error`` guard failed on one. Documenting a rail is not having it.
-    """
-    return "\n".join(ln for ln in body.splitlines() if not ln.lstrip().startswith("#"))
-
-
-def fetch_guards(body: str) -> list[str]:
-    """Every ``if ! curl …; then … fi`` block in a job body, as text.
-
-    The unit that matters for "an inconclusive run must not be green" is not the job and not
-    a word — it is each individual guard around a network fetch. A whole-body substring check
-    is too loose to notice a regression *inside* one guard: renaming the message while an
-    ``::error title=… unproven::`` annotation survived elsewhere in the same job left the
-    assertion passing, which is how this helper came to exist.
-
-    Nesting is not handled because these guards do not nest; the first ``fi`` at the guard's
-    own indent closes it.
-    """
-    lines = body.splitlines()
-    guards: list[list[str]] = []
-    current: list[str] | None = None
-    indent = 0
-    for line in lines:
-        if current is None:
-            if re.search(r"if\s+!\s+curl\b", line):
-                current = [line]
-                indent = len(line) - len(line.lstrip())
-            continue
-        current.append(line)
-        if line.strip() == "fi" and (len(line) - len(line.lstrip())) == indent:
-            guards.append(current)
-            current = None
-    if current is not None:  # unterminated — hand it back so the caller can fail on it
-        guards.append(current)
-    return ["\n".join(g) for g in guards]
-
-
-def _live_leg(full_text: str) -> tuple[str, str]:
-    """The ``breadth.yml`` job that exercises the served one-liner — located by BEHAVIOUR.
-
-    Found by "the job that mentions the served URL", not by its id, so renaming it stays
-    green while deleting it does not.
-    """
-    matches = {jid: body for jid, body in jobs(full_text).items() if SERVED_URL in body}
-    assert matches, (
-        f"no job in breadth.yml mentions {SERVED_URL}. The installer's live rail is gone, "
-        "and the header's smoke claim is false again."
-    )
-    assert len(matches) == 1, f"expected one live installer leg, found {sorted(matches)}"
-    return next(iter(matches.items()))
-
-
-class TestLiveInstallerLegIsWired:
-    """The network half — and the reason a network failure here cannot read as a pass."""
-
-    @pytest.fixture(scope="class")
-    @classmethod
-    def leg(cls) -> tuple[str, str]:
-        return _live_leg(_BREADTH.read_text(encoding="utf-8"))
-
-    def test_breadth_yml_has_a_live_installer_leg(self, leg: tuple[str, str]) -> None:
-        jid, _body = leg
-        assert jid, "unreachable — _live_leg asserts this"
-
-    def test_it_exercises_the_staged_file_too(self, leg: tuple[str, str]) -> None:
-        """Served-only would not catch a broken edit until after it was hand-applied.
-
-        Running both separates "our next installer is broken" (staged red) from "the site
-        or PyPI regressed" (served red) — two different pages for two different people.
-
-        Asserted as EXECUTION, not as a mention. A step that hashes or diffs the staged path
-        names it too — a byte comparison step once did both — so a substring check passed
-        with the staged smoke leg deleted outright: measured, the leg was reduced to
-        served-only and the case stayed green. Hashing a file is not running it.
-        """
-        _jid, body = leg
-        assert re.search(
-            r"(?:^|\s)(?:/bin/)?(?:sh|dash|bash)\s+\S*deploy/website/install\.sh",
-            code_only(body),
-        ), (
-            "nothing in the live leg EXECUTES deploy/website/install.sh (hashing or diffing "
-            "it does not count). A staged edit that breaks the installer would go green "
-            "until someone copied it to the website repo."
-        )
-
-    def test_it_pipes_the_served_bytes_into_a_shell(self, leg: tuple[str, str]) -> None:
-        """The served leg must run the documented pipeline, not just download the file.
-
-        ``curl … | sh`` is itself part of what is being asserted — no TTY on stdin, and a
-        partial transfer must install nothing. Fetching to a file and running that file
-        would exercise a path no user takes, and would quietly drop the pipe semantics.
-        """
-        _jid, body = leg
-        assert re.search(
-            rf"curl[^\n]*{re.escape(SERVED_URL)}[^\n]*\|\s*(?:/bin/)?sh\b",
-            code_only(body).replace("\\\n", " "),
-        ), (
-            "the served bytes are never piped into a shell, so the leg does not exercise "
-            "the one-liner users are actually given."
-        )
-
-    def test_every_fetch_failure_exits_nonzero_and_says_unproven(
-        self, leg: tuple[str, str]
-    ) -> None:
-        """The ninth absent-vs-declared-false is what this case is here to prevent.
-
-        A curl that cannot reach the host proves nothing. If that path exits zero — or
-        merely warns — the job reports success for having tested nothing, which is how a
-        missing tmux got read as a passing test class in this repo last month.
-
-        Asserted per GUARD, not per job: the first version of this case checked the whole
-        job body for the word "unproven", and a mutant that reworded the message inside a
-        guard still passed because an annotation title elsewhere in the job carried the word.
-        ``exit`` is the load-bearing half — the vocabulary only makes the red legible.
-        """
-        _jid, body = leg
-        guards = fetch_guards(code_only(body))
-        served = [g for g in guards if SERVED_URL in g]
-        assert len(served) == 1, (
-            f"expected exactly one guarded fetch of {SERVED_URL} (the served smoke); found "
-            f"{len(served)} among {len(guards)} guard(s). An unguarded curl cannot report "
-            "`unproven` at all."
-        )
-        for guard in guards:
-            assert re.search(r"^\s*exit\s+[1-9]", guard, flags=re.MULTILINE), (
-                "a fetch-failure branch does not exit nonzero, so an unreachable host would "
-                f"be reported as a passing check:\n{guard}"
-            )
-            assert "unproven" in guard, (
-                "a fetch-failure branch reds without saying it proved nothing. The red must "
-                f"be legible as `unproven`, not as a generic failure:\n{guard}"
-            )
-
-    def test_the_leg_is_not_continue_on_error(self, leg: tuple[str, str]) -> None:
-        """One line would make every red above invisible, and this workflow already uses it.
-
-        ``breadth.yml``'s ``audit`` job is deliberately ``continue-on-error: true`` (report-only
-        supply-chain scan). Copying that line onto this job — a plausible edit the first time
-        a flaky network annoys someone — turns the whole installer rail into decoration that
-        reports success while failing, which is the defect this file exists to end.
-        """
-        _jid, body = leg
-        assert "continue-on-error" not in code_only(body), (
-            "the live installer leg is marked continue-on-error, so its failures do not fail "
-            "the workflow. A rail that cannot go red is a comment. If network flakiness is "
-            "the problem, retry the fetch — do not silence the verdict."
-        )
-
-    def test_it_redirects_uv_tool_dirs(self, leg: tuple[str, str]) -> None:
-        """The smoke must install into a scratch dir, not over whatever the runner has."""
-        _jid, body = leg
-        code = code_only(body)
-        assert "UV_TOOL_DIR" in code and "UV_TOOL_BIN_DIR" in code, (
-            "the live leg does not redirect uv's tool dirs, so the smoke writes into the "
-            "runner's real tool directories."
-        )
-
-    def test_both_smoke_legs_assert_the_installed_binary_runs(self, leg: tuple[str, str]) -> None:
-        """Installing without running proves the wheel downloaded, not that it works.
-
-        Counted, not merely found: with one occurrence the assertion is satisfied by whichever
-        leg happens to have it, and the other leg can install into its own tool dir and never
-        check that anything came out. Two legs, two verdicts.
-        """
-        _jid, body = leg
-        found = code_only(body).count("personalclaw --version")
-        assert found >= 2, (
-            f"`personalclaw --version` appears {found} time(s) in the live leg; both the "
-            "staged and served smokes must run the installed binary, or one of them proves "
-            "only that a download happened."
-        )
-
-    def test_current_checkout_runs_setup_with_system_timezone_paths_removed(
-        self, leg: tuple[str, str]
-    ) -> None:
-        """The release's first real command must run before the release reaches PyPI."""
-        _jid, body = leg
-        code = code_only(body)
-        assert re.search(r"^\s*uv\s+tool\s+install\b.*\s\.\s*$", code, re.MULTILINE)
-        assert 'PYTHONTZPATH=""' in code
-        assert 'TZ="America/Los_Angeles"' in code
-        assert re.search(r"\bpersonalclaw\s+setup\b", code)
-        assert '"timezone": "America/Los_Angeles"' in code
-
-
-class TestLintJobChecksTheInstaller:
-    """The every-PR half of the linter claim, which cannot skip."""
-
-    @pytest.fixture(scope="class")
-    @classmethod
-    def lint_body(cls) -> str:
-        present = jobs(_CI.read_text(encoding="utf-8"))
-        assert "lint" in present, f"ci.yml has no lint job (has: {sorted(present)})"
-        return present["lint"]
-
-    def test_lint_runs_shellcheck_on_the_installer(self, lint_body: str) -> None:
-        """The INVOCATION, not the word.
-
-        The step installs its tools with ``for tool in shellcheck dash``, so "shellcheck
-        appears in this job" is true even with every actual check deleted: measured, removing
-        both ``shellcheck --version`` and ``shellcheck -s sh …`` left this case green because
-        the apt loop still named the tool. Naming a linter is not running it.
-        """
-        assert re.search(
-            r"shellcheck\s+(?:-\S+\s+)*-s\s+sh\s+\S*deploy/website/install\.sh",
-            code_only(lint_body),
-        ), (
-            "ci.yml's lint job never invokes `shellcheck -s sh deploy/website/install.sh`, "
-            "so the header's shellcheck-clean claim rests on nothing again."
-        )
-
-    def test_lint_runs_both_posix_syntax_checks(self, lint_body: str) -> None:
-        """``dash -n`` and ``sh -n`` are not interchangeable, and neither replaces shellcheck.
-
-        Measured while mutating this rail: ``[[ -t 0 ]]`` — a bashism that breaks the script
-        under a real dash — passes ``dash -n`` cleanly, because dash parses ``[[`` as an
-        ordinary command name and only fails at RUNTIME. shellcheck is the only member of the
-        set that rejects it at check time. All three are named here so that dropping one is a
-        red rather than a silent narrowing of what "POSIX-clean" means.
-        """
-        code = code_only(lint_body)
-        for tool in ("sh -n", "dash -n"):
-            assert re.search(
-                rf"{re.escape(tool)}\s+\S*deploy/website/install\.sh", code
-            ), f"ci.yml's lint job does not run `{tool}` on the installer"
-
-    def test_lint_sets_the_require_proof_lever(self, lint_body: str) -> None:
-        """Without the lever, a runner image that drops shellcheck turns red into skip."""
-        assert REQUIRE_ENV in code_only(lint_body), (
-            f"ci.yml's lint job does not set {REQUIRE_ENV}, so a missing shellcheck or "
-            "dash would silently skip the cases that prove the installer lints."
-        )
 
 
 # ── vacuity: the parsers must be able to say NO ──────────────────────────────────────
@@ -1270,14 +948,6 @@ class TestLintJobChecksTheInstaller:
 
 class TestParsersAreNotVacuous:
     """Every assertion above is only worth its ability to fail. Drive it and watch."""
-
-    def test_jobs_finds_the_real_workflows(self) -> None:
-        ci = set(jobs(_CI.read_text(encoding="utf-8")))
-        full = set(jobs(_BREADTH.read_text(encoding="utf-8")))
-        assert LONG_STANDING_CI_JOBS <= ci, f"parser lost ci.yml jobs: {LONG_STANDING_CI_JOBS - ci}"
-        assert (
-            LONG_STANDING_BREADTH_JOBS <= full
-        ), f"parser lost breadth.yml jobs: {LONG_STANDING_BREADTH_JOBS - full}"
 
     def test_jobs_ignores_step_level_keys(self) -> None:
         parsed = jobs("jobs:\n  only:\n    runs-on: x\n    steps:\n      - name: not-a-job\n")
@@ -1327,17 +997,6 @@ class TestParsersAreNotVacuous:
             code_only("      # runs personalclaw --version and pins install.sh.sha256\n").strip()
             == ""
         )
-
-    def test_fetch_guards_finds_the_real_ones(self) -> None:
-        """The live leg must really contain the guards the assertions iterate over."""
-        _jid, body = _live_leg(_BREADTH.read_text(encoding="utf-8"))
-        guards = fetch_guards(body)
-        served = [g for g in guards if SERVED_URL in g]
-        assert len(served) == 1, (
-            f"parser found {len(served)} guarded fetch(es) of {SERVED_URL} in the live leg "
-            f"({len(guards)} guard(s) in all)"
-        )
-        assert all("curl" in g for g in guards)
 
     def test_fetch_guards_isolates_each_block(self) -> None:
         """Two guards must come back as two strings, not one run-together blob.

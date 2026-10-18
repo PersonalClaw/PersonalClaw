@@ -727,7 +727,7 @@ def test_work_run_as_a_sessions_runs_under_that_session(monkeypatch):
 async def test_a_spec_a_native_agent_checks_is_its_chats_candidate(tmp_path, monkeypatch):
     """Driven through a real native turn whose scripted model calls the real tool.
     🔴 Before: the candidate named no session, so every other chat's plans matched it."""
-    from test_a_declared_read_asks_nobody import _OneCall
+    from a_declared_read_asks_nobody_shared import _OneCall
 
     from personalclaw.agents.native.runtime import NativeAgentRuntime
     from personalclaw.agents.native.tools import InProcessMcpToolProvider

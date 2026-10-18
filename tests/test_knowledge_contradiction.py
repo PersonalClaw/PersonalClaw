@@ -10,7 +10,6 @@ import asyncio
 import json
 
 import pytest
-import source_index
 
 from personalclaw.action_providers.base import ActionContext
 from personalclaw.knowledge import session_brief
@@ -715,20 +714,6 @@ def test_every_knowledge_reader_and_writer_uses_one_path(tmp_path, monkeypatch):
     from personalclaw.knowledge.store import knowledge_db_path
 
     assert knowledge_db_path() == tmp_path / "workspace" / "knowledge" / "knowledge.db"
-
-
-def test_no_module_composes_the_knowledge_path_itself():
-    """A second copy of the path is how the split-brain happened. The helper is the only place it
-    is written, so a future caller cannot reintroduce a divergent one by accident."""
-    import pathlib as _pathlib
-
-    root = _pathlib.Path(__file__).resolve().parents[1] / "src/personalclaw"
-    offenders = [
-        str(path.relative_to(root))
-        for path in source_index.package_files()
-        if '"knowledge" / "knowledge.db"' in source_index.text(path) and path.name != "store.py"
-    ]
-    assert offenders == [], f"these compose the knowledge path directly: {offenders}"
 
 
 # ── typed edges beyond `contradicts` ──

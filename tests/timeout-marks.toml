@@ -168,7 +168,7 @@ cap = 300
 reason = "thirteen cycles of the search, each running its steps as processes of their own: 42-69 s plain and 64-120 s under coverage on CI (2026-10-15)"
 
 [[mark]]
-site = "tests/test_provider_instance_secrets.py::test_every_config_bearing_surface_also_preserves_secrets_if_it_writes"
+site = "tests/rails/test_provider_instance_secrets_tree.py::test_every_config_bearing_surface_also_preserves_secrets_if_it_writes"
 cap = 300
 reason = "a census of the tree: 80-97 s of the default under coverage on CI (2026-10-14/15)"
 

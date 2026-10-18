@@ -422,15 +422,6 @@ def test_the_scan_cap_is_declared():
 # ── channel 3: proposals ──
 
 
-def test_a_proposal_is_ONE_grouped_suggestion():
-    """Five separate "enable this SOP?" prompts on attach is a wall the user clicks away — and
-    clicking away a wall teaches them to click away the next one."""
-    proposal = propose_packs(["pyproject.toml", "tests", ".github/workflows", "Makefile"])
-    assert proposal is not None
-    assert len(proposal.packs) >= 2
-    assert isinstance(proposal.defs, list)
-
-
 def test_a_proposal_ENABLES_NOTHING():
     """Propose-don't-enable, as a checkable field rather than a docstring claim."""
     proposal = propose_packs(["pyproject.toml", "tests"])

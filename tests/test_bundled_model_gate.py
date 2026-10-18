@@ -44,7 +44,6 @@ drive's own quoted reply on the signed-off weight.
 
 from __future__ import annotations
 
-import ast
 import hashlib
 import importlib.util
 import json
@@ -58,6 +57,7 @@ from pathlib import Path
 
 import pytest
 import tool_homes
+from bundled_model_gate_shared import _REPO_ROOT, _VERIFY_WHEEL
 
 from personalclaw import bundled_model as rail
 from personalclaw.bundled_model import (
@@ -74,10 +74,8 @@ from personalclaw.bundled_model import (
     weight_shaped_members,
 )
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
 _DRIVE = _REPO_ROOT / "scripts" / "zero_config_first_turn_drive.py"
 _FETCH = _REPO_ROOT / "scripts" / "fetch_bundled_model.py"
-_VERIFY_WHEEL = _REPO_ROOT / "scripts" / "verify_wheel.py"
 
 #: Licences that MUST be refused, each with the reason it is a trap rather than an obvious no.
 #: Every one of these appears on a real model card that a reader could take for permissive.
@@ -1137,36 +1135,6 @@ def test_the_release_gate_reads_the_whole_onboarding_body(monkeypatch) -> None:
     monkeypatch.setattr(module, "_http_get", fake)
     module._assert_download_offer("http://127.0.0.1:1")
     assert seen["limit"] is None
-
-
-def _calls_in(function_name: str) -> list[tuple[int, str]]:
-    tree = ast.parse(_VERIFY_WHEEL.read_text(encoding="utf-8"))
-    fn = next(
-        (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == function_name), None
-    )
-    assert fn is not None, f"scripts/verify_wheel.py has no {function_name}()"
-    return sorted(
-        (node.lineno, node.func.id)
-        for node in ast.walk(fn)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-    )
-
-
-def test_every_verification_asks_the_installed_package_after_installing_it() -> None:
-    """A perfect assertion with no call site guards nothing — and before the install there is no
-    artifact to ask, so the ORDER is part of the contract. The install-and-boot half lives in
-    one function, and both ways in (``--wheel``, and ``make build``'s ``--build``) reach it."""
-    names = [name for _line, name in _calls_in("_verify_wheel_runtime")]
-    assert "_assert_installed_bundled_model" in names, f"assertion 7 never runs: {names}"
-    assert names.index("_pip_install_wheel") < names.index("_assert_installed_bundled_model")
-    for entry in ("main", "_canonical_distribution_build"):
-        called = [name for _line, name in _calls_in(entry)]
-        assert "_verify_wheel_runtime" in called, f"{entry}() skips the installed checks: {called}"
-
-
-def test_the_boot_probe_asks_for_the_download_offer() -> None:
-    names = [name for _line, name in _calls_in("_boot_and_probe")]
-    assert "_assert_download_offer" in names, f"assertion 8 has no call site: {names}"
 
 
 def test_the_release_gate_reads_nothing_from_the_repository() -> None:
