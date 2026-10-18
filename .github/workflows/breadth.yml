@@ -103,26 +103,37 @@ jobs:
       # reports (tools/ci/shards.py), made once so every shard of a leg reads the same buckets.
       # After the earlier results, so a planning failure never touches reuse. Interim until
       # #3948's telemetry record; an unreadable source gives equal weights and a whole plan.
+      #
+      # ON MAIN THE EARLIER PLAN IS KEPT. A shard's list digest is one of its inputs, so a plan
+      # made afresh each night, from durations that move a few percent, would hand every shard
+      # other files and no tree-keyed shard would ever carry (measured: two green main runs
+      # hours apart planned 885-949 of each shard's files differently). So `--keep-from-main`
+      # reuses the newest earlier main run's plan for every leg it still plans whole: the same
+      # test files in the same N. A changed file set, or no readable earlier plan, plans afresh.
       - name: plan the suite's shards, once for every leg of this run
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          python3 -m tools.ci shards plan --repo "$GITHUB_REPOSITORY"
-          --leg ubuntu:breadth.yml:junit-ubuntu-:4
-          --leg macos:breadth.yml:junit-macos-:6
-          --leg arm:breadth.yml:junit-arm-:4
-          --leg coverage-shard:breadth.yml:junit-coverage-shard-:6
-          --leg canary:breadth.yml:junit-canary-:4
-          --out "$RUNNER_TEMP/shard-plan/plan.json"
+        run: |
+          keep=""
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then keep="--keep-from-main breadth.yml"; fi
+          # shellcheck disable=SC2086 # $keep is two words or none
+          python3 -m tools.ci shards plan --repo "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" $keep \
+            --leg ubuntu:breadth.yml:junit-ubuntu-:4 \
+            --leg macos:breadth.yml:junit-macos-:6 \
+            --leg arm:breadth.yml:junit-arm-:4 \
+            --leg coverage-shard:breadth.yml:junit-coverage-shard-:6 \
+            --leg canary:breadth.yml:junit-canary-:4 \
+            --out "$RUNNER_TEMP/shard-plan/plan.json"
       - name: every collectable file is in exactly one shard of each leg
         run: python3 -m tools.ci shards check --plan "$RUNNER_TEMP/shard-plan/plan.json"
+      # Kept a week, so the next night's freshness can keep it, however late that run starts.
       - name: Upload the shard plan
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: shard-plan
           path: ${{ runner.temp }}/shard-plan/plan.json
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
 
   ubuntu:
     # report holds each key to this job's latest attempt, by this name.

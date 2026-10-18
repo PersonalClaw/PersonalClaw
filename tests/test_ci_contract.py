@@ -1884,6 +1884,43 @@ def suite_shard_violations(tree: Tree) -> list[str]:
     return bad
 
 
+_KEEP_GATE = (
+    'if [ "$GITHUB_REF" = "refs/heads/main" ]; then keep="--keep-from-main breadth.yml"; fi'
+)
+
+
+def breadth_keeps_its_plan_violations(tree: Tree) -> list[str]:
+    """On main, breadth keeps the newest earlier main run's shard plan (#3923, #3913).
+
+    A breadth shard's list digest is one of its inputs, so a plan made afresh each night would
+    hand every shard other files and no tree-keyed shard would ever carry. So ``freshness``
+    passes ``--keep-from-main breadth.yml``, only on ``refs/heads/main`` (off main nothing is
+    reused), names its own run so it never keeps its own plan, and uploads the plan for at least
+    two days, so the next night can read it.
+    """
+    steps = (_breadth_jobs(tree).get("freshness") or {}).get("steps") or []
+    runs = [str(s.get("run", "")) for s in steps]
+    planning = [r for r in runs if "tools.ci shards plan" in r]
+    if len(planning) != 1:
+        return ["breadth.yml:freshness does not plan the shards once"]
+    bad: list[str] = []
+    text = planning[0]
+    if _KEEP_GATE not in text or "--keep-from-main" in text.replace(_KEEP_GATE, ""):
+        bad.append("breadth.yml:freshness does not keep main's earlier plan, and only on main")
+    if '--run-id "$GITHUB_RUN_ID"' not in text:
+        bad.append("breadth.yml:freshness does not name its own run, so it could keep its plan")
+    uploads = [
+        s
+        for s in steps
+        if _action(s) == "actions/upload-artifact"
+        and (s.get("with") or {}).get("name") == "shard-plan"
+    ]
+    days = [int((s.get("with") or {}).get("retention-days") or 0) for s in uploads]
+    if len(days) != 1 or days[0] < 2:
+        bad.append(f"breadth.yml:freshness keeps its plan {days} days, too short for tomorrow")
+    return bad
+
+
 def no_cov_violations(tree: Tree) -> list[str]:
     """No workflow command passes ``--no-cov``.
 
@@ -3196,6 +3233,37 @@ ROWS: tuple[Row, ...] = (
         ),
     ),
     _toolchain_row(
+        "breadth keeps main's earlier shard plan",
+        breadth_keeps_its_plan_violations,
+        (
+            _plant(
+                "a plan made afresh every night",
+                _BREADTH,
+                _KEEP_GATE + "\n",
+                "",
+            ),
+            _plant(
+                "the earlier plan kept off main too",
+                _BREADTH,
+                _KEEP_GATE,
+                'keep="--keep-from-main breadth.yml"',
+            ),
+            _plant(
+                "a plan that may keep its own run's",
+                _BREADTH,
+                ' --run-id "$GITHUB_RUN_ID" $keep',
+                " $keep",
+            ),
+            _plant(
+                "a plan gone before the next night",
+                _BREADTH,
+                "          retention-days: 7\n\n  ubuntu:\n",
+                "          retention-days: 1\n\n  ubuntu:\n",
+            ),
+            Control("the kept plan, as the tree has it, passes", _nothing, fails=False),
+        ),
+    ),
+    _toolchain_row(
         "every suite shard runs its share of its run's one plan",
         suite_shard_violations,
         (
@@ -3235,7 +3303,7 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "a breadth leg the plan leaves out",
                 _BREADTH,
-                "          --leg arm:breadth.yml:junit-arm-:4\n",
+                "            --leg arm:breadth.yml:junit-arm-:4 \\\n",
                 "",
             ),
             _plant(
