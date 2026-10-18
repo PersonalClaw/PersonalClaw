@@ -467,7 +467,8 @@ ended is not offered for pausing, and a task finished at your desk is not listed
 
 Which notifications reach the phone at all is **Settings → Notifications**: every kind has a row,
 and *Approval needed* ships with the phone among its targets. Turn it off there and nothing else
-changes.
+changes. A row pushes only while it is set to **Notify**, and by default only approvals, questions
+and errors are.
 
 ## Anti-patterns — do not do these
 

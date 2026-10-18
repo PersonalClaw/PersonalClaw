@@ -502,10 +502,11 @@ class LoopWatchdog:
 
     #: Events where the loop is WAITING ON THE USER, mapped to their registered attention
     #: kind. These outlive the moment they happen in, so they get a durable inbox item
-    #: rather than only a toast. Progress/outcome events (complete, failed, stage_advance,
-    #: and the two prove-the-instrument warnings) are deliberately NOT here: they report
-    #: something that already finished, and an inbox row the user must dismiss would be
-    #: busywork rather than attention.
+    #: rather than only a toast. ``judge_blind`` is one: a blind judge pauses the loop to
+    #: NEEDS_INPUT until its owner acts, as a stall does. Progress/outcome events (complete,
+    #: failed, stage_advance, and ``ship_blocked``, a completion the reproduce did not
+    #: confirm) are deliberately NOT here: they report something that already finished, and an
+    #: inbox row the user must dismiss would be busywork rather than attention.
     _ATTENTION_EVENTS = {
         "needs_input": "needs_input",
         "blocked": "needs_input",
@@ -513,6 +514,7 @@ class LoopWatchdog:
         "spend_cap": "needs_input",
         "declined": "needs_input",
         "no_tools": "needs_input",
+        "judge_blind": "needs_input",
     }
 
     def _attention_dedup_key(self, loop_id: str, event: str) -> str:

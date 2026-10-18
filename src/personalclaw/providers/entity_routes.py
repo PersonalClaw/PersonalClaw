@@ -268,10 +268,10 @@ def _must_be_answered(registered) -> bool:
 
     `attention` ALONE is too wide, and the tree says so. It means "this persists a durable row",
     which the info-ranked attention kinds use for the opposite purpose: `learning/report`'s
-    registration states that `immediate` + SEV_INFO is *"what make quiet hours suppress the PING
-    while the artifact stays durable"*, and `knowledge/research_finding` leans on the same shape
-    (*"the report runs while nobody is watching"*). For those, the durable artifact IS the record
-    and the silence is the designed behaviour — `test_identity_report` pins it.
+    registration says a ping for it (a row the owner made Notify) is suppressed inside quiet hours
+    while the artifact stays durable, and `knowledge/research_finding` has the same shape (*"the
+    report runs while nobody is watching"*). For those, the durable artifact IS the record and the
+    silence is the designed behaviour — `test_identity_report` pins it.
 
     Severity is the axis that separates them, and the registry already draws the line: the
     attention kinds ranked SEV_WARNING are exactly the "you must decide" ones — `loop/needs_input`,
@@ -417,13 +417,13 @@ def notification_posture(kind: str, *, now: "object | None" = None) -> str:
 
 
 def notification_allowed(kind: str, *, now: "object | None" = None) -> bool:
-    """Whether *kind* is delivered under its default rule — :func:`notification_posture` as a
+    """Whether the gate lets a ping of *kind* through — :func:`notification_posture` as a
     boolean.
 
     Kept as the name every caller and doc already uses ("the global gate"). A ``quiet`` posture
-    IS allowed: the note is recorded, it just does not interrupt. A ``hush`` is not: the default
-    rule pings, and a ping is what quiet hours suppress — only a rule that already delivers
-    quietly (the digest, a badge) delivers one.
+    IS allowed: the note is recorded, it just does not interrupt. A ``hush`` is not: a ping is
+    what quiet hours suppress — only a rule that already delivers quietly (the digest, a badge,
+    which is most kinds' default) delivers one.
     """
     return notification_posture(kind, now=now) not in (POSTURE_DROP, POSTURE_HUSH)
 

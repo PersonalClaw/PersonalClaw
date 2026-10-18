@@ -549,9 +549,13 @@ class TestNotificationAllowed:
 @pytest.mark.asyncio
 async def test_state_notify_respects_gate(monkeypatch, tmp_path):
     """DashboardState.notify() must consult the gate: a muted store drops the
-    note (no log append, no broadcast, no persist)."""
+    note (no log append, no broadcast, no persist). The kind is set to Notify, so the live leg
+    pings: with no rule it would wait in the bell, which broadcasts nothing either way."""
+    from personalclaw import notification_rules as nr
     from personalclaw.dashboard import state as st
 
+    monkeypatch.setattr(nr, "config_dir", lambda: tmp_path)
+    nr.save_rules({"rules": {"system/info": {"mode": "immediate"}}})
     er._save_entity_settings("notifications", {"mute_all": True})
     ds = object.__new__(st.DashboardState)  # skip heavyweight __init__
     ds._notification_log = []
@@ -615,22 +619,25 @@ async def test_rules_put_rejects_a_resolution_only_kind(_isolate_rules):
 async def test_rules_put_persists_and_takes_effect(_isolate_rules):
     from personalclaw import notification_rules as nr
 
+    # `digest`, not the default `badge`, so the read below cannot pass on the default.
     resp = await er.handle_notification_rules_put(
-        _req({"rules": {"heartbeat/status": {"mode": "badge"}}})
+        _req({"rules": {"heartbeat/status": {"mode": "digest"}}})
     )
     data = await _json(resp)
     assert data["ok"] is True
     # The effective read path — not just the response echo — must reflect it.
-    assert nr.resolve_rule("heartbeat", "status").mode == "badge"
+    assert nr.resolve_rule("heartbeat", "status").mode == "digest"
 
 
 @pytest.mark.asyncio
 async def test_rules_put_merges_rather_than_replacing(_isolate_rules):
     from personalclaw import notification_rules as nr
 
-    await er.handle_notification_rules_put(_req({"rules": {"heartbeat/status": {"mode": "badge"}}}))
+    await er.handle_notification_rules_put(
+        _req({"rules": {"heartbeat/status": {"mode": "digest"}}})
+    )
     await er.handle_notification_rules_put(_req({"rules": {"hook/fired": {"mode": "never"}}}))
-    assert nr.resolve_rule("heartbeat", "status").mode == "badge", "second PUT dropped the first"
+    assert nr.resolve_rule("heartbeat", "status").mode == "digest", "second PUT dropped the first"
     assert nr.resolve_rule("hook", "fired").mode == "never"
 
 
@@ -650,9 +657,12 @@ async def test_rules_put_null_clears_the_rule_so_the_row_inherits_again(_isolate
 
     assert row()["configured"] is False, "fixture is not clean"
     default_mode = row()["default_mode"]
+    assert default_mode != "immediate", "the set below must differ from the default"
 
-    await er.handle_notification_rules_put(_req({"rules": {"skills/proposal": {"mode": "badge"}}}))
-    assert (row()["mode"], row()["configured"]) == ("badge", True)
+    await er.handle_notification_rules_put(
+        _req({"rules": {"skills/proposal": {"mode": "immediate"}}})
+    )
+    assert (row()["mode"], row()["configured"]) == ("immediate", True)
 
     resp = await er.handle_notification_rules_put(_req({"rules": {"skills/proposal": None}}))
     assert resp.status == 200
@@ -859,7 +869,8 @@ async def test_rules_put_stores_conditions_that_escalate(_isolate_rules):
             {
                 "rules": {
                     "hook/fired": {
-                        "mode": "badge",
+                        # `digest`, not the default `badge`, so the mode's write is observable.
+                        "mode": "digest",
                         # One keyword per edit (`notification_rules.edited_list`), beside the
                         # name-mention switch in the same write.
                         "conditions": {"keywords": {"add": "deploy"}, "name_mention": True},
@@ -869,7 +880,7 @@ async def test_rules_put_stores_conditions_that_escalate(_isolate_rules):
         )
     )
     rule = nr.resolve_rule("hook", "fired")
-    assert rule.mode == "badge"
+    assert rule.mode == "digest"
     assert rule.conditions.matches("please deploy now") == "keyword: deploy"
     assert rule.escalated().mode == "immediate"
 

@@ -811,9 +811,10 @@ async def deliver_identity_report(
     """Compose, persist and surface one identity report. Never raises.
 
     **The artifact is written before the item is raised.** That ordering is what makes
-    "quiet hours suppresses the ping but not the artifact" true by construction rather
-    than by promise: the document is already durable when delivery is attempted, and
-    ``notification_allowed`` can only drop the notification.
+    "quiet hours suppress the ping but not the artifact" true by construction rather than by
+    promise: the document is already durable when delivery is attempted, whether the notice is
+    the badge it is by default or a ping the owner asked for, and the gate can only drop the
+    notification.
 
     Returns the delivery record even when a step failed — ``artifact_slug == ""`` or
     ``inbox_item_id == ""`` is how a caller (and the trigger's result surface) sees a

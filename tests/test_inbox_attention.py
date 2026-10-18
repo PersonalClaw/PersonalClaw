@@ -358,10 +358,12 @@ def test_watchdog_attention_events_are_a_subset_of_its_notify_events():
 
 
 def test_watchdog_outcome_events_are_not_attention_events():
-    """complete/failed/stage_advance already happened — an inbox row would be busywork."""
+    """complete/failed/stage_advance already happened — an inbox row would be busywork. So did a
+    completion the reproduce did not confirm (ship_blocked); a blind judge (judge_blind) pauses the
+    loop for its owner instead, and asks (`test_loop_watchdog.TestABlindJudgeAsksItsOwner`)."""
     from personalclaw.loop.watchdog import LoopWatchdog
 
-    for event in ("complete", "failed", "stage_advance", "judge_blind", "ship_blocked"):
+    for event in ("complete", "failed", "stage_advance", "ship_blocked"):
         assert event not in LoopWatchdog._ATTENTION_EVENTS
 
 

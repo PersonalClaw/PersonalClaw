@@ -26,9 +26,10 @@ that fails to list is skipped by `registry.collect_tasks` and one bad sweep woul
 every record and announce them all again.
 
 **Quiet hours** are honoured by WAITING. Inside the window the gate
-(`entity_routes.notification_posture`) answers ``hush``, and `notify()` suppresses the ping — right
-for a heartbeat, wrong for a reminder, which would then never ring — so a notice whose moment falls
-in quiet hours is left unsent and unrecorded, and the first sweep after the window ends sends it.
+(`entity_routes.notification_posture`) answers ``hush``, and `notify()` suppresses a ping — right
+for a heartbeat, wrong for a reminder the owner made Notify, which would then never ring — so a
+notice whose moment falls in quiet hours is left unsent and unrecorded, and the first sweep after
+the window ends sends it, as its rule says: a badge in the bell by default.
 Mute and a raised minimum severity mean "not at all" rather than "not now": the notice is handed to
 `notify()`, whose gate drops it, and it is recorded, so unmuting next week does not deliver a
 week-old reminder.

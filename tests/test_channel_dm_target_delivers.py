@@ -106,8 +106,12 @@ def _state(tmp_path):
 
 
 def _target(flat_kind: str) -> None:
+    """The kind's row set to Notify with Channel DM ticked: only a ping goes to the channel, and
+    most kinds wait in the bell by default."""
     registered = nk.kind_for_legacy(flat_kind)
-    assert rules.ensure_target(registered.source, registered.kind, "channel_dm")
+    rules.save_rules(
+        {"rules": {registered.key: {"mode": "immediate", "targets": ["dashboard", "channel_dm"]}}}
+    )
 
 
 async def _settle(times: int = 20) -> None:
@@ -131,9 +135,10 @@ async def test_a_note_with_the_channel_dm_target_reaches_the_owner_on_their_chan
     channel = _connect()
     state = _state(tmp_path)
 
+    rules.save_rules({"rules": {"system/warning": {"mode": "immediate"}}})
     state.notify(nk.WARNING, "Disk nearly full", "92% of /data is used.")
     await _settle()
-    assert channel.sent == [], "vacuity floor: no target, no DM"
+    assert channel.sent == [], "vacuity floor: a ping with no channel target, no DM"
 
     _target(nk.WARNING)
     state.notify(nk.WARNING, "Disk nearly full", "92% of /data is used.")

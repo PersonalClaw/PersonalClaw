@@ -656,12 +656,17 @@ async def test_quiet_hours_suppresses_the_ping_but_not_the_artifact(
 ):
     """Both directions, one clock read. The delivering case IS the vacuity floor.
 
+    With no rule of the owner's the report is a badge, so inside quiet hours it is recorded in
+    the bell without a ping, as everywhere else. The ping exists once the owner sets the row to
+    Notify, and from then on this is about that ping.
+
     A suppression assertion that would also hold with suppression removed proves nothing,
-    so the same fixture runs twice: once with the quiet window over now (no notification,
-    artifact and inbox row both durable) and once with it hours away (notification
-    delivered). If the second leg did not deliver, the first leg's silence would be
-    meaningless.
+    so the same fixture runs twice under the Notify rule: once with the quiet window over now
+    (no notification, artifact and inbox row both durable) and once with it hours away
+    (notification delivered). If the second leg did not deliver, the first leg's silence would
+    be meaningless.
     """
+    from personalclaw import notification_rules as nr
     from personalclaw.inbox import InboxStore
 
     state, vs = _state(tmp_path)
@@ -673,7 +678,16 @@ async def test_quiet_hours_suppresses_the_ping_but_not_the_artifact(
         home,
         {"quiet_hours_enabled": True, "quiet_hours_start": start, "quiet_hours_end": end},
     )
-    quiet = await LR.deliver_identity_report(state, vs=vs, now=NOW)
+    await LR.deliver_identity_report(state, vs=vs, now=NOW)
+    (badge,) = state._notification_log
+    assert badge["kind"] == LR.NOTIFY_KIND and badge["badge_only"] is True
+
+    # The owner makes the report a ping. `now` advances a month for each delivery below because
+    # the dedup key is the calendar month: without that, a delivery would be swallowed as a
+    # duplicate and read like quiet hours suppressing.
+    state._notification_log.clear()
+    nr.save_rules({"rules": {"learning/report": {"mode": "immediate"}}})
+    quiet = await LR.deliver_identity_report(state, vs=vs, now=NOW + timedelta(days=40))
 
     assert state._notification_log == [], "quiet hours did not suppress the ping"
     assert quiet.artifact_slug == LR.ARTIFACT_SLUG, "quiet hours must not lose the artifact"
@@ -684,18 +698,16 @@ async def test_quiet_hours_suppresses_the_ping_but_not_the_artifact(
 
     # The floor: move the window off now and the SAME call delivers. Same state, same store,
     # same function — only the window moved, so a green here cannot come from a different
-    # fixture. `now` advances a month because the dedup key is the calendar month: without
-    # that, the second delivery would be swallowed as a duplicate and the floor would read
-    # like quiet hours were still suppressing.
-    state._notification_log.clear()
+    # fixture.
     start, end = _window_around(6)
     _notifications(
         home,
         {"quiet_hours_enabled": True, "quiet_hours_start": start, "quiet_hours_end": end},
     )
-    await LR.deliver_identity_report(state, vs=vs, now=NOW + timedelta(days=40))
+    await LR.deliver_identity_report(state, vs=vs, now=NOW + timedelta(days=80))
 
     assert [n["kind"] for n in state._notification_log] == [LR.NOTIFY_KIND]
+    assert state._notification_log[0]["mode"] == "immediate"
 
 
 @pytest.mark.asyncio

@@ -750,11 +750,29 @@ applied to the rule as stored at that moment, and never as a whole list, so a sa
 from a matrix opened before another tab's edit (or before the phone turned push on,
 `ensure_target`) cannot undo it. **Rules refine delivery for notifications that already
 passed the gate — they can never resurrect a suppressed one**, so `mute_all`
-still means mute. Every failure path (missing file, malformed JSON, unknown
-mode/target) falls back to the registry default, which is `immediate`: a policy
+still means mute.
+
+With no rule of the owner's, a kind takes its registry default, and **only a
+decision or an error interrupts**: a kind defaults to `immediate` only when it
+is a `decision` (work parked until the owner answers: an approval, a question,
+a paused room, runs or imported triggers to review) or ranks `SEV_ERROR`. Every
+other kind defaults to `badge`, listed and counted in the bell without a toast,
+except two that wait for the digest: `system/usage_recap`, and `loop/progress`,
+a loop's heads-up after each cycle, the one kind frequent enough to bury the
+rest of the bell (about 30 an hour per loop). `notification_kinds.register()`
+refuses an `immediate` default on any other kind, and a kind that names no mode
+(an app's proposal kind) is a badge. A stored rule's mode wins for any kind, and
+conditions still raise a quieter mode, so an `inbox/alert` (raised only when its
+own conditions matched) still toasts: the alert's reason names the keyword or
+the part of the name it matched, which keeps the match in the note's text when
+the mention is past the 200 characters of the message the note keeps.
+
+Every failure path (missing file, malformed JSON, unknown mode/target) falls
+back to the kind's registry default, and no default silences anything: a policy
 layer that cannot read its own config must not be able to silence the system.
-An unregistered pair resolves to `system/generic` with a warning rather than
-raising.
+When resolving the rule raises, `rule_outcome` delivers `immediate`, since
+nothing then says whether the note is a question. An unregistered pair resolves
+to `system/generic`, a badge, with a warning rather than raising.
 
 **3. The addressee** — `notification_addressing.py`. The first two layers answer
 *should this be delivered* and *how loudly*; neither could answer *to whom*, so

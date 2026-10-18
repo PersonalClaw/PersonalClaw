@@ -520,9 +520,9 @@ def test_the_approval_kind_is_registered_and_carries_no_default_push_target(home
 
     And that row's UNCONFIGURED state must be dashboard-only. This change first shipped a
     per-kind default of ``("dashboard", "push")`` and it reddened
-    ``test_no_rules_file_delivers_exactly_like_before``, whose docstring states the invariant
-    it was breaking in as many words: *"an unconfigured rule adds no delivery channel and
-    escalates nothing, which must hold for every kind including a brand-new one"*. The
+    ``test_no_rules_file_resolves_every_kind_to_its_registered_default``, whose docstring states
+    the invariant it was breaking in as many words: *"an unconfigured rule adds no delivery
+    channel and escalates nothing, which must hold for every kind including a brand-new one"*. The
     default was dropped rather than the invariant weakened; the tap on **Turn on push**
     configures the rule instead (:func:`notification_rules.ensure_target`).
     """
@@ -584,12 +584,16 @@ def test_notify_pushes_only_when_the_rule_targets_push(
     delivered: list[tuple[str, str]] = []
     monkeypatch.setattr(push, "deliver_async", lambda kind, item: delivered.append((kind, item)))
 
+    # A ping in both legs, so only the targets differ: a job's result waits in the bell by
+    # default, and a badge pushes nothing whatever its targets say.
     state = _state()
+    rules_file = home / "entity_settings" / "notification_rules.json"
+    rules_file.parent.mkdir(parents=True, exist_ok=True)
+    rules_file.write_text(json.dumps({"rules": {"cron/result": {"mode": "immediate"}}}))
     state.notify("cron", "Job finished", "all good")
     assert delivered == [], "the default targets do not include push"
 
-    (home / "entity_settings").mkdir(parents=True, exist_ok=True)
-    (home / "entity_settings" / "notification_rules.json").write_text(
+    rules_file.write_text(
         json.dumps(
             {"rules": {"cron/result": {"mode": "immediate", "targets": ["dashboard", "push"]}}}
         )

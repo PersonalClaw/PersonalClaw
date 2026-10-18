@@ -116,6 +116,9 @@ def state(monkeypatch, tmp_path):
     # seam rather than at `notification_addressing.owner_username`, so the module's own read
     # path is exercised.
     monkeypatch.setattr("personalclaw.identity.current_username", lambda: OWNER)
+    # A ping to the dashboard, so the broadcast branch is reachable: this kind waits in the bell
+    # by default, which fires nothing, and "not broadcast" would then hold for every note.
+    _rule_with(monkeypatch, targets=("dashboard",))
     st.captured = {
         "broadcast": broadcast,
         "persisted": persisted,
@@ -139,8 +142,9 @@ def _rule_with(monkeypatch, *, mode: str = "immediate", targets: tuple[str, ...]
     """Pin the resolved rule so a delivery branch under test is actually REACHABLE.
 
     Every branch below the addressee is conditional on a rule field, and the shipped default
-    for this kind is ``mode=immediate, targets=("dashboard",)`` — so a test that does not pin
-    the rule asserts about a path the code never took.
+    for this kind is ``mode=badge, targets=("dashboard",)``, which fires nothing — so a test that
+    does not pin the rule asserts about a path the code never took. The ``state`` fixture pins
+    ``immediate`` to the dashboard; a test that needs another branch pins its own.
     """
     from personalclaw import notification_rules
 

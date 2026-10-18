@@ -1,10 +1,11 @@
 """Per-(source, kind) notification rules.
 
-The single most important test in this file is
-``test_no_rules_file_delivers_exactly_like_before``. This plan replaces `notify()`'s
-delivery path with no gate to hide behind, so the safety property is that a user who has
-never opened the new settings page sees precisely what they saw before. That equivalence is
-what the dropped gate-OFF task would have proven.
+The most important tests in this file are the ones under "with no rules": an owner who has
+never opened Settings → Notifications is interrupted only by approvals, questions and errors,
+and every other notification waits in the bell, listed and counted. Each kind's registered
+default says which (``notification_kinds``); what these pin is that ``notify()`` delivers by it,
+and that the owner's own choices (a Notify row, a keyword, their name) still raise any kind to a
+toast.
 
 Everything else here is about the second-order risk: a *policy* layer that can silence the
 system. Every failure path must fail OPEN, and there are more of those paths than is
@@ -18,6 +19,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+from table_rows import row
 
 from personalclaw import notification_kinds as nk
 from personalclaw import notification_rules as nr
@@ -40,41 +42,44 @@ def _write_rules(home, doc):
     )
 
 
-# ── the equivalence property ────────────────────────────────────────────
+# ── with no rules ───────────────────────────────────────────────────────
 
 
-def test_no_rules_file_delivers_exactly_like_before(home):
+def test_no_rules_file_resolves_every_kind_to_its_registered_default(home):
     """No rules file ⇒ every registered kind resolves to its registered default, dashboard only.
 
-    The `immediate` half binds the kinds that HAD a pre-registry emitter — that is the delivery
-    this equivalence property preserves. A kind nothing ever emitted has no prior behavior to
-    reproduce, so it resolves to its own registered default; `test_notification_kinds.py` pins
-    both the carve-out and the exact population it covers.
-
-    Targets and conditions stay universal: those are not behavior-preservation claims, they are
-    "an unconfigured rule adds no delivery channel and escalates nothing", which must hold for
-    every kind including a brand-new one.
+    Targets and conditions are universal: "an unconfigured rule adds no delivery channel and
+    escalates nothing", which must hold for every kind including a brand-new one.
     """
-    historical = {nk.kind_for_legacy(flat).key for flat in nk._LEGACY_FLAT}
     for k in nk.all_kinds():
         rule = nr.resolve_rule(k.source, k.kind)
         assert rule.mode == k.default_mode, f"{k.key} did not resolve to its registered default"
-        if k.key in historical:
-            assert rule.mode == "immediate", f"{k.key} would not deliver as before"
         assert rule.targets == ("dashboard",)
         assert rule.conditions.matches("anything at all") == ""
 
 
-def test_every_legacy_wire_kind_resolves_to_immediate_by_default(home):
-    """The wire format is the flat string; each LEGACY one must reach an immediate rule.
-
-    Scoped to `_LEGACY_FLAT` rather than all of `WIRE_CONSTANTS`, matching this test's own name:
-    the tuple gained `USAGE_RECAP`, a named constant for a kind with no pre-registry emitter and
-    therefore no immediate-delivery obligation.
-    """
-    for flat in nk.WIRE_CONSTANTS:
-        if flat in nk._LEGACY_FLAT:
-            assert nr.resolve_rule_for_legacy(flat).mode == "immediate"
+def test_with_no_rules_only_the_wire_kinds_of_decisions_and_errors_ping(home):
+    """`notify()` is handed the flat wire string, so each must reach its OWN kind's rule: one that
+    fell through to `system/generic` would take generic's badge, and a question would wait in the
+    bell unseen. Of every wire string, only the decisions' and the errors' reach an `immediate`
+    rule; the monthly recap and a loop's progress wait for the digest, and everything else is a
+    badge."""
+    by_mode: dict[str, list[str]] = {}
+    for flat in nk._WIRE_TO_PAIR:
+        by_mode.setdefault(nr.resolve_rule_for_legacy(flat).mode, []).append(flat)
+    assert sorted(by_mode.pop("immediate")) == [
+        "agent_request",
+        "approval",
+        "cron_failed",
+        "error",
+        "loop_failed",
+        "needs_input",
+        "room_paused",
+        "run_review",
+        "trigger_import",
+    ]
+    assert sorted(by_mode.pop("digest")) == [nk.LOOP, nk.USAGE_RECAP]
+    assert set(by_mode) == {"badge"}
 
 
 # ── mode resolution ─────────────────────────────────────────────────────
@@ -82,41 +87,55 @@ def test_every_legacy_wire_kind_resolves_to_immediate_by_default(home):
 
 @pytest.mark.parametrize("mode", ["never", "badge", "immediate", "digest"])
 def test_stored_mode_is_honored(home, mode):
-    _write_rules(home, {"rules": {"cron/result": {"mode": mode}}})
-    assert nr.resolve_rule("cron", "result").mode == mode
+    # A kind whose default is another mode, so the answer can only come from the stored rule.
+    source, kind = ("cron", "failed") if mode == "badge" else ("cron", "result")
+    assert nk.resolve_kind(source, kind).default_mode != mode
+    _write_rules(home, {"rules": {f"{source}/{kind}": {"mode": mode}}})
+    assert nr.resolve_rule(source, kind).mode == mode
 
 
 def test_unrelated_kinds_keep_their_defaults(home):
     """One configured row must not change any other row."""
     _write_rules(home, {"rules": {"cron/result": {"mode": "never"}}})
     assert nr.resolve_rule("cron", "result").mode == "never"
-    assert nr.resolve_rule("hook", "fired").mode == "immediate"
+    assert nr.resolve_rule("hook", "fired").mode == "badge"
 
 
 # ── fail-open on every corruption path ──────────────────────────────────
+#
+# Each falls back to the kind's registered default — a badge for `cron/result`, which is listed
+# and counted in the bell — and never to `never`.
+
+
+def _reads_as_no_rules() -> None:
+    """A rules file that cannot be read gives every kind its own default: a job's result is a
+    badge, and a question still interrupts. A fallback that made every kind a badge would leave
+    the question unseen in the bell."""
+    assert nr.resolve_rule("cron", "result").mode == "badge"
+    assert nr.resolve_rule("loop", "needs_input").mode == "immediate"
 
 
 def test_missing_file_falls_back_to_defaults(home):
     assert nr.load_rules() == {}
-    assert nr.resolve_rule("cron", "result").mode == "immediate"
+    _reads_as_no_rules()
 
 
 def test_malformed_json_falls_back_to_defaults(home):
     (home / "entity_settings" / "notification_rules.json").write_text("{not json", encoding="utf-8")
     assert nr.load_rules() == {}
-    assert nr.resolve_rule("cron", "result").mode == "immediate"
+    _reads_as_no_rules()
 
 
 @pytest.mark.parametrize("root", ["[]", '"a string"', "42", "null"])
 def test_non_object_root_falls_back_to_defaults(home, root):
     (home / "entity_settings" / "notification_rules.json").write_text(root, encoding="utf-8")
-    assert nr.resolve_rule("cron", "result").mode == "immediate"
+    _reads_as_no_rules()
 
 
 @pytest.mark.parametrize("bad", ["[]", '"never"', "5", "null"])
 def test_non_object_rule_falls_back_to_default_mode(home, bad):
     _write_rules(home, {"rules": {"cron/result": json.loads(bad)}})
-    assert nr.resolve_rule("cron", "result").mode == "immediate"
+    assert nr.resolve_rule("cron", "result").mode == "badge"
 
 
 def test_unknown_mode_falls_back_to_default_not_silence(home, caplog):
@@ -124,13 +143,13 @@ def test_unknown_mode_falls_back_to_default_not_silence(home, caplog):
     _write_rules(home, {"rules": {"cron/result": {"mode": "nevr"}}})
     with caplog.at_level("WARNING"):
         rule = nr.resolve_rule("cron", "result")
-    assert rule.mode == "immediate"
+    assert rule.mode == "badge"
     assert "unknown mode" in caplog.text
 
 
 def test_non_dict_rules_container_falls_back(home):
     _write_rules(home, {"rules": ["cron/result"]})
-    assert nr.resolve_rule("cron", "result").mode == "immediate"
+    _reads_as_no_rules()
 
 
 def test_a_good_mode_survives_a_malformed_targets_list(home):
@@ -142,9 +161,9 @@ def test_a_good_mode_survives_a_malformed_targets_list(home):
 
 
 def test_unregistered_kind_resolves_through_the_generic_fallback(home):
-    """An unknown pair still gets a rule (fail-open), not an exception."""
+    """An unknown pair still gets a rule (fail-open), not an exception: a badge, in the bell."""
     rule = nr.resolve_rule("no-such-source", "no-such-kind")
-    assert rule.mode == "immediate"
+    assert rule.mode == "badge"
     assert rule.key == f"{nk.GENERIC_SOURCE}/{nk.GENERIC_KIND}"
 
 
@@ -199,8 +218,17 @@ def test_blank_keyword_is_ignored():
 
 def test_name_mention_matches_whole_words_only():
     c = nr.Conditions(name_mention=True)
-    assert c.matches("hey jordan, look", "Jordan Marlow") == "name mention"
+    assert c.matches("hey jordan, look", "Jordan Marlow") == "name mention: Jordan"
     assert c.matches("jordanian politics", "Jordan Marlow") == ""
+
+
+def test_a_name_mention_names_the_part_it_matched_as_the_owner_wrote_it():
+    """The reason carries the name, as a keyword's carries the keyword: an inbox alert's note
+    keeps only the first 200 characters of the message, so the reason is where the name a
+    mention matched further on is still in the note's own text, which `notify()` re-matches."""
+    c = nr.Conditions(name_mention=True)
+    assert c.matches("thanks MARLOW", "Jordan Marlow") == "name mention: Marlow"
+    assert c.matches("ask jordan or marlow", "Jordan Marlow") == "name mention: Jordan"
 
 
 def test_short_name_parts_are_skipped():
@@ -224,6 +252,9 @@ def test_conditions_reproduce_the_retired_inbox_alert_semantics():
     of the retired implementation (the original body of `inbox.evaluate_alert`, kept here as
     the oracle) — so a user whose keywords were backfilled cannot silently start getting
     different alerts.
+
+    The one difference is deliberate and exact: a name mention now also says which part of the
+    name it matched, as the owner wrote it, so each name case states that part.
     """
     import re
 
@@ -242,21 +273,27 @@ def test_conditions_reproduce_the_retired_inbox_alert_semantics():
                     return "name mention"
         return ""
 
+    # The last field is the part of the name a mention matched, for the cases where one does.
     cases = [
-        ("ship the deploy tonight", ["deploy"], False, "Jordan Marlow"),
-        ("nothing to see", ["deploy"], False, "Jordan Marlow"),
-        ("hey Jordan can you look", [], True, "Jordan Marlow"),
-        ("jordanian politics", [], True, "Jordan Marlow"),
-        ("REDEPLOY now", ["deploy"], False, ""),
-        ("", ["deploy"], True, "Jordan Marlow"),
-        ("a de facto standard", [], True, "J de Vries"),
-        ("  ", ["x"], True, "Jordan"),
-        ("Deploy DEPLOY deploy", ["DePlOy"], False, ""),
-        ("hey marlow", [], True, "Jordan Marlow"),
-        ("nothing", [], False, "Jordan Marlow"),
+        ("ship the deploy tonight", ["deploy"], False, "Jordan Marlow", ""),
+        ("nothing to see", ["deploy"], False, "Jordan Marlow", ""),
+        ("hey Jordan can you look", [], True, "Jordan Marlow", "Jordan"),
+        ("jordanian politics", [], True, "Jordan Marlow", ""),
+        ("REDEPLOY now", ["deploy"], False, "", ""),
+        ("", ["deploy"], True, "Jordan Marlow", ""),
+        ("a de facto standard", [], True, "J de Vries", ""),
+        ("  ", ["x"], True, "Jordan", ""),
+        ("Deploy DEPLOY deploy", ["DePlOy"], False, "", ""),
+        ("hey marlow", [], True, "Jordan Marlow", "Marlow"),
+        ("nothing", [], False, "Jordan Marlow", ""),
+        ("deploy, Jordan", ["deploy"], True, "Jordan Marlow", ""),
     ]
-    for text, keywords, name_mention, user in cases:
+    for text, keywords, name_mention, user, part in cases:
         want = legacy(text, keywords, name_mention, user)
+        if want == "name mention":
+            want = f"{want}: {part}"
+        else:
+            assert not part, f"{text!r}: the oracle matched no name, so no part is expected"
         got = nr.Conditions(keywords=tuple(keywords), name_mention=name_mention).matches(text, user)
         assert got == want, f"divergence on {text!r}: legacy={want!r} new={got!r}"
 
@@ -395,7 +432,26 @@ def test_rules_document_exposes_the_default_alongside_the_effective_mode(home):
     """The UI needs both to show "changed from default"."""
     _write_rules(home, {"rules": {"cron/result": {"mode": "never"}}})
     row = next(r for r in nr.rules_document()["rules"] if r["key"] == "cron/result")
-    assert (row["mode"], row["default_mode"]) == ("never", "immediate")
+    assert (row["mode"], row["default_mode"]) == ("never", "badge")
+
+
+def test_with_no_rules_the_matrix_shows_notify_only_on_decisions_and_errors(home):
+    """What Settings → Notifications draws for an owner who has set nothing: Notify on the
+    decisions and the errors, Digest on the monthly recap and on a loop's progress, Badge on every
+    other row."""
+    rows = nr.rules_document()["rules"]
+    assert not any(r["configured"] for r in rows)
+    pinging = sorted(r["key"] for r in rows if r["mode"] == "immediate")
+    assert pinging == sorted(
+        k.key for k in nk.configurable_kinds() if k.decision or k.default_severity == nk.SEV_ERROR
+    )
+    assert len(pinging) == 9
+    assert [r["key"] for r in rows if r["mode"] == "digest"] == [
+        "loop/progress",
+        "system/usage_recap",
+    ]
+    assert {r["mode"] for r in rows} == {"immediate", "digest", "badge"}
+    assert sum(r["mode"] == "badge" for r in rows) == len(rows) - 11
 
 
 def test_rules_document_is_json_serializable(home):
@@ -506,10 +562,17 @@ def _write_legacy(home, payload):
 
 
 def test_backfill_projects_keywords_onto_the_alert_rule(legacy_home):
+    """The owner set keywords, not a mode: both rows keep their default, a badge, and a message
+    that matches is what raises the alert to a toast. A stored Notify would make every agent
+    message interrupt on a home that came through the backfill, and on no other home."""
     _write_legacy(legacy_home, {"alert_keywords": ["deploy", "prod"]})
-    rule = nr.resolve_rule("inbox", "alert")
-    assert rule.conditions.keywords == ("deploy", "prod")
-    assert rule.mode == "immediate"
+    for wire in (nk.INBOX_ALERT, nk.AGENT):
+        rule = nr.resolve_rule_for_legacy(wire)
+        assert rule.conditions.keywords == ("deploy", "prod"), wire
+        assert rule.mode == nk.kind_for_legacy(wire).default_mode == "badge", wire
+        assert nr.rule_outcome(wire, "the roadmap is up", posture="deliver").mode == "badge", wire
+        raised = nr.rule_outcome(wire, "please deploy it", posture="deliver")
+        assert (raised.mode, raised.escalated_by) == ("immediate", "keyword: deploy"), wire
 
 
 def test_backfill_projects_name_mention(legacy_home):
@@ -1121,9 +1184,9 @@ def test_the_source_on_the_note_is_the_rules_source_not_a_kind_prefix(native_sta
     `app.route.drift` is a legacy flat wire string whose rule key is `system/route_drift`,
     so splitting on the first dot would name a non-existent `app` surface.
     """
-    state, sent = native_state
+    state, _sent = native_state
     state.notify("app.route.drift", "App route drift", "one route moved")
-    assert sent[0]["source"] == "system"
+    assert state._notification_log[-1]["source"] == "system"
 
 
 def test_a_broken_registry_still_delivers_to_the_dashboard(native_state, monkeypatch):
@@ -1191,7 +1254,7 @@ def test_a_mention_of_the_users_name_escalates(mention_state, assistant):
     names("Ada Lovelace", assistant)
     note = deliver("Ada, the disk is at 91% and needs you")
     assert note["mode"] == "immediate"
-    assert note["escalated_by"] == "name mention"
+    assert note["escalated_by"] == "name mention: Ada"
 
 
 def test_a_mention_of_only_the_assistants_name_does_not_escalate(mention_state):
@@ -1270,15 +1333,28 @@ def test_quiet_hours_records_an_attention_kind_as_a_badge(quiet_state):
     assert sent == [], "a badge does not broadcast — that is what keeps quiet hours quiet"
 
 
-def test_quiet_hours_still_drops_a_non_attention_kind(quiet_state):
+def test_quiet_hours_still_drops_a_non_attention_kind(home, quiet_state):
     """🪤 THE VACUITY LEG. Same window, same code path, a kind of the same severity.
 
     Without it, the test above would pass against a gate that had simply stopped suppressing
-    anything. The carve-out is "this persists a row somebody must answer", not "warning".
+    anything. The carve-out is "this persists a row somebody must answer", not "warning". The
+    owner's rule makes it a ping, because a warning with no rule is already a badge (below).
     """
     state, sent = quiet_state
+    _write_rules(home, {"rules": {"system/warning": {"mode": "immediate"}}})
     state.notify("warning", "Disk filling", "78% used")
     assert state._notification_log == []
+    assert sent == []
+
+
+def test_quiet_hours_record_a_badge_default_silently(quiet_state):
+    """A kind that waits in the bell by default is delivered as its rule says inside quiet hours
+    too: recorded and counted, without a ping. The pair to the test above: the same kind, the
+    same window, and only the rule differs."""
+    state, sent = quiet_state
+    state.notify("warning", "Disk filling", "78% used")
+    (note,) = state._notification_log
+    assert note["mode"] == "badge" and note["badge_only"] is True
     assert sent == []
 
 
@@ -1301,3 +1377,259 @@ def test_quiet_hours_does_not_resurrect_a_never_rule(home, quiet_state):
     state.notify("needs_input", "Loop needs your input", "refactor-auth")
     assert state._notification_log == []
     assert sent == []
+
+
+# ── with no rules, what reaches you ─────────────────────────────────────
+#
+# Only approvals, questions and errors interrupt; every other notification waits in the bell,
+# listed and counted. Driven through the real `notify()`, so each test reads what the owner meets:
+# the `notification` frame that raises a toast (and carries the desktop, push and channel
+# targets), or the `notification_logged` frame that only counts the note in the bell.
+
+
+@pytest.fixture()
+def bell_state(home, tmp_path, monkeypatch):
+    """`notify()` with no rules file, and every way a note leaves it recorded."""
+    from tests.chat_test_helpers import _make_state
+
+    monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+    state = _make_state(tmp_path)
+    out: dict[str, list] = {"toast": [], "logged": [], "push": [], "dm": []}
+    monkeypatch.setattr(state, "_broadcast", out["toast"].append)
+    monkeypatch.setattr(state, "_push_target", lambda kind, note: out["push"].append(note))
+    monkeypatch.setattr(state, "_channel_dm_target", out["dm"].append)
+    sent_ws = state.broadcast_ws
+
+    def broadcast_ws(event, payload, *args, **kwargs):
+        if event == "notification_logged":
+            out["logged"].append(payload)
+        return sent_ws(event, payload, *args, **kwargs)
+
+    monkeypatch.setattr(state, "broadcast_ws", broadcast_ws)
+    assert not (home / "entity_settings" / "notification_rules.json").exists()
+    return state, out
+
+
+def _reset(state, out, home) -> None:
+    """What a row of a table below touched, put back, so the next row starts from nothing."""
+    state._notification_log.clear()
+    for sent in out.values():
+        sent.clear()
+    (home / "entity_settings" / "notification_rules.json").unlink(missing_ok=True)
+
+
+def _owner_named(name: str) -> None:
+    """Settings → Account → Your name, written where `identity.operator_name` reads it."""
+    from personalclaw.config.loader import config_dir, config_path
+
+    config_dir()  # the home this writes into: finding where the file is makes nothing
+    config_path().write_text(json.dumps({"dashboard": {"user_name": name}}), encoding="utf-8")
+
+
+def _served(state) -> dict:
+    """`GET /api/notifications` as the bell reads it: the log, and how many of it are unread."""
+    import asyncio
+
+    from personalclaw.dashboard.handlers.messaging import api_notifications
+
+    request = MagicMock()
+    request.app = {"state": state}
+    request.get = lambda key, default=None: default
+    return json.loads(asyncio.run(api_notifications(request)).body)
+
+
+_EVERY_TARGET = list(nr.TARGETS)
+
+#: ``(case, the stored rules or None for no rules file, wire kind, toasts, fires the targets the
+#: row names besides the dashboard)``.
+_DELIVERY = [
+    ("a scheduled job's result", None, nk.CRON, False, False),
+    ("a loop's question", None, "needs_input", True, False),
+    ("an error", None, nk.ERROR, True, False),
+    # Ticking a target in the matrix stores the target alone, so the row keeps its default: a
+    # badge, which fires none of the targets it names until the row is Notify.
+    (
+        "a result on a row with every target ticked",
+        {"cron/result": {"targets": _EVERY_TARGET}},
+        nk.CRON,
+        False,
+        False,
+    ),
+    # One click on the row: the owner's Notify outranks the default, for any kind.
+    (
+        "a result on a row set to Notify",
+        {"cron/result": {"mode": "immediate"}},
+        nk.CRON,
+        True,
+        False,
+    ),
+    (
+        "a result on a row set to Notify with every target ticked",
+        {"cron/result": {"mode": "immediate", "targets": _EVERY_TARGET}},
+        nk.CRON,
+        True,
+        True,
+    ),
+]
+
+
+def test_with_no_rule_of_yours_only_a_decision_or_an_error_interrupts(bell_state, home, subtests):
+    """A scheduled job's result lands in the bell as a badge, listed and counted, and nothing
+    fires; a loop's question and an error interrupt. Read as the bell reads it, through
+    `GET /api/notifications`. A target ticked on the result's row fires nothing while the row is
+    a badge, and the owner's Notify brings the toast back with every target the row names."""
+    state, out = bell_state
+    assert len(_DELIVERY) == 6, "a row was dropped from the table"
+    for case, rules, kind, toasts, fires in _DELIVERY:
+        with row(subtests, case=case):
+            try:
+                if rules is not None:
+                    _write_rules(home, {"rules": rules})
+                state.notify(kind, case, "body")
+                served = _served(state)
+                (note,) = served["notifications"]
+                assert served["unread"] == 1, f"{case}: the bell does not count it"
+                if toasts:
+                    assert [n["title"] for n in out["toast"]] == [case], f"{case} did not toast"
+                    assert note["mode"] == "immediate" and "badge_only" not in note, note
+                    assert out["logged"] == [], f"{case} toasted and was logged quietly too"
+                else:
+                    assert out["toast"] == [], f"{case} toasted"
+                    assert (note["mode"], note.get("badge_only")) == ("badge", True), note
+                    assert out["logged"] == [{"ts": note["ts"]}], f"{case}: the bell was not told"
+                fired = (len(out["push"]), len(out["dm"]), "native" in note)
+                assert fired == ((1, 1, True) if fires else (0, 0, False)), f"{case}: {fired}"
+            finally:
+                _reset(state, out, home)
+
+
+def _inbox_alert(state, text: str) -> str:
+    """One message through the inbox's own alert path: `evaluate_alert` decides it alerts, and
+    `notify_inbox_alert` raises it. Returns the reason, "" when it does not alert."""
+    from personalclaw.identity import operator_name
+    from personalclaw.inbox import InboxItem, evaluate_alert, notify_inbox_alert
+
+    item = InboxItem(
+        id="C1_1",
+        channel="C1",
+        channel_name="#finance",
+        thread_ts=None,
+        message=text,
+        sender_id="U1",
+        sender_name="Sam",
+    )
+    reason = evaluate_alert(item, operator_name())
+    if reason:
+        notify_inbox_alert(state, item, reason)
+    return reason
+
+
+#: A message that mentions the owner past the first 200 characters, all the alert's note keeps.
+_FAR_MENTION = "The quarterly figures are attached for review. " * 7 + "Ada, can you sign them off?"
+
+#: ``(case, the conditions on the inbox/alert row, message, the reason it alerts with)``. The row
+#: stores conditions and no mode, so it stays a badge, and only the condition can make it toast.
+_ALERTS = [
+    ("a keyword", {"keywords": ["deploy"]}, "Can someone deploy the fix?", "keyword: deploy"),
+    ("a name past the note's 200", {"name_mention": True}, _FAR_MENTION, "name mention: Ada"),
+]
+
+
+def test_an_inbox_alert_your_condition_raised_still_interrupts(bell_state, home, subtests):
+    """An inbox alert fires only when a condition of the owner's matched the message
+    (`inbox.evaluate_alert`), and `notify()` matches the conditions again against the note's own
+    text to raise the row's badge to a toast. The note keeps only the first 200 characters of the
+    message, so its reason names what matched, the keyword or the part of the name, and a name
+    mentioned past that cut still interrupts."""
+    state, out = bell_state
+    assert _FAR_MENTION.index("Ada") > 200, "the mention is inside what the note keeps"
+    _owner_named("Ada Lovelace")
+    assert len(_ALERTS) == 2, "a row was dropped from the table"
+    for case, conditions, message, reason in _ALERTS:
+        with row(subtests, case=case):
+            try:
+                _write_rules(home, {"rules": {"inbox/alert": {"conditions": conditions}}})
+                assert nr.resolve_rule("inbox", "alert").mode == "badge", "the row itself pings"
+                assert _inbox_alert(state, message) == reason, f"{case} did not alert as named"
+                (note,) = state._notification_log
+                assert out["toast"] == [note], f"{case} did not toast: {note}"
+                assert note["escalated_by"] == reason
+            finally:
+                _reset(state, out, home)
+
+
+# ── the pings the owner set up wait in the bell too ─────────────────────
+#
+# A `notify` action ("ping me when this happens") and a task's due notice are notices like any
+# other: in the bell, counted, with no toast, until their row is Notify. An error is the
+# exception, as everywhere.
+
+
+def test_a_notify_action_waits_in_the_bell_unless_it_reports_an_error(bell_state, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from personalclaw.action_providers import notify_provider
+    from personalclaw.action_providers.base import ActionContext
+    from personalclaw.action_providers.notify_provider import NotifyActionProvider
+
+    state, out = bell_state
+    monkeypatch.setattr(
+        notify_provider, "get_action_services", lambda: SimpleNamespace(state=state)
+    )
+
+    def act(kind: str, title: str) -> None:
+        config = {"kind": kind, "title_template": title}
+        ctx = ActionContext(event="Stop", context="", payload={})
+        assert asyncio.run(NotifyActionProvider().execute(config, ctx)).success
+
+    act("info", "The export finished")
+    (note,) = state._notification_log
+    assert note["badge_only"] is True and out["toast"] == []
+    assert out["logged"] == [{"ts": note["ts"]}]
+
+    act("error", "The export failed")
+    assert [n["title"] for n in out["toast"]] == ["The export failed"]
+
+
+def test_a_tasks_due_notice_waits_in_the_bell(bell_state, monkeypatch):
+    from datetime import datetime
+
+    from personalclaw.tasks import due_notices
+    from personalclaw.tasks.models import Task
+
+    state, out = bell_state
+    monkeypatch.setattr(due_notices, "_owner", lambda: "")
+    task = Task(id="t-1", title="Ship the release notes", due="2026-10-02")
+    now = datetime(2026, 10, 1, 9, 0).timestamp()
+
+    assert due_notices.sweep([task], notify=state.notify, now=now) == ["t-1"]
+    (note,) = state._notification_log
+    assert note["title"] == "Due tomorrow: Ship the release notes"
+    assert note["badge_only"] is True and out["toast"] == []
+    assert out["logged"] == [{"ts": note["ts"]}]
+
+
+# ── a loop's progress waits for the morning digest ──────────────────────
+#
+# The one frequent kind: a loop at the default 2-minute cycle reports about 30 times an hour. In
+# the bell its notes buried what does wait on the owner and, past the log's 400, trimmed the
+# evening's failures out of it.
+
+
+def test_a_loops_progress_waits_for_the_digest_not_the_bell(bell_state):
+    """Each cycle's heads-up goes to the morning digest, which counts it, and nothing is listed,
+    counted or toasted in the bell meanwhile."""
+    from personalclaw.loop.watchdog import LoopWatchdog
+
+    state, out = bell_state
+    watchdog = LoopWatchdog(state, MagicMock())
+    for cycle in (1, 2, 3):
+        watchdog._notify_progress("a1b2c3d4e5f6", cycle, 30)
+    served = _served(state)
+    assert (served["notifications"], served["unread"]) == ([], 0), served
+    assert out["toast"] == [] and out["logged"] == []
+    assert nr.run_digest(state), "the morning digest has nothing to count"
+    (digest,) = state._notification_log
+    assert digest["title"] == "Digest — 3 notifications"
+    assert "**Loop progress** — 3" in digest["body"]

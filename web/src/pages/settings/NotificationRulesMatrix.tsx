@@ -104,7 +104,7 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
 
   return (
     <Section title="Per-kind delivery"
-      hint="What happens to each kind of notification once it passes the settings above. Never = dropped; Badge = kept in the list without interrupting; Notify = a toast; Digest = batched into the daily summary.">
+      hint="What happens to each kind of notification once it passes the settings above. Never = dropped; Badge = kept in the list without interrupting; Notify = a toast; Digest = batched into the daily summary. By default only approvals, questions and errors notify; everything else is a badge.">
       {err && <FieldError className="mb-m">{err}</FieldError>}
       <div className="flex flex-col gap-l">
         {bySource.map(([source, rows]) => (
