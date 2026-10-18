@@ -146,9 +146,9 @@ components:
 
 **Creative North Star: "The Friendly Machine in the Night Studio"**
 
-PersonalClaw's dashboard is a capable engine with a soft shell, working in a studio after hours. The room is dark and calm — near-black canvas (#0f0f0f), tonal surface layers instead of hard borders — and the machine's warmth shows through one coral voice (#ff6b5b) that glows, blooms, and sweeps through gradient accents wherever the agent is alive: the composer focus ring, the thinking pulse, the spark. Two influences are deliberately blended: a **neural-expressive** signature (fractional variable-font weights like `wght 280` display, ambient glow, gradient energy that reads as live intelligence) and **Google's playful expressive element language** (pill shapes, tonal containers, springy overshoot on press) — both re-tinted through PersonalClaw's own coral/terracotta identity rather than copied.
+PersonalClaw's dashboard is a capable engine with a soft shell, working in a studio after hours. The room is dark and calm — near-black canvas (#0f0f0f), tonal surface layers instead of hard borders — and the machine's warmth shows through one coral voice (#ff6b5b) that glows, blooms, and sweeps through gradient accents wherever the agent is alive: the composer focus ring, the agent orb, the spark. Two influences are deliberately blended: a **neural-expressive** signature (fractional variable-font weights like `wght 280` display, ambient glow, gradient energy that reads as live intelligence) and **Google's playful expressive element language** (pill shapes, tonal containers, springy overshoot on press) — both re-tinted through PersonalClaw's own coral/terracotta identity rather than copied.
 
-Controls are physical and friendly: pills by default, squircles for large sheets, spring-driven press/hover with earned overshoot. Personality is *budgeted and tunable* — a global expressiveness knob and bounciness slider scale every playful moment, and `prefers-reduced-motion` collapses all of it to crossfades. This system explicitly rejects hacker-terminal cosplay: no green-on-black, no scanlines, no readability sacrificed to look "technical." The optional `data-ui="cli"` density mode tightens spacing and squares corners as a utilitarian layout choice; it is not a costume.
+Controls are physical and friendly: pills by default, squircles for large sheets, spring-driven press/hover with earned overshoot. Personality is *budgeted and tunable* — a global expressiveness knob and bounciness slider scale every playful moment, and `prefers-reduced-motion` collapses all of it to crossfades. Each identity spends that budget its own way (§7). The default look draws no ambient light: the wave field, the halo and the sheen are Claw Arcade's. This system explicitly rejects hacker-terminal cosplay: no green-on-black, no scanlines, no readability sacrificed to look "technical." The optional `data-ui="cli"` density mode tightens spacing and squares corners as a utilitarian layout choice; it is not a costume.
 
 **Key Characteristics:**
 - Dark-first tonal layering (canvas → surface → container → high → highest); light mode is an override, dark is home.
@@ -165,7 +165,7 @@ A restrained dark neutral ramp with a single committed coral accent and a warm g
 - **Warm Coral** (#ff6b5b): the brand voice. Primary buttons, active/selected states, the focus ring, agent-activity glow. Hover shifts to **Coral Emphasis** (#ff9a86). Ink on solid coral is **Deep Ember** (#3f1008). Tonal container fills use **Ember Container** (#5a1d12) with **Peach Ink** (#ffe0d6) on top.
 
 ### Secondary
-- **Warm Amber** (#ffb454): coral's gradient partner — the tail of the brand spectrum (`#c85a48 → #ff6b5b → #ff9a7a → #ffb454`), used in the spark, bloom, and focus-ring sweeps. Rarely a fill on its own.
+- **Warm Amber** (#ffb454): coral's gradient partner — the tail of the brand spectrum (`#c85a48 → #ff6b5b → #ff9a7a → #ffb454`), used in the spark, and in Claw Arcade's bloom and focus-ring sweep (§7). Rarely a fill on its own.
 
 ### Neutral
 - **Night Canvas** (#0f0f0f): the app background — the studio's darkness.
@@ -212,11 +212,10 @@ A hybrid model: tonal layering does the everyday work (the surface ramp IS eleva
 - **Menu** (`0 0 20px rgb(0 0 0 / 0.28)`): popovers and dropdowns.
 - **Sheet** (`0 16px 40px rgb(0 0 0 / 0.42)`): modals and large sheets.
 - **Lift** (deep ambient + coral-tinted glow at 50%): a card rising under the pointer or a drag.
-- **Composer focus** (`--shadow-composer-focus`: contact shadow + tight coral rim): the composer's focused and drag-over state. Sized to the 16px page gutter the composer sits in — docked above the page bottom, and beside the rail at the default `full` width — because the page box clips anything past it, and a shadow that outruns its gutter is cut into a hard line.
+- **Composer focus** (`--shadow-composer-focus`: contact shadow + tight coral rim): Claw Arcade's focused and drag-over composer (§7). In the default look a focused composer keeps its Rest shadow. Sized to the 16px page gutter the composer sits in — docked above the page bottom, and beside the rail at the default `full` width — because the page box clips anything past it, and a shadow that outruns its gutter is cut into a hard line.
 
 ### Named Rules
-**The Glow-Is-Alive Rule.** Coral-tinted glow (`--glow`) appears only when the agent is active or the user is focused into an input — never as static decoration.
-**The Contained-Light Rule.** The wide glow around the composer is the halo (`ui/DotGlow`), and it fades to nothing before every edge of the column it lights. A glow never ends in a line: not at the rail, not at the page bottom, not at a docked panel. Light also needs a surface to come from — a glow with no emitter reads as a stain behind the content, so there is one light, and it is the composer's.
+**The Glow-Is-Alive Rule.** Coral-tinted glow (`--glow`) appears only when the agent is active or, in Claw Arcade (§7), the user is focused into an input — never as static decoration.
 
 ## 5. Components
 
@@ -225,7 +224,7 @@ Controls are pill-shaped, tonal, and springy; every interactive component has de
 ### Buttons
 - **Shape:** pill (9999px); `squircle` (34px) opt-in for large-sheet contexts.
 - **Primary:** coral fill (#ff6b5b), deep-ember ink, 40px height, 20px side padding, label at wght 470.
-- **Hover / Press:** hover lifts to #ff9a86 with a subtle spring scale-up (~1.025); press springs in (~0.95); solid buttons at high expressiveness carry a pointer-tracking radial sheen.
+- **Hover / Press:** hover lifts to #ff9a86 with a subtle spring scale-up (~1.025); press springs in (~0.95). In Claw Arcade, solid buttons also carry a pointer-tracking radial sheen (§7).
 - **Secondary:** tonal fill (#282a2c → #333537 on hover). **Ghost:** transparent → tonal hover. **Danger:** #f55e57 with white ink.
 - **Loading:** label cross-fades out, centered spinner in; width preserved.
 - **Disabled:** 40% opacity, pointer-events off.
@@ -241,7 +240,7 @@ Controls are pill-shaped, tonal, and springy; every interactive component has de
 
 ### Inputs / Fields
 - Tonal fill (surface-low/container), 1px hairline stroke, 8–12px radius, ink text with ink-low placeholder (metadata only — placeholders never carry required information).
-- **Focus:** the composer earns the animated 4-stop gradient ring (coral spectrum + highlight stop); ordinary inputs get the global 2px coral `:focus-visible` outline.
+- **Focus:** ordinary inputs get the global 2px coral `:focus-visible` outline. In the default look the composer's focus is a plain 2px coral ring: no animated gradient ring, no rim glow, no spring rise. Claw Arcade adds them (§7).
 
 ### Navigation
 - **NavRail:** drag-resizable side rail (196px default, 64px icon-only collapsed) on rail tone (#1f1f1f); active item carries a tonal fill + coral accent; mobile becomes a 264px overlay drawer with scrim.
@@ -266,3 +265,45 @@ Controls are pill-shaped, tonal, and springy; every interactive component has de
 - **Don't** bounce opacity or color — overshoot belongs to spatial properties only; effects are critically damped.
 - **Don't** put coral on inactive states, decorative fills, or more than ~10% of a task screen; semantic colors (green/orange/red/blue) never decorate.
 - **Don't** use uppercase tracked eyebrows or display sizes inside panels — weight steps carry hierarchy.
+
+## 7. Identities
+
+An identity (`src/design/personalities.ts`) is a theme that carries behaviour: a base scheme from `SCHEMES`, a closed behaviour block, and the dials it seeds into the owner's appearance overrides when it is switched on. It never carries colours of its own, so every identity's palette is a contrast-checked scheme. Each dial writes an existing token, the way its Settings control does, so the owner can dial it straight back.
+
+### The five dials
+
+**Decision: the backdrop is the fifth dial,** because an identity arrives with its backdrop. `PersonalityDials` stays a short, deliberate list rather than "any token": an identity brings a motion temperament, a dot glyph and its backdrop, and it still never resizes the type, recolours outside its base scheme or reaches the layout.
+
+| Dial | Token | Sets |
+|---|---|---|
+| Expressiveness | `--expressiveness` | motion intensity, 0 refined to 1 bold |
+| Bounciness | `--bounciness` | spring overshoot, 0 calm to 1 playful |
+| Dot shape | `--dot-shape` | the glyph the backdrop paints |
+| Dot pattern | `--dot-pattern` | the lattice the dots sit on |
+| Backdrop | `--bg-style` | `none`, `still` (one frozen frame), `waves` (the animated field) or `glow` (light around the composer, no dots) |
+
+| Identity | Base scheme | Expressiveness | Bounciness | Dot shape | Dot pattern | Backdrop (`--bg-style`) |
+|---|---|---|---|---|---|---|
+| PersonalClaw (default) | `coral` | token default | token default | token default | token default | `none`, the token default |
+| Retro Terminal | `phosphor` | 0.25 | 0 | `square` | `grid` | `still` |
+| Claw Arcade | `amber` | 1 | 1 | `sparkle` | `diamond` | `waves` |
+
+- `--bg-style` defaults to `none`. The default identity declares no dial: it gets `none` from the token default.
+- A backdrop the owner picked by hand wins over the default. Switching identity seeds or resets the backdrop exactly like the other four dials, so a hand-picked backdrop lasts until the next switch.
+- `glow` keeps its meaning, and it is never a default.
+- Under reduced motion a backdrop paints one still frame, or nothing for `none`.
+
+### The default look
+
+The default identity draws no decorative light. Coral is a solid accent on neutral surfaces, with no ambient glow, no particles and no sheen. The composer's focus is a plain 2px coral ring, with no animated gradient ring, no rim glow and no spring rise. The agent shows it is working through the agent orb at the head of its reply ([`docs/design/agent-orb.md`](../docs/design/agent-orb.md)), never through light around the composer. Retro Terminal keeps the same rules over its still field, which is painted once and has no halo.
+
+### Claw Arcade
+
+Claw Arcade is the one identity that keeps the light, all of it as decoration. The working signal is still the orb.
+
+- **The wave field** (`waves`), which pauses whenever nobody can see it: in a hidden tab, and when its stage is offscreen.
+- **The halo:** the wide glow around the composer (`ui/DotGlow`), its bloom, and the focus aura that gathers close around the composer while it has the caret.
+- **The composer's focus:** the animated 4-stop gradient ring (coral spectrum + highlight stop), the tight coral rim of `--shadow-composer-focus`, and the spring rise.
+- **The sheen:** a pointer-tracking radial sheen on solid buttons.
+
+**The Contained-Light Rule.** The wide glow around the composer is the halo (`ui/DotGlow`), and it fades to nothing before every edge of the column it lights. A glow never ends in a line: not at the rail, not at the page bottom, not at a docked panel. Light also needs a surface to come from — a glow with no emitter reads as a stain behind the content, so there is one light, and it is the composer's.

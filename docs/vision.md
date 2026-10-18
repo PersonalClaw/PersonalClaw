@@ -26,6 +26,28 @@ and a Linux AppImage and `.deb` for x86-64 (unsigned).
 
 ---
 
+## Product tenets
+
+They decide trade-offs, in this order. When two pull against each other the earlier one wins, and
+the change that chose says which tenet decided, in its PR description.
+
+1. **The owner's yes before any action, failing closed when unsure.** Nothing is sent or run
+   without it, and a gate that cannot tell refuses.
+2. **Words that are true.** Every label, state and ending says what really happened.
+3. **The owner's data stays on the owner's machine.** Nothing leaves it by default, and there is no
+   telemetry.
+4. **A working agent within minutes, with no account.** A fresh install reaches a working agent
+   without signing up for anything.
+5. **Works with the tools the owner already uses.** It meets the owner in the agents, editors,
+   messengers and files they already have.
+6. **A feature is not done until the owner can find and use it.** An endpoint that answers is not
+   a feature.
+
+The decision is recorded in
+[`docs/decisions/2026-10-06-ordered-product-tenets.md`](decisions/2026-10-06-ordered-product-tenets.md).
+
+---
+
 ## Architecture tenets
 
 1. **Provider-agnostic core.** Core owns *capability logic*; provider-specific logic
