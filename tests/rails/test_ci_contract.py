@@ -4543,6 +4543,117 @@ EVERY_TIMEOUT_MARK_IS_LISTED = Row(
 ROWS = (*ROWS, EVERY_TIMEOUT_MARK_IS_LISTED)
 
 
+# ── The suite's temporary folders stay outside the runner's home ─────────────────────────────
+#
+# On a hosted Linux runner `RUNNER_TEMP` and the workspace sit under `/home/runner`, which is
+# `$HOME`. The suite's real-home guard refuses a folder under the home unless it sits under the
+# system temp folder, and path renderers shorten home paths to `~/...`, so a suite run whose
+# `tmp_path` folders live under the home reds on the folder, not on the code. Breadth's first
+# canary night did exactly that, with `--basetemp="$RUNNER_TEMP/pytest"`.
+
+#: A `--basetemp` value, in its `=` or its space form, quoted or not, or an expression.
+_BASETEMP = re.compile(r"--basetemp(?:=|\s+)(\"[^\"]*\"|'[^']*'|\$\{\{[^}]*\}\}\S*|\S+)")
+#: A folder under the runner's home: the runner's temp folder or workspace, `$HOME` or `~`, or
+#: a hosted runner's home written out.
+_UNDER_HOME = re.compile(
+    r"\$\{?RUNNER_TEMP\b|\$\{\{\s*runner\.temp\b|\$\{?GITHUB_WORKSPACE\b"
+    r"|\$\{\{\s*github\.workspace\b|\$\{?HOME\b|\$\{\{\s*env\.HOME\b|^~|/home/|/Users/"
+)
+
+
+def _under_home(value: str) -> bool:
+    """A folder under the runner's home. A relative one resolves in the workspace, so it is."""
+    bare = value.strip().strip("'\"")
+    return bool(_UNDER_HOME.search(bare)) or not bare.startswith(("/", "$"))
+
+
+def suite_basetemp_violations(tree: Tree) -> list[str]:
+    """No step that runs the suite keeps pytest's temporary folders under the runner's home:
+    no ``--basetemp`` there, in either form, and no ``TMPDIR`` there in the workflow's, the
+    job's or the step's env."""
+    bad: list[str] = []
+    for name, workflow in _workflows(tree):
+        top = workflow.get("env") or {}
+        for job_id, job in (workflow.get("jobs") or {}).items():
+            for step in job.get("steps") or []:
+                run = str(step.get("run", ""))
+                suite = [w for w in _commands(run) if _runs_the_suite(w)]
+                if not suite:
+                    continue
+                for words in suite:
+                    for value in _BASETEMP.findall(" ".join(words)):
+                        if _under_home(value):
+                            bad.append(
+                                f"{name}:{job_id} keeps pytest's folders under the runner's "
+                                f"home: --basetemp {value}"
+                            )
+                for where, env in (
+                    ("workflow", top),
+                    ("job", job.get("env") or {}),
+                    ("step", step.get("env") or {}),
+                ):
+                    value = str(env.get("TMPDIR", ""))
+                    if value and _under_home(value):
+                        bad.append(
+                            f"{name}:{job_id} runs the suite with its {where}'s TMPDIR under "
+                            f"the runner's home: {value}"
+                        )
+    return bad
+
+
+_CANARY_RUN = (
+    'uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt"'
+    " --junitxml=reports/junit-canary.xml"
+)
+
+
+def _canary_basetemp(name: str, value: str, fails: bool = True) -> Control:
+    """The canary's suite step with ``--basetemp`` *value* (the ``=`` or the space form)."""
+    return _plant(
+        name,
+        _BREADTH,
+        _CANARY_RUN,
+        _CANARY_RUN.replace(" --junitxml=", f" {value} --junitxml="),
+        fails,
+        "" if not fails else "--basetemp",
+    )
+
+
+SUITE_TEMP_STAYS_OUT_OF_THE_HOME = _toolchain_row(
+    "no suite step keeps pytest's temporary folders under the runner's home",
+    suite_basetemp_violations,
+    (
+        _canary_basetemp("the first canary night's form", '--basetemp="$RUNNER_TEMP/pytest"'),
+        _canary_basetemp("runner.temp, space form", "--basetemp ${{ runner.temp }}/p"),
+        _canary_basetemp("the workspace", "--basetemp=$GITHUB_WORKSPACE/p"),
+        _canary_basetemp("$HOME", "--basetemp=$HOME/p"),
+        _canary_basetemp("~", "--basetemp=~/p"),
+        _canary_basetemp("a Linux runner's home written out", "--basetemp=/home/runner/p"),
+        _canary_basetemp("a macOS runner's home written out", "--basetemp=/Users/runner/p"),
+        _canary_basetemp("a relative folder, so in the workspace", "--basetemp=reports/pytest"),
+        _plant(
+            "TMPDIR under runner.temp in a suite job's env",
+            _BREADTH,
+            '      PERSONALCLAW_SKIP_APP_BACKENDS: "1"\n',
+            '      PERSONALCLAW_SKIP_APP_BACKENDS: "1"\n      TMPDIR: ${{ runner.temp }}\n',
+            expect="TMPDIR",
+        ),
+        _plant(
+            "TMPDIR under runner.temp in a suite step's env",
+            _BREADTH,
+            f"        run: {_CANARY_RUN}\n",
+            f"        env:\n          TMPDIR: ${{{{ runner.temp }}}}\n        run: {_CANARY_RUN}\n",
+            expect="TMPDIR",
+        ),
+        _canary_basetemp(
+            "a basetemp outside the home passes", "--basetemp=/var/tmp/pytest-canary", fails=False
+        ),
+        Control("a suite step with no --basetemp passes", _nothing, fails=False),
+    ),
+)
+ROWS = (*ROWS, SUITE_TEMP_STAYS_OUT_OF_THE_HOME)
+
+
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
 def test_the_ci_contract_holds_and_each_check_can_fail(
     row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest

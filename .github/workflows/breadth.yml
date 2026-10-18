@@ -916,7 +916,9 @@ jobs:
     name: breadth-leg canary/${{ matrix.shard }}
     # The next hosted Ubuntu image, ahead of the move to it: the suite on ubuntu-26.04 and
     # 3.12, run every night. A red is the image's news, not a gate: `continue-on-error`.
-    # `--basetemp` under RUNNER_TEMP keeps pytest's folders off the image's /tmp policy.
+    # It differs from the ubuntu-24.04 leg only in image and Python, so pytest keeps its own
+    # temporary folders: RUNNER_TEMP is under the runner's home, where the suite's home guard
+    # refuses a test's folders and paths print as `~/...`.
     # The label is GitHub's (the runner-images list names it); an actionlint older than it
     # does not know it, and this repository runs none.
     needs: [freshness]
@@ -991,7 +993,7 @@ jobs:
       - name: pytest (canary shard ${{ matrix.shard }})
         id: pytest
         continue-on-error: true
-        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --basetemp="$RUNNER_TEMP/pytest" --junitxml=reports/junit-canary.xml
+        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-canary.xml
       - name: Upload JUnit results (canary · shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
