@@ -9,7 +9,7 @@ made it invisible — ``test_browse_behavioural_proof_is_reachable.py``'s own lo
 (1). A skipped surface reads exactly like a pass, so the green check said "the safety script
 blocks ``fetch()``" while having never opened a browser.
 
-``ci.yml``'s ``browse-live`` job closes that: it installs a Chromium and sets the require-env,
+``ci.yml``'s ``e2e`` job closes that: it installs a Chromium and sets the require-env,
 so a browser that is missing, renamed by a Playwright bump, or unlaunchable is a RED there
 instead of twenty quiet skips. This file is the rail over that WIRING, because the wiring is
 now the load-bearing part — delete the env line, or drop a module from the pytest invocation,
@@ -48,7 +48,7 @@ _CI = _ROOT / ".github" / "workflows" / "ci.yml"
 
 #: The job id as it stands today. Used only in failure messages — the assertions locate the leg
 #: by behaviour, so renaming the job is not a regression and must not read as one.
-EXPECTED_LEG = "browse-live"
+EXPECTED_LEG = "e2e"
 
 #: Job ids that have been in this workflow long enough that their absence means the parser
 #: broke rather than that CI changed. The vacuity floor for :func:`jobs`.

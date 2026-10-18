@@ -24,10 +24,10 @@ import { join } from 'node:path'
 // overflow; desktop unchanged at 816/787.
 //
 // 🔑 WHY THIS IS A SOURCE RAIL AND NOT A GENERAL ONE. The general property — "no visible text field
-// is narrower than Npx at phone width" — needs a browser, and there is no CI-run harness that can
-// express it today: `web/e2e/` is not executed by CI (its own workflow comment says the a11y rail
-// "mounts here once the harness auth-seed lands"), and `scripts/render_smoke.mjs` mounts five
-// desktop routes (`#/dashboard`, `#/chat`, `#/projects`, `#/settings`, `#/apps`) — none of them this
+// is narrower than Npx at phone width" — needs a browser, and when this rail was written there was
+// no CI-run harness that could express it: `web/e2e/` was not executed by CI, and the render smoke
+// (now `web/e2e/smoke.spec.ts`) mounts five desktop routes (`#/dashboard`, `#/chat`, `#/projects`,
+// `#/settings`, `#/apps`) — none of them this
 // one. A rail placed in a suite CI does not run is an inert control, which is the defect class this
 // repo keeps finding, so the general check stayed a measurement: swept all 74 surfaces at 390px,
 // examined 119 visible text fields across 37 of them, and the narrowest field anywhere is now 80px

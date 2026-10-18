@@ -176,8 +176,8 @@ Remote CI is confirmation, not discovery.
 ```bash
 make lint                       # black, isort, flake8, mypy
 make test                       # the full suite
-npm run typecheck:web && npm run test:web && npm run build   # from the root, never `cd web`
-npm run smoke:render
+npm run typecheck:web && npm run test:web && make web-build   # from the root, never `cd web`; web-build stamps the dist
+(cd web && PW_ONLY_SMOKE=1 npx playwright test --project=smoke --no-deps)   # the built bundle mounts
 make build                      # the distribution, inspected and rebuilt byte-identical from the sdist
 ```
 

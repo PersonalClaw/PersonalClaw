@@ -51,6 +51,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Closing or merging a pull request cancels its CI runs that are still queued or running, so they no longer hold runners other pull requests are waiting for.**
 - **A bare `pytest` in core runs in one process without coverage; `make test` stays parallel, and coverage is `--cov=personalclaw`.**
 - **Core's test extra no longer installs pytest-split: the suite's CI shards are whole test files planned from recorded durations, and `pytest tests --shard-list FILE` runs the files one names.**
+- **CI builds the dashboard once and runs every browser check in one run, so one failing check no longer hides the others, and a build that does not match the code fails before any check runs.**
 
 ## [0.2.1] — 2026-10-15
 

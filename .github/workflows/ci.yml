@@ -10,9 +10,9 @@
 # `apps-contract` when the SDK changed. No, or no answer: every job runs on the pushed tree,
 # `test-macos` included, as that tree's one execution.
 #
-# The three browser-driven jobs (e2e-a11y · e2e-walkthrough · e2e-pwa) take a `needs:` on the
-# cheap `changes` job, so a diff that cannot reach a rendered pixel does not pay for a Chromium
-# — see that job's header for the measurements and for why its verdict defaults to TRUE.
+# The browser-driven `e2e` job takes a `needs:` on the cheap `changes` job, so a diff that cannot
+# reach a rendered pixel does not pay for a Chromium — see that job's header for the
+# measurements and for why its verdict defaults to TRUE.
 #
 # TWO SIBLING WORKFLOWS EXIST BECAUSE THIS ONE CANNOT TALK TO A FORK PR.
 #   dco.yml          pull_request_target — so sign-off is checked without a maintainer first
@@ -134,15 +134,16 @@ jobs:
 
   changes:
     # ── The browser gates' admission decision (#3110) ─────────────────────────────────────────
-    # `e2e-a11y`, `e2e-walkthrough` and `e2e-pwa` each boot a real gateway, build the SPA and
-    # drive a real Chromium. MEASURED 2026-09-19 over the last 14 CONCLUDED runs of this
+    # The `e2e` job boots a real gateway and drives a real Chromium. When this gate was added the
+    # same work was three jobs, `e2e-a11y`, `e2e-walkthrough` and `e2e-pwa`; MEASURED 2026-09-19
+    # over the last 14 CONCLUDED runs of this
     # workflow: `e2e-a11y` took 19.9-29.4 min (median 21.9) and was the run's TAIL in 10 of 14,
     # so it added a median 6.4 and up to 14.0 min to time-to-ripe — and it has neither a path
     # filter nor a `needs:`, so it paid that on every PR. Over 60 recent merged PRs, 22 touched
     # no `web/` file at all.
     #
     # This job answers one question — can the diff reach a rendered pixel or the harness boot —
-    # and the three jobs below take a `needs:` on it. It is ~20s: a depth-1 checkout plus one
+    # and the `e2e` job takes a `needs:` on it. It is ~20s: a depth-1 checkout plus one
     # API call, no uv and no npm. That 20s sits in front of jobs that measured 0.1-33.3 min of
     # runner QUEUE wait in the same sample, so it is noise against what it saves.
     #
@@ -218,7 +219,7 @@ jobs:
           # argument for this step. Appending the script's stdout straight to $GITHUB_OUTPUT
           # looks equivalent and fails in the silent direction: if the interpreter is missing or
           # the script raises, NO `frontend` key is written, `needs.changes.outputs.frontend`
-          # resolves to the EMPTY STRING, `== 'true'` is false, and all three browser gates skip
+          # resolves to the EMPTY STRING, `== 'true'` is false, and the browser gate skips
           # on a green run. A crashed classifier would disable the gates it exists to schedule.
           # So anything that is not exactly one of the two legal answers becomes `true`.
           verdict=$(python3 scripts/ci_touches_frontend.py \
@@ -861,9 +862,9 @@ jobs:
         # (a text-*/bg-*/border-* class must compile to real CSS — a name with no
         # token emits NOTHING and styles silently vanish). A new hardcoded value, a
         # new bespoke element, or a new inert utility turns this step — and CI — red.
-        # (The axe-per-route a11y rail lives in web/e2e/ and runs in the `e2e-a11y` job below —
-        # the harness auth-seed it was waiting for is web/e2e/auth.setup.ts. It is a separate job
-        # because the harness boots a real gateway, so it needs the Python toolchain too.)
+        # (The axe-per-route a11y rail lives in web/e2e/ and runs in the `e2e` job below. It is a
+        # separate job because the harness boots a real gateway, so it needs the Python toolchain
+        # too.)
         run: npm run test:web
       - name: test (desktop, node --test)
         # desktop/ is the OTHER member of this single root workspace, so the `npm ci`
@@ -902,15 +903,23 @@ jobs:
       # Stdlib only, so the runner's python3 is enough.
       - name: bundled asset licences (built web)
         run: python3 scripts/check_asset_licenses.py --built-web
-      # Render smoke: mount the BUILT bundle in headless Chromium and assert it
-      # actually renders. typecheck/vitest/build all stayed green through the
-      # v0.1.0 dual-React blank-dashboard regression — nothing above this line
-      # ever loads the artifact in a browser; this step is what would have
-      # caught it. Same script as the local pre-push gate (scripts/run_prepush.sh).
-      - name: install chromium (render smoke)
-        run: npx playwright install --with-deps chromium
-      - name: render smoke (built SPA mounts in a real browser)
-        run: npm run smoke:render
+      # Record what this build was built FROM, so the `e2e` job's preview can refuse a dist that
+      # does not match its checkout (web/playwright.config.ts). This is the run's ONE vite build:
+      # the browser run serves it rather than building its own. The render smoke that used to run
+      # here is the `smoke` project, the first thing the `e2e` job's one Playwright run does.
+      - name: stamp the build (scripts/spa_dist_freshness.py)
+        run: python3 scripts/spa_dist_freshness.py stamp
+      # `include-hidden-files`: the stamp is `web/dist/.build-inputs.json`, and upload-artifact
+      # leaves dotfiles out by default, which would hand the `e2e` job an unstamped dist that its
+      # preview refuses.
+      - name: upload the build (web-dist)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-dist
+          path: web/dist/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
       # ── The wheel, built from the SPA this job just built and checked ──────────────────────
       # Until this step a pull request built no core wheel: `client` builds the client package's,
       # and release.yml built the first one, at a tag. A change that drops a package file, a
@@ -933,286 +942,44 @@ jobs:
       - name: verify the wheel contract (contents · install from the wheel alone · boot · serve)
         run: uv run --no-project python scripts/verify_wheel.py --wheel "dist/*.whl"
 
-  e2e-pwa:
-    # ── The service-worker cache rail, finally EXECUTED ──────────────────────────────────────────
-    # `web/e2e/pwa.spec.ts` is the PROOF for the security requirement: a service
-    # worker that caches an authenticated `/api` response is a data leak (a later visitor, or the
-    # same browser after logout, gets the previous session's approvals off disk). `swPolicy.test.ts`
-    # asserts the policy's return values and its call sites; neither can show what a browser
-    # actually does. This spec installs the real worker against the real `dist/`, takes the origin
-    # offline by SHUTTING THE SERVER DOWN, and observes that a navigation still renders the shell
-    # while `fetch('/api/ping')` fails — the contrast is the proof.
+  e2e:
+    # ── Every browser spec, in ONE Playwright run, against the ONE build `web` made (#3939) ───────
+    # This job replaced four. `e2e-a11y` ran eleven `playwright test` steps, each rebuilding the SPA
+    # and booting a gateway (a 43-54 s floor apiece), and one red step skipped every step after it.
+    # `e2e-walkthrough`, `e2e-pwa` and `browse-live` each installed a Chromium of their own.
+    # Measured on main's green run 39083799842: 20.5 + 7.1 + 1.7 + 1.5 min across four runners,
+    # five Chromium installs and fourteen SPA builds per run.
     #
-    # It ran in NO workflow. Wired here rather than folded into `e2e-a11y` so a11y and the security
-    # proof fail independently: one job covering both means a red tells you "the frontend is broken"
-    # instead of which contract broke.
+    # Now the `web` job builds and stamps the dashboard once and uploads it as `web-dist`. This job
+    # downloads it, installs Chromium once, and runs every spec but the visual rail in one
+    # invocation. web/playwright.config.ts decides the order: the render smoke first, reaching no
+    # gateway; then the specs that share the gateway, in parallel; then the stateful set, one at a
+    # time, and once more in an order drawn from a seed the report names. web/e2e/isolation.ts says
+    # which spec is which and why. One red spec hides none of the others, and the preview refuses a
+    # dist that does not match this checkout before any test runs.
     #
-    # Platform-neutral by construction — zero snapshot assertions, and it serves its own build on a
-    # private port (PW_PWA_PORT, default 10944) independent of the config's `webServer`. Measured
-    # locally before wiring: 3 passed in 48s. `visual.spec.ts` is deliberately NOT here; its 40
-    # baselines are all `-darwin`, so a Linux runner has nothing to compare against
-    # (tests/test_e2e_specs_are_executed.py declares that exemption and retires it automatically).
+    # No `--reporter` on the command line: it would replace the config's reporters, and with them
+    # the isolation reporter that annotates every test with its mode and fails a run in which a
+    # stateful spec shares the gateway. Under CI the config writes github, json, blob and html.
+    # `visual.spec.ts` stays out (`--grep-invert @visual`): tests/test_e2e_specs_are_executed.py
+    # declares that exemption.
     #
-    # Gated on `changes` (#3110): this spec builds and serves the SPA, so a diff that cannot
-    # reach a rendered pixel cannot reach it either. See that job's header for why the verdict
-    # defaults to TRUE and why `src/personalclaw/**` is not ignorable.
-    needs: [changes, tree-check]
-    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && needs.changes.outputs.frontend == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Runner identity
-        # The image this job ran on, so a runner image that moves is visible in the log.
-        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: "0.13.1"
-          python-version: "3.12.15"
-          enable-cache: true
-          prune-cache: true
-      # The config's `webServer` starts `../.venv/bin/personalclaw`, so the gateway must import
-      # even though this spec serves `dist/` itself.
-      - name: Install (locked)
-        run: uv sync --locked --extra dev
-      # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828).
-      - name: npm ci (root)
-        run: npm ci
-      - name: install chromium
-        run: npx playwright install --with-deps chromium
-      - name: service worker never caches /api (web/e2e/pwa.spec.ts)
-        working-directory: web
-        run: npx playwright test e2e/pwa.spec.ts --project=chromium
-      - name: upload the traces
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: pwa-traces
-          path: web/test-results/
-          if-no-files-found: ignore
-
-  e2e-a11y:
-    # ── The axe-per-route rail, finally EXECUTED ─────────────────────────────────────────────────
-    # `web/e2e/a11y.spec.ts` scans every nav route and every settings panel with axe-core (both
-    # themes) plus five surfaces that only exist after an interaction, and fails on any
-    # serious/critical WCAG 2 AA violation. It has been in the tree, complete and passing, while
-    # running in NO automated gate: the `web` job's own comment said it "mounts here once the
-    # harness auth-seed lands", and that seed landed — `web/e2e/auth.setup.ts` performs the
-    # gateway's real token handshake and exports a storageState the specs reuse.
-    #
-    # The harness is self-contained: playwright's `webServer` boots an ISOLATED gateway
-    # (PERSONALCLAW_HOME under $TMPDIR, never a real home) and captures its token from the
-    # PERSONALCLAW_READY line, then builds and previews the SPA against it. So this job needs both
-    # toolchains and nothing else. Measured locally before wiring: 107 passed, 4 skipped
-    # (the two peek docks have no rows to open in a fresh home), ~60s per theme.
-    #
-    # Auth stays ON — no PERSONALCLAW_AUTH_MODE=none, which would swap the csrf middleware for the
-    # dev one and make every finding describe a user who does not exist.
-    #
-    # ── 🪤 WHAT THIS JOB IS *NOT* ANY MORE, AND WHY THAT WAS THE REAL COST (#3110) ──────────────
-    # MEASURED 2026-09-19 on green run 35421244889, per step: the axe sweep this job is NAMED for
-    # took 5.6 min, and `walkthrough.spec.ts` — a different contract entirely — took 11.9 of the
-    # job's 21.4. So 56% of the tail that every PR waited on was not the a11y rail. Splitting
-    # walkthrough into its own `e2e-walkthrough` job below takes ~8 min off the e2e critical path
-    # for EVERY PR, web-touching ones included, and removes ZERO coverage: the same spec, the same
-    # assertions, on its own runner in parallel.
-    #
-    # That split is also what this job's own comments already argued for twice and never did.
-    # `e2e-pwa`: "one job covering both means a red tells you 'the frontend is broken' instead of
-    # which contract broke." `browse-live`: "steps are sequential and fail-fast, so a browse step
-    # appended to `e2e-pwa` would only run when the service-worker spec passed." Both applied here
-    # verbatim — walkthrough ran only when the axe sweep passed, and its red was titled "e2e-a11y".
-    # The step comment it replaced claimed "a separate STEP so a failure names which property
-    # broke"; a step cannot do that, only a job can.
-    #
-    # Gated on `changes` (#3110) — see that job's header.
-    needs: [changes, tree-check]
-    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && needs.changes.outputs.frontend == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - name: Runner identity
-        # The image this job ran on, so a runner image that moves is visible in the log.
-        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: "0.13.1"
-          python-version: "3.12.15"
-          enable-cache: true
-          prune-cache: true
-      # The harness starts `../.venv/bin/personalclaw`, so the gateway must be importable.
-      - name: Install (locked)
-        run: uv sync --locked --extra dev
-      # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828).
-      - name: npm ci (root)
-        run: npm ci
-      - name: install chromium
-        run: npx playwright install --with-deps chromium
-      # `--reporter=github,json` because the step below has to READ the result: a green
-      # playwright exit says the job ran, not that anything was measured.
-      - name: axe per route, both themes (web/e2e/a11y.spec.ts)
-        working-directory: web
-        env:
-          PLAYWRIGHT_JSON_OUTPUT_NAME: a11y-report.json
-        run: npx playwright test e2e/a11y.spec.ts --project=chromium --reporter=github,json
-      # A SKIP reads exactly like a PASS in a green job, and this job's whole claim is a
-      # COUNT ("every authenticated route"). So the count is asserted against the manifest
-      # rather than trusted: zero route-level skips, and scans == declared routes × themes.
-      # Without this, emptying a route list in web/e2e/routes.ts would shrink the gate's
-      # coverage to nothing and still show a green check.
-      - name: every authenticated route was actually SCANNED (not skipped)
-        working-directory: web
-        run: node e2e/assert-no-route-skips.mjs a11y-report.json
-      # The two non-axe detectors (mouse-only click targets, clipped focus rings) sweep every
-      # route in the Tier-1/2 loop above, and both return `[]` on a healthy tree — which is
-      # what the tree is. So a selector that rotted into a no-op would read exactly like a
-      # pass, forever. This spec is the anti-vacuity probe: it plants each defect shape in a
-      # live page and asserts the detector still recognises it. It belongs in THIS job because
-      # it needs the same authenticated harness the axe sweep does, and nothing more.
-      - name: non-axe a11y detectors still recognise their defects (web/e2e/nonAxeA11yChecks.spec.ts)
-        working-directory: web
-        run: npx playwright test e2e/nonAxeA11yChecks.spec.ts --project=chromium
-      # The app-AUTHORED half of the same coverage. `app/e2e-ui-fixture` is in NON_NAV_ROUTES, so
-      # the axe sweep and both detectors already visit it — but a clean fixture makes "swept" and
-      # "never swept" the same output, and a failed fixture install degrades into the shell's
-      # already-covered 404 branch. This asserts the app's own bundle actually mounted and its
-      # control takes focus, which is what makes those green results mean something.
-      - name: app-authored DOM is really mounted and swept (web/e2e/appSurface.spec.ts)
-        working-directory: web
-        run: npx playwright test e2e/appSurface.spec.ts --project=chromium
-      # A deployed artifact's page is model-authored and served from the dashboard's own host, so
-      # what keeps it from acting as the dashboard is the sandbox its response and its frame put it
-      # in. Whether the page still loads its own files from an opaque origin, and reaches nothing of
-      # the window around it, framed or in a tab, is a property only a browser can measure.
-      - name: a deployed page runs in an origin of its own (web/e2e/deployedArtifacts.spec.ts)
-        working-directory: web
-        run: npx playwright test e2e/deployedArtifacts.spec.ts --project=chromium
-      # The requirement: the browser gate completes a real chat turn OFFLINE, with no
-      # provider credential anywhere in the environment, against the scripted fixture
-      # provider. A separate step because this one proves a different property from the
-      # two above — not "is the page accessible" but "does the app still work at all
-      # without a vendor". `make test-e2e` picks up every spec automatically, but CI
-      # names them explicitly, so a spec not listed here runs nowhere: declared and
-      # never executed is the failure class this repo's rails exist to catch.
-      - name: offline scripted chat turn (web/e2e/chat.spec.ts)
-        working-directory: web
-        run: npx playwright test e2e/chat.spec.ts --project=chromium
-      # The step above proves a turn COMPLETES. This one proves the turn survives losing the one
-      # frame that ends it. `chat_done` is the only frame that clears the streaming state, and the
-      # session-create remount closes the socket while its replacement is still handshaking — so a
-      # fast turn can be delivered to nothing and the chat then claims a stream that no longer
-      # exists, with the assistant's whole action row (Speak / Copy / Regenerate / Fork) suppressed
-      # and no way back but a reload. It lives HERE because it needs exactly the harness the steps
-      # above stand up, and it forces the loss with `routeWebSocket` rather than racing the remount
-      # — a test that waits for a race is a test that passes for the wrong reason. Named explicitly
-      # because CI names specs one by one: a spec not listed runs nowhere.
-      - name: a lost terminal frame does not strand a chat (web/e2e/streamStall.spec.ts)
-        working-directory: web
-        run: npx playwright test e2e/streamStall.spec.ts --project=chromium
-      # The requirements — the rail renders in-session, stays fixed while the transcript
-      # scrolls, a mark jump scrolls it, and the coarse-pointer form collapses to one control. All
-      # four are LAYOUT or NAVIGATION properties of a ~4k-line `ChatPage` that jsdom cannot mount
-      # and could not measure if it did, so the honest home is this job and not vitest. It belongs
-      # in THIS job rather than its own because it needs exactly the harness the steps above
-      # already stand up (isolated gateway + auth handshake + previewed SPA) and nothing more, and
-      # it asserts no screenshot, so it is platform-neutral on a Linux runner.
-      - name: Session Map in the transcript (web/e2e/sessionMap.spec.ts)
-        working-directory: web
-        run: npx playwright test e2e/sessionMap.spec.ts --project=chromium
-      # FIRST RUN'S GEOMETRY — the one class of defect no gate in `web/` could see. jsdom computes no
-      # layout, so every `clientHeight` is 0 and every rect is zeros there: the onboarding screen
-      # shipped with its `<h1>` at -247px and its "go back to step 1" button at -141px — unreachable at
-      # every viewport, `scrollTop` clamped at 0 — while every frontend rail was
-      # green, and `design/onboardingScrollable.test.tsx` can only assert the two CSS shapes we
-      # already know about. This spec asserts the PROPERTY — everything the user must reach lies
-      # inside the scroller's reachable range — at four viewports, plus the keyboard legs (focus
-      # survives a step change; every visible control is in the tab ring). It also publishes the
-      # measured offsets into `web/test-results/`, which the upload step below already collects.
-      #
-      # THIS JOB rather than its own: it needs exactly the harness the steps above stand up (isolated
-      # gateway + auth handshake + previewed SPA) and nothing more, it asserts no screenshot, and it
-      # is ~45s. Listed explicitly because CI names specs one by one — a spec not named here runs
-      # nowhere, which is the failure class these rails exist to catch.
-      - name: first run is reachable at every viewport (web/e2e/onboardingGeometry.spec.ts)
-        working-directory: web
-        run: npx playwright test e2e/onboardingGeometry.spec.ts --project=chromium
-      # The chat header's geometry, for the same reason as the step above: jsdom lays nothing out,
-      # and the header overlapped itself at every width from 320 to 1440px while every frontend rail
-      # was green. Seven widths, one browser each, the chat pinned by route stubs; ~20s, no
-      # screenshot, the same harness.
-      - name: the chat header never overlaps itself (web/e2e/chatHeaderGeometry.spec.ts)
-        working-directory: web
-        run: npx playwright test e2e/chatHeaderGeometry.spec.ts --project=chromium
-      # TWO TABS, ONE LIST. A save built from a page's stale copy of a whole list is refused
-      # (`409 stale_write`) instead of erasing what another tab — or the CLI, a separate process
-      # writing the same home — saved in between, and the refused tab keeps the user's change and
-      # re-applies it. Two pages in one browser context are the two tabs; vitest can mock a 409
-      # but cannot show one real gateway refusing one real tab while the other's write survives.
-      # THIS JOB because it needs exactly the harness above and nothing more, and it asserts no
-      # screenshot, so it is platform-neutral. Named explicitly: a spec not listed runs nowhere.
-      - name: a stale tab's save never overwrites another tab's (web/e2e/staleWrite.spec.ts)
-        working-directory: web
-        run: npx playwright test e2e/staleWrite.spec.ts --project=chromium
-      # THE COMPOSER'S HALO, AS PAINTED. `ui/DotGlow`'s bloom reaches ~180px past the composer inside
-      # a layer that clips at its own box, so on an ongoing chat it ran into the page bottom and the
-      # rail and stopped in a straight line, and while a reply streamed a second light sat behind the
-      # transcript (#3611). Both are painted pixels, which jsdom does not produce. The spec reads thin
-      # strips at the stage's edges against the canvas colour, with a positive control that must see
-      # the halo where it is brightest. It compares against no committed baseline, so it is
-      # platform-neutral, and it drives the scripted turns this job's harness already serves. Measured
-      # before wiring: 7 passed in 54s at this job's 3 workers. Named explicitly: a spec not listed
-      # here runs nowhere.
-      - name: the composer's halo fades before every edge (web/e2e/chatHalo.spec.ts)
-        working-directory: web
-        run: npx playwright test e2e/chatHalo.spec.ts --project=chromium
-      - name: upload the axe reports
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: axe-violations
-          path: web/test-results/
-          if-no-files-found: ignore
-          retention-days: 7
-
-  e2e-walkthrough:
-    # ── The OTHER half, lifted off the a11y job's critical path (#3110) ──────────────────────────
-    # `web/e2e/walkthrough.spec.ts` asserts the three properties axe cannot express: whether a
-    # focus stop is VISIBLE (axe checks name/role, not "was the user told"), what a user with
-    # prefers-reduced-motion actually gets, and whether the page pans sideways on a phone.
-    #
-    # WHY IT IS ITS OWN JOB, measured rather than asserted. On green run 35421244889 it was step
-    # 12 of `e2e-a11y` and took 11.9 min of that job's 21.4 — 56% of the tail every PR waited on,
-    # for a contract that is not a11y. As a step it also inherited both defects this file's other
-    # comments name: it ran ONLY when the axe sweep passed (steps are sequential and fail-fast),
-    # and its failure was titled `e2e-a11y`, so a broken keyboard path read as "the a11y job is
-    # red". Its own step comment claimed a separate step made "a failure name which property
-    # broke" — that is what a separate JOB does.
-    #
-    # It needs the identical harness to `e2e-a11y` (isolated gateway + built SPA + chromium), so
-    # this is the same setup verbatim, running in PARALLEL: it adds a runner and ~1 min of setup,
-    # and removes ~8 min from the e2e critical path of every PR that pays it. No assertion, route,
-    # ruleset or budget changes — the spec is untouched.
+    # The browse behavioural proof runs here too, after Playwright whatever it answered, on the
+    # same Chromium: two guarantees of the browse safety script that only a real browser can show
+    # (a page's `fetch()` / `media.play()` / `navigator.bluetooth` blocked, a client-side redirect
+    # re-evaluated per `Page.frameNavigated`). Without a browser those cases skip, and a skip reads
+    # as a pass, so PERSONALCLAW_REQUIRE_BROWSE_PROOF turns a missing browser into a failure. It is
+    # set on that step ONLY: a contributor without a Chromium still gets a skip.
+    # tests/test_browse_live_legs_run_in_ci.py holds this job to all of it. Its JUnit report keeps
+    # the `junit-browse-live` name, which tools/browse_live_quarantine_frequency.py reads.
     #
     # Gated on `changes` (#3110) — see that job's header for why the verdict defaults to TRUE.
-    needs: [changes, tree-check]
+    needs: [changes, tree-check, web]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # The browser run's budget is 12 min; the browse proof is under one. 30 is slack for a loaded
+    # runner, and still ends a wedged Chromium long before the default 360.
+    timeout-minutes: 30
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -1231,23 +998,70 @@ jobs:
           python-version: "3.12.15"
           enable-cache: true
           prune-cache: true
-      # The harness starts `../.venv/bin/personalclaw`, so the gateway must be importable.
+      # The harness starts `../.venv/bin/personalclaw`, and the browse proof is pytest.
       - name: Install (locked)
         run: uv sync --locked --extra dev
       # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828).
       - name: npm ci (root)
         run: npm ci
-      - name: install chromium
+      # The build `web` stamped. The preview checks the stamp against this checkout's sources and
+      # refuses a mismatch, so a dist from anywhere else fails here before a test runs.
+      - name: the dashboard the web job built (web-dist)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-dist
+          path: web/dist
+      - name: install chromium (the one browser this run installs)
         run: npx playwright install --with-deps chromium
-      - name: full-app walkthrough — keyboard / reduced-motion / phone (web/e2e/walkthrough.spec.ts)
+      - name: every browser spec but the visual rail, in one invocation (web/e2e/*.spec.ts)
         working-directory: web
-        run: npx playwright test e2e/walkthrough.spec.ts --project=chromium
-      - name: upload the traces
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: e2e-report.json
+        run: npx playwright test --grep-invert @visual
+      # A SKIP reads exactly like a PASS in a green job, and the axe sweep's claim is a COUNT
+      # ("every authenticated route"). So the count is asserted against the manifest rather than
+      # trusted: zero route-level skips, and scans == declared routes × themes. It counts
+      # `a11y.spec.ts`'s specs only, by the file the report names for each. Runs whatever the
+      # browser run answered, so a red elsewhere does not hide a coverage loss.
+      - name: every authenticated route was actually SCANNED (not skipped)
+        if: ${{ !cancelled() }}
+        working-directory: web
+        run: node e2e/assert-no-route-skips.mjs e2e-report.json
+      # One process, pytest's default: the live fixture is module-scoped and launches a browser,
+      # so xdist would launch one per worker for no gain. The modules are named explicitly rather
+      # than globbed — a glob that matches nothing exits clean, and "the proof ran" is a claim
+      # about specific files. test_browse_live_legs_run_in_ci.py asserts this line names every
+      # module that calls the browser gate, and that each path it names exists.
+      - name: browse behavioural proof in a REAL browser (safety script · redirect re-eval)
+        if: ${{ !cancelled() }}
+        env:
+          PERSONALCLAW_REQUIRE_BROWSE_PROOF: "1"
+          # No PERSONALCLAW_HOME (the no-global-home contract), and app backends are not part of
+          # what these modules assert.
+          PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+        run: uv run pytest tests/test_browse_safety_script.py tests/test_browse_cdp_live.py tests/test_browse_behavioural_proof_is_reachable.py --junitxml=reports/junit-browse-live.xml
+      # "exit code 1" cannot tell a broken safety-script assertion from an unlaunchable Chromium;
+      # the XML can. Same argument as `test-shard`'s upload step.
+      - name: Upload JUnit results (browse proof)
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: walkthrough-traces
-          path: web/test-results/
+          name: junit-browse-live
+          path: reports/junit-browse-live.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      # The JSON report (every test with its isolation mode, the stateful seed in its metadata),
+      # the blob report `merge-reports` reads, the traces, the axe reports and the HTML report.
+      - name: upload the browser run's reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-reports
+          path: |
+            web/e2e-report.json
+            web/blob-report/
+            web/test-results/
+            web/playwright-report/
           if-no-files-found: ignore
           retention-days: 7
 
@@ -1293,98 +1107,6 @@ jobs:
         run: >-
           "$RUNNER_TEMP/audit-venv/bin/python" -m tools.ci audit run
           --pip-audit "$RUNNER_TEMP/audit-venv/bin/python" --work "$RUNNER_TEMP/audit"
-
-  browse-live:
-    # ── The BEHAVIOURAL proof, finally EXECUTED on the merge gate ────────────────────────────────
-    # Two of the browse safety guarantees can only be proven by a real browser:
-    # the injected safety script making a page's `fetch()` / `media.play()` / `navigator.bluetooth`
-    # throw or return blocked, and a client-side redirect being re-evaluated per
-    # `Page.frameNavigated`. tests/test_browse_safety_script.py (layer 2) and
-    # tests/test_browse_cdp_live.py drive a real Chromium over raw CDP to assert them.
-    #
-    # The `test` job installs NO browser, so on the one machine that gates every merge those cases
-    # `pytest.skip` — MEASURED: 20 of them, and a skip is reported as a pass. Those guarantees were
-    # proven only on a developer laptop that happened to have a Chromium, and nothing would have
-    # noticed if they broke. That is the false green this job closes.
-    #
-    # WHY ITS OWN JOB rather than a step on `web` / `e2e-pwa` / `e2e-a11y` (the three legs that
-    # already install chromium):
-    #   · Steps are sequential and fail-fast, so a browse step appended to `e2e-pwa` would only run
-    #     when the service-worker spec passed. Making this proof's EXECUTION conditional on an
-    #     unrelated frontend contract is the same defect in a new costume.
-    #   · A red here names the contract ("the browse safety script / redirect re-eval broke")
-    #     instead of "the frontend job is red" — the argument `e2e-pwa`'s own comment makes.
-    #   · Not folded into `test` either: that job is the longest on the critical path, and the
-    #     no-node route to a browser (`--extra js-render`) would put `playwright` INTO the tested
-    #     environment, where the suite's own js-render capability probes can see it.
-    # It reuses `e2e-pwa`'s install pattern verbatim, and runs in parallel, so it adds a runner
-    # rather than wall-clock. Measured locally: 30 cases, 0 skips, 38s.
-    needs: [tree-check]
-    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
-    runs-on: ubuntu-24.04
-    # A wedged Chromium must not hold a runner for the default 360 minutes. The suite's own
-    # launch waits cap at 30s each and pytest's addopts cap a case at 120s, so 15 is slack.
-    timeout-minutes: 15
-    env:
-      # THE lever, and the reason this job cannot pass by proving nothing. Without it a missing,
-      # renamed or unlaunchable browser makes browse_chrome.missing() skip; with it, that same
-      # state FAILS. So "the browser install broke" and "the guard broke" both go red here, and
-      # neither can arrive as a green check. Set ONLY here: a contributor with no Chromium still
-      # gets a skip, because failing on a laptop would take the whole suite down over an
-      # environment. tests/test_browse_live_legs_run_in_ci.py rails this line's continued
-      # existence — deleting it would restore the silent skip and nothing else would notice.
-      PERSONALCLAW_REQUIRE_BROWSE_PROOF: "1"
-      # Same reason as the `test` job: no PERSONALCLAW_HOME (the no-global-home contract), and
-      # app backends are not part of what these three modules assert.
-      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
-    steps:
-      - name: Runner identity
-        # The image this job ran on, so a runner image that moves is visible in the log.
-        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: "0.13.1"
-          python-version: "3.12.15"
-          enable-cache: true
-          prune-cache: true
-      - name: Install (locked)
-        run: uv sync --locked --extra dev
-      # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828). Node is here for
-      # ONE reason: the lock-pinned playwright CLI is what downloads the browser. The suite itself
-      # speaks raw CDP and imports no playwright, in either language — which is also why the
-      # browser must come from the same pin the other three chromium jobs use, rather than a
-      # floating `uvx playwright`: two Chromium revisions in one repo is a difference nobody would
-      # think to look for when a behavioural assertion starts disagreeing.
-      - name: npm ci (root)
-        run: npm ci
-      - name: install chromium
-        run: npx playwright install --with-deps chromium
-      # One process, pytest's default: the live fixture is module-scoped and launches a browser,
-      # so xdist would launch one per worker for no gain over 38 seconds. The three modules are
-      # named explicitly rather than globbed — a glob that matches nothing exits clean, and "the proof ran" is a claim about
-      # specific files. test_browse_live_legs_run_in_ci.py asserts this line names every module
-      # that imports browse_chrome, and that each path it names exists.
-      - name: browse behavioural proof in a REAL browser (safety script · redirect re-eval)
-        run: uv run pytest tests/test_browse_safety_script.py tests/test_browse_cdp_live.py tests/test_browse_behavioural_proof_is_reachable.py --junitxml=reports/junit-browse-live.xml
-      # Same argument as `test-shard`'s upload step. It bites hardest here: this leg's whole
-      # purpose is that a missing browser must RED instead of skip, and "exit code 1" cannot
-      # tell a broken safety-script assertion apart from an unlaunchable Chromium. The XML can.
-      - name: Upload JUnit results (browse-live)
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: junit-browse-live
-          path: reports/junit-browse-live.xml
-          if-no-files-found: ignore
-          retention-days: 7
 
   security-corpus:
     # The adversarial scanner corpus (five attack classes, the scanned-bytes==installed-bytes

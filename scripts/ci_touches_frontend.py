@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Does this diff need the browser-driven frontend gates? Reads paths, prints a verdict.
 
-`e2e-a11y`, `e2e-walkthrough` and `e2e-pwa` each boot a real gateway, build the SPA and drive
-a real Chromium. MEASURED 2026-09-19 over 14 concluded `ci.yml` runs: `e2e-a11y` cost 19.9-29.4
+The `e2e` job boots a real gateway and drives a real Chromium over every browser spec. When this
+gate was added that work was three jobs (`e2e-a11y`, `e2e-walkthrough`, `e2e-pwa`). MEASURED
+2026-09-19 over 14 concluded `ci.yml` runs: `e2e-a11y` cost 19.9-29.4
 min of wall clock (median 21.9) and was the run's tail in 10 of 14, so it added a median 6.4 and
 up to 14.0 min to every PR's time-to-ripe — including PRs whose diff cannot reach a rendered
 pixel. Over 60 recent merged PRs, 22 touched no `web/` file at all.
@@ -75,8 +76,8 @@ IGNORABLE: tuple[tuple[str, str], ...] = (
     (
         ".github/** except workflows/ci.yml",
         "issue templates, dependabot config and the other workflows cannot change a rendered "
-        "pixel. ci.yml is EXCLUDED from this exemption because it defines the three jobs "
-        "themselves: editing it must re-validate them, or a broken job definition would be "
+        "pixel. ci.yml is EXCLUDED from this exemption because it defines the `e2e` job "
+        "itself: editing it must re-validate it, or a broken job definition would be "
         "waved through by the very gate it broke.",
     ),
 )
@@ -156,8 +157,8 @@ def main(argv: list[str]) -> int:
     else:
         summary += [
             "",
-            "Every changed path is in the ignore-list, so `e2e-a11y`, `e2e-walkthrough` and",
-            "`e2e-pwa` cannot observe this diff. The reasons, verified rather than assumed:",
+            "Every changed path is in the ignore-list, so the `e2e` job cannot observe this",
+            "diff. The reasons, verified rather than assumed:",
             "",
         ]
         summary += [f"- **{what}** — {why}" for what, why in IGNORABLE]

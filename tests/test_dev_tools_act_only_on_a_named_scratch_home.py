@@ -374,21 +374,6 @@ def test_a_javascript_tool_refuses_before_a_browser_starts(machine, tool, args) 
         assert not machine.default_home.exists(), f"{tool} made the default home"
 
 
-def test_the_render_smoke_pointed_at_the_default_home_refuses(machine) -> None:
-    """With no home it serves the built bundle itself and needs no gateway; a gateway is driven
-    only when a home is named, and the default home is refused."""
-    nothing = machine.root / "no-browsers"
-    nothing.mkdir()
-    done = _run(
-        machine,
-        [_node(), str(REPO / "scripts/render_smoke.mjs"), "--home", str(machine.default_home)],
-        PERSONALCLAW_PY=sys.executable,
-        PLAYWRIGHT_BROWSERS_PATH=str(nothing),
-    )
-    said = done.stdout + done.stderr
-    assert done.returncode != 0 and _DEFAULT_NAMED in said, said
-
-
 # ── and works on a scratch home it was named ───────────────────────────────────────────────────
 
 

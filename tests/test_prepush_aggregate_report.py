@@ -124,7 +124,7 @@ def test_three_independent_failures_all_surface_in_one_run(sandbox: Sandbox) -> 
         assert f"{name}" in result.stdout
         assert f"{name} FAIL:" in result.stdout
         assert f"{name} failed" in result.stdout
-    assert "SUMMARY: 3 of 9 gate(s) FAILED" in result.stdout
+    assert "SUMMARY: 3 of 10 gate(s) FAILED" in result.stdout
 
 
 def test_an_absent_toolchain_is_reported_as_skipped_not_passed(
@@ -144,6 +144,7 @@ def test_an_absent_toolchain_is_reported_as_skipped_not_passed(
         "typecheck-web",
         "test-web",
         "build-web",
+        "stamp-web",
         "playwright-chromium",
         "render-smoke",
     ):

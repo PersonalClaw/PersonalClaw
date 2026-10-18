@@ -360,12 +360,12 @@ the easiest one in this file to fake.
 
 **Why it cannot live in the unit tier.** `requestAnimationFrame` under jsdom is a `setTimeout`
 shim with no frame clock — it will report whatever rate you ask it for. So the measurement is a
-real browser driven by `scripts/motion_frame_budget.mjs`, next to `render_smoke.mjs` for the
-same reason that one is a standalone driver: it loads the built artifact and needs a live
+real browser driven by `scripts/motion_frame_budget.mjs`, a standalone driver because it
+loads the built artifact and needs a live
 gateway. Deliberately **not** a spec in `web/e2e/`, which is the zero-diff gate tier — a
 frame-time distribution has no committed baseline and no machine-independent threshold, so a
-red/green there would be a claim about hardware. Nothing in CI runs it (`ci.yml` runs exactly
-one file out of `web/e2e/`, `a11y.spec.ts`, by explicit path); it is a driver you point at a
+red/green there would be a claim about hardware. Nothing in CI runs it (`ci.yml`'s `e2e` job
+runs the specs in `web/e2e/` and nothing else); it is a driver you point at a
 gateway and read.
 
 **Why the unit of the report is a distribution.** A mean hides a stall: 60fps with one 400ms
