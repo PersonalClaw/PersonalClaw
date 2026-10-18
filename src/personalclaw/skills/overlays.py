@@ -34,7 +34,8 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw.atomic_write import atomic_write
-from personalclaw.skills.loader import hold_library, skills_dir
+from personalclaw.skills import loader as _loader
+from personalclaw.skills.loader import hold_library
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,11 @@ def _safe_parts(name: str) -> list[str] | None:
 
 
 def overlays_dir() -> Path:
-    return skills_dir() / _OVERLAYS_DIRNAME
+    # Resolved through the loader module on each call, as ``proposals._proposals_dir`` does: a name
+    # bound at import keeps whatever ``skills_dir`` was when this module was first imported, so a
+    # first import made while a test had pointed it at a folder of its own kept that folder for
+    # every later reader in the process.
+    return _loader.skills_dir() / _OVERLAYS_DIRNAME
 
 
 def overlay_path(name: str) -> Path | None:
