@@ -628,6 +628,9 @@ def _visit(
             fr=fr,
             order=order,
             inst=inst,
+            item=item,
+            has_item=has_item,
+            item_total=item_total,
             policies=policies,
         )
         return
@@ -962,10 +965,18 @@ def _visit_loop(
     fr: Frontier,
     order: Ordering,
     inst: dict[str, str],
+    item: Any = None,
+    has_item: bool = False,
+    item_total: int | None = None,
     policies: tuple[AdmissionPolicy, ...] = (),
 ) -> None:
     """Sequential iteration: exactly one body instance in flight at a time. Iteration
-    paths are `<path>.body@<n>`, so a rewind can invalidate one iteration by prefix."""
+    paths are `<path>.body@<n>`, so a rewind can invalidate one iteration by prefix.
+
+    A loop inside a fan-out item hands its body the item it runs in (`item`, `has_item`,
+    `item_total`), as a branch hands its case: without them a step in the loop could not read
+    `{{item}}` at all, and failed as an unresolved reference. `iter_index` is the loop's own
+    cycle here, as it always was."""
     if node.body is None:
         return
     current = int(iterations.get(path, 0))
@@ -989,7 +1000,10 @@ def _visit_loop(
         # engine has no vocabulary for, and it is the previous iteration's instance path that a
         # rewind invalidates.
         inst={**inst, f"{spec}.body": ipath},
+        item=item,
+        has_item=has_item,
         iter_index=current,
+        item_total=item_total,
         policies=policies,
     )
 

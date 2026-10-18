@@ -10,7 +10,8 @@ another item's value written last, and checks the read made for an item is that 
 * the inputs an approval gate's continuation records;
 * the `max_concurrency` count (an item whose case is still running read as finished);
 * a loop's progress field and its judge's ruling at the cycle boundary;
-* the output a loop's cycle boundary reads off its last leaf, which the handoff is taken from.
+* the output a loop's cycle boundary reads off its last leaf, which the handoff is taken from;
+* and ``{{item}}`` itself, read by a step in a loop inside the item.
 
 The run-level controls drive the real controller with a fake model; the loop-boundary reads and the
 concurrency count are read straight off the functions that make them, over a fixed state, since a
@@ -341,51 +342,49 @@ def test_a_loops_judge_ruling_is_its_own_items_judge() -> None:
     assert judge_ruling(ctl, loop, "root.body#1", 0) == {"verdict": "ESCALATE"}
 
 
-async def test_a_failed_cycle_hands_on_nothing_from_another_items_cycle() -> None:
-    """In each item, after an echo of the item, a counted loop runs one cycle of one step. I1's
-    step succeeds first and hands on notes; I0's then fails. The cycle boundary reads the settled
-    leaf's output: by node id that was I1's, and I0's loop journaled I1's notes as its own handoff.
-
-    The loop's step reads its item through the echo, not ``{{item}}``: a loop inside a fan-out
-    item is not handed the item (a separate gap, on the base as well)."""
-    spec = {
+def _loop_per_item(work_config: dict) -> dict:
+    """A fan-out over two items, each running a one-cycle counted loop of one ``work`` step."""
+    return {
         "name": "loop-in-item",
         "root": {
             "kind": "foreach",
             "id": "fan",
             "config": {"items": ["I0", "I1"], "on_item_error": "skip"},
             "body": {
-                "kind": "sequence",
-                "id": "one",
-                "children": [
-                    {
-                        "kind": "infer",
-                        "id": "echo",
-                        "config": {"prompt": "ECHO :: {{item}}", "schema": {"echoed": "string"}},
-                    },
-                    {
-                        "kind": "loop",
-                        "id": "lp",
-                        "config": {"mode": "counted", "n": 1},
-                        "body": {
-                            "kind": "infer",
-                            "id": "work",
-                            "config": {
-                                "prompt": "WORK :: {{nodes.echo.output.echoed}}",
-                                "schema": {"handoff": "object"},
-                            },
-                        },
-                    },
-                ],
+                "kind": "loop",
+                "id": "lp",
+                "config": {"mode": "counted", "n": 1},
+                "body": {"kind": "infer", "id": "work", "config": work_config},
             },
         },
     }
+
+
+async def test_a_loop_inside_an_item_hands_its_body_the_item() -> None:
+    """A step in a loop inside a fan-out item reads ``{{item}}``. The loop used to hand its body
+    no item, so the read failed as unresolved in every item."""
+    spec = _loop_per_item({"prompt": "WORK :: {{item}}", "schema": {"seen": "string"}})
+    run = _run(spec)
+    fn = _together(["I0", "I1"], lambda item: {"seen": item})
+    ctl = _controller(run, spec, fn)
+    await ctl.run_to_completion(timeout=60)
+    works = _per_item(ctl, "work")
+    failed = {i: w.failure.cause_plain for i, w in works.items() if w.failure is not None}
+    assert failed == {}, f"a loop's step could not read its item: {failed}"
+    seen = {i: store.read_output(run.id, w.path)["seen"] for i, w in works.items()}
+    assert seen == {"0": "I0", "1": "I1"}, seen
+
+
+async def test_a_failed_cycle_hands_on_nothing_from_another_items_cycle() -> None:
+    """In each item a counted loop runs one cycle of one step that reads ``{{item}}``. I1's step
+    succeeds first and hands on notes; I0's then fails. The cycle boundary reads the settled
+    leaf's output: by node id that was I1's, and I0's loop journaled I1's notes as its own
+    handoff."""
+    spec = _loop_per_item({"prompt": "WORK :: {{item}}", "schema": {"handoff": "object"}})
     run = _run(spec)
 
     async def fn(prompt, *, use_case="background", output_type=None, model=""):
         item = prompt.split("::", 1)[1].strip()
-        if prompt.startswith("ECHO"):
-            return json.dumps({"echoed": item})
         if item == "I0":
             await asyncio.sleep(0.2)
             raise RuntimeError("I0 broke")
@@ -398,6 +397,6 @@ async def test_a_failed_cycle_hands_on_nothing_from_another_items_cycle() -> Non
         rec.get("instance_path"): rec.get("verified_state")
         for rec in J.journal_records(run.id, kinds={J.HANDOFF})
     }
-    i0, i1 = "root.body#0.children[1]", "root.body#1.children[1]"
+    i0, i1 = "root.body#0", "root.body#1"
     assert handoffs.get(i1) == "I1 cycle 0 notes", f"premise: {handoffs}"
     assert i0 not in handoffs, f"I0's failed cycle handed on another item's: {handoffs}"
