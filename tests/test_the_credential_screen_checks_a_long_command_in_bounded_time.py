@@ -289,10 +289,13 @@ def _joined(command: str) -> str:
 
 
 def _seconds(fn) -> float:
+    """The CPU time this process spends on a second call of *fn*. CPU time, not the wall clock: the
+    budget is about the work the screen does, and other processes on a loaded machine stretch the
+    wall clock without adding any."""
     fn()  # build the regex once, as a running gateway already has
-    started = time.perf_counter()
+    started = time.process_time()
     fn()
-    return time.perf_counter() - started
+    return time.process_time() - started
 
 
 @pytest.mark.parametrize(
@@ -310,6 +313,19 @@ def test_a_256_kb_command_is_checked_by_the_credential_screen_in_under_a_second(
     in the square of its length, about 40 s at 100 KB. Measured on this tree at 256 KB: 0.34 s."""
     command = build()
     assert len(command) >= LONG
+    took = _seconds(lambda: security.is_sensitive_bash_command(command))
+    assert security.is_sensitive_bash_command(command) is None
+    assert took < 1.0, f"{took:.2f}s"
+
+
+def test_a_32_kb_heredoc_is_checked_by_the_credential_screen_in_under_a_second(home):
+    """🔴 Red before, on the budget itself: at 32 KB the quadratic search still finishes, so it fails
+    here rather than on the test's timeout. Measured CPU time for this command: 4.2 s on the code
+    before the fix, 0.03 s on this tree."""
+    command = _joined(
+        "cat > notes.md <<'EOF'\n" + "a line of text here\n" * (32 * 1024 // 20) + "EOF"
+    )
+    assert len(command) >= 32000
     took = _seconds(lambda: security.is_sensitive_bash_command(command))
     assert security.is_sensitive_bash_command(command) is None
     assert took < 1.0, f"{took:.2f}s"
