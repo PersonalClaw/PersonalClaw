@@ -8,30 +8,28 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
-### Added
+## [0.2.2] — 2026-10-18
 
-- **Settings → Security can let agents push a branch, each push still asking you.**
-- **The app quality check can judge each app's `tested` claim from test results a CI run already recorded (`--results DIR`), instead of running every app's tests again.**
-
-### Security
-
-- **The built-in push rule judges a `git stash push` as the command it is, where a text exception could let a command through that was not a stash push.**
-- **An agent can no longer change a security setting by running `personalclaw config` in its shell; your own terminal still can.**
-- **A folder holding a `personalclaw` package no longer runs its own code in place of PersonalClaw's when an agent runs a command there, or when PersonalClaw starts an app, the computer-use driver, an evaluation, an upload scan or a restart: that code ran before the sandbox did.**
-- **A browse run whose page redirects itself to a site your egress settings deny can no longer read or act on that page when the browser refuses to tear it down, and a refusal that lasts only a moment after the redirect no longer ends the run.**
+A patch release on 0.2.1. A long shell command, such as one that writes a file from a here-document,
+is checked in a fraction of a second instead of holding up every chat while it is checked; an
+agent's command that only mentions "push" is no longer refused as one; a message sent while a turn
+runs is no longer stopped after 10 minutes; and an answered approval or a Stop takes effect at once.
+The default look no longer animates its backdrop, Home shows only what waits on you, and the
+machine's telemetry moves to Settings › System. It installs over 0.2.1; a git clone that uv
+installed needs uv 0.13.1 or newer to update, which `uv self update` gets.
 
 ### Fixed
 
-- **With the default look, picking a colour scheme in Settings → Design keeps the UI density, dot shape, arrangement, bounciness and expressiveness you set, where it put them back to their defaults.**
-- **An answered approval, a Stop or an edit takes effect immediately.**
+- **An agent's shell command is no longer refused as a push when it only reads text that says "push", such as a search of your workflow files, or when the word is in a commit, tag, merge, note or stash message given with `-m` or `--message`. A message given in a here-document, and any other git argument or word containing "push", are still refused, and so is a real push unless you allow pushes in Settings → Security.**
 - **A long shell command, such as one that writes a file from a here-document, is checked against the shell denylist in a fraction of a second, where a few kilobytes took several seconds and held up every chat while it was checked.**
 - **The check of a shell command for credential files takes a fraction of a second on a long command, where 100 KB took about 40 seconds and held up every chat while it ran.**
-- **The gateway image runs its bundled agent CLIs on Node 24, where it shipped Debian's Node 20, which no longer gets security fixes.**
-- **An agent's shell command is no longer refused as a push when it only reads text that says "push", such as a search of your workflow files, or when the word is in a commit, tag, merge, note or stash message given with `-m` or `--message`. A message given in a here-document, and any other git argument or word containing "push", are still refused, and so is a real push unless you allow pushes in Settings → Security.**
 - **A message you send while a turn runs is no longer stopped after 10 minutes when its turn comes: it runs until it is done, as one sent to an idle chat does, and a turn nobody is watching, such as a subagent's report or a loop's cycle, is stopped only once it has made no progress for its whole limit, saying how far it got.**
+- **An answered approval, a Stop or an edit takes effect immediately.**
+- **A reasoning effort on a current Claude model over the Anthropic API no longer fails every turn with an error.**
+- **With the default look, picking a colour scheme in Settings → Design keeps the UI density, dot shape, arrangement, bounciness and expressiveness you set, where it put them back to their defaults.**
+- **The gateway image runs its bundled agent CLIs on Node 24, where it shipped Debian's Node 20, which no longer gets security fixes.**
 - **Best-of-n on Claude Haiku 5.5 gets an answer from every candidate, where each one asked for a temperature other than 1 failed: the model refuses a custom temperature, top_p or top_k, so none is sent and best-of-n says so.**
 - **The context ring measures Claude Haiku 5.5 against its 1M-token window, where it said no window was declared for the model.**
-- **A reasoning effort on a current Claude model over the Anthropic API no longer fails every turn with an error.**
 - **The Nix flake installs 0.2.1, where it was still on 0.1.3, and under it the agent's own tools, app installs and `personalclaw doctor` find PersonalClaw's packages; it no longer offers Intel Macs, where it could not build.**
 - **Settings → Updates' release notes and changelog scroll from the keyboard, and a screen reader names each box instead of reading all of it out as its name.**
 - **A service from `personalclaw service install` finds `git`, `python3` and every other program where the shell that installed it does, instead of the system's copies first, once it is installed again.**
@@ -44,6 +42,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A step after a fan-out reads every item's result as `{{nodes.<fan-out>.output}}`, and audit-sweep checks each finding with its own verifier shown the target, keeps a finding whose verifier gave no verdict, and hands its fix stage only the findings no verifier refuted, where one verifier judged them all and refuted ones were fixed too.**
 - **A browse run whose start page fails to load says so instead of blaming your egress settings, a blocked redirect torn down cleanly no longer ends a healthy run, and a watched source whose browse step could not run says why instead of telling you to change its URL.**
 
+### Security
+
+- **The built-in push rule judges a `git stash push` as the command it is, where a text exception could let a command through that was not a stash push.**
+- **An agent can no longer change a security setting by running `personalclaw config` in its shell; your own terminal still can.**
+- **A folder holding a `personalclaw` package no longer runs its own code in place of PersonalClaw's when an agent runs a command there, or when PersonalClaw starts an app, the computer-use driver, an evaluation, an upload scan or a restart: that code ran before the sandbox did.**
+- **A browse run whose page redirects itself to a site your egress settings deny can no longer read or act on that page when the browser refuses to tear it down, and a refusal that lasts only a moment after the redirect no longer ends the run.**
+
 ### Changed
 
 - **The animated backdrop is off by default, so an idle chat no longer repaints every frame: Claw Arcade brings the wave field with its glow, the composer's glowing focus ring and the button sheen, and Retro Terminal brings a still field; if you already use one of them, pick its backdrop under Background in Settings → Design.**
@@ -55,6 +60,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A bare `pytest` in core runs in one process without coverage; `make test` stays parallel, and coverage is `--cov=personalclaw`.**
 - **Core's test extra no longer installs pytest-split: the suite's CI shards are whole test files planned from recorded durations, and `pytest tests --shard-list FILE` runs the files one names.**
 - **CI builds the dashboard once and runs every browser check in one run, so one failing check no longer hides the others, and a build that does not match the code fails before any check runs.**
+
+### Added
+
+- **Settings → Security can let agents push a branch, each push still asking you.**
+- **The app quality check can judge each app's `tested` claim from test results a CI run already recorded (`--results DIR`), instead of running every app's tests again.**
 
 ## [0.2.1] — 2026-10-15
 
