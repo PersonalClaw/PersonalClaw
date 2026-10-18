@@ -308,6 +308,46 @@ async def test_a_step_after_a_branch_reads_what_its_own_items_case_produced() ->
     assert wrong == [], f"a step read the branch record of another item: {wrong}"
 
 
+async def test_a_router_inside_the_taken_case_routes_on_its_own_items_step() -> None:
+    """The outer branch takes the same case in every item; inside that case (a sequence) a second
+    branch routes on the item's own ``echo``. Whether the outer case has ended is judged on the
+    item's own outputs too: judged on the item whose ``echo`` was written last, the other parity's
+    inner case reads as the untaken one, the outer record is never written for that item, and its
+    read of ``produced`` fails as unresolved (the run still completes, since items are skipped).
+
+    The case is a sequence holding the router, not the router itself: a branch whose case is
+    directly another branch deadlocks with or without a fan-out, which is a separate defect."""
+    inner = {
+        "kind": "branch",
+        "id": "inner",
+        "config": {"on": "{{nodes.echo.output.even}}"},
+        "cases": {
+            "true": {"kind": "transform", "id": "in_even", "config": {"expr": {"took": "even"}}},
+            "false": {"kind": "transform", "id": "in_odd", "config": {"expr": {"took": "odd"}}},
+        },
+    }
+    outer = {
+        "kind": "branch",
+        "id": "outer",
+        "config": {"on": "{{inputs.go}}"},
+        "cases": {"yes": {"kind": "sequence", "id": "case_body", "children": [inner]}},
+    }
+    read = {
+        "kind": "transform",
+        "id": "read",
+        "config": {"expr": {"item": "{{item}}", "took": "{{nodes.outer.output.produced.took}}"}},
+    }
+    spec = _spec([outer, read])
+    run = store.create(WorkflowRun(id="", workflow_name=spec["name"], inputs={"go": "yes"}))
+    store.write_spec(run.id, spec)
+    ctl = _controller(run, spec, _together(4))
+    assert await ctl.run_to_completion(timeout=60) == RunStatus.COMPLETE
+    reads = _outputs_of(ctl, run.id, "read")
+    assert sorted(r["item"] for r in reads) == sorted(ITEMS), f"items whose read failed: {reads}"
+    wrong = [r for r in reads if r["took"] != ("even" if int(r["item"][1:]) % 2 == 0 else "odd")]
+    assert wrong == [], f"an item read another item's routing: {wrong}"
+
+
 def test_an_item_that_has_not_produced_a_node_is_not_handed_another_items() -> None:
     """Fail closed. Item 1 has produced ``x``; item 0 has not. Scoped to item 0, ``x`` is not
     there, so a read of it fails as unresolved instead of answering with item 1's value."""
