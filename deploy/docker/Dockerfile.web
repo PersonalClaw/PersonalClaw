@@ -38,9 +38,10 @@ RUN npm ci --workspace=web --prefer-offline
 # THE SPA IMPORTS FILES FROM OUTSIDE `web/`: data the backend reads too, kept in one file both
 # sides import. `web/src/lib/scanFindings.ts` imports `src/personalclaw/scan_rule_gloss.json`
 # and `web/src/ui/composer/duplex.ts` imports `src/personalclaw/voice/phrases.json`, each by a
-# relative path that resolves to /app/src/personalclaw/… from WORKDIR /app. Without them
-# `tsc --noEmit` fails TS2307 and the `build` script never reaches vite. Each lands where its
-# import resolves, and before the build.
+# relative path that resolves to /app/src/personalclaw/… from WORKDIR /app. Without them the
+# build cannot resolve those imports and fails. Each lands where its import resolves, and before
+# the build. (The build is `vite build` alone: the image is typechecked by the job that gates it,
+# `release.yml`'s `build`, and on a pull request by ci.yml's `web`.)
 #
 # This list is the web build's complete set of reads outside `web/` (node_modules aside, which
 # `npm ci` installs). tests/test_web_image_stage_parity.py holds it to that in both images: it
@@ -54,7 +55,7 @@ COPY src/personalclaw/voice/phrases.json src/personalclaw/voice/
 # Copy full web source and build
 COPY web/ web/
 
-# tsc + vite on this SPA need more than node's default (~2 GiB) old-space heap;
+# vite on this SPA needs more than node's default (~2 GiB) old-space heap;
 # without this the in-container build dies with "JavaScript heap out of memory"
 # even when the container itself has plenty of RAM.
 RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build --workspace=web

@@ -1039,6 +1039,8 @@ def _canonical_distribution_build(*, keep: bool, release_version: str = "") -> N
 
     _clean_distribution_outputs(root)
     _run([npm, "ci"], cwd=root, env=env)
+    # `npm run build` is `vite build` alone; a distribution is typechecked before it is built.
+    _run([npm, "run", "typecheck:web"], cwd=root, env=env)
     _run([npm, "run", "build"], cwd=root, env=env)
     _run([sys.executable, "scripts/spa_dist_freshness.py", "stamp"], cwd=root, env=env)
     _run(

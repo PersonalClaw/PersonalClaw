@@ -233,7 +233,7 @@ export default defineConfig({
           command: `npm run build && npm run preview -- --port ${PORT} --strictPort`,
           url: BASE_URL,
           // 🕐 THE BUILD IS A PRECONDITION, AND 180s IS BELOW ITS COST ON A LOADED HOST. This
-          // entry runs `npm run build` — tsc twice plus a full vite build — before the preview
+          // entry runs `npm run build` — a full vite build — before the preview
           // server can answer, and that is pure host-bound work. Against the old 180_000 a
           // loaded box did not fail a test, it produced NO TESTS: `Error: Timed out waiting
           // 180000ms from config.webServer`, at a sha whose goldens were 41/41 on a quiet one.

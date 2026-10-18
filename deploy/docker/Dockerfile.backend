@@ -85,9 +85,9 @@ COPY scripts/install_git_hooks.sh scripts/
 RUN npm ci --workspace=web --prefer-offline
 
 # The SPA imports two data files the backend reads too, each by a relative path that resolves
-# to /app/src/personalclaw/… from WORKDIR /app: without them `tsc --noEmit` fails TS2307 and
-# `npm run build` never reaches vite. The list is complete, and tests/test_web_image_stage_parity.py
-# keeps it so — see the same COPYs in Dockerfile.web.
+# to /app/src/personalclaw/… from WORKDIR /app: without them `npm run build` (`vite build`)
+# cannot resolve those imports and fails. The list is complete, and
+# tests/test_web_image_stage_parity.py keeps it so — see the same COPYs in Dockerfile.web.
 COPY src/personalclaw/scan_rule_gloss.json src/personalclaw/
 COPY src/personalclaw/voice/phrases.json src/personalclaw/voice/
 

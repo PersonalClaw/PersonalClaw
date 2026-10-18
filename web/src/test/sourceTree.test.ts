@@ -1,5 +1,5 @@
 // @module-tag tree-scan
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, inject, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
@@ -99,6 +99,44 @@ describe('readSource reads a file once', () => {
     // One entry per file, however its path is spelled.
     expect(readSource(relative(process.cwd(), join(root, 'one.ts')))).toBe('first')
     expect(readFileSync(join(root, 'one.ts'), 'utf8'), 'the control: the file did change').toBe('second')
+  })
+})
+
+describe('a run lists src/ and e2e/ once, and every test file reads that listing', () => {
+  it('the run hands this file its listing, and a scan of src/ is read off it', () => {
+    const index = inject('sourceTree')
+    expect(Object.keys(index ?? {}), 'the run handed this file no listing (vitest.config.ts `provide`)').toEqual([
+      SRC,
+      join(WEB, 'e2e'),
+    ])
+    expect(index[SRC]).toContain(SELF)
+    expect(filesUnder(SRC)).toEqual(index[SRC])
+    const testDir = join(SRC, 'test')
+    expect(filesUnder(testDir)).toEqual(index[SRC].filter((path) => path.startsWith(testDir + sep)))
+  })
+
+  it('so a scan of an indexed folder lists no directory at all', async () => {
+    // The control that the listing is READ, not walked again beside it: with every directory
+    // listing refused, a fresh copy of the reader still lists folders under `src/` and `e2e/`,
+    // and still walks a folder outside them, where the refusal shows.
+    vi.resetModules()
+    vi.doMock('node:fs', async (real) => ({
+      ...(await real<typeof import('node:fs')>()),
+      readdirSync: () => {
+        throw new Error('listed a directory')
+      },
+    }))
+    try {
+      const fresh = await import('./sourceTree')
+      expect(fresh.filesUnder(join(SRC, 'test'))).toContain(SELF)
+      expect(fresh.filesUnder(join(WEB, 'e2e')).length).toBeGreaterThan(0)
+      expect(() => fresh.filesUnder(join(WEB, 'scripts')), 'the control: an unindexed folder is walked').toThrow(
+        'listed a directory',
+      )
+    } finally {
+      vi.doUnmock('node:fs')
+      vi.resetModules()
+    }
   })
 })
 
