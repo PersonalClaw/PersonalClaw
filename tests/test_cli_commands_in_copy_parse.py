@@ -31,6 +31,7 @@ import shlex
 
 import pytest
 import source_index
+from table_rows import row
 
 from personalclaw.cli import build_parser
 
@@ -215,14 +216,15 @@ def test_a_sample_in_a_choices_slot_is_retried_with_the_first_choice(said):
 
 
 def test_every_command_in_copy_parses(subtests):
-    """One row per command in copy, each a subtest named by its site. The rows are read here, not
-    at collection, so collecting this module parses nothing; the count is today's exactly."""
+    """One row per command in copy, reported as a subtest named by its site when it fails. The
+    rows are read here, not at collection, so collecting this module parses nothing; the count is
+    today's exactly."""
     found = _commands()
     assert len(found) == _ROWS, (
         f"the copy holds {len(found)} commands, not {_ROWS}: a row went missing, or a new command "
         "was added (then raise _ROWS)"
     )
     for site, command in found:
-        with subtests.test(site=site, command=command):
+        with row(subtests, site=site, command=command):
             error = _parse_error(_argv(command))
             assert not error, f"{site} tells users to run `{command}`, and the CLI says: {error}"
