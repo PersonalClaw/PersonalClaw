@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 import pytest
+import table_rows
 
 from tools.ci import __main__ as ci_main
 from tools.ci import variation_census as census
@@ -132,11 +133,11 @@ def test_the_census_lists_every_function_with_twenty_or_more_cases_and_no_other(
     found = {row.function: row for row in rows}
     assert len(_LISTED) == 5
     for function, cases, security in _LISTED:
-        with subtests.test(function=function):
-            row = found.get(function)
-            assert row is not None, f"{function} ({cases} cases) is not listed: {sorted(found)}"
-            assert (row.cases, row.security) == (cases, security), row
-            assert row.timed == cases, f"{function}: {row.timed} of {cases} cases timed"
+        with table_rows.row(subtests, function=function):
+            listed = found.get(function)
+            assert listed is not None, f"{function} ({cases} cases) is not listed: {sorted(found)}"
+            assert (listed.cases, listed.security) == (cases, security), listed
+            assert listed.timed == cases, f"{function}: {listed.timed} of {cases} cases timed"
     assert sorted(found) == sorted(f for f, _, _ in _LISTED), "a function under 20 cases is listed"
 
 

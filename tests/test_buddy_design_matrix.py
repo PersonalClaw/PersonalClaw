@@ -37,6 +37,8 @@ from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
+import table_rows
+
 REPO = Path(__file__).resolve().parents[1]
 FOLDER = REPO / "docs" / "design" / "buddy"
 MATRIX_DATA = FOLDER / "interruption-matrix.json"
@@ -643,8 +645,8 @@ def test_each_check_reports_a_planted_defect(subtests: Any, tmp_path: Path) -> N
     table = MATRIX_TABLE.read_text(encoding="utf-8")
     machine = STATE_MACHINE.read_text(encoding="utf-8")
     guide = MOTION_GUIDE.read_text(encoding="utf-8")
-    row = f"| {data['events']['start']} | {data['cells']['compact']['start']} |"
-    assert row in table, "the control's row is no longer in the table"
+    control = f"| {data['events']['start']} | {data['cells']['compact']['start']} |"
+    assert control in table, "the control's row is no longer in the table"
     planted: list[tuple[str, Callable[[], list[str]], str]] = [
         (
             "a situation lost an event",
@@ -672,7 +674,9 @@ def test_each_check_reports_a_planted_defect(subtests: Any, tmp_path: Path) -> N
         ),
         (
             "one cell changed in the table alone",
-            lambda: table_problems(data, table.replace(row, f"| {data['events']['start']} | x |")),
+            lambda: table_problems(
+                data, table.replace(control, f"| {data['events']['start']} | x |")
+            ),
             "compact/start: the table says 'x'",
         ),
         (
@@ -735,6 +739,6 @@ def test_each_check_reports_a_planted_defect(subtests: Any, tmp_path: Path) -> N
     ]
     assert len(planted) == 14, "a planted defect was dropped from the table"
     for name, check, expected in planted:
-        with subtests.test(defect=name):
+        with table_rows.row(subtests, defect=name):
             reported = check()
             assert any(expected in line for line in reported), (name, reported)
