@@ -461,9 +461,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # .python-version's Python: setup-python has no macOS build of a 3.12 security release
+      # (CPython ships those as source only), and the desktop arm runs on a Mac. Which Python
+      # the walkthrough runs on doesn't change how an install's kind is classified.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12.15"
+          python-version: "3.13.16"
 
       - name: Install
         env:
