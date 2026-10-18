@@ -376,10 +376,16 @@ class TestTheOutputIsByteIdentical:
                 got = S.redact_credentials(text)
                 assert got == expected, f"{text!r}: expected {expected!r}, got {got!r}"
 
-    @pytest.mark.parametrize("kb", [1, 16, 64])
-    def test_a_mixed_document_redacts_exactly_as_the_reference(self, kb):
-        text = _mixed_document(kb * 1024)
-        assert S.redact_credentials(text) == _reference_redact_credentials(text)
+    def test_a_mixed_document_redacts_exactly_as_the_reference(self, subtests):
+        sizes_kb = (1, 16, 64)
+        assert len(sizes_kb) == 3, "a size was added or dropped: pin the new count"
+        for kb in sizes_kb:
+            with row(subtests, kb=kb):
+                text = _mixed_document(kb * 1024)
+                got = S.redact_credentials(text)
+                assert got == _reference_redact_credentials(
+                    text
+                ), f"the {kb} KB mixed document redacts differently from the reference"
 
     def test_the_url_pre_pass_alone_is_identical_too(self, subtests):
         """`redact_url_userinfo` is public — a caller that only handles URLs uses it directly, so
