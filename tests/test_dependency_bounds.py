@@ -426,13 +426,46 @@ def _dependabot_pip_ignores() -> dict[str, list]:
     return ignores
 
 
+def _exact_build_pins() -> dict[str, str]:
+    """Every ``[build-system] requires`` entry pinned with ``==``, and its version.
+
+    An exact pin is held equal to the version ``uv.lock`` resolves
+    (``tests/test_verify_wheel_contract.py`` does it for setuptools), and Dependabot moves the pin
+    without the lock, so its bump can never pass. Such a pin is bumped by hand with the lock and
+    ignored outright in dependabot.yml."""
+    from packaging.requirements import Requirement
+    from packaging.utils import canonicalize_name
+
+    with (_REPO_ROOT / "pyproject.toml").open("rb") as fh:
+        requires = tomllib.load(fh)["build-system"]["requires"]
+    pins: dict[str, str] = {}
+    for spec in requires:
+        req = Requirement(spec)
+        exact = [s.version for s in req.specifier if s.operator == "=="]
+        if exact:
+            pins[canonicalize_name(req.name)] = exact[0]
+    return pins
+
+
 def test_dependabot_never_proposes_widening_a_held_ceiling() -> None:
     """Dependabot cannot read the comments that argue a bound, so a held ceiling ``<N`` without
     a ``versions: [">=N"]`` ignore comes back as a widening PR every week, unmergeable on the
     merits. Both directions: every held ceiling is ignored at its own major, and every ignore
-    names a ceiling still held, so moving a bound on purpose moves its ignore with it."""
+    names a ceiling still held, so moving a bound on purpose moves its ignore with it.
+
+    An exact build-system pin is the other kind of hold: it is ignored outright, with no
+    ``versions:``, because no version of it may arrive without the lock."""
     ceilings = _held_ceilings()
+    pins = _exact_build_pins()
+    assert pins, "[build-system] requires pins nothing exactly; re-derive the exact-pin ignores"
     ignores = _dependabot_pip_ignores()
+    for name, version in sorted(pins.items()):
+        assert name in ignores and ignores[name] is None, (
+            f"[build-system] pins {name}=={version}, which only moves with uv.lock, but "
+            f"dependabot.yml's pip ignore list has {ignores.get(name, 'no entry')!r} for it: add "
+            f"`- dependency-name: {name}` with no `versions:`, so no bump of it is ever proposed"
+        )
+    ignores = {name: v for name, v in ignores.items() if name not in pins}
     for name, ceiling in sorted(ceilings.items()):
         assert name in ignores, (
             f"pyproject holds {name}<{ceiling} on purpose but dependabot.yml's pip ignore list "
