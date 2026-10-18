@@ -1,4 +1,5 @@
-"""``--fixture-costs`` reports each fixture's own setup time, merged across xdist workers.
+"""``--fixture-costs`` reports each fixture's own setup and teardown time, merged across xdist
+workers.
 
 A run of its own, in a folder of its own, with only the report's plugin: two fixtures that spend
 3 ms and 5 ms per setup, and a fixture that asks for both from its own code
@@ -9,6 +10,11 @@ fixture inside another is charged to it alone. The total is compared with what t
 measured in the same run, so a slow machine slows both sides.
 Run once without workers and once with two, which also proves the controller merges every
 worker's measurements into the one file.
+
+The teardown half plants a dependency and its dependent that each spend a known CPU time after
+their ``yield``, and a fixture that sleeps in its teardown. Each must show its own time, the
+dependency none of its dependent's, the sleep in wall time and not in CPU time, and each test's
+teardown total the three added together.
 """
 
 from __future__ import annotations
@@ -80,11 +86,11 @@ def test_uses_both(depends_on_the_sleeper, n):
 """
 
 
-@pytest.mark.parametrize("workers", ["0", "2"])
-def test_a_planted_5ms_fixture_reports_about_5ms(tmp_path: Path, workers: str) -> None:
+def _run(tmp_path: Path, tests: str, workers: str) -> dict:
+    """Run *tests* in a pytest of its own with only the report's plugin, and read the report."""
     (tmp_path / "pytest.ini").write_text("[pytest]\n")
     (tmp_path / "conftest.py").write_text(textwrap.dedent(_CONFTEST))
-    (tmp_path / "test_planted.py").write_text(textwrap.dedent(_TESTS))
+    (tmp_path / "test_planted.py").write_text(textwrap.dedent(tests))
     env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "PERSONALCLAW_"))}
     env["PYTHONPATH"] = os.pathsep.join([str(_TESTS_DIR), env.get("PYTHONPATH", "")]).rstrip(
         os.pathsep
@@ -98,10 +104,15 @@ def test_a_planted_5ms_fixture_reports_about_5ms(tmp_path: Path, workers: str) -
         timeout=120,
     )
     assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-2000:]
-    report = json.loads((tmp_path / "reports" / "fixture-costs.json").read_text())
+    return json.loads((tmp_path / "reports" / "fixture-costs.json").read_text())
+
+
+@pytest.mark.parametrize("workers", ["0", "2"])
+def test_a_planted_5ms_fixture_reports_about_5ms(tmp_path: Path, workers: str) -> None:
+    report = _run(tmp_path, _TESTS, workers)
     assert report["tests"] == 12
     assert report["workers"] == int(workers)
-    rows = {row["fixture"].rsplit("::", 1)[1]: row for row in report["fixtures"]}
+    rows = {row["fixture"].rsplit("::", 1)[1]: row["setup"] for row in report["fixtures"]}
     short = rows["short_sleeper"]
     assert short["calls"] == 12
     assert 2.7 <= short["median_ms"] <= 15, short
@@ -118,6 +129,79 @@ def test_a_planted_5ms_fixture_reports_about_5ms(tmp_path: Path, workers: str) -
     # double the sleepers' time, and a frame left on the stack or taken from the wrong end adds
     # about the short sleeper's 3 ms again.
     sleepers = short["median_ms"] + sleeper["median_ms"]
-    total = report["per_test_setup"]["median_ms"]
-    assert abs(total - sleepers) <= _MARGIN_MS, (total, sleepers, report["per_test_setup"])
-    assert total < 1.5 * sleepers, (total, sleepers, report["per_test_setup"])
+    total = report["per_test"]["setup"]["median_ms"]
+    assert abs(total - sleepers) <= _MARGIN_MS, (total, sleepers, report["per_test"]["setup"])
+    assert total < 1.5 * sleepers, (total, sleepers, report["per_test"]["setup"])
+
+
+#: Teardowns planted for the teardown half: a dependency that spends 5 ms of CPU after its yield,
+#: a fixture that depends on it and spends 3 ms after its own (pytest tears the dependent down
+#: first), and a fixture that SLEEPS 20 ms in its teardown, which shows in wall time and not in
+#: CPU time.
+_TEARDOWN_TESTS = """
+import time
+
+import pytest
+
+
+def _spend(seconds):
+    # Spent on this thread's CPU clock, not the wall clock: on a loaded machine a wall-clock busy
+    # wait is descheduled for part of its time (measured: 4.1 ms of CPU in a 5 ms wait), and
+    # what is planted here is CPU, which the report must then read as at least that.
+    end = time.thread_time() + seconds
+    while time.thread_time() < end:
+        pass
+
+
+@pytest.fixture
+def slow_to_close():
+    yield
+    _spend(0.005)
+
+
+@pytest.fixture
+def closes_after_its_dependent(slow_to_close):
+    yield
+    _spend(0.003)
+
+
+@pytest.fixture
+def waits_to_close():
+    yield
+    time.sleep(0.02)
+
+
+@pytest.mark.parametrize("n", range(12))
+def test_uses_them(closes_after_its_dependent, waits_to_close, n):
+    pass
+"""
+
+
+@pytest.mark.parametrize("workers", ["0", "2"])
+def test_a_planted_teardown_is_charged_to_its_own_fixture(tmp_path: Path, workers: str) -> None:
+    """Each teardown shows its own time, the dependent's is not charged to its dependency, the
+    sleep shows in wall time only, and each test's teardown total is the three added together."""
+    report = _run(tmp_path, _TEARDOWN_TESTS, workers)
+    assert report["tests"] == 12
+    rows = {row["fixture"].rsplit("::", 1)[1]: row["teardown"] for row in report["fixtures"]}
+    # Judged in CPU time, which is what was planted: the wall clock of a loaded machine adds
+    # whatever it was descheduled for (a 20 ms sleep measured 70-89 ms wall here).
+    dependency = rows["slow_to_close"]
+    assert dependency["calls"] == 12, dependency
+    assert 4.9 <= dependency["cpu_median_ms"] <= 6.5, dependency
+    assert dependency["median_ms"] >= dependency["cpu_median_ms"], dependency
+    dependent = rows["closes_after_its_dependent"]
+    assert dependent["calls"] == 12, dependent
+    # Charged with the other's 3 ms or 5 ms, either would read about 8 ms.
+    assert 2.9 <= dependent["cpu_median_ms"] <= 4.5, dependent
+    asleep = rows["waits_to_close"]
+    assert asleep["calls"] == 12, asleep
+    assert asleep["median_ms"] >= 19, asleep
+    assert asleep["cpu_median_ms"] < 1, asleep
+    # Each test's teardown total is the three teardowns, once each: five correct runs put the
+    # CPU total within 0.02 ms of the medians' sum; counting nothing, or one twice, misses by 3 ms
+    # or more.
+    planted = sum(row["cpu_median_ms"] for row in (dependency, dependent, asleep))
+    total = report["per_test"]["teardown"]["cpu_median_ms"]
+    assert abs(total - planted) <= 1.0, (total, planted, report["per_test"]["teardown"])
+    assert report["per_test"]["teardown"]["median_ms"] >= asleep["median_ms"], report["per_test"]
