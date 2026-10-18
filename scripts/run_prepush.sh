@@ -296,7 +296,10 @@ fi
 # already relies on: CI runs this same chain with npm/node present and still enforces it in
 # full on every pull request, and `main` is protected, so a frontend regression cannot reach
 # a release without passing it. What moves is only WHERE the first failure is observed —
-# minutes later in CI instead of before the push leaves the machine. The v0.1.0
+# in CI instead of before the push leaves the machine. Since #3915 `ci.yml` runs on a push to
+# `main` only, so a topic branch is checked once it has a pull request, and not before: a
+# branch pushed with no pull request gets no CI run at all, and nothing merges without one.
+# The v0.1.0
 # blank-dashboard release this rail was built for shipped from a RELEASE ref, and release
 # refs are exactly what still run it here.
 #
@@ -304,7 +307,7 @@ fi
 # set is a bypass that gets set. Reverting is one line — drop this `release_ref` test.
 if [ "$release_ref" -eq 0 ]; then
   echo "pre-push: frontend changes outgoing on a topic branch — CI is the render-smoke gate"
-  echo "          (main/release/tags still run it locally)."
+  echo "          once the branch has a pull request (main/release/tags still run it locally)."
   skip_frontend_checks "topic branch: CI is the render-smoke gate"
   finish_report
 fi

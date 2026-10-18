@@ -1,4 +1,4 @@
-# CI — every pull request, every branch push, and every push to main.
+# CI — every pull request, and every push to main.
 # Jobs are stable ids that tests in this repo reference:
 # lint · test · web · rails · harness · client. Platform breadth (other Pythons, arm64,
 # coverage, the installer smoke, the audit) is breadth.yml's, nightly.
@@ -31,13 +31,16 @@ name: CI
 on:
   pull_request:
   push:
-    # Every branch, main included. A tag is not a branch, so a tag push starts no run here:
-    # tags are release.yml's.
-    branches: ["**"]
+    # Main only. A pull request's run is its candidate's check; a push run on the same feature
+    # branch only duplicated it, and the shared group below cancelled one of the two (#3915).
+    # A branch with no pull request gets no run here. A tag is not a branch: tags are
+    # release.yml's.
+    branches: [main]
 
-# One in-flight run per BRANCH, across BOTH triggers this file enables — a new push cancels
-# the superseded run, AND a `pull_request` run cancels the duplicate `push` run sitting on the
-# same head.
+# Off main, one in-flight run per pull request's head BRANCH: a new push to it cancels the
+# superseded run. Only `pull_request` runs land here off main, since the push trigger above
+# admits main alone (#3915); until then the same key also collapsed a branch's `push` run onto
+# its `pull_request` run, which is the history the two traps below record.
 #
 # 🪤 WHY NOT `github.ref`, which this keyed on until #2595. Under `pull_request` that is
 # `refs/pull/<n>/merge`; under `push` it is `refs/heads/<branch>`. Two different strings → two
@@ -56,8 +59,7 @@ on:
 #
 # The head REPO qualifies the key so that two forks which each push a branch named `patch-1` do
 # not cancel one another. For a same-repo PR it equals `github.repository`, and `github.head_ref`
-# equals `github.ref_name` — which is precisely what makes the `pull_request` and `push` keys
-# collide. That collision IS the dedupe.
+# equals `github.ref_name`, so a branch's runs share one key whichever field a run fills in.
 #
 # ON MAIN, ONE GROUP PER COMMIT, AND NOTHING IS CANCELLED. A push to main is that commit's
 # check, and for a tree no pull-request run tested it is the only execution that tree gets.
@@ -204,10 +206,10 @@ jobs:
             gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/${BEFORE}...${HEAD_SHA}" \
               --jq '.files[].filename' > /tmp/changed.txt || : > /tmp/changed.txt
           else
-            # A `push` run on a feature branch. Compared against the DEFAULT branch rather than
-            # `github.event.before`, which is all-zeros on a branch's first push and would
-            # enumerate nothing — the fail-open case, but reached on a routine event instead of
-            # a broken one, so the gate would never fire for anybody's first push.
+            # Neither: a push to main whose `before` is all-zeros or missing. A feature branch
+            # starts no push run here (the trigger admits main alone, #3915). Compared against
+            # the DEFAULT branch, which can enumerate nothing for main itself; an empty list is
+            # read as an unknown diff, so the gates run.
             gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/main...${HEAD_SHA}" \
               --jq '.files[].filename' > /tmp/changed.txt || : > /tmp/changed.txt
           fi
@@ -319,10 +321,11 @@ jobs:
       contents: read   # NOT pull-requests: write — a fork PR is handed a read-only token
                        # regardless, so asking for write here only looked like it worked.
                        # The remediation comment is posted by pr-feedback.yml instead.
-      pull-requests: read   # #2595: a `push` run has no PR in its payload, so the feedback
-                            # relay's PR number is looked up by head branch. READ only — the
-                            # line above still holds, and the fork path never reaches the
-                            # lookup because a fork PR's payload already carries the number.
+      pull-requests: read   # #2595: the feedback relay's PR number is looked up by head branch
+                            # when the payload has none. Since #3915 only a push to main has no
+                            # number, and its lookup (`head=<owner>:main`) is expected to find
+                            # nothing. READ only — the line above still holds, and a fork PR's
+                            # payload always carries the number.
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -398,17 +401,16 @@ jobs:
       # BASE repo's context, where the token really is write-capable, and posts from there.
       # Resolve the PR number WITHOUT keying on the event name — #2595.
       #
-      # Since the concurrency group above collapsed the `pull_request` and `push` runs for a
-      # branch into ONE group, one of the two cancels the other, and which of them survives is
+      # Until #3915 a feature branch also ran on `push`, the concurrency group above collapsed
+      # that run and its `pull_request` run into ONE group, and which of the two survived was
       # NOT contractual. While the two steps below were gated on
       # `github.event_name == 'pull_request'`, a push-survivor produced a red `lint` with the
       # remediation posted NOWHERE: no artifact is uploaded, and pr-feedback.yml reads the PR
-      # number out of that artifact's pr.txt, so it correctly posts nothing. That would have
-      # traded a throughput bug for a silence bug — the worse of the two — so the dedupe above
-      # is only safe together with this step.
+      # number out of that artifact's pr.txt, so it correctly posts nothing. The steps still
+      # read the number without keying on the event, so no trigger change can bring that back.
       #
-      # An empty answer is legitimate (a branch pushed before its PR exists) and must not fail
-      # the step; the two steps below simply do not run, which is the same outcome as today.
+      # An empty answer is legitimate (a push to main has no open pull request) and must not
+      # fail the step; the two steps below simply do not run.
       - name: Resolve the PR number for the feedback relay
         id: prnum
         if: failure() && steps.lint.outputs.violations != ''
@@ -697,8 +699,8 @@ jobs:
     #
     # ── 🪤 `!cancelled()`, NOT `always()`. THE RED NO TEST PRODUCED (#2946) ────────────────────
     # `always()` runs a job even when the RUN ITSELF was cancelled, and the step below then turned
-    # `result == 'cancelled'` into `exit 1`. The concurrency group above deliberately collapses
-    # this branch's `pull_request` and `push` runs, so ONE of the two is always cancelled — and
+    # `result == 'cancelled'` into `exit 1`. Until #3915 the concurrency group above collapsed
+    # a branch's `pull_request` and `push` runs, so ONE of the two was always cancelled — and
     # the cancelled one was publishing a `test` FAILURE. Check-runs key on the SHA, not the run,
     # so that red landed on the exact commit whose surviving run went green.
     #
@@ -760,7 +762,7 @@ jobs:
     # queue on macOS; the cap is above a quarter's measured share on these runners.
     #
     # On pull requests into main, and on a push to main whose tree no green pull-request run
-    # tested. Not on a branch push: that branch's pull request runs it.
+    # tested. A feature branch has no push run here (#3915); its pull request runs it.
     needs: [tree-check, shard-plan]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && ((github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     runs-on: macos-26
@@ -1270,8 +1272,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # scan --diff diffs against the base named below, or on a branch push against the
-          # merge-base with origin/main; full history so either resolves.
+          # scan --diff diffs against the base named below, or the commit a push to main
+          # replaced; full history so either resolves.
           fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -1286,9 +1288,9 @@ jobs:
         run: uv run python -m harness validate
       # A pull request names its base, so the scan diffs against that commit. `--base` fails when
       # the named commit does not resolve, where the default falls back to `main` and then
-      # `HEAD~1`, either of which can scan a different change from this one. A branch push
-      # carries no base and keeps the default; a push to main diffs against the commit it
-      # replaced. Through `env:`, never `${{ }}` inside `run:`.
+      # `HEAD~1`, either of which can scan a different change from this one. A push to main
+      # diffs against the commit it replaced, and keeps the default only when `before` is
+      # missing or all zeros. Through `env:`, never `${{ }}` inside `run:`.
       - name: harness scan (static boundary scanner over the diff)
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

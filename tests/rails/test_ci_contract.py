@@ -1315,7 +1315,12 @@ def _main_never_cancels(where: str, workflow: dict[str, Any]) -> list[str]:
 
 
 def main_push_runs_violations(tree: Tree) -> list[str]:
-    """``ci.yml`` runs on every push to main, and no main run is ever cancelled or replaced."""
+    """``ci.yml`` runs on every push to main and on no other push, and no main run is ever
+    cancelled or replaced.
+
+    A pull request's run is its candidate's check. A push run on the same feature branch only
+    duplicated it: the shared group cancelled one of the two, and a later push run could cancel
+    the ``pull_request`` run that ``tree-check`` reads (#3915)."""
     workflow = _workflow(tree, "ci.yml")
     if workflow is None:
         return ["ci.yml is missing"]
@@ -1324,7 +1329,7 @@ def main_push_runs_violations(tree: Tree) -> list[str]:
     if push == "absent":
         bad.append("ci.yml does not run on a push")
     elif not isinstance(push, dict):
-        bad.append("ci.yml runs on a bare `push:`, which a tag push also starts")
+        bad.append("ci.yml runs on a bare `push:`, which every branch and tag push also starts")
     else:
         branches = [str(b) for b in push.get("branches") or []]
         # GitHub reads branch patterns in order, so a later `!` pattern drops what an earlier
@@ -1336,7 +1341,14 @@ def main_push_runs_violations(tree: Tree) -> list[str]:
             or {"paths", "paths-ignore"} & set(push)
         ):
             bad.append(f"ci.yml's push trigger leaves main, or some pushes to it, out: {push}")
-        if "tags" in push:
+        others = [b for b in branches if b != "main" and not b.startswith("!")]
+        if "branches-ignore" in push or others:
+            bad.append(
+                f"ci.yml runs on a push to a branch other than main ({push}), which only "
+                "duplicates that branch's pull_request run"
+            )
+        # Beside a branch filter, a tags-ignore starts a run on every tag it does not match.
+        if {"tags", "tags-ignore"} & set(push):
             bad.append("ci.yml runs on a tag push, which is release.yml's")
     return bad + _main_never_cancels("ci.yml", workflow)
 
@@ -2644,8 +2656,50 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "branches-ignore: [main]",
                 _CI,
-                '    branches: ["**"]\n',
+                "    branches: [main]\n",
                 "    branches-ignore: [main]\n",
+            ),
+            _plant(
+                "branches-ignore of one feature branch",
+                _CI,
+                "    branches: [main]\n",
+                "    branches-ignore: [feature]\n",
+                expect="a branch other than main",
+            ),
+            _plant(
+                "main and a release branch, named without a glob",
+                _CI,
+                "    branches: [main]\n",
+                "    branches: [main, release]\n",
+                expect="a branch other than main",
+            ),
+            _plant(
+                "a tag push beside main",
+                _CI,
+                "    branches: [main]\n",
+                '    branches: [main]\n    tags: ["v*"]\n',
+                expect="tag push",
+            ),
+            _plant(
+                "a tags-ignore beside main",
+                _CI,
+                "    branches: [main]\n",
+                '    branches: [main]\n    tags-ignore: ["v*"]\n',
+                expect="tag push",
+            ),
+            _plant(
+                'every branch again (branches: ["**"])',
+                _CI,
+                "    branches: [main]\n",
+                '    branches: ["**"]\n',
+                expect="a branch other than main",
+            ),
+            _plant(
+                "main and one feature pattern",
+                _CI,
+                "    branches: [main]\n",
+                '    branches: [main, "feature-*"]\n',
+                expect="a branch other than main",
             ),
             _plant(
                 "cancel-in-progress: true on main",
@@ -2660,24 +2714,32 @@ ROWS: tuple[Row, ...] = (
                 "",
             ),
             _plant(
-                "a bare push: (a tag push would start it)",
+                "a bare push: (every branch and tag push would start it)",
                 _CI,
-                "  push:\n    # Every branch, main included. A tag is not a branch, so a tag push"
-                " starts no run here:\n    # tags are release.yml's.\n"
-                '    branches: ["**"]\n',
-                "  push:\n",
+                "    branches: [main]\n",
+                "",
+                expect="bare `push:`",
             ),
             _plant(
-                'a "!main" after "**"',
+                'a "!main" after "main"',
                 _CI,
-                '    branches: ["**"]\n',
-                '    branches: ["**", "!main"]\n',
+                "    branches: [main]\n",
+                '    branches: [main, "!main"]\n',
+                expect="leaves main",
             ),
             _plant(
                 "a paths-ignore on the main trigger",
                 _CI,
-                '    branches: ["**"]\n',
-                '    branches: ["**"]\n    paths-ignore: ["docs/**"]\n',
+                "    branches: [main]\n",
+                '    branches: [main]\n    paths-ignore: ["docs/**"]\n',
+                expect="leaves main",
+            ),
+            _plant(
+                "no main at all",
+                _CI,
+                "    branches: [main]\n",
+                "    branches: [release]\n",
+                expect="leaves main",
             ),
             _plant(
                 "a job-level concurrency group",
