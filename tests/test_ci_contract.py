@@ -1783,6 +1783,27 @@ def docker_tree_check_violations(tree: Tree) -> list[str]:
     return bad + _main_never_cancels("docker-single-container.yml", workflow)
 
 
+def job_timeout_violations(tree: Tree) -> list[str]:
+    """Every job carries its own ``timeout-minutes``, in every workflow.
+
+    Without one a hung job holds its runner for GitHub's 360-minute default. Cancelling
+    concurrency is no bound: it evicts a hung job only when a later run in the same group
+    arrives, and a main push, a tag or a nightly may have none behind it. A non-cancelling
+    group is worse: the hung job holds the lane for every run queued behind it. A job that
+    calls a reusable workflow is exempt, because the callee's jobs carry the caps.
+    """
+    bad: list[str] = []
+    for name, job_id, job in _jobs(tree):
+        if job.get("uses"):
+            continue
+        cap = job.get("timeout-minutes")
+        if cap is None:
+            bad.append(f"{name}:{job_id} has no timeout-minutes")
+        elif isinstance(cap, bool) or not isinstance(cap, int) or cap <= 0:
+            bad.append(f"{name}:{job_id} has timeout-minutes {cap!r}, not a positive integer")
+    return bad
+
+
 _CI = ".github/workflows/ci.yml"
 _BREADTH = ".github/workflows/breadth.yml"
 _DOCKER = ".github/workflows/docker-single-container.yml"
@@ -2693,6 +2714,70 @@ ROWS: tuple[Row, ...] = (
     NO_TRUSTED_CHECKOUT_OF_CANDIDATE_CODE,
     NO_CANDIDATE_JOB_HOLDS_A_WRITE_OR_A_SECRET,
     ONLY_THE_RELEASE_CONTROLLER_PUBLISHES,
+    _toolchain_row(
+        "every job that runs steps has its own timeout-minutes",
+        job_timeout_violations,
+        (
+            _plant(
+                "a job in a cancelling group without one",
+                _CI,
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n",
+                "    runs-on: ubuntu-24.04\n",
+            ),
+            _plant(
+                "a job in a workflow with no concurrency group without one",
+                ".github/workflows/release.yml",
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n",
+                "    runs-on: ubuntu-24.04\n",
+            ),
+            _plant(
+                "a job in a non-cancelling group without one",
+                _BREADTH,
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n",
+                "    runs-on: ubuntu-24.04\n",
+            ),
+            _plant(
+                "a job whose cap is zero",
+                _CI,
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n",
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: 0\n",
+            ),
+            _plant(
+                "a job whose cap is negative",
+                _CI,
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n",
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: -5\n",
+            ),
+            _plant(
+                "a job whose cap is a fraction",
+                _CI,
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n",
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: 5.5\n",
+            ),
+            _plant(
+                "a job whose cap is a string",
+                _CI,
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n",
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: '5'\n",
+            ),
+            _plant(
+                "a job whose cap is a boolean",
+                _CI,
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n",
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: true\n",
+            ),
+            Control(
+                "a job that calls a reusable workflow, without one, passes",
+                _plant(
+                    "a reusable call",
+                    _CI,
+                    "jobs:\n",
+                    "jobs:\n  called:\n    uses: ./.github/workflows/reusable.yml\n",
+                ).plant,
+                fails=False,
+            ),
+        ),
+    ),
 )
 
 

@@ -29,6 +29,7 @@ jobs:
     # (setup.py's BuildWithWeb copies web/dist into the package). `make build` is the same
     # build plus the proof that the sdist rebuilds a byte-identical wheel.
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.ver.outputs.version }}
       gh_release_flags: ${{ steps.ver.outputs.gh_release_flags }}
@@ -187,6 +188,7 @@ jobs:
     # environment gate. No stored token (OIDC).
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     environment: release
     permissions:
       id-token: write  # OIDC for Trusted Publishing
@@ -224,6 +226,7 @@ jobs:
     # an already-on-PyPI version no-ops instead of failing the job.
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     environment: release-client
     permissions:
       id-token: write
@@ -327,6 +330,7 @@ jobs:
     # `deploy/compose/compose.yaml` pulls both and half a published pair is worse than none.
     needs: [build, gateway-dashboard]
     runs-on: ubuntu-24.04
+    timeout-minutes: 165
     permissions:
       contents: read
       packages: write
@@ -565,6 +569,7 @@ jobs:
     # second leg; it is deliberately not claimed here until a job proves it, exactly as
     # desktop-linux declines to claim arm64.
     runs-on: macos-26
+    timeout-minutes: 15
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -659,6 +664,7 @@ jobs:
     # what that means for users. x86-64 only (this runner's arch); arm64 desktop is
     # not claimed anywhere until a job proves it.
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -737,6 +743,7 @@ jobs:
     # Linux desktop build blocks the release (the images-smoke precedent).
     needs: [build, pypi, images, desktop-linux, desktop-mac]
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: write
     steps:
@@ -811,6 +818,7 @@ jobs:
     # `v*` tags only, so the token is readable by a tag's release run and nothing else.
     needs: [notes]
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     environment: website-follow
     continue-on-error: true
     steps:
@@ -836,6 +844,7 @@ jobs:
     # and the wheel PyPI had already published got no build provenance on GitHub.
     needs: [build]
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       id-token: write
       attestations: write

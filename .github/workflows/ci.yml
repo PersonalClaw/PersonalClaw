@@ -159,6 +159,7 @@ jobs:
     # surfaces it never actually visited." Sixteen of eighteen routes in web/e2e/routes.ts are
     # `needsData: true`. A backend diff can change scanned DOM, so a backend diff pays.
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read   # `pulls/{n}/files` below. READ only, and a fork PR's token is
@@ -306,6 +307,7 @@ jobs:
     needs: [tree-check]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read   # NOT pull-requests: write — a fork PR is handed a read-only token
                        # regardless, so asking for write here only looked like it worked.
@@ -515,6 +517,7 @@ jobs:
     needs: [tree-check]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 55
     strategy:
       # fail-fast:false so one red shard does not cancel the others — you want every failing
       # shard's report in one push, not a fix-push-rediscover loop (same reason breadth.yml's legs
@@ -653,6 +656,7 @@ jobs:
     needs: [tree-check, test-shard]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -748,6 +752,7 @@ jobs:
     needs: [tree-check]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -868,6 +873,7 @@ jobs:
     needs: [changes, tree-check]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -941,6 +947,7 @@ jobs:
     needs: [changes, tree-check]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -1113,6 +1120,7 @@ jobs:
     needs: [changes, tree-check]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -1285,6 +1293,7 @@ jobs:
     needs: [tree-check]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     # No PERSONALCLAW_HOME (see the test job) — the residue sweep is a static
     # import-boundary check and the suite runs under the no-global-home contract.
     steps:
@@ -1369,6 +1378,7 @@ jobs:
     needs: [tree-check]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -1419,6 +1429,7 @@ jobs:
     needs: [tree-check]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
