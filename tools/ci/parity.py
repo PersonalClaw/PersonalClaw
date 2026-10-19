@@ -73,10 +73,10 @@ def read(path: Path) -> dict[str, Counter[str]]:
             if number == 0:
                 if line.get("kind") != "run" or line.get("schema") != telemetry.SCHEMA:
                     raise UnreadableError(f"its first line is not a {telemetry.SCHEMA} run line")
-                if line.get("version") != telemetry.VERSION:
+                if line.get("version") not in telemetry.READS:
                     raise UnreadableError(
                         f"schema version {line.get('version')!r}, this check reads "
-                        f"{telemetry.VERSION}"
+                        f"{sorted(telemetry.READS)}"
                     )
                 continue
             if line.get("kind") != "test":

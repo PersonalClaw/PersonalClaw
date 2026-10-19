@@ -383,7 +383,7 @@ def test_the_report_the_rerun_marks_gives_telemetry_its_rerun_result(tmp_path):
         root, _job("tests/test_flaky.py", "tests/test_broken.py", "tests/test_guarded.py"), tmp_path
     )
     cases, _, _ = telemetry.report_cases("junit-x", _zipped((root / REPORT).read_bytes()))
-    got = {test: (first, rerun) for test, _, first, _, rerun in cases}
+    got = {test: (first, rerun) for test, _, first, _, rerun, _ in cases}
     assert got == {
         "tests.test_flaky::test_fails_then_passes": ("failed", "flake"),
         "tests.test_broken.TestBroken::test_fails_twice[a b]": ("failed", "repeated failure"),
@@ -726,7 +726,7 @@ def test_the_weekly_report_counts_a_flake_and_not_a_repeated_failure(tmp_path):
         jobs=[],
     )
     lines = [head]
-    for test, seconds, first, _, rerun in cases:
+    for test, seconds, first, _, rerun, _ in cases:
         line = dict.fromkeys(telemetry.TEST_FIELDS)
         line.update(
             kind="test",
@@ -998,7 +998,7 @@ def test_a_setup_error_is_rerun_and_the_collector_reads_its_word(tmp_path):
     assert entry["rerun_result"] == "flake", entry
     assert log.read_text().splitlines() == ["test_errors_then_passes"]
     cases, _, _ = telemetry.report_cases("junit-x", _zipped((root / REPORT).read_bytes()))
-    assert [(first, word) for _, _, first, _, word in cases] == [("error", "flake")]
+    assert [(first, word) for _, _, first, _, word, _ in cases] == [("error", "flake")]
 
 
 def test_a_test_that_skips_on_the_rerun_is_not_classified(tmp_path):

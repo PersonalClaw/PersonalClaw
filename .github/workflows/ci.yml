@@ -1226,7 +1226,8 @@ jobs:
     # as a pass, so PERSONALCLAW_REQUIRE_BROWSE_PROOF turns a missing browser into a failure. It is
     # set on that step ONLY: a contributor without a Chromium still gets a skip.
     # tests/test_browse_live_legs_run_in_ci.py holds this job to all of it. Its JUnit report keeps
-    # the `junit-browse-live` name, which tools/browse_live_quarantine_frequency.py reads.
+    # the `junit-browse-live` name, whose lines the weekly report's browse-live row reads from the
+    # telemetry history (tools/ci/report.py).
     #
     # Its own job, not a step of `e2e` (#3945): it is security evidence, which no plan leaves out
     # and no run reuses, while the browser run is planned only for the diffs its inputs reach. So

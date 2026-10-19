@@ -2,11 +2,11 @@
 
 It reads only what ``tools/ci/telemetry.py`` writes, in its one schema: the
 ``history-<run>-<attempt>.jsonl`` files and the ``slots-*.jsonl`` files. A file in another
-schema or a newer version fails the report (exit 2), since a figure read from a record it does
-not understand would be a guess. It also reads the quarantine, ``tests/quarantine.toml``, for its
-status. The same table prints in a terminal and goes to the job summary
-(``$GITHUB_STEP_SUMMARY``), and ``--json`` writes the figures for the weekly issue and for the
-tools that read them (#3926 the p99 durations, #3946 the reds).
+schema or a version it does not read (``telemetry.READS``) fails the report (exit 2), since a
+figure read from a record it does not understand would be a guess. It also reads the quarantine,
+``tests/quarantine.toml``, for its status. The same table prints in a terminal and goes to the
+job summary (``$GITHUB_STEP_SUMMARY``), and ``--json`` writes the figures for the weekly issue
+and for the tools that read them (#3926 the p99 durations, #3946 the reds).
 
 **At 90 days' scale.** 90 days are about 860 histories of about 49 MB each, so nothing is held
 whole. The report reads each history's first line to find the runs and the window, then only the
@@ -39,6 +39,17 @@ trend: the p50 of the last 7 days over the p50 of the 7 days before, less one.
 expiry, and the days left; an entry on or past its date has expired, as ``tests/quarantine.py``
 reads it, and is flagged. A missing list is an empty one; an entry not in the list's shape fails
 the report.
+
+**Browse-live's environment quarantine.** The browse proof fails with ``ENVIRONMENT, NOT
+POLICY`` when the browser, not the safety script, broke the run (``environment_failure`` on its
+``junit-browse-live`` lines, version 2 on). Each head commit of main is one observation, so a
+rerun cannot inflate the rate: of a head's runs and their attempts, the newest that was not
+cancelled is the one that counts, and when it holds no browse-live line (or only version-1 lines,
+which cannot say), the head is not observed and an older run never stands in for it. The newest
+``BROWSE_LIVE_WINDOW`` observed heads are listed, and ``BROWSE_LIVE_THRESHOLD`` of them
+quarantined is a recurrence: flagged in the issue, and an error annotation in the log. These are
+the rules of the tracker workflow this row replaced, which also counted pull-request heads; the
+history holds pushes to main only.
 
 **Scheduled runs.** From the newest slots file: each scheduled workflow's slots that ran, with
 their median lag, and the slots no run answered, as ``missed`` (its next slot passed with no run)
@@ -82,6 +93,14 @@ MAX_FILE_BYTES = 256 * 1024 * 1024
 #: The quarantine, whose status the report shows, and its fields (``tests/quarantine.py``'s).
 QUARANTINE = Path(__file__).resolve().parents[2] / "tests" / "quarantine.toml"
 QUARANTINE_FIELDS = ("nodeid", "issue", "assignee", "expires", "reason")
+#: The browse proof's report, whose lines the browse-live row reads.
+BROWSE_LIVE_REPORT = "junit-browse-live"
+#: An alert at 3 of the last 5 distinct heads: three independent revisions establish recurrence
+#: beyond a one-off flake, and a rate also catches alternating failures a run of reds would miss.
+BROWSE_LIVE_WINDOW = 5
+BROWSE_LIVE_THRESHOLD = 3
+#: An attempt with one of these conclusions observed nothing.
+UNMEASURED = frozenset({None, "cancelled", "skipped"})
 
 
 class SchemaError(Exception):
@@ -164,6 +183,7 @@ class History:
     window: dict[str, Any]
     tests: dict[str, Figures]
     suite_size: int
+    browse_live: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +192,10 @@ class _File:
     run_id: int
     attempt: int
     created: datetime.datetime
+    sha: str
+    conclusion: str | None
+    #: When the attempt was last updated (its created time when it has none): retries' order.
+    updated: datetime.datetime
 
 
 def _at(value: object) -> datetime.datetime:
@@ -214,17 +238,20 @@ def _head(path: Path, kind: str) -> dict[str, Any]:
         raise SchemaError(f"{path.name} is empty")
     if head.get("kind") != kind or head.get("schema") != telemetry.SCHEMA:
         raise SchemaError(f"{path.name}: its first line is not a {telemetry.SCHEMA} {kind} line")
-    if head.get("version") != telemetry.VERSION:
+    if head.get("version") not in telemetry.READS:
         raise SchemaError(
             f"{path.name}: schema version {head.get('version')}, this report reads "
-            f"{telemetry.VERSION}"
+            f"{sorted(telemetry.READS)}"
         )
     return head
 
 
-def _outcomes(files: Sequence[_File]) -> dict[str, _Outcome]:
-    """Each test's outcome in one run, from that run's files, lowest attempt first."""
+def _outcomes(files: Sequence[_File]) -> tuple[dict[str, _Outcome], dict[int, bool | None]]:
+    """Each test's outcome in one run, from that run's files, lowest attempt first; and for each
+    attempt with browse-live lines, whether one carried the environment marker (None when a line
+    cannot say: a version-1 line has no such field)."""
     outcomes: dict[str, _Outcome] = {}
+    browse: dict[int, bool | None] = {}
     # Lowest attempt first, so each test's first result is that attempt's, whatever the file
     # order; files of one attempt in path order.
     for file in sorted(files, key=lambda f: f.attempt):
@@ -235,6 +262,12 @@ def _outcomes(files: Sequence[_File]) -> dict[str, _Outcome]:
                 raise SchemaError(f"{file.path.name}: a line after the first is not a test line")
             test, result = str(record["test"]), str(record["first_result"])
             seconds = float(record.get("seconds") or 0.0)
+            if record.get("report") == BROWSE_LIVE_REPORT:
+                marked = record.get("environment_failure")
+                known = browse.get(file.attempt, False)
+                browse[file.attempt] = (
+                    None if known is None or not isinstance(marked, bool) else known or marked
+                )
             found = outcomes.get(test)
             if found is None:
                 found = outcomes[test] = _Outcome(file.attempt, result, seconds)
@@ -247,7 +280,43 @@ def _outcomes(files: Sequence[_File]) -> dict[str, _Outcome]:
                 continue
             if found.first in FAILED and record.get("rerun_result") == telemetry.FLAKE:
                 found.passed_on_rerun = True
-    return outcomes
+    return outcomes, browse
+
+
+def _browse_live(
+    files: Iterable[_File], measured: Mapping[tuple[int, int], bool | None]
+) -> list[dict[str, Any]]:
+    """The newest ``BROWSE_LIVE_WINDOW`` observed heads, newest first: per head, the newest of
+    its runs' attempts that was not cancelled, when it measured browse-live."""
+    by_sha: dict[str, list[_File]] = {}
+    for file in files:
+        if file.sha:
+            by_sha.setdefault(file.sha, []).append(file)
+
+    def order(file: _File) -> tuple[datetime.datetime, int, int]:
+        return file.updated, file.run_id, file.attempt
+
+    heads = sorted(by_sha.items(), key=lambda item: max(map(order, item[1])), reverse=True)
+    observed: list[dict[str, Any]] = []
+    for sha, retries in heads:
+        if len(observed) >= BROWSE_LIVE_WINDOW:
+            break
+        counted = sorted((f for f in retries if f.conclusion not in UNMEASURED), key=order)
+        if not counted:
+            continue
+        newest = counted[-1]
+        quarantined = measured.get((newest.run_id, newest.attempt))
+        if quarantined is None:
+            continue
+        observed.append(
+            {
+                "sha": sha,
+                "run_id": newest.run_id,
+                "attempt": newest.attempt,
+                "quarantined": quarantined,
+            }
+        )
+    return observed
 
 
 def read(folder: Path) -> History:
@@ -257,8 +326,17 @@ def read(folder: Path) -> History:
     files = []
     for path in sorted(folder.rglob("history-*.jsonl")):
         head = _head(path, "run")
+        made = _at(head["created_at"])
         files.append(
-            _File(path, int(head["run_id"]), int(head["attempt"]), _at(head["created_at"]))
+            _File(
+                path,
+                int(head["run_id"]),
+                int(head["attempt"]),
+                made,
+                str(head.get("sha") or ""),
+                head.get("conclusion"),
+                _at(head["updated_at"]) if head.get("updated_at") else made,
+            )
         )
     if not files:
         window: dict[str, Any] = {"runs": 0, "days": 0, "first": None, "last": None}
@@ -286,8 +364,10 @@ def read(folder: Path) -> History:
     before = newest - datetime.timedelta(days=2 * TREND_DAYS)
     tests: dict[str, Figures] = {}
     suite_size = 0
+    measured: dict[tuple[int, int], bool | None] = {}
     for run_id, at in sorted(kept.items()):
-        outcomes = _outcomes(by_run[run_id])
+        outcomes, browse = _outcomes(by_run[run_id])
+        measured.update({(run_id, attempt): marked for attempt, marked in browse.items()})
         if run_id == latest:
             suite_size = len(outcomes)
         for test, outcome in outcomes.items():
@@ -308,7 +388,8 @@ def read(folder: Path) -> History:
             elif at > before:
                 figures.last_week = figures.last_week or Counted()
                 figures.last_week.add(outcome.seconds)
-    return History(window, tests, suite_size)
+    in_window = [file for run_id in kept for file in by_run[run_id]]
+    return History(window, tests, suite_size, _browse_live(in_window, measured))
 
 
 def read_slots(folder: Path) -> list[dict[str, Any]]:
@@ -355,7 +436,20 @@ def figures(
         "slowest": slowest,
         "suite_size": history.suite_size,
         "quarantine": quarantine_status(quarantine, on or today()),
+        "browse_live": browse_live(history.browse_live),
         "schedules": schedules(slots),
+    }
+
+
+def browse_live(observed: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    quarantined = sum(bool(o["quarantined"]) for o in observed)
+    return {
+        "window": BROWSE_LIVE_WINDOW,
+        "threshold": BROWSE_LIVE_THRESHOLD,
+        "measured": len(observed),
+        "quarantined": quarantined,
+        "recurring": len(observed) == BROWSE_LIVE_WINDOW and quarantined >= BROWSE_LIVE_THRESHOLD,
+        "observations": [dict(o) for o in observed],
     }
 
 
@@ -494,6 +588,25 @@ def markdown(data: Mapping[str, Any]) -> str:
             lines.append(f"| `{q['nodeid']}` | #{q['issue']} | @{q['assignee']} | {expires} |")
     else:
         lines.append("The quarantine is empty.")
+    browse = data["browse_live"]
+    lines += ["", "### Browse-live's environment quarantine", ""]
+    if browse["measured"] < browse["window"]:
+        heads = "head" if browse["measured"] == 1 else "heads"
+        lines.append(
+            f"{browse['measured']} measured {heads} on main of the {browse['window']} a rate "
+            "needs: no rate yet."
+        )
+    else:
+        count = f"{browse['quarantined']} of the last {browse['window']}"
+        lines.append(
+            f"{f'**{count}**' if browse['recurring'] else count} measured heads on main carried "
+            f"`{telemetry.ENVIRONMENT_MARKER}`; the alert is at {browse['threshold']} of "
+            f"{browse['window']}."
+        )
+    for o in browse["observations"]:
+        attempt = f" attempt {o['attempt']}" if o["attempt"] > 1 else ""
+        verdict = "quarantined" if o["quarantined"] else "clear"
+        lines.append(f"- `{o['sha'][:12]}` run {o['run_id']}{attempt}: {verdict}")
     lines += ["", "### Scheduled runs", ""]
     if not data["schedules"]:
         lines.append("No slots file was read.")
@@ -531,6 +644,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     text = markdown(data)
     print(text, end="")
+    browse = data["browse_live"]
+    if browse["recurring"]:
+        # In the log only, where the runner reads it: the summary and the issue carry the row.
+        print(
+            "::error title=browse-live environment quarantine is recurring::"
+            f"{browse['quarantined']} of the last {browse['window']} measured heads on main "
+            f"carried '{telemetry.ENVIRONMENT_MARKER}' (alert at {browse['threshold']} of "
+            f"{browse['window']})"
+        )
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as fh:

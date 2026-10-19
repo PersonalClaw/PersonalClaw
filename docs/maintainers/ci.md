@@ -899,12 +899,19 @@ the shard planner and the weekly report read it.
 - **The diagnostic rerun:** `rerun_result` is read from the `rerun_result` property `run-job`
   writes on each failed case it reran: `flake` or `repeated failure`, null for a case it did not
   rerun. Any other value, or one on a case that did not fail first, fails the collection.
+- **The environment marker** (schema version 2): `environment_failure` is true when the case
+  failed or errored with the exact words `ENVIRONMENT, NOT POLICY` in its failure's message or
+  text, the suite's way of naming a red the environment caused rather than the code under test
+  (the browse proof's page that stayed detached), and false for every other case. Version 2
+  adds that field and changes nothing else: the report and the parity check read version 1 too,
+  as histories without it. The shard planner still reads version 2 alone, so after this lands it
+  skips each version-1 history, with a warning, until three version-2 main histories exist.
 - **Not yet recorded:** `quarantined` is #3947's, `cache_hits` is #3909's, and `worker` and
   `position` are #3949's. No API reports them, so they are null, never guessed.
 
 `tools/ci/report.py` (`python -m tools.ci report --history <folder>`) reads only that schema
-and fails (exit 2) on a file in another schema or a newer version, and on a folder that does
-not exist; an empty folder is reported as no history. It prints the same table in a terminal
+and fails (exit 2) on a file in another schema or a version it does not read, and on a folder
+that does not exist; an empty folder is reported as no history. It prints the same table in a terminal
 and to the job summary, and `--json` writes the figures.
 
 It reads 90 days of history, about 860 files of about 49 MB each, without holding any of them:
@@ -930,6 +937,15 @@ The figures:
   with its issue, its assignee, its expiry and the days left, soonest first. On its date an
   entry has expired, as the suite reads it, and the report flags it. A missing list is an empty
   quarantine; an entry not in the list's shape fails the report;
+- **browse-live's environment quarantine:** each of the newest 5 head commits of main that
+  measured the browse proof, newest first, quarantined when a `junit-browse-live` line carries
+  `environment_failure`. One head is one observation, so a rerun cannot inflate the rate: of a
+  head's runs and their attempts the newest that was not cancelled counts, and when it measured
+  no browse-live line, or only version-1 lines, which cannot say, the head is not observed and
+  no older run stands in for it. 3 of 5 quarantined is a recurrence: flagged in the issue, and an
+  error annotation in the log. These are the rules of the tracker workflow this row replaced,
+  except that the tracker also counted pull-request heads, and the history holds main's pushes
+  only. Fewer than 5 observed heads give no rate;
 - **scheduled runs:** from the newest slots file, each workflow's slots that ran, with the median
   lag, and every missed or pending slot as a line of its own.
 
@@ -939,9 +955,9 @@ test node ids `test-shard` ran (its `junit-test-shard-*` reports) with those `te
 (`junit-test-macos-*`). A skipped case counts as run on its side, since it was collected there.
 It names every id only one side ran and exits 1 when there is one, and exits 0 when the two sets
 are equal. An id one side ran more than once is named but is no difference. It exits 2 on a file
-it can't read: missing, empty, not JSON lines, another schema or a newer version, a line over
-1 MiB or a whole over 256 MiB, or no report of one side (a push whose tree was already tested
-runs no `test-macos`). It reads only the file it is given, and no workflow runs it yet.
+it can't read: missing, empty, not JSON lines, another schema or a version it does not read, a
+line over 1 MiB or a whole over 256 MiB, or no report of one side (a push whose tree was already
+tested runs no `test-macos`). It reads only the file it is given, and no workflow runs it yet.
 
 ## The selection map
 
