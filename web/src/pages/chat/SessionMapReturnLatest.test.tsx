@@ -64,6 +64,8 @@ const SRC = join(process.cwd(), 'src')
 const OWNER = 'pages/chat/SessionMapReturnLatest.tsx'
 /** The host that renders it. Named only so the corpus can prove it read a big real file. */
 const HOST = 'pages/ChatPage.tsx'
+/** Where the chat follows its stream to the end: the transcript's controller, and the peek panel. */
+const FOLLOWERS = ['pages/chat/transcript/useTranscript.ts', 'pages/chat/history/SessionPeek.tsx']
 
 /** Blank every comment, length-preserving, before any scan — see vacuity floor #3. Same shape as
  *  `design/hitTargetThinHandle.test.ts`'s, and for the same reason: a scanner that cannot tell a
@@ -203,10 +205,13 @@ describe('exactly one implementation, derived over src', () => {
     // Known positive: the real module, read from disk, must match.
     expect(scrollsToLatest(CODE.get(OWNER)!), 'the matcher cannot see the control it is about').toBe(true)
     // Known negative, and this is the pair that proves the matcher is not just "always false":
-    // ChatPage still scrolls to the end to FOLLOW the stream, and those must not be counted.
-    const host = CODE.get(HOST)!
-    expect(host, 'the follow-the-stream scrolls must still be in ChatPage').toMatch(/scrollIntoView\(\{ block: 'end' \}\)/)
-    expect(scrollsToLatest(host), 'an instant conditional follow is not a return-to-newest').toBe(false)
+    // The chat still scrolls to the end to FOLLOW the stream, and those must not be counted. They
+    // moved out of ChatPage with the transcript and the history's peek panel.
+    for (const rel of FOLLOWERS) {
+      const follower = CODE.get(rel)!
+      expect(follower, `the follow-the-stream scroll must still be in ${rel}`).toMatch(/scrollIntoView\(\{ block: 'end' \}\)/)
+      expect(scrollsToLatest(follower), 'an instant conditional follow is not a return-to-newest').toBe(false)
+    }
     // And a hand-built duplicate DOES trip it, in either key order — the shape a copy/paste takes.
     expect(scrollsToLatest(`el.scrollIntoView({ behavior: 'smooth', block: 'end' })`)).toBe(true)
     expect(scrollsToLatest(`el.scrollIntoView({ block: 'end', behavior: 'smooth' })`)).toBe(true)

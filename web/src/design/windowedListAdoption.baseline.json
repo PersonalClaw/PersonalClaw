@@ -2,7 +2,7 @@
   "_comment": "Windowing-adoption ratchet baseline. The INVERSE of primitiveAdoption.baseline.json: that one counts bespoke chrome and may only shrink, this one counts surfaces that have ADOPTED ui/WindowedList and may only GROW. A surface that drops the primitive and goes back to rendering every row turns CI red, so the improvement cannot quietly leak back out. Add a surface here in the same commit that adopts it. See windowedListAdoption.test.ts.",
   "adopters": 5,
   "surfaces": [
-    "pages/ChatPage.tsx",
+    "pages/chat/history/ChatHistoryPage.tsx",
     "pages/inbox/InboxPage.tsx",
     "pages/knowledge/KnowledgeListPage.tsx",
     "pages/settings/DiagnosticsPanel.tsx",

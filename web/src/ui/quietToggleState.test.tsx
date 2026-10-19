@@ -84,7 +84,8 @@ describe('the call sites, classified per site', () => {
   const read = (rel: string) => readSource(join(SRC, rel))
 
   const DISCLOSURES: [string, string][] = [
-    ['pages/ChatPage.tsx', 'open'],
+    // "Organize chat", which moved with the chat history page.
+    ['pages/chat/history/ChatHistoryPage.tsx', 'open'],
     ['pages/artifacts/ArtifactViewer.tsx', 'comparing'],
     ['pages/workflows/WorkflowRunDetail.tsx', 'workspaceOpen'],
     ['pages/workflows/WorkflowRunDetail.tsx', 'outboxOpen'],
@@ -148,8 +149,8 @@ describe('the call sites, classified per site', () => {
 //   DISCLOSURE  ModelBackends "Edit"                → {editing && <EditInstanceForm/>}
 //   DISCLOSURE  MultiInstanceCard "Edit"            → {editing && props.length > 0 && (…)}
 //   DISCLOSURE  WidgetFrame iteration rail          → {railOpen && !streaming && (…)}
-//   DISCLOSURE  ChatPage "Organize chat"            → a Popover menu trigger
-//   toggle      ChatPage "Pin chat"        (s.pinned)      — a state
+//   DISCLOSURE  ChatPage "Organize chat"            → a Popover menu trigger   (now chat/history/ChatHistoryPage)
+//   toggle      ChatPage "Pin chat"        (s.pinned)      — a state   (now chat/history/ChatHistoryPage)
 //   toggle      ContentSurface "word wrap" (wrap)          — a mode
 //   toggle      WidgetFrame Bookmark       (saved)         — a state
 //   toggle      WidgetFrame Pin            (pinned)        — a state
@@ -268,7 +269,7 @@ describe('the SquareIconButton state family is classified, all thirteen of it', 
     // `aria-expanded` on any of them would promise content that does not exist.
     const toggles = stateBearing().filter((x) => x.kind === 'toggle').map((x) => x.rel).sort()
     expect(toggles).toEqual([
-      'pages/ChatPage.tsx',
+      'pages/chat/history/ChatHistoryPage.tsx',
       'pages/tools/ToolsPage.tsx',
       'pages/tools/ToolsPage.tsx',
       'ui/content/ContentSurface.tsx',
@@ -286,7 +287,7 @@ describe('the SquareIconButton state family is classified, all thirteen of it', 
       // empty schema the button reveals nothing and must not claim otherwise.
       ['pages/settings/MultiInstanceCard.tsx', /ariaExpanded=\{editing && props\.length > 0\}/],
       ['ui/widget/WidgetFrame.tsx', /ariaExpanded=\{railOpen\}/],
-      ['pages/ChatPage.tsx', /ariaExpanded=\{open\}/],
+      ['pages/chat/history/ChatHistoryPage.tsx', /ariaExpanded=\{open\}/],
       ['ui/content/ContentSurface.tsx', /ariaExpanded=\{exportOpen\}/],
     ]
     for (const [rel, re] of pairs) {

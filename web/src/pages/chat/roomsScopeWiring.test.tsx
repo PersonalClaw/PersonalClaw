@@ -119,31 +119,35 @@ describe('the rooms list', () => {
 describe('🔴 the wiring that makes a room reachable at all', () => {
   const chat = read('pages/ChatPage.tsx')
   const app = read('app/App.tsx')
+  // The chat history page, where the Rooms scope lives: its state in `useChatHistory`, the list in
+  // `ChatHistoryPage`.
+  const history = read('pages/chat/history/useChatHistory.ts')
+  const historyView = read('pages/chat/history/ChatHistoryPage.tsx')
 
   it("'room' is a member of the chat-history origin union, in both of its two declarations", () => {
     // The union is declared inline TWICE (the narrowed value and the setter), with no name, so a
     // member added to one and not the other type-checks and then silently never resolves.
-    const decls = chat.match(/'manual' \| 'loop' \| 'code' \| 'channel' \| 'room' \| 'all'/g) ?? []
+    const decls = history.match(/'manual' \| 'loop' \| 'code' \| 'channel' \| 'room' \| 'all'/g) ?? []
     expect(decls.length, "both inline declarations must carry 'room'").toBe(2)
-    expect(chat, 'and the raw value must be narrowed to it').toContain("originRaw === 'room'")
+    expect(history, 'and the raw value must be narrowed to it').toContain("originRaw === 'room'")
   })
 
   it('the Rooms tab appears the moment `/api/rooms` answers — including at ZERO rooms', () => {
     // A fresh install with rooms ON has no rooms, and the tab is how the first one gets made. A
     // `roomCount > 0` gate would make the feature reachable only to someone who already used it.
-    expect(chat, 'the tab is gated on the read succeeding, not on the count')
+    expect(historyView, 'the tab is gated on the read succeeding, not on the count')
       .toMatch(/originCounts\.channel > 0 \|\| roomsAvailable\)/)
-    expect(chat, 'and the whole control strip survives an empty chat list for the same reason')
+    expect(historyView, 'and the whole control strip survives an empty chat list for the same reason')
       .toMatch(/sessions\.length > 0 \|\| roomsAvailable\)/)
-    expect(chat, 'the tab option itself').toMatch(/key: 'room', label: `Rooms\$\{roomCount/)
+    expect(historyView, 'the tab option itself').toMatch(/key: 'room', label: `Rooms\$\{roomCount/)
   })
 
   it('and it does NOT appear while rooms are off — the list answering is not the feature being on', () => {
     // Off answers `{"enabled": false}`, a 200, so "the read succeeded" stopped meaning "rooms are
     // on". Availability is a LIST having arrived; a default install, where rooms ship off, must not
     // grow a Rooms tab it cannot use.
-    expect(chat).toMatch(/const roomsAvailable = Array\.isArray\(roomsData\)/)
-    expect(chat).toMatch(/const roomCount = Array\.isArray\(roomsData\) \? roomsData\.length : 0/)
+    expect(history).toMatch(/const roomsAvailable = Array\.isArray\(roomsData\)/)
+    expect(history).toMatch(/const roomCount = Array\.isArray\(roomsData\) \? roomsData\.length : 0/)
   })
 
   it('the Rooms scope swaps the list BODY rather than filtering sessions', () => {
@@ -151,12 +155,12 @@ describe('🔴 the wiring that makes a room reachable at all', () => {
     // session is filtered out of `/api/chat/sessions` by the backend. So the scope cannot be a
     // predicate over `sessions`, and the body branch must come BEFORE the session load states — a
     // failed `/api/chat/sessions` must not replace the rooms list with a chat LoadError.
-    expect(chat).toMatch(/const roomsScope = origin === 'room'/)
-    const bodyIdx = chat.indexOf('{roomsScope ? (')
-    const sessionErrIdx = chat.indexOf('sessions === null && sessionsError ?')
+    expect(history).toMatch(/const roomsScope = origin === 'room'/)
+    const bodyIdx = historyView.indexOf('{roomsScope ? (')
+    const sessionErrIdx = historyView.indexOf('sessions === null && sessionsError ?')
     expect(bodyIdx, 'the rooms body branch must exist').toBeGreaterThan(0)
     expect(bodyIdx, 'and must precede the session load states').toBeLessThan(sessionErrIdx)
-    expect(chat, 'it renders the rooms list, not a narrowed session list').toContain('<RoomsScope rooms={roomsData}')
+    expect(historyView, 'it renders the rooms list, not a narrowed session list').toContain('<RoomsScope rooms={roomsData}')
   })
 
   it('`#/chat/room/<id>` resolves to the room, ABOVE the session-key fallthrough', () => {

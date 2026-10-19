@@ -155,7 +155,8 @@ const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !
 // `disabledReason` now, and that rail lists them.
 const ADOPTERS = [
   'ui/PlanningWalkthrough.tsx',
-  'pages/ChatPage.tsx',
+  // The history peek's quick-reply send, which moved out of ChatPage.
+  'pages/chat/history/SessionPeek.tsx',
   'pages/chat/ChatActivityPanel.tsx',
   'pages/settings/ProjectionRulesPanel.tsx',
 ]

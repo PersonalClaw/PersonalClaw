@@ -1252,6 +1252,15 @@ change to one region touches that region's files:
   `ChatComposer.tsx` draws the notice line, the queue, the routing chip and
   the composer, with `ContextPickers`, `KnowledgeChips`, `PasteCards`,
   `QueueStack` and `AutoNudgeMenuItem` beside it.
+- **The history** — `web/src/pages/chat/history/`. `useChatHistory.ts` keeps
+  `#/chat/history`: the sessions, folders, tags and Agent Rooms (each its own
+  read, each failure its own), the scope, search, tag filter, view, peek and
+  archive that ride the URL, the search inside transcripts, the bulk selection,
+  the retag run, and every row action (pin, folder, tags, archive, export,
+  share, delete). `ChatHistoryPage.tsx` draws the list and the board
+  (`TagBoard.tsx`), with a row's folder and tag menu, and `SessionPeek.tsx` is
+  the peek panel a row opens. `ChatHistorySidePanel.tsx` is the recent-chats
+  panel a new chat opens.
 
 ## Prompt entities
 

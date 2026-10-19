@@ -313,7 +313,8 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // longer exists at any call site, rather than being excused at nine.
   // `lib/agents.ts` (1) is GONE: `ensureBindableAgentName` used to swallow a failed `createAgent` and
   // return the profile name anyway. It propagates now, and each picker that calls it says why.
-  // 4: the side-chat open and three optimistic organise writes (pin/folder/never-archive). The two tag
+  // 1: the side-chat open. Its three optimistic organise writes (pin/folder/never-archive) moved with
+  // the history page to `pages/chat/history/useChatHistory.ts`, below. The two tag
   // writes left this list when they became one-tag edits that report a refusal, and the title regen
   // when it said why nothing was asked and reported a request that failed. The `/optimize` and `/undo`
   // fall-throughs moved with the composer to `pages/chat/composer/useChatComposer.ts`, and the two
@@ -324,7 +325,10 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // `setNeverArchive` already does `reportActionFailure` + an UNGATED `load()` (the refetch is the
   // repair for an optimistic move that already lied). The five organise writes are that same shape
   // with the report missing, and `userActionReported` already pinned three of their siblings.
-  'pages/ChatPage.tsx': 4,
+  'pages/ChatPage.tsx': 1,
+  // The history page's three organise writes (pin, folder, never-archive), moved with it, ruled (a)
+  // above: `setLifecycle` beside them is the exemplar they lack.
+  'pages/chat/history/useChatHistory.ts': 3,
   // The composer's half of ChatPage's eight, moved with it, same rulings as above: (b) `/optimize`
   // sends either way, and (a) `/undo` leaves the transcript as it was with nothing said.
   'pages/chat/composer/useChatComposer.ts': 2,

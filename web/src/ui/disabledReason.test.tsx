@@ -166,8 +166,9 @@ describe('the migrated submits pass a reason', () => {
     'pages/files/comments/CommentLayer.tsx',
     'pages/loops/LoopCockpitPage.tsx',
     'pages/apps/AppsSection.tsx',
-    'pages/ChatPage.tsx',
-    // Auto-nudge's Arm, which moved with the chat's composer region.
+    // ChatPage's two, which moved out with its regions: the edited message's Resend (the
+    // transcript) and Auto-nudge's Arm (the composer).
+    'pages/chat/transcript/UserEditor.tsx',
     'pages/chat/composer/AutoNudgeMenuItem.tsx',
   ]
 

@@ -531,8 +531,9 @@ describe('the hand-laid bars reach the same idiom', () => {
     // `showArchived` is deliberately NOT part of `active` — the active/archived split is enforced
     // server-side, so it swaps WHICH list is fetched rather than narrowing this one.
     const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-    const src = strip(readSource(join(SRC, 'pages/ChatPage.tsx')))
-    // The two pickers moved with the chat's composer region (`chat/composer/ContextPickers.tsx`).
+    // The chat list moved with the history page (`chat/history/ChatHistoryPage.tsx`), and the two
+    // pickers with the chat's composer region (`chat/composer/ContextPickers.tsx`).
+    const src = strip(readSource(join(SRC, 'pages/chat/history/ChatHistoryPage.tsx')))
     const pickers = strip(readSource(join(SRC, 'pages/chat/composer/ContextPickers.tsx')))
     expect((src.match(/<ResultAnnouncement\b/g) ?? []).length, 'the chat list').toBe(1)
     expect((pickers.match(/<ResultAnnouncement\b/g) ?? []).length, 'the two pickers').toBe(2)

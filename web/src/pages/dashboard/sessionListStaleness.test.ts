@@ -91,9 +91,11 @@ describe('every reader of the chat-session collection shares its namespace', () 
 
 describe('both session mutations bust the collection', () => {
   const chat = () => codeOf('pages/ChatPage.tsx')
+  // The chat history page's controller, whose loader the delete runs.
+  const history = () => codeOf('pages/chat/history/useChatHistory.ts')
 
   it('delete busts it', () => {
-    const code = chat()
+    const code = history()
     const at = code.indexOf('const load = useCallback(')
     expect(at, 'the loader must still exist').toBeGreaterThan(-1)
     expect(code.slice(at, at + 400)).toMatch(/invalidateKeys\('chat:sessions', true\)/)
@@ -109,7 +111,7 @@ describe('both session mutations bust the collection', () => {
   })
 
   it('the two per-key busts collapsed into one prefix call', () => {
-    const code = chat()
+    const code = chat() + '\n' + history()
     // Not a style preference: the explicit pair could only ever name the keys its author knew about.
     expect(code, 'the archived key no longer needs naming').not.toMatch(/invalidateKeys\('chat:sessions:archived'\)/)
     expect((code.match(/invalidateKeys\('chat:sessions', true\)/g) ?? []).length,

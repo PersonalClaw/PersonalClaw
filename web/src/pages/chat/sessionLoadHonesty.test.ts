@@ -54,9 +54,11 @@ const callSites = walk(SRC).flatMap((abs) => {
 
 describe('every reader of the chat-session list', () => {
   it('is found by the census (not vacuously green)', () => {
-    // Four at the time of writing: two in ChatPage, one on the dashboard, one imperative.
+    // Four at the time of writing: two in the chat history region (moved out of ChatPage), one on
+    // the dashboard, one imperative.
     expect(callSites.length, 'the matcher must find the chatSessions() readers').toBeGreaterThanOrEqual(4)
-    expect(callSites.map((c) => c.file)).toContain('pages/ChatPage.tsx')
+    expect(callSites.map((c) => c.file)).toContain('pages/chat/history/ChatHistorySidePanel.tsx')
+    expect(callSites.map((c) => c.file)).toContain('pages/chat/history/useChatHistory.ts')
     expect(callSites.map((c) => c.file)).toContain('pages/dashboard/DashboardPage.tsx')
   })
 
@@ -72,7 +74,9 @@ describe('every reader of the chat-session list', () => {
 })
 
 describe('the two chat-history surfaces', () => {
-  const src = readSource(join(SRC, 'pages/ChatPage.tsx'))
+  // The side panel and the history page, read as one: both moved out of ChatPage to `chat/history/`.
+  const src = ['ChatHistorySidePanel.tsx', 'useChatHistory.ts', 'ChatHistoryPage.tsx']
+    .map((f) => readSource(join(SRC, 'pages/chat/history', f))).join('\n')
 
   it('capture the error from the hook', () => {
     // `useQuery` hands back `{ data, loading, error, refresh }`; the branch is impossible

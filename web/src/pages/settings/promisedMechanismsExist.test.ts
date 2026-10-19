@@ -264,7 +264,7 @@ describe('the census: every empty-state promise is accounted for', () => {
       // 🪤 A DIFFERENT AND SAFE CLASS, kept in the list with its reason rather than excluded by a regex
       // I would have had to invent. These promise a future the USER or a LIVE RUN produces, not a
       // background mechanism that might be descoped:
-      'pages/ChatPage.tsx',                           // "start a conversation — your sessions will appear": the user's own action makes the row
+      'pages/chat/history/ChatHistoryPage.tsx',       // "start a conversation — your sessions will appear": the user's own action makes the row
       'pages/code/CodeCockpitPage.tsx',               // gated on `running`; the files come from the run in flight, and the panel lists the workspace
       // "the rail fills as the run works" is the LIVE-RUN class above, and the
       // mechanism is named rather than hoped for — the engine's own `RunJournal.step_completed`
@@ -295,7 +295,7 @@ describe('the census: every empty-state promise is accounted for', () => {
     for (const rel of ['pages/dashboard/widgets/Suggestions.tsx', 'pages/settings/DurabilityPanel.tsx',
       'pages/settings/FeedbackPanel.tsx', 'pages/settings/MemoryPanel.tsx',
       'pages/loops/DesignCockpitPage.tsx', 'pages/settings/settingsWidgets.tsx',
-      'pages/ChatPage.tsx', 'pages/code/CodeCockpitPage.tsx']) {
+      'pages/chat/history/ChatHistoryPage.tsx', 'pages/code/CodeCockpitPage.tsx']) {
       expect(strip(readSource(join(SRC, rel))), `${rel} should still carry a promise`)
         .toMatch(PROMISE)
     }
@@ -312,7 +312,7 @@ describe('the three user-driven promises are what they claim', () => {
   })
 
   it('the chat empty state promises only what the user does next', () => {
-    expect(web('pages/ChatPage.tsx')).toMatch(
+    expect(web('pages/chat/history/ChatHistoryPage.tsx')).toMatch(
       /title="No chats yet" hint="Start a conversation — your sessions will appear here/,
     )
   })

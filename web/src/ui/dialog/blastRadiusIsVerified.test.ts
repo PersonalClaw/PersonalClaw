@@ -319,7 +319,8 @@ describe('two more bodies: one corrected, one confirmed', () => {
   })
 
   it('the chat delete really does take the history it promises', () => {
-    expect(web('pages/ChatPage.tsx')).toContain('and its history will be permanently removed')
+    // The delete dialog moved with the chat history page's controller.
+    expect(web('pages/chat/history/useChatHistory.ts')).toContain('and its history will be permanently removed')
     const h = py('dashboard/chat_handlers.py')
     const del = h.slice(h.indexOf('async def api_chat_session_delete'))
     // The handler hands the delete to the one way a chat is deleted, so the claim is verified in
@@ -346,7 +347,7 @@ describe('two more bodies: one corrected, one confirmed', () => {
     // 🪤 The sentence this replaced promised the history was gone while every episode, fact and
     // summary memory drew from the chat stayed and was recalled into other chats. Both halves of the
     // new one are claims about the store's provenance rule, so both are read back from the Python.
-    const ui = web('pages/ChatPage.tsx')
+    const ui = web('pages/chat/history/useChatHistory.ts')
     expect(ui, 'what goes').toContain(
       'and so will what memory drew from this chat alone: its summary, its episodes, and the facts and lessons that came only from it.',
     )

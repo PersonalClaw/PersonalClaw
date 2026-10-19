@@ -751,8 +751,8 @@ describe('the tone-as-ink-and-tint family stays inside the swept envelope', () =
     'pages/knowledge/KnowledgeListPage.tsx @20% tone',
     // A user-chosen chat-tag colour (`t.color`). The tone is USER DATA, so no token value can
     // constrain it — this one needs a contrast-aware ink picked at render time, which is a
-    // different change from a scheme retune.
-    "pages/ChatPage.tsx @22% t.color || 'var(--color-primary)",
+    // different change from a scheme retune. (Moved with the chat history page.)
+    "pages/chat/history/ChatHistoryPage.tsx @22% t.color || 'var(--color-primary)",
   ])
 
   it('no chip tints above the 18% ceiling these tiers were swept at', () => {
@@ -772,10 +772,11 @@ describe('the tone-as-ink-and-tint family stays inside the swept envelope', () =
     const at18 = SITES.filter((s) => s.pct === 18)
     expect(at18.map(key).sort(), 'a new 18% chip needs its resting tier measured before it can be added here')
       .toEqual([
-        // --color-secondary — unswept at any strength (see tier 2)
-        'pages/ChatPage.tsx @18% var(--color-secondary)',
+        // --color-secondary — unswept at any strength (see tier 2). This and the next moved with the
+        // chat history page.
+        'pages/chat/history/ChatHistoryPage.tsx @18% var(--color-secondary)',
         // a user-chosen tag colour, else --color-primary
-        "pages/ChatPage.tsx @18% tagById[tid].color || 'var(--color-primary)",
+        "pages/chat/history/ChatHistoryPage.tsx @18% tagById[tid].color || 'var(--color-primary)",
         'pages/artifacts/ArtifactViewer.tsx @18% var(--color-warning)',   // 12px text
         "pages/loops/LoopCockpitPage.tsx @18% verdict.done ? 'var(--color-ok)' : 'var(--color-primary)",
         'pages/prompts/VariableRow.tsx @18% var(--color-danger)',          // 12px text

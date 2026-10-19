@@ -13,8 +13,8 @@ import { join } from 'node:path'
 //   LoopComposer      `fileUpload`          attached design files silently dropped; the design pass
 //                                           then runs from the URL and prompt alone
 //   ChatPage          `renameSession`       optimistic title; reverts on next load
-//   ChatPage          `setSessionLifecycle` optimistic row move; `load()` snaps it back
-//   ChatPage          `createChatFolder`    a name typed into a dialog, no folder appears
+//   useChatHistory    `setSessionLifecycle` optimistic row move; `load()` snaps it back
+//   useChatHistory    `createChatFolder`    a name typed into a dialog, no folder appears
 //   AgentsListPage    `setDefaultAgent`     the default silently stays where it was
 //   ToolsPage         `probeMcp`            spinner runs, list reloads unchanged, probe never ran
 //   PinnedTiles       `refreshTile` (button) "a human asked", per its own comment
@@ -46,8 +46,9 @@ const strip = (s: string) =>
 const FIXED: Array<[string, string, string]> = [
   ['pages/loop/LoopComposer.tsx', 'fileUpload', 'upload '],
   ['pages/ChatPage.tsx', 'renameSession', 'rename this chat'],
-  ['pages/ChatPage.tsx', 'setSessionLifecycle', 'this chat'],
-  ['pages/ChatPage.tsx', 'createChatFolder', 'create the folder'],
+  // The history page's two, which moved out of ChatPage.
+  ['pages/chat/history/useChatHistory.ts', 'setSessionLifecycle', 'this chat'],
+  ['pages/chat/history/useChatHistory.ts', 'createChatFolder', 'create the folder'],
   ['pages/agents/AgentsListPage.tsx', 'setDefaultAgent', 'the default agent'],
   ['pages/tools/ToolsPage.tsx', 'probeMcp', 're-probe the MCP servers'],
   ['pages/dashboard/PinnedTiles.tsx', 'refreshTile', 'refresh this tile'],
@@ -126,7 +127,7 @@ describe('a user-initiated write that fails tells the user', () => {
   })
 
   it('the three GATING decisions are each what they should be', () => {
-    const chat = strip(F('pages/ChatPage.tsx'))
+    const chat = strip(F('pages/chat/history/useChatHistory.ts'))
 
     // gate it: the refetch would only re-render the same state
     const folder = chat.slice(chat.indexOf('async function createFolder()'), chat.indexOf('async function createFolder()') + 520)
