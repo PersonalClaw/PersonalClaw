@@ -111,6 +111,45 @@ describe('a button that reveals content says that it does', () => {
     expect(paused, 'pause/resume flips a mode too').not.toMatch(/aria-expanded/)
   })
 
+  // 🔴 THIS REGEX'S KEY EXCLUDED A WHOLE SHAPE, and the exclusion was silent — the same failure mode
+  // as the 400-character window in the census below, one level up. It matches a BOOLEAN FLIP
+  // (`setX(!x)` / `setX(v => !v)`), so every ACCORDION — `setX(open ? null : id)`, one panel open at a
+  // time — sat outside the 48 entirely. Four exist; three announced nothing until they were fixed, and
+  // `NotificationRulesMatrix` had been doing it correctly all along. A second, independent sweep (the
+  // exclusive-choice one in pages/settings) missed them too, for its own different reason.
+  // **When a census defines membership by a WRITE pattern, enumerate the other ways the same
+  // interaction is written.**
+  // One-open-at-a-time (`setX(open ? null : id)`) stores an id, so there is no `!` here to match on;
+  // that population is swept in the last describe of this file.
+  //
+  // 🔴 AND A GUARD IN FRONT OF THE SETTER HID ONE MORE, the lesson above for the fourth time. The
+  // matcher wanted the setter straight after the arrow, so a flip written behind a condition —
+  // `onClick={() => items.length > 1 && setExpanded((e) => !e)}`, the chat composer's queue header,
+  // which is a toggle only while two or more messages wait — was never in the population. It shipped
+  // `aria-expanded` without this census ever counting it. The optional `cond && ` prefix takes that
+  // shape in; its class stops at `{`, `}`, `&` and a line break, so the guard cannot run past the
+  // handler's own closing brace into the next attribute.
+  const TOGGLE = /onClick=\{\(\) => (?:[^&{}\n]+&& )?set\w+\(\(?\w*\)? ?=> ?!\w+\)|onClick=\{\(\) => (?:[^&{}\n]+&& )?set\w+\(!\w+\)/g
+
+  it('the old matcher is BLIND to a guarded flip — the gap is structural', () => {
+    // Synthetic and exact: the first line is the one that sat outside the census since it was written.
+    const OLD = /onClick=\{\(\) => set\w+\(\(?\w*\)? ?=> ?!\w+\)|onClick=\{\(\) => set\w+\(!\w+\)/
+    const sees = (shape: string) => { TOGGLE.lastIndex = 0; return TOGGLE.test(shape) }
+    for (const shape of [
+      'onClick={() => items.length > 1 && setExpanded((e) => !e)}',
+      'onClick={() => !busy && setOpen(!open)}',
+    ]) {
+      expect(OLD.test(shape), `the old matcher cannot see ${shape}`).toBe(false)
+      expect(sees(shape), `and this one does: ${shape}`).toBe(true)
+    }
+    // Widened, not changed: the unguarded flips it was written for still match.
+    expect(sees('onClick={() => setOpen((v) => !v)}')).toBe(true)
+    expect(sees('onClick={() => setOpen(!open)}')).toBe(true)
+    // And the guard stays inside its own handler — a `&&` in a later attribute is not a guard.
+    expect(sees('onClick={() => run()} data-x={ready && setOpen(!open)}')).toBe(false)
+    TOGGLE.lastIndex = 0
+  })
+
   it('the census is reproducible — every boolean-toggling button is accounted for', () => {
     // Not vacuous, and the number is the point: if a new toggle appears it must be classified (disclosure
     // → `aria-expanded`, mode → `aria-pressed` or a state-naming label), not left silent by default.
@@ -119,30 +158,26 @@ describe('a button that reveals content says that it does', () => {
     // `<button …</button>` within 400 chars, so ADDING `aria-expanded` pushed two buttons past the
     // window and the census fell from 12 to 10 — the fix shrank its own population. Anchor on the
     // TOGGLE (which is what defines the population) and look for the attribute around it.
-    // 🔴 THIS REGEX'S KEY EXCLUDED A WHOLE SHAPE, and the exclusion was silent — the same failure mode
-    // as the 400-character window above, one level up. It matches a BOOLEAN FLIP
-    // (`setX(!x)` / `setX(v => !v)`), so every ACCORDION — `setX(open ? null : id)`, one panel open at a
-    // time — sat outside the 48 entirely. Four exist; three announced nothing until they were fixed, and
-    // `NotificationRulesMatrix` had been doing it correctly all along. A second, independent sweep (the
-    // exclusive-choice one in pages/settings) missed them too, for its own different reason.
-    // **When a census defines membership by a WRITE pattern, enumerate the other ways the same
-    // interaction is written.**
-    const TOGGLE = /onClick=\{\(\) => set\w+\(\(?\w*\)? ?=> ?!\w+\)|onClick=\{\(\) => set\w+\(!\w+\)/g
-    // One-open-at-a-time (`setX(open ? null : id)`) stores an id, so there is no `!` here to match on;
-    // that population is swept in the last describe of this file.
     const toggles = walk(PAGES).flatMap((abs) => {
       const src = readSource(abs)
       return [...src.matchAll(TOGGLE)].map((m) => src.slice(Math.max(0, m.index! - 200), m.index! + 260))
     })
-    expect(toggles.length, 'the scan must still find the population it was written for').toBeGreaterThanOrEqual(48)
+    // 58 measured when the guard went in: 57 unguarded flips (the tree grew past the 48 this floor once
+    // held, and the floor never followed) plus the queue header. A measured population, so it sits at
+    // the measurement.
+    expect(toggles.length, 'the scan must still find the population it was written for').toBeGreaterThanOrEqual(58)
+    expect(toggles.some((w) => w.includes('items.length > 1 && setExpanded((e) => !e)')),
+      'including the guarded flip that widened the matcher').toBe(true)
     // A primitive takes the state as `ariaExpanded`/`ariaPressed` and renders the same attribute.
     const silent = toggles.filter((w) => !/aria-expanded|aria-pressed|ariaExpanded|ariaPressed/.test(w))
     // A CEILING on the backlog, not a claim that it is empty: 34 measured when it was written, and it may
     // only fall. A new toggle that announces nothing pushes this over and has to be classified before
     // it lands. 9 once the primitives' `ariaExpanded`/`ariaPressed` counted: 24 of the 33 "silent"
-    // toggles were primitives that announce, which the raw-attribute regex could not see.
+    // toggles were primitives that announce, which the raw-attribute regex could not see. 8 when the
+    // guard went in, and the slack of one was closed with it: the ceiling had sat at 9 against a
+    // measured 8, and the guarded flip it newly counts already announces, so widening added nothing here.
     expect(silent.length, 'measured backlog — classify a new toggle, do not add to this number')
-      .toBeLessThanOrEqual(9)
+      .toBeLessThanOrEqual(8)
   })
 })
 
