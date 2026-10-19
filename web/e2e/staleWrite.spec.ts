@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import { gotoRoute, openHeaderOverflowIfNeeded } from './helpers'
+import { harnessHome } from './runPlaces'
 
 // ── Two tabs, one list: a save from the stale tab never overwrites the other tab's change ──────
 //
@@ -125,7 +126,7 @@ test.describe('a save from a stale tab', () => {
 
     // Something other than this page writes the same list: the CLI, a separate process over the
     // gateway's own home — the home and binary the harness gateway runs on (playwright.config.ts).
-    const home = join((process.env.TMPDIR || '/tmp').replace(/\/$/, ''), 'personalclaw-e2e-home')
+    const home = harnessHome(process.env)
     execFileSync('../.venv/bin/personalclaw', [
       'config', 'set', 'tools.projection_rules',
       JSON.stringify([{ name: 'from-cli', match_regex: '^\\[CLI\\]', strategy: 'log' }]),

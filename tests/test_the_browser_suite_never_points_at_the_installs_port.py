@@ -25,10 +25,17 @@ def _suite_texts() -> dict[str, str]:
 
 
 def test_the_harness_gateway_has_a_port_of_its_own() -> None:
+    # Each run picks free ports (`web/e2e/runPlaces.ts`), so there is no default to read. What
+    # keeps the install's port out is the helper's own constant, which must be that port, and
+    # the config must take its ports from the helper.
     config = (_WEB / "playwright.config.ts").read_text(encoding="utf-8")
-    default = re.search(r"PW_GATEWAY_PORT \|\| (\d+)", config)
-    assert default, "playwright.config.ts no longer names its gateway's default port"
-    assert int(default.group(1)) != loader._DEFAULT_PORT
+    assert (
+        "choosePlaces(" in config
+    ), "playwright.config.ts no longer takes its ports from runPlaces.ts"
+    places = (_WEB / "e2e" / "runPlaces.ts").read_text(encoding="utf-8")
+    install = re.search(r"export const INSTALL_PORT = (\d+)", places)
+    assert install, "runPlaces.ts no longer names the install's port it keeps out"
+    assert int(install.group(1)) == loader._DEFAULT_PORT
 
 
 def test_no_recipe_aims_the_suite_at_the_installs_port() -> None:

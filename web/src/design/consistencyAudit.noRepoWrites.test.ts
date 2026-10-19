@@ -64,6 +64,13 @@ const MAY_WRITE_SCRATCH: Record<string, string> = {
   'app/thirdPartyNotices.test.ts':
     'Lays out a throwaway repository (a package-lock.json, installed packages and a web ' +
     'build) for the third-party notices plugin to read, and to write its notices into.',
+  'design/e2eRunPlaces.test.ts':
+    'Makes browser-run homes, output folders and held ports in a scratch folder of its own, to ' +
+    'prove two runs get two of each. Its real-config listing makes one empty run folder under ' +
+    'the gitignored web/test-results/, and the test checks the run removed it again.',
+  'design/e2eHarnessHome.test.ts':
+    'Lays out a stand-in user home, a symlink into it and a stand-in CLI script, to prove a spec ' +
+    'refuses an unset or default gateway home before the CLI starts.',
   'test/sourceTree.test.ts':
     'Lays out small throwaway trees to prove the one walker the tree scans share lists them ' +
     'in the order the walkers it replaced did, never follows a link, and remembers a listing ' +
