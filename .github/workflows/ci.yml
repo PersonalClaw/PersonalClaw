@@ -273,6 +273,7 @@ jobs:
             : > "$RUNNER_TEMP/plan.err"
             answer=$(cd "$judge" && python3 -m tools.ci plan merge \
                        --catalogue "$GITHUB_WORKSPACE/tools/ci/catalogue.toml" \
+                       --trusted-areas "$judge/tools/ci/areas.toml" \
                        --root "$GITHUB_WORKSPACE" --paths "$changed" -z \
                        --repo "$GITHUB_REPOSITORY" --outputs ${full_flag:+"$full_flag"} \
                        2> "$RUNNER_TEMP/plan.err") || answer=""
