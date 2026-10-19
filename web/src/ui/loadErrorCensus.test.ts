@@ -415,7 +415,7 @@ describe('the migrated surfaces read the error', () => {
     // `#/chat` joins late and deliberately. #1162 gave the `chat:sessions` readers an error
     // branch but left SIX other reads swallowing, so this file could not satisfy the
     // no-swallow-anywhere bar and got a resource-scoped rail instead
-    // (`pages/chat/sessionLoadHonesty.test.ts`). Those six are now gone:
+    // (now the chat-list rows of `pages/honestStateSurfaces.test.tsx`). Those six are now gone:
     //   • `chat:suggestions` · `chat:starters` — persisted decoration strips that hide when empty.
     //     A swallowed rejection resolved to `[]`, which the hook then persists as though it were an
     //     answer. No error UI: a strip that quietly does not appear claims nothing.
@@ -435,8 +435,9 @@ describe('the migrated surfaces read the error', () => {
     // tamper-evident security log says when nothing happened, so a read failure rendered as silence.
     // Measured at 500 with a cold sessionStorage: no `role="alert"`, no retry, and the server's own
     // message nowhere on the page. The other three members (the memory Audit tab, the remote-provider
-    // region, the custom-rules list) are pinned per site in
-    // `pages/settings/settingsListHonesty.test.ts` — see its header for why they cannot live here.
+    // region, the custom-rules list) are driven per site in
+    // `pages/honestStateSurfaces.test.tsx`: the memory panel is a multi-tab file whose first skeleton
+    // belongs to another tab, and the two band adopters render no `<LoadError>`.
     'pages/settings/ArchivePanel.tsx',
     'pages/settings/AuditPanel.tsx',
     // `#/loops` joined, found while auditing the seven surfaces that change rolls the

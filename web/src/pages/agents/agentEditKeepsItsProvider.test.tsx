@@ -157,7 +157,7 @@ describe('the chip names the real provider, so the mismatch is visible', () => {
   /** Open the detail panel and return IT, not the page.
    *
    *  🪤 SCOPED ON PURPOSE. The list page renders a SECTION HEADED "Native" (the group that holds every
-   *  `cfg.agents` entry — `nativeCaptionHonest.test.ts` owns its caption), so an unscoped
+   *  `cfg.agents` entry — `pages/honestStateSurfaces.test.tsx` owns its caption), so an unscoped
    *  `queryByText('Native')` matches the heading and an unscoped `findByText` throws on two matches.
    *  Both of my first attempts failed that way. `SidePanel` is a `role="region"` named by its title,
    *  which is the agent's name — so the panel is addressable, and the assertions can mean the chip. */

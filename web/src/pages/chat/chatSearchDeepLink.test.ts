@@ -12,7 +12,7 @@ import { api } from '../../lib/api'
 //   2. the endpoint's `source` (index|scan) is no longer dropped by the client, and shows
 //
 // The pure path/label logic is unit-tested directly. The two wirings that live inside
-// ChatPage's shell — too heavy to mount for this (the sessionLoadHonesty / chatListNoMatch
+// ChatPage's shell — too heavy to mount for this (the chatListNoMatch
 // precedent) — are pinned from source, which is where a regression would actually land.
 
 describe('chatFindPath (the ?find deep-link the "Open" action navigates to)', () => {
