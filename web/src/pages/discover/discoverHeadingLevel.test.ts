@@ -107,7 +107,8 @@ describe("Discover's area headings sit one rung under the page title", () => {
     //     siblings on the same run-detail surface. Panel-level, correctly nested: the
     //     classification above still holds.
     expect(withH3.sort(), 'files still using h3').toEqual([
-      'pages/code/CodeCockpitPage.tsx',
+      // The cockpit's task title, which moved with the task detail out of `CodeCockpitPage`.
+      'pages/code/cockpit/tasks/TaskDetailView.tsx',
       'pages/settings/VoicePanel.tsx',
       'pages/settings/VoiceProfilesSection.tsx',
       'pages/workflows/IntrospectPanel.tsx',

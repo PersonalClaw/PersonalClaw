@@ -718,6 +718,17 @@ redirecting a run-backed loop (`run_id`) to its run page, `#/workflows/runs/<id>
   `files/FilesRail.tsx` draws the tabs over `files/FileFinder.tsx` and
   `files/WorkspaceTree.tsx`, or over `files/ChangesPanel.tsx`: the workspace's
   changes, its recent commits and the run's merged work.
+- **The tasks** — `tasks/useStageTasks.ts` keeps what the Tasks rail's list
+  knows about the run's tasks (done, queued, queueable, running, or left undone
+  by a finished run) and queues tasks or switches between autopilot and
+  one-by-one. `tasks/useTaskDetail.ts` keeps one task's state and queues,
+  un-queues or steers that task alone. `tasks/StageTasks.tsx` and
+  `tasks/TaskDetailView.tsx` draw them, with `tasks/TaskRow.tsx`,
+  `tasks/FindingCard.tsx` and the task states in `tasks/taskState.ts`.
+
+What more than one region reads lives in `cockpitShared.ts` (the statuses a
+steer still reaches and the ones that end a run, a stage's key, a worker path
+resolved against the workspace) and `FilesTouched.tsx` (the file chips).
 
 ## Related docs
 

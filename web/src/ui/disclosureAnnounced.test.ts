@@ -88,7 +88,8 @@ describe('a button that reveals content says that it does', () => {
 
   it('the two canonical adopters still carry it', () => {
     expect(read('chat/ChatActivityPanel.tsx')).toMatch(/aria-expanded=\{open\}/)
-    expect(read('code/CodeCockpitPage.tsx')).toMatch(/aria-expanded=\{showEvidence\}/)
+    // The cockpit's finding card, which moved out of `CodeCockpitPage` into its own module.
+    expect(read('code/cockpit/tasks/FindingCard.tsx')).toMatch(/aria-expanded=\{showEvidence\}/)
   })
 
   it("the cockpit's Terminal button is a disclosure, not a setting", () => {
