@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmdirSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmdirSync, rmSync, statSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -18,9 +18,14 @@ export interface RunPlaces {
   gatewayPort: number
   /** Whether THIS call made the home, so this process removes it when the run ends. */
   madeHome: boolean
-  /** The cookie jar `auth.setup.ts` writes and every spec reads: inside the run's home, so it
-   *  holds only this run's sign-in and goes with the home. `STORAGE_STATE` names another. */
+  /** The cookie jar `auth.setup.ts` writes and every spec reads, in `authDir`: this run's sign-in
+   *  only, removed with the home. `STORAGE_STATE` names another. */
   storageState: string
+  /** The jar's folder: BESIDE the run's home (`authDirFor`), never in it. In the home it was a
+   *  path no snapshot claims, and the Doctor's state inventory reported the home degraded. */
+  authDir: string
+  /** Whether THIS call made `authDir`, so this process removes it with the home. */
+  madeAuthDir: boolean
   /** Where this run's specs write their output: a folder of its own under `test-results/`, which
    *  CI uploads. Playwright clears it when the run starts, so it clears only this run's. */
   outputDir: string
@@ -45,6 +50,28 @@ export function freePort(): Promise<number> {
 }
 
 const set = (value: string | undefined): value is string => value !== undefined && value !== ''
+
+/** The folder that holds a run's cookie jar: a sibling of the run's home, named for it. Not under
+ *  the `personalclaw-e2e-` prefix, so nothing that counts homes counts it. */
+export function authDirFor(home: string): string {
+  return join(dirname(home), `sign-in-for-${basename(home)}`)
+}
+
+/** Make the jar folder, 0700: it holds a live owner token for this run's gateway. A folder there
+ *  already (a run on a named home that did not end cleanly) is taken and closed to 0700. */
+function makeAuthDir(dir: string): boolean {
+  try {
+    mkdirSync(dir, { mode: 0o700 })
+    chmodSync(dir, 0o700) // the umask may have narrowed the mode, never widened it; say it exactly
+    return true
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST' && statSync(dir).isDirectory()) {
+      chmodSync(dir, 0o700)
+      return false
+    }
+    throw err
+  }
+}
 
 /**
  * The harness gateway's home, as a spec that writes it with the CLI must take it.
@@ -97,14 +124,19 @@ function named(env: Env, key: string): number | null {
  * again, and each server and spec it starts, reads the same three and makes nothing. A run that
  * starts no servers (`PW_NO_SERVER`) gets no home unless `PW_E2E_HOME` names one.
  *
- * It also gives the run a cookie jar in its home (`STORAGE_STATE`, which `auth.setup.ts` writes)
+ * It also gives the run a cookie jar in a 0700 folder beside its home (`STORAGE_STATE`, which
+ * `auth.setup.ts` writes; refused loudly when the folder cannot be made)
  * and an output folder of its own under `test-results/` (`PW_OUTPUT_DIR`), handed on the same way,
  * so two runs never sign each other's specs out or clear each other's output. A run with no home
  * keeps the jar at `e2e/.auth/state.json`, as before: it drives a gateway pair of its own.
  */
 export async function choosePlaces(
   env: Env,
-  opts: { tmp?: string; pickPort?: () => Promise<number>; testResults?: string } = {},
+  opts: {
+    tmp?: string; pickPort?: () => Promise<number>; testResults?: string
+    /** Makes the jar folder; the default makes it 0700. A test replaces it to make it fail. */
+    makeAuthDir?: (dir: string) => boolean
+  } = {},
 ): Promise<RunPlaces> {
   const pick = opts.pickPort ?? freePort
   let madeHome = false
@@ -135,9 +167,22 @@ export async function choosePlaces(
   const port = await choose('PW_PORT')
   const gatewayPort = await choose('PW_GATEWAY_PORT')
 
-  const storageState = set(env.STORAGE_STATE)
-    ? env.STORAGE_STATE
-    : home ? join(home, '.auth', 'state.json') : 'e2e/.auth/state.json'
+  // A STORAGE_STATE already set is the runner's (a worker reads it back) or the caller's: its
+  // folder is someone else's to make and remove.
+  let authDir = set(env.STORAGE_STATE) ? dirname(env.STORAGE_STATE) : home ? authDirFor(home) : 'e2e/.auth'
+  let madeAuthDir = false
+  if (!set(env.STORAGE_STATE) && home) {
+    try {
+      madeAuthDir = (opts.makeAuthDir ?? makeAuthDir)(authDir)
+    } catch (err) {
+      // Loudly, and before anything starts: with no jar folder the sign-in cannot be saved, and
+      // every spec would run signed out against a gateway that shows them the onboarding screen.
+      if (madeHome) rmSync(home, { recursive: true, force: true })
+      throw new Error(`could not make the folder for this run's cookie jar (${authDir}): ${(err as Error).message}`)
+    }
+  }
+  const storageState = set(env.STORAGE_STATE) ? env.STORAGE_STATE : join(authDir, 'state.json')
+  authDir = dirname(storageState)
   let outputDir = set(env.PW_OUTPUT_DIR) ? env.PW_OUTPUT_DIR : ''
   let madeOutputDir = false
   if (!outputDir) {
@@ -152,14 +197,15 @@ export async function choosePlaces(
   env.PW_GATEWAY_PORT = String(gatewayPort)
   env.STORAGE_STATE = storageState
   env.PW_OUTPUT_DIR = outputDir
-  return { home, port, gatewayPort, madeHome, storageState, outputDir, madeOutputDir }
+  return { home, port, gatewayPort, madeHome, storageState, authDir, madeAuthDir, outputDir, madeOutputDir }
 }
 
-/** Remove what this process made for the run: the home (and the cookie jar in it), and the
+/** Remove what this process made for the run: the home, the cookie jar's folder beside it, and the
  *  output folder if the run wrote nothing there. Output a spec wrote stays, for CI to upload. A
  *  worker, and a run whose home or output folder the caller named, removes nothing it was given. */
 export function cleanUpRun(places: RunPlaces): void {
   if (places.madeHome && places.home) rmSync(places.home, { recursive: true, force: true })
+  if (places.madeAuthDir && places.authDir) rmSync(places.authDir, { recursive: true, force: true })
   if (places.madeOutputDir && places.outputDir) {
     try { rmdirSync(places.outputDir) } catch { /* not empty: the run's output stays */ }
   }
@@ -167,6 +213,6 @@ export function cleanUpRun(places: RunPlaces): void {
 
 /** `cleanUpRun` when this process ends. */
 export function cleanUpRunAtExit(places: RunPlaces): void {
-  if (!places.madeHome && !places.madeOutputDir) return
+  if (!places.madeHome && !places.madeAuthDir && !places.madeOutputDir) return
   process.once('exit', () => cleanUpRun(places))
 }

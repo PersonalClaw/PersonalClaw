@@ -49,7 +49,8 @@ const BASE_URL = process.env.PW_BASE_URL || `http://localhost:${PORT}`
 const GATEWAY_PORT = PLACES.gatewayPort
 
 // Where auth.setup.ts writes the authenticated cookie jar (it reads STORAGE_STATE, which
-// `choosePlaces` sets): inside this run's home, so it holds a live owner token for this run's
+// `choosePlaces` sets): a 0700 folder beside this run's home, never in it (the Doctor audits the
+// home, and a jar there is a path no snapshot claims). It holds a live owner token for this run's
 // throwaway gateway only and goes with the home. Two runs never sign each other's specs out.
 const STORAGE_STATE = PLACES.storageState
 // Where this run's specs write their output: a folder of its own under test-results/, which CI
