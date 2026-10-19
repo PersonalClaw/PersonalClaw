@@ -1114,6 +1114,37 @@ row per runner, pytest's included: one retry, in a fresh process, with the same 
 red on a first failure the retry passes. Until then a web job's failure is red with no rerun, and
 the pytest half is held by `tests/test_ci_jobs_rerun.py` alone.
 
+## State a test leaves behind
+
+`tests/state_leak_guard.py` (#3949), loaded by `tests/conftest.py` in every process, names the
+test that leaves process-global state changed, as itself, instead of the unrelated test on its
+worker that turns red later.
+
+- **What it reads.** A non-daemon thread the test started that is still alive after a short
+  grace; the working directory; the handlers for `SIGINT`, `SIGTERM`, `SIGUSR1` and `SIGUSR2`; a
+  child process the test started that is still running; a socket the test opened that is still
+  listening (as the port guard tracks them); and each registry a `_restore_*` fence covers. The
+  first five are read when the test's setup begins and again once its teardown has ended, so a
+  fixture's own threads and ports, and a `monkeypatch` change, are not the test's. The directory
+  and the handlers are given back once read. The environment stays `env_guard`'s.
+- **Before the fences.** The fixture `_a_test_leaves_process_state_as_it_found_it` requests every
+  fence, so its after-reading of the registries is taken before any fence restores one. Such a
+  change is recorded as `fenced` and never fails while its fence stands; the record is what a
+  fence's retirement is judged on.
+- **Never failing:** a fenced change, and a thread named as a pool names its workers
+  (`ThreadPoolExecutor`, asyncio's executor).
+- **Report mode** is the default: every leak goes to `reports/state-leaks.json`, with the test's
+  real xdist worker and its position in that worker's order, and the guard's own seconds. The
+  terminal summary gives the count and the cost per test.
+- **`--strict-state`** fails a leaking test in its teardown, with what it left, unless
+  `tests/state_leak_allowlist.toml` names it with the issue that tracks its fix. At most 5
+  entries, each exactly `nodeid` and `issue`; a list that breaks a rule stops the session.
+
+Not read yet: files a test writes outside its temporary paths. Under xdist every worker writes
+to one tree, so a per-test listing would charge one worker's writes to another worker's test;
+the real-home guard already fails writes to the real home. The randomized-order leg and the
+bisect tool come later in #3949.
+
 ## Supply chain
 
 The actions, images and tools the workflows and Dockerfiles fetch are named exactly, so a run

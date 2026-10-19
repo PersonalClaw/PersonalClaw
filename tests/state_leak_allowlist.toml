@@ -1,0 +1,7 @@
+# The tests ``--strict-state`` does not fail for leaving process-global state changed
+# (tests/state_leak_guard.py, #3949). Each is an ``[[entry]]`` of exactly:
+#
+#   nodeid = "tests/test_x.py::test_y"   # the test, as pytest names it
+#   issue = 1234                         # the issue that tracks its fix
+#
+# At most 5 entries. A leak here is still recorded in reports/state-leaks.json.
