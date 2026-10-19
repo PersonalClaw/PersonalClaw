@@ -4,7 +4,7 @@
 exists today onto a provider-plugin boundary, fixes where SSO configuration lives, enumerates the
 security controls it touches, and names the follow-on work. Every claim below cites the code it
 was read from by name — `path::symbol`, a function, class, constant or field — and
-`tests/test_sso_design_note_citations.py` checks that each name still exists, so a rename or a
+`tests/rails/test_sso_design_note_citations.py` checks that each name still exists, so a rename or a
 deletion reds a test instead of leaving the note pointing somewhere else. (It used to cite line
 numbers, and most of them had drifted.) Where the as-built contradicts an assumption, the as-built
 wins and the contradiction is stated.

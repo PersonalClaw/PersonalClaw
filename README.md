@@ -451,7 +451,7 @@ These are commitments, not a legal instrument — but they are **enforced agains
 which is the part a promise usually lacks. `tests/rails/test_licence_governance_tree.py` reds
 CI on a licence identifier that stops saying MIT anywhere in the repo, on a rewrite of
 `LICENSE`'s grant text, and on a `CLA`/`CONTRIBUTOR_LICENSE_AGREEMENT` file appearing;
-`tests/test_network_egress_hosts.py` reds it on a new outbound host. So changing any of the
+`tests/rails/test_network_egress_hosts_tree.py` reds it on a new outbound host. So changing any of the
 four takes a deliberate, reviewable edit to committed artifacts — never a quiet one.
 
 Why say this at all: several self-hosted AI projects have relicensed, added a CLA, reserved

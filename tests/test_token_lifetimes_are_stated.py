@@ -8,16 +8,16 @@ lifetime. The decision recorded with this change: a browser sign-in lasts ``auth
 (30 days by default) and the startup link and harness token ARE browser sign-ins, so they follow
 that setting; a token a caller mints without naming a lifetime lasts 20 hours, the documented
 ``personalclaw token`` default; and nothing lasts longer than 90 days — asking for
-longer is refused with a sentence saying so.
+longer is refused with a sentence saying so. That the CLI help and the CLI reference state those
+lifetimes is held by the rail ``tests/rails/test_token_lifetimes_are_stated_tree.py``, once per CI
+run in the rails job.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import re
 import time
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -26,7 +26,6 @@ from fakes import gateway_stand_in
 from personalclaw import cli_server
 from personalclaw.dashboard import token_auth
 
-REPO = Path(__file__).resolve().parents[1]
 _SYNTHETIC_TOKEN = "synthetic.placeholder.not-a-real-token"
 
 
@@ -109,32 +108,3 @@ def test_the_startup_link_and_harness_token_last_as_long_as_a_browser_sign_in(tm
                 configured,
                 issuer,
             )
-
-
-def _subcommand_help(name: str) -> str:
-    from personalclaw import cli
-
-    parser = cli.build_parser()
-    sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
-    return " ".join(sub.choices[name].format_help().split())
-
-
-def test_the_lifetimes_the_help_and_docs_state_are_the_codes():
-    gateway_help = _subcommand_help("gateway")
-    token_help = _subcommand_help("token")
-    cli_doc = (REPO / "docs" / "reference" / "cli.md").read_text(encoding="utf-8")
-    ready_row = next(line for line in cli_doc.splitlines() if line.startswith("| `--json-ready`"))
-
-    assert "20 hours" not in ready_row, "the harness token lasts 30 days, not 20 hours"
-    assert "30 days" in ready_row and "auth.session_ttl" in ready_row, ready_row
-    assert "up to 20 hours" not in gateway_help, "the --json-ready help still says 20 hours"
-    assert "30 days" in gateway_help and "auth.session_ttl" in gateway_help
-    assert "20h" in token_help and "Settings → Devices" in token_help, token_help
-    docstring = token_auth.generate_token.__doc__ or ""
-    assert "capped at 20 hours" not in docstring and "5 minutes" not in docstring
-    token_row = next(
-        line for line in cli_doc.splitlines() if line.startswith("| `personalclaw token")
-    )
-    assert "20h" in token_row and "Settings → Devices" in token_row, token_row
-    assert re.search(r"90d|90 days", token_row), "the ceiling a caller may ask for"
-    assert not re.search(r"1 year|a year|8760h", token_row), "a year is no longer on offer"

@@ -9,7 +9,9 @@ every file of every folder again.
 
 A folder of files stays out of the shards now, and every backup surface says which copy a restore
 reads: Settings → Backups, `personalclaw backup export` and `validate`, the CLI reference, the
-setting's help and `import_shards` itself. The snapshot holds the folders, with every file at its
+setting's help and `import_shards` itself. The CLI reference is read by the rail
+`tests/rails/test_the_snapshot_is_the_backup_tree.py`, once per CI run; the rest are tested here.
+The snapshot holds the folders, with every file at its
 path, and a restore of it brings them back — asserted here too, since it is the claim the surfaces
 now make.
 
@@ -29,8 +31,6 @@ import pytest
 from personalclaw.durability import inventory as inv
 from personalclaw.durability import shards
 from personalclaw.durability.shards import NOT_A_BACKUP, export_shards, import_shards
-
-_ROOT = Path(__file__).resolve().parents[1]
 
 #: One file of each kind of folder a user keeps, at a path a restore must put it back at.
 FOLDER_FILES = {
@@ -159,16 +159,6 @@ def test_the_backup_command_says_what_the_shards_are(tmp_path, monkeypatch, caps
     assert _backup("validate", out) == 0
     assert NOT_A_BACKUP in capsys.readouterr().out
     assert "The backup is a snapshot" in NOT_A_BACKUP and "skills" in NOT_A_BACKUP
-
-
-def test_the_cli_reference_says_the_snapshot_is_the_backup():
-    doc = (_ROOT / "docs" / "reference" / "cli.md").read_text(encoding="utf-8")
-    export_row = next(line for line in doc.splitlines() if "personalclaw backup export" in line)
-    snapshot_row = next(line for line in doc.splitlines() if "`personalclaw snapshot [" in line)
-    assert "It is not a backup" in export_row
-    assert "The backup is `personalclaw snapshot`" in export_row
-    assert "the backup a restore reads" in snapshot_row and "skills" in snapshot_row
-    assert "A backup nobody has verified" not in doc, "validate no longer calls the shards a backup"
 
 
 def test_the_setting_says_what_a_restore_brings_back():

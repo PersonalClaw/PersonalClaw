@@ -25,6 +25,10 @@ the table short enough to actually read.
 Shaped after `test_provider_boundary_residue.py`: patterns + a judgment table + a
 stale-entry check + a teeth check.
 
+The census table lives in ``docs/``, so every test that reads it is the rail
+``tests/rails/test_network_egress_hosts_tree.py``, run once per CI run in the rails job. This
+module keeps the one test that reads no tree: the scan's teeth, on strings it writes.
+
 **The section an entry sits under is a claim, and it is cross-checked** against what the code
 can fetch. `huggingface.co` was filed under "Never fetched" (as a citation link in the voice
 bake-off) while the bundled-model download fetched it and `local_models/hf_token.py`'s token
@@ -37,23 +41,7 @@ filed as fetched.
 
 from __future__ import annotations
 
-from network_egress_hosts_shared import _SECTIONS, _classes, _record_fetches, _table, hosts_in
-
-_FETCHED = frozenset({"unprompted", "user"})
-
-
-def test_every_declared_host_carries_a_judgment():
-    """A bare hostname is a list, not a decision.
-
-    The judgment is the whole value of the table: "fetched, unprompted, on a schedule" and
-    "an XML namespace that is never retrieved" are both single lines here and could not be
-    more different, and no scanner can tell them apart.
-    """
-    thin = sorted(h for h, j in _table().items() if len(j) < 30)
-    assert not thin, (
-        "these entries have no real judgment — say whether the host is fetched and by "
-        f"whose action: {thin}"
-    )
+from network_egress_hosts_shared import hosts_in
 
 
 def test_the_sweep_has_teeth(tmp_path):
@@ -78,49 +66,3 @@ def test_the_sweep_has_teeth(tmp_path):
     assert (
         hosts_in('placeholder="e.g. https://nas.local"\n') == set()
     ), "an mDNS `.local` name was treated as a vendor destination"
-
-
-def test_every_entry_sits_under_a_known_section():
-    """An entry before the first header, or under a header nobody classifies, claims nothing."""
-    known = {cls for _prefix, cls in _SECTIONS}
-    loose = sorted(
-        f"{h} ({c or 'before any header'})" for h, c in _classes().items() if c not in known
-    )
-    assert not loose, f"entries outside the four sections: {loose}"
-
-
-def test_a_host_a_shipped_record_fetches_is_filed_as_fetched():
-    """A URL in shipped DATA is fetched by the code that reads it — never "never fetched".
-
-    The bundled default model downloads from the sign-off record's `source_url`; a watched
-    source created from a recipe polls the recipe's `spec` URL. Neither literal is in a `.py`
-    file, so only reading the records says where those requests go.
-    """
-    classes = _classes()
-    misfiled = sorted(
-        f"{host} ({where}) is filed as {classes.get(host) or 'unlisted'!r}"
-        for host, where in _record_fetches().items()
-        if classes.get(host) not in _FETCHED
-    )
-    assert not misfiled, (
-        "a shipped record fetches these hosts, but the census does not say they are fetched:\n"
-        + "\n".join(f"  {m}" for m in misfiled)
-    )
-
-
-def test_the_release_check_is_the_only_unprompted_destination():
-    """The one host the product contacts without the user asking for that thing.
-
-    Pinned deliberately: this is the sentence the privacy posture rests on, and it should
-    take a failing test to change it. ``api.github.com`` remains the sole unprompted
-    destination — but it is now suppressible: ``updates.check_enabled=false`` is the egress
-    kill switch, and with it set the check makes ZERO calls
-    (``test_self_update.py::test_the_check_makes_zero_calls_when_checking_is_disabled`` +
-    ``test_do_update_check_kill_switch_runs_no_subprocess``). The schedule is real; the
-    opt-out is now real too, and defaults ON so this rail's "unprompted" claim still holds.
-    """
-    unprompted = sorted(h for h, j in _table().items() if "FETCHED, unprompted" in j)
-    assert unprompted == ["api.github.com"], (
-        "the set of unprompted destinations changed. Adding one is a product decision about "
-        f"the privacy claim, not an implementation detail: {unprompted}"
-    )

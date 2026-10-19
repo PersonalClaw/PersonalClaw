@@ -17,20 +17,21 @@ crosses the docs/code boundary, not the behaviour the guide's recipe is for.
 on purpose, update the guide to the new value in the same change — do not rename the constant back
 to satisfy this test, and do not delete the promise from the guide to make it green, because a
 user's inbox row will still carry whatever the code sends.
+
+It reads the guide and the module, so it is a rail: it runs once per CI run, in the rails job.
 """
 
 from __future__ import annotations
 
-import pathlib
 import re
 
-import personalclaw
+import source_index
+from rails_repo import REPO
+
 from personalclaw.triggers import delivery
 
-SRC = pathlib.Path(personalclaw.__file__).resolve().parent
-REPO = SRC.parent.parent
 GUIDE = REPO / "docs" / "guides" / "automations.md"
-DELIVERY = SRC / "triggers" / "delivery.py"
+DELIVERY = REPO / "src" / "personalclaw" / "triggers" / "delivery.py"
 
 #: A dotted automation event identifier as the guide writes it, in backticks.
 _EVENT_RE = re.compile(r"`(automation\.run\.[a-z_]+)`")
@@ -39,7 +40,7 @@ _EVENT_RE = re.compile(r"`(automation\.run\.[a-z_]+)`")
 def test_the_guide_exists_and_names_the_failure_event():
     """First, the guide exists: it is the surface a prospect and a user both meet."""
     assert GUIDE.is_file(), f"{GUIDE} is missing — the guide is the user-facing promise"
-    names = set(_EVENT_RE.findall(GUIDE.read_text(encoding="utf-8")))
+    names = set(_EVENT_RE.findall(source_index.text(GUIDE)))
     assert names, (
         "docs/guides/automations.md names no `automation.run.*` event, so this rail would be "
         "vacuous — the guide must state the event that carries a failure to the inbox"
@@ -59,7 +60,7 @@ def test_the_constant_still_carries_the_value_the_guide_quotes():
     )
     # The constant must also be the one the fire path actually routes a FAILURE through — a
     # correctly-named constant with no reader would satisfy a string check and nothing else.
-    text = DELIVERY.read_text(encoding="utf-8")
+    text = source_index.text(DELIVERY)
     assert "EVENT_SUCCEEDED if ok else EVENT_FAILED" in text, (
         "`EVENT_FAILED` is no longer selected by the ok/failure branch in triggers/delivery.py; "
         "the guide's guarantee 1 describes that branch, so re-verify it before changing this"

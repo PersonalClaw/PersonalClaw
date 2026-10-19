@@ -6,7 +6,7 @@ process. So every surface that would act on the gateway here says which command 
 host instead: ``personalclaw update`` and the Updates panel, ``personalclaw stop`` and
 ``restart``, ``personalclaw service``, and the startup banner's way to a sign-in link
 (``personalclaw token``, run in the container). Each of those commands comes from this module, and
-``tests/test_container_host.py`` holds README.md's ``docker run`` and
+``tests/rails/test_container_host_tree.py`` holds README.md's ``docker run`` and
 ``docs/guides/containers.md`` to it, so a documented command and the one the product prints
 cannot drift apart again. (They did: the update instructions named Docker Compose while the
 README's container install is a plain ``docker run``.)
