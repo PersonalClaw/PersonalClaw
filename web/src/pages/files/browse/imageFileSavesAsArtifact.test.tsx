@@ -9,7 +9,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 // is a COPY of its bytes, which the gateway reads and checks itself — so the dialog says which, and
 // the save sends the file's path and kind, never a body.
 //
-// 🪤 Driven through ContentSurface's prop seam, as `fileViewerStaleWrite.test.tsx` is: a bundled
+// 🪤 Driven through ContentSurface's prop seam, as the file row of `pages/staleWriteSurfaces.test.tsx` is: a bundled
 // preview does not mount under jsdom, and what is under test is the host chrome (the action, the
 // dialog, the call), not the preview.
 

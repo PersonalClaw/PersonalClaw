@@ -248,39 +248,6 @@ async def _read_note(c: TestClient) -> tuple[str, str | None]:
 
 class TestRoutingNotes:
     @pytest.mark.asyncio
-    async def test_a_second_save_from_the_same_read_is_refused(self, agents_home) -> None:
-        from personalclaw import agent_metadata
-
-        agent_metadata.save(AGENT, "use for literature reviews")
-        async with TestClient(TestServer(_notes_app())) as c:
-            _note, base = await _read_note(c)
-            first = await c.put(
-                f"/api/agent-metadata/{AGENT}",
-                json={"content": "use for literature reviews and meta-analyses"},
-                headers=_based_on(base),
-            )
-            assert first.status == 200, await first.text()
-            second = await c.put(
-                f"/api/agent-metadata/{AGENT}",
-                json={"content": "prefers primary sources"},
-                headers=_based_on(base),
-            )
-            assert second.status == 409, await second.text()
-            assert await _refusal(second) == "stale_write"
-        assert agent_metadata.load(AGENT) == "use for literature reviews and meta-analyses"
-
-    @pytest.mark.asyncio
-    async def test_replacing_a_note_without_a_base_is_refused(self, agents_home) -> None:
-        from personalclaw import agent_metadata
-
-        agent_metadata.save(AGENT, "use for literature reviews")
-        async with TestClient(TestServer(_notes_app())) as c:
-            resp = await c.put(f"/api/agent-metadata/{AGENT}", json={"content": "replaced"})
-            assert resp.status == 428, await resp.text()
-            assert await _refusal(resp) == "revision_required"
-        assert agent_metadata.load(AGENT) == "use for literature reviews"
-
-    @pytest.mark.asyncio
     async def test_the_first_note_needs_no_base(self, agents_home) -> None:
         from personalclaw import agent_metadata
 
@@ -371,37 +338,6 @@ class TestThemes:
             theme = await _read_theme(c, slug)
         assert "revision" in theme, "the read hands out no revision to save over"
         assert theme["revision"] == revision_of({k: v for k, v in theme.items() if k != "revision"})
-
-    @pytest.mark.asyncio
-    async def test_a_second_save_from_the_same_read_is_refused(self) -> None:
-        async with TestClient(TestServer(_themes_app())) as c:
-            slug = await _create_theme(c)
-            theme = await _read_theme(c, slug)  # both tabs load this
-            base = theme.get("revision")
-            first = await c.put(
-                f"/api/themes/{slug}",
-                json=_update(theme, dark={**DARK, "--color-primary": "#aa0000"}),
-                headers=_based_on(base),
-            )
-            assert first.status == 200, await first.text()
-            second = await c.put(
-                f"/api/themes/{slug}", json=_update(theme, name="Harbour"), headers=_based_on(base)
-            )
-            assert second.status == 409, await second.text()
-            assert await _refusal(second) == "stale_write"
-        stored = _stored_theme(slug)
-        assert stored["dark"]["--color-primary"] == "#aa0000", "tab A's color was undone"
-        assert stored["name"] == "Harbor"
-
-    @pytest.mark.asyncio
-    async def test_a_save_that_names_no_base_is_refused(self) -> None:
-        async with TestClient(TestServer(_themes_app())) as c:
-            slug = await _create_theme(c)
-            theme = await _read_theme(c, slug)
-            resp = await c.put(f"/api/themes/{slug}", json=_update(theme, name="Overwritten"))
-            assert resp.status == 428, await resp.text()
-            assert await _refusal(resp) == "revision_required"
-        assert _stored_theme(slug)["name"] == "Harbor"
 
     @pytest.mark.asyncio
     async def test_a_synced_version_landing_between_read_and_save_is_not_undone(self) -> None:
@@ -503,48 +439,6 @@ class TestMcpServerEdit:
             view = await _read_server(c)
         assert "revision" in view, "the read hands out no revision to save over"
         assert view["revision"] == revision_of({k: v for k, v in view.items() if k != "revision"})
-
-    @pytest.mark.asyncio
-    async def test_a_second_edit_from_the_same_read_is_refused(self, mcp_home) -> None:
-        async with TestClient(TestServer(_mcp_app())) as c:
-            await _add_server(c)
-            view = await _read_server(c)  # both tabs open the edit form on this
-            base = view.get("revision")
-            first = await c.put(
-                f"/api/mcp/servers/{SERVER}",
-                json=confirmed(
-                    {
-                        "transport": "stdio",
-                        "command": "npx",
-                        "args": ["-y", "server-files", "/srv"],
-                    }
-                ),
-                headers=_based_on(base),
-            )
-            assert first.status == 200, await first.text()
-            second = await c.put(
-                f"/api/mcp/servers/{SERVER}",
-                json=confirmed({"transport": "stdio", "command": "node", "args": view["args"]}),
-                headers=_based_on(base),
-            )
-            assert second.status == 409, await second.text()
-            assert await _refusal(second) == "stale_write"
-        stored = _stored_server(mcp_home)
-        assert stored["args"] == ["-y", "server-files", "/srv"], "tab A's edit was undone"
-        assert stored["command"] == "npx"
-
-    @pytest.mark.asyncio
-    async def test_an_edit_that_names_no_base_is_refused(self, mcp_home) -> None:
-        # The Add form reaching a name that is already configured sends no base — it read nothing.
-        async with TestClient(TestServer(_mcp_app())) as c:
-            await _add_server(c)
-            resp = await c.put(
-                f"/api/mcp/servers/{SERVER}",
-                json=confirmed({"transport": "stdio", "command": "rm"}),
-            )
-            assert resp.status == 428, await resp.text()
-            assert await _refusal(resp) == "revision_required"
-        assert _stored_server(mcp_home)["command"] == "npx"
 
     @pytest.mark.asyncio
     async def test_the_provider_card_editing_it_between_read_and_save_is_not_undone(

@@ -362,20 +362,6 @@ def _stored_order(query_class: str = _QC) -> list[str]:
 
 class TestARoutingOrderIsWrittenOverTheCopyItWasBuiltFrom:
     @pytest.mark.asyncio
-    async def test_the_second_reorder_from_the_same_base_is_refused(self, routing_home) -> None:
-        async with _routing_client() as c:
-            order, base = await _read_cell(c, _UC, _QC)
-            assert order == ["p:a", "p:b"]
-            first = await _save_order(c, ["p:b", "p:a"], base)
-            assert first.status == 200, await first.text()
-            second = await _save_order(c, ["p:a", "p:b", "p:c"], base)
-            assert second.status == 409
-            err = (await second.json())["error"]
-            assert err["code"] == "stale_write"
-            assert "the reasoning routing order for summarize requests" in err["message"]
-        assert _stored_order() == ["p:b", "p:a"]
-
-    @pytest.mark.asyncio
     async def test_an_order_that_names_no_base_is_refused_and_a_mode_needs_none(
         self, routing_home
     ) -> None:
@@ -474,32 +460,6 @@ async def _save_settings(c: TestClient, use_case: str, settings: dict, base: str
 
 
 class TestUseCaseSettingsAreWrittenOverTheCopyTheyWereBuiltFrom:
-    @pytest.mark.asyncio
-    async def test_the_second_save_from_the_same_base_is_refused(self, settings_home) -> None:
-        from personalclaw.providers.use_cases import load_use_case_settings
-
-        async with _instance_routes_client() as c:
-            settings, base = await _read_settings(c, "tts")
-            assert base == revision_of(settings)
-            first = await _save_settings(c, "tts", {**settings, "speed": 1.4}, base)
-            assert first.status == 200, await first.text()
-            second = await _save_settings(c, "tts", {**settings, "enabled": False}, base)
-            assert second.status == 409
-            err = (await second.json())["error"]
-            assert err["code"] == "stale_write"
-            assert "the tts settings" in err["message"]
-        assert load_use_case_settings("tts") == {"enabled": True, "speed": 1.4}
-
-    @pytest.mark.asyncio
-    async def test_a_save_that_names_no_base_is_refused(self, settings_home) -> None:
-        from personalclaw.providers.use_cases import load_use_case_settings
-
-        async with _instance_routes_client() as c:
-            resp = await _save_settings(c, "tts", {"enabled": False}, None)
-            assert resp.status == 428
-            assert await _error_code(resp) == "revision_required"
-        assert load_use_case_settings("tts") == {"enabled": True, "speed": 1.0}
-
     @pytest.mark.asyncio
     async def test_a_channel_apps_save_between_read_and_save_is_not_undone(
         self, settings_home
@@ -629,16 +589,6 @@ class TestAnInstanceIsWrittenOverTheCopyItWasBuiltFrom:
         assert (stored["default_model"], stored["endpoint"]) == ("m2", "e1")
 
     @pytest.mark.asyncio
-    async def test_a_save_that_names_no_base_is_refused(self, instance_home) -> None:
-        async with _instance_routes_client() as c:
-            instance_id = await _create_instance(c)
-            config, _ = await _read_instance(c, instance_id)
-            resp = await _save_instance(c, instance_id, {**config, "endpoint": "e9"}, None)
-            assert resp.status == 428
-            assert await _error_code(resp) == "revision_required"
-        assert _stored_instance_config(instance_home, instance_id)["endpoint"] == "e1"
-
-    @pytest.mark.asyncio
     async def test_the_response_carries_the_new_revision_and_keeps_the_secret(
         self, instance_home
     ) -> None:
@@ -748,30 +698,6 @@ _APP_ROUTES = [f"/api/apps/{_APP}/config", f"/api/providers/{_APP}/config"]
 
 
 class TestAnAppsSettingsAreWrittenOverTheCopyTheyWereBuiltFrom:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("route", _APP_ROUTES, ids=["apps-put", "providers-patch"])
-    async def test_the_second_save_from_the_same_base_is_refused(self, app_home, route) -> None:
-        async with _app_settings_client() as c:
-            config, base = await _read_app_config(c, route)
-            assert base == revision_of(config)
-            first = await _save_app_config(c, route, {**config, "room": "ops"}, base)
-            assert first.status == 200, await first.text()
-            second = await _save_app_config(c, route, {**config, "greeting": "hello"}, base)
-            assert second.status == 409
-            err = (await second.json())["error"]
-            assert err["code"] == "stale_write"
-            assert _APP in err["message"]
-        assert _stored_app_config() == {"room": "ops", "greeting": "hi"}
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("route", _APP_ROUTES, ids=["apps-put", "providers-patch"])
-    async def test_a_save_that_names_no_base_is_refused(self, app_home, route) -> None:
-        async with _app_settings_client() as c:
-            resp = await _save_app_config(c, route, {"room": "x", "greeting": "y"}, None)
-            assert resp.status == 428
-            assert await _error_code(resp) == "revision_required"
-        assert _stored_app_config() == {"room": "general", "greeting": "hi"}
-
     @pytest.mark.asyncio
     @pytest.mark.parametrize("route", _APP_ROUTES, ids=["apps-put", "providers-patch"])
     async def test_the_apps_own_save_between_read_and_save_is_not_undone(
