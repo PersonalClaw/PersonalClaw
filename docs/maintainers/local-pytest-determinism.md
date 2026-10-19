@@ -41,6 +41,10 @@ nightly on macOS in `breadth.yml`'s `rails-macos` leg. `pytest tests/rails -n 4
 --dist worksteal` runs both halves' rails locally. A whole-suite `make test`
 still collects them.
 
+No shard runs a test file that a workflow job runs by name, either. Each such file is listed,
+with its job, in `JOB_OWNED` in `tools/ci/shards.py`, so it runs once per CI run, in that job:
+`tests/test_website_installer.py` runs in `ci.yml`'s `lint` job.
+
 ## Measurement protocol
 
 Each full local run captures stdout and stderr to a distinct file under

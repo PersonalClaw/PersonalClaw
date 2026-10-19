@@ -47,6 +47,14 @@ _SKIPPED_DIRS = frozenset({"__pycache__", "node_modules", "build", "dist", "venv
 #: The rails' folder, run by the ``rails`` job and never by a shard (``rails_census.RAILS``).
 RAILS = "tests/rails"
 
+#: The test files a workflow job runs by name, and so no shard collects (#3929): each runs once
+#: per run, in the job that owns it. ``file: "workflow job"``. A rail
+#: (``tests/rails/test_each_tree_check_runs_in_one_place.py``) holds that each owner still runs
+#: its file by name, so leaving a file out here never leaves it running nowhere.
+JOB_OWNED: Mapping[str, str] = {
+    "tests/test_website_installer.py": "ci.yml lint",
+}
+
 
 # ── the universe ──────────────────────────────────────────────────────────────────────────────
 
@@ -57,16 +65,22 @@ def _pytest_options(root: Path) -> Mapping[str, object]:
     return options if isinstance(options, Mapping) else {}
 
 
-def universe(root: Path) -> list[str]:
+def universe(root: Path, owned: Mapping[str, str] | None = None) -> list[str]:
     """Every file pytest collects under ``testpaths`` by ``python_files`` (its defaults,
     ``test_*.py`` and ``*_test.py``, when the config names none), as sorted posix paths
     relative to ``root``. A future ``foo_test.py`` cannot fall outside every shard.
 
-    One folder is excluded: ``tests/rails``, the rails, which the ``rails`` job runs once per
-    run (``tools/ci/rails_census.py``), so ``check`` proves no shard of any leg lists one. The
-    security paths stay in the shards until a merge-tier security job runs them, or they would
-    run nowhere.
+    Two things are excluded, so ``check`` proves no shard of any leg lists one:
+
+    - ``tests/rails``, the rails, which the ``rails`` job runs once per run
+      (``tools/ci/rails_census.py``);
+    - the files in ``owned`` (:data:`JOB_OWNED` unless given), each of which a workflow job
+      runs by name.
+
+    The security paths stay in the shards until a merge-tier security job runs them, or they
+    would run nowhere.
     """
+    skipped = JOB_OWNED if owned is None else owned
     options = _pytest_options(root)
     named_paths = options.get("testpaths", ["."])
     named_files = options.get("python_files", ["test_*.py", "*_test.py"])
@@ -85,7 +99,9 @@ def universe(root: Path) -> list[str]:
             )
             for name in names:
                 if name.endswith(".py") and any(fnmatch.fnmatch(name, p) for p in patterns):
-                    found.add((Path(current) / name).relative_to(root).as_posix())
+                    rel = (Path(current) / name).relative_to(root).as_posix()
+                    if rel not in skipped:
+                        found.add(rel)
     return sorted(found)
 
 

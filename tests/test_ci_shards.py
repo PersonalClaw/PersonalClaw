@@ -59,6 +59,73 @@ def test_a_shard_plan_listing_a_rail_fails_its_check(tmp_path: Path) -> None:
     assert shards.check(files, [["tests/test_a.py", "tests/rails/test_r.py"]])
 
 
+def test_a_file_a_job_owns_is_in_no_shard(tmp_path: Path) -> None:
+    root = _tree(tmp_path, "tests/test_a.py", "tests/test_owned.py")
+    owned = {"tests/test_owned.py": "ci.yml lint"}
+    assert shards.universe(root, owned) == ["tests/test_a.py"]
+    assert shards.universe(root, {}) == ["tests/test_a.py", "tests/test_owned.py"]
+
+
+def test_a_shard_plan_listing_a_file_a_job_owns_fails_its_check(tmp_path: Path) -> None:
+    """The control: a plan that hands a job's file to a shard lists a file the shards would not
+    collect, and ``check`` refuses it, as it refuses a rail."""
+    root = _tree(tmp_path, "tests/test_a.py", "tests/test_owned.py")
+    files = shards.universe(root, {"tests/test_owned.py": "ci.yml lint"})
+    problems = shards.check(files, [["tests/test_a.py"], ["tests/test_owned.py"]])
+    assert problems == ["tests/test_owned.py is listed but not collected"]
+
+
+def test_shards_check_fails_on_a_plan_that_lists_the_installer(tmp_path: Path) -> None:
+    """``shards check``, as CI runs it, over the real exclusion list: a planted plan that still
+    hands the installer sweep to a shard fails."""
+    root = _tree(tmp_path, "tests/test_a.py", *shards.JOB_OWNED)
+    plan = {
+        "version": shards.VERSION,
+        "legs": {"test-shard": {"n": 1, "buckets": [["tests/test_a.py", *shards.JOB_OWNED]]}},
+    }
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(plan), encoding="utf-8")
+    done = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "tools.ci",
+            "shards",
+            "check",
+            "--plan",
+            str(path),
+            "--root",
+            str(root),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=Path(__file__).resolve().parents[1],
+    )
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert "tests/test_website_installer.py is listed but not collected" in done.stdout
+    plan["legs"]["test-shard"]["buckets"] = [["tests/test_a.py"]]
+    path.write_text(json.dumps(plan), encoding="utf-8")
+    again = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "tools.ci",
+            "shards",
+            "check",
+            "--plan",
+            str(path),
+            "--root",
+            str(root),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=Path(__file__).resolve().parents[1],
+    )
+    assert again.returncode == 0, again.stdout + again.stderr
+
+
 def test_the_rails_folder_name_is_the_censuss() -> None:
     from tools.ci import rails_census
 
