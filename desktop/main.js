@@ -1608,6 +1608,17 @@ const deepLinkInbox = makeWindowDeepLinkInbox({
   log: (msg) => console.log(`desktop: ${msg}`),
 });
 
+// ── The Go menu ──
+
+// ⌘N and ⌘1 to ⌘9, which a browser keeps for itself, as menu accelerators. Each hands the tab in
+// view one command id from its keymap, on the gateway the window is pointed at only (`goMenu.js`).
+const { activeTabContents, goMenuTemplate, makeGoCommandSender } = require("./goMenu");
+
+const sendGoCommand = makeGoCommandSender({
+  contents: () => activeTabContents(BaseWindow.getFocusedWindow(), mainWindow),
+  gatewayUrl: () => activeUrl || localGatewayUrl,
+});
+
 // ── App lifecycle ──
 
 // Single-instance: a second launch focuses the existing window instead of
@@ -1658,6 +1669,7 @@ if (!app.requestSingleInstanceLock()) {
           { label: "Gateways…", accelerator: "CmdOrCtrl+Shift+G", click: () => openConnectDialog() },
         ],
       },
+      goMenuTemplate(sendGoCommand),
       { role: "windowMenu" },
     ]);
     Menu.setApplicationMenu(appMenu);

@@ -282,6 +282,9 @@ async def test_an_approval_asked_on_a_channel_shows_the_owner_no_key(telegram):
         title=f"deploy with {SECRET}",
         tool_purpose=f"push the build, authenticating with {SECRET}",
         tool_input={"command": f"deploy --token {SECRET}", "retries": 2},
+        # A call that asks no second confirmation, so the gateway puts it to the channel: one
+        # that asks once more is never put to a channel's prompt.
+        consequences=(),
     )
 
     with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):

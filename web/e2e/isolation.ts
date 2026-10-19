@@ -53,6 +53,10 @@ export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
   'sessionMap.spec.ts': { mode: 'shared', why: 'adds its own chat sessions and reads only its own' },
   'streamStall.spec.ts': { mode: 'shared', why: 'adds its own chat session and reads only its own' },
   'walkthrough.spec.ts': { mode: 'shared', why: 'reads every route, writes nothing' },
+  'keyboard.spec.ts': {
+    mode: 'shared',
+    why: 'answers its approval, inbox and chat-list reads with route stubs; its one scripted turn adds a chat session of its own',
+  },
   'visual.spec.ts': {
     mode: 'shared',
     why:

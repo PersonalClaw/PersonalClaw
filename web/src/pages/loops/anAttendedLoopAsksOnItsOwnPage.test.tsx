@@ -47,6 +47,7 @@ function ask(over: Partial<PendingApproval> = {}): PendingApproval {
     id: `chat:loop-${LOOP_ID}:req-1`, request_id: 'req-1', source: '', tool: 'bash',
     tool_input: '{"command": "sed -i s/escape/plain/ src/feedsmith/digest.py"}', tool_purpose: '',
     session: `loop-${LOOP_ID}`, ts: 0, session_title: '', agent: 'personalclaw-coder',
+    confirms: [],
     risk: 'caution', grant_agent: '', source_label: 'loop “Digest titles”', ...over,
   }
 }
@@ -151,6 +152,26 @@ describe('the loop’s page answers its workers’ asks', () => {
     STORE.pending = []
     await act(async () => { socket!({ type: 'approval_resolved', data: {} } as WsMessage) })
     await waitFor(() => expect(cards()).toHaveLength(0))
+  })
+
+  it('one request per decision: an answered ask still listed sends nothing more, a failed one stays answerable', async () => {
+    STORE.pending = [ask()]
+    render(<LoopApprovals loopId={LOOP_ID} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Allow bash/ }))
+    await waitFor(() => expect(approve).toHaveBeenCalledTimes(1))
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+    fireEvent.click(await screen.findByRole('button', { name: /^Allow bash/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Deny bash/ }))
+    expect(approve).toHaveBeenCalledTimes(1)
+    cleanup()
+    approve.mockReset()
+    approve.mockRejectedValueOnce(new Error('the gateway did not respond')).mockResolvedValue({ ok: true })
+    render(<LoopApprovals loopId={LOOP_ID} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Allow bash/ }))
+    await waitFor(() => expect(approve).toHaveBeenCalledTimes(1))
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+    fireEvent.click(await screen.findByRole('button', { name: /^Allow bash/ }))
+    await waitFor(() => expect(approve).toHaveBeenCalledTimes(2))
   })
 
   it('the loop cockpit carries the card, so the place the nudge sends you can answer', async () => {

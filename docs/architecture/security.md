@@ -1160,6 +1160,47 @@ the ceiling did not bound.
   `$HOME`, owned by another uid and mode `0444` — which is what
   `PERSONALCLAW_CEILING_FILE` is for.
 
+## Which approvals ask twice (`approval_confirms.py`)
+
+Most approvals decide on the first Allow or ⌘Enter. A call asks a second confirmation before it
+runs when it may do something hard to take back, and the card sends nothing before it:
+
+- **a delete**: its effective risk may destroy (`task_modes.MAY_DESTROY`), an established delete or
+  a shell command the screen could not read;
+- **a change outside the chat's folder**: a shell command's write facet, a file tool's path, or the
+  files an agent CLI's edit names, read against the chat's folder (`run_bounds.outside`). A write
+  whose path this reading cannot follow counts as outside;
+- **a send to other people, and spending**: what the tool declares
+  (`ToolDefinition.consequences`, `sends`/`spends`). A call that only tells you something
+  (`tells_owner`) sends to nobody else;
+- **a tool that declares nothing**: an external MCP server's tool, an app's tool that declares no
+  `consequences`, or an agent CLI's own tool other than its shell call and its edit. It fails closed:
+  it asks unless the call is an established read. PersonalClaw's own tools (a provider
+  `registry.ships_with_core` reports, other than app-routes and the MCP Tool Servers app) are all
+  classified, so they decide on one press unless they are one of the kinds above. A declaration is
+  read strictly (`consequences_of`): anything but a list of the known kinds, spelled exactly, is one
+  this reading cannot follow, and counts as none, whoever ships the tool. An MCP server's question
+  to you (an elicitation) is undeclared too: what an accept lets the server do is nothing it
+  declares.
+
+It is worked out once, where the call is raised (the chat runner, the gateway for a background
+call, and `request_approval` for PersonalClaw's own asks), and kept on the approval as `confirms`,
+which every surface reads. A surface that reads an approval with no `confirms` asks the
+confirmation unless its risk is `safe` (`approvalMeta.confirmsOf`), and a row recorded without one
+names `undeclared`.
+
+No surface skips it. A messaging channel's prompt answers on one press, so a call whose row names a
+confirmation is never put to one: the owner is told on the channel that it waits, with the link to
+answer it where it asks once more, and an Approve that arrives from a channel for such a row is
+refused (`DashboardApprovalState._skips_its_confirm`). A Deny from a channel still answers.
+
+The key that approves follows the same consent rules as a click, and no more
+([the keyboard guide](../guides/keyboard.md)): ⌘Enter acts only inside the focused card, never from a
+text field, a dialog over it or a hidden card, a held key sends one request, and once an answer has
+landed the card sends nothing more. A second press of Allow while the confirmation is asked only
+asks again. A computer-use approval decides on one press: it relies on computer use's own arming
+step, not on this confirmation.
+
 ## Who answers an approval (`approval_answer.py`)
 
 An approval is a question put to you: a tool call waiting for Allow, a workflow's gate, the

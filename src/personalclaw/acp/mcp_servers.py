@@ -153,6 +153,10 @@ class CoreDeclaration(NamedTuple):
     proposes: bool = False
     tells_owner: bool = False
     work_asks: bool = False
+    #: What the tool declares a call may do past this machine (``ToolDefinition.consequences``):
+    #: ``()`` for one of PersonalClaw's own that declares neither, ``None`` for a call that names
+    #: none of them (an agent CLI's own tool, which declares nothing).
+    consequences: tuple[str, ...] | None = None
 
 
 def core_tool_declaration(title: str, tool_kind: str, tool_input: object) -> CoreDeclaration:
@@ -183,10 +187,12 @@ def core_tool_declaration(title: str, tool_kind: str, tool_input: object) -> Cor
     from personalclaw import mcp_core
     from personalclaw.tool_providers.base import (
         BUILDS_META_KEY,
+        CONSEQUENCES_META_KEY,
         PROPOSES_META_KEY,
         TELLS_OWNER_META_KEY,
         WORK_ASKS_META_KEY,
         RiskLevel,
+        consequences_of,
         only_tells_the_owner,
         risk_from_annotations,
     )
@@ -197,6 +203,7 @@ def core_tool_declaration(title: str, tool_kind: str, tool_input: object) -> Cor
         return CoreDeclaration()
     risk = risk_from_annotations(tool.get("annotations"), trusted=True)
     if not exact:
+        # Not the tool's own declaration: the call may be a shell call wearing its name.
         return CoreDeclaration(risk.value if risk is RiskLevel.DESTRUCTIVE else "")
     schema = tool.get("inputSchema")
     takes = schema.get("properties") if isinstance(schema, dict) else None
@@ -211,6 +218,13 @@ def core_tool_declaration(title: str, tool_kind: str, tool_input: object) -> Cor
         proposes=meta.get(PROPOSES_META_KEY) is True,
         tells_owner=isinstance(notice_args, list) and only_tells_the_owner(notice_args, args),
         work_asks=meta.get(WORK_ASKS_META_KEY) is True,
+        # PersonalClaw's own tools are classified: one that declares nothing declares neither, and
+        # one whose declaration this reading cannot follow declares nothing (it asks).
+        consequences=(
+            ()
+            if meta.get(CONSEQUENCES_META_KEY) is None
+            else consequences_of(meta.get(CONSEQUENCES_META_KEY))
+        ),
     )
 
 

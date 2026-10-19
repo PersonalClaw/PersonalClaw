@@ -73,6 +73,9 @@ async def ask(
             session=session,
             risk_level=RiskLevel.CAUTION.value,
             answered_alone=True,
+            # PersonalClaw's own ask, which says what it would start: classified, so no second
+            # confirmation for a tool that declares nothing (`approval_confirms`).
+            own=True,
         )
         ending = str(state.ended_as(ask_id) or "") or ("approved" if allowed else "rejected")
         return ToolDecision(

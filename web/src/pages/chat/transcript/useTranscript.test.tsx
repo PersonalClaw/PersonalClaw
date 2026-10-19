@@ -118,6 +118,16 @@ describe('useTranscript does what a turn offers', () => {
     expect(result.current.selection.approval).toBe('trust')
   })
 
+  it('tells the card whether its decision landed: true once it did, and not when it failed', async () => {
+    const { result } = mount()
+    let landed: unknown
+    await act(async () => { landed = await result.current.t.approve('req-1', 'approved') })
+    expect(landed).toBe(true)
+    h.approve.mockRejectedValue(new Error('gateway restarted'))
+    await act(async () => { landed = await result.current.t.approve('req-1', 'approved') })
+    expect(landed).not.toBe(true)
+  })
+
   it('leaves the pill where it was when the decision fails', async () => {
     h.approve.mockRejectedValue(new Error('gateway restarted'))
     const { result } = mount()

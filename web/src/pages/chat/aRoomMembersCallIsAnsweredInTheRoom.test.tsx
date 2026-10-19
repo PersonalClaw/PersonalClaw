@@ -29,6 +29,7 @@ const approval = (over: Partial<PendingApproval> = {}): PendingApproval => ({
   id: `room:${ROOM}:talk-editor:c1`, request_id: `room:${ROOM}:talk-editor:c1`, source: 'room',
   tool: 'edit_file', tool_input: '{"path": "~/Notes/Talks/incident-notes.md"}',
   session: `room:${ROOM}:talk-editor`, ts: 0, session_title: '', agent: '', risk: 'caution',
+  confirms: [],
   grant_agent: '', source_label: 'room “Is the live crash demo worth the risk?” · member “talk-editor”',
   ...over,
 })
@@ -64,6 +65,24 @@ describe("a room member's call that asks is answered in its room", () => {
     await mountFor(ROOM, [approval()])
     await userEvent.click(await screen.findByRole('button', { name: /^Deny edit_file/ }))
     await waitFor(() => expect(resolveApproval).toHaveBeenCalledWith(`room:${ROOM}:talk-editor:c1`, 'reject'))
+  })
+
+  it('one request per decision: an answered call still listed sends nothing more, a failed one stays answerable', async () => {
+    await mountFor(ROOM, [approval()])
+    const allow = await screen.findByRole('button', { name: /^Allow edit_file/ })
+    await userEvent.click(allow)
+    await waitFor(() => expect(resolveApproval).toHaveBeenCalledTimes(1))
+    // Listed still, until the resolved frame or the next read takes it away.
+    await userEvent.click(await screen.findByRole('button', { name: /^Allow edit_file/ }))
+    await userEvent.click(screen.getByRole('button', { name: /^Deny edit_file/ }))
+    expect(resolveApproval).toHaveBeenCalledTimes(1)
+    cleanup()
+    await mountFor(ROOM, [approval()])
+    resolveApproval.mockRejectedValueOnce(new Error('the gateway did not respond'))
+    await userEvent.click(await screen.findByRole('button', { name: /^Allow edit_file/ }))
+    await waitFor(() => expect(resolveApproval).toHaveBeenCalledTimes(1))
+    await userEvent.click(await screen.findByRole('button', { name: /^Allow edit_file/ }))
+    await waitFor(() => expect(resolveApproval).toHaveBeenCalledTimes(2))
   })
 
   it('tells the room how many are waiting, so it can keep the newest in view', async () => {

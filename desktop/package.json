@@ -58,6 +58,7 @@
       "pushToTalk.js",
       "trayPresence.js",
       "deepLinks.js",
+      "goMenu.js",
       "loginItem.js",
       "nativeNotifications.js",
       "systemBrowser.js",

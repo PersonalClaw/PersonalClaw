@@ -1416,7 +1416,8 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "work_asks"},
     {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "named_files"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "hooks_asked"},
-    {"annotation": "dict[str, Any] | None", "default": "None", "kind": "positional_or_keyword", "name": "reasoning"}
+    {"annotation": "dict[str, Any] | None", "default": "None", "kind": "positional_or_keyword", "name": "reasoning"},
+    {"annotation": "tuple[str, ...] | None", "default": "None", "kind": "positional_or_keyword", "name": "consequences"}
    ],
    "returns": "None"
   },
@@ -9389,7 +9390,8 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "builds"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "proposes"},
     {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "tells_owner"},
-    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "annotations"}
+    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "annotations"},
+    {"annotation": "tuple[str, ...] | None", "default": "None", "kind": "positional_or_keyword", "name": "consequences"}
    ],
    "returns": "None"
   },

@@ -188,9 +188,12 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
     //
     // The card itself needs nothing here: it renders from `seg.resolved`, which the backend
     // persists, so an unapproved tool call correctly stays unresolved and still asking.
-    api.approve(s, action, id)
+    // It resolves `true` once the decision landed, so the card sends nothing more for it while it
+    // is still on the page (`ApprovalChoice.onClick`), and a failure leaves the card answerable.
+    return api.approve(s, action, id)
       .then(() => {
         if (raised) setSelection((sel) => (sel.approval === raised ? sel : { ...sel, approval: raised }))
+        return true
       })
       .catch(reportActionFailure('record your decision'))
   }, [])

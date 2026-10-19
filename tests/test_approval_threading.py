@@ -63,8 +63,15 @@ def _make_gateway():
 def _make_event(
     request_id: str = "req1", title: str = "shell: ls", risk_level: str = ""
 ) -> LLMEvent:
+    """A call a channel's prompt may answer: classified, declaring neither a send nor spending.
+    One that asks a second confirmation is never put to a channel
+    (`test_a_channel_never_answers_a_call_that_asks_twice`)."""
     return LLMEvent(
-        kind="permission_request", request_id=request_id, title=title, risk_level=risk_level
+        kind="permission_request",
+        request_id=request_id,
+        title=title,
+        risk_level=risk_level,
+        consequences=(),
     )
 
 

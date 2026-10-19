@@ -12,7 +12,9 @@ import type { ApprovalSegment } from './chatTypes'
 // it never claims a facet it did not establish, and it never advocates approval.
 
 const seg = (over: Partial<ApprovalSegment> = {}): ApprovalSegment => ({
-  kind: 'approval', id: 'a1', tool: 'bash', ...over,
+  // No second confirmation unless a test names one: these are about the scope picker
+  // (`approvalCardAsksWhatTheRowNames.test.tsx` covers the confirm).
+  kind: 'approval', id: 'a1', tool: 'bash', confirms: [], ...over,
 })
 
 /** The scope picker, addressed the way a user does. */

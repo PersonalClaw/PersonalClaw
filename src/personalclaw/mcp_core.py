@@ -43,7 +43,9 @@ from personalclaw.constants import HOOK_SESSION_PREFIX
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.tool_providers.base import (
     BUILDS_META_KEY,
+    CONSEQUENCES_META_KEY,
     PROPOSES_META_KEY,
+    SENDS,
     TELLS_OWNER_META_KEY,
     ToolFailure,
     tool_failure,
@@ -530,7 +532,12 @@ def _list_tools() -> list[dict[str, Any]]:
             "annotations": {"readOnlyHint": False},
             # A call with only these tells the owner and no one else, which an automation's own
             # agent may do though it may change nothing (`ToolDefinition.tells_owner`).
-            "_meta": {TELLS_OWNER_META_KEY: list(OWNER_NOTICE_ARGS)},
+            # Any other argument reaches someone else (a channel, a user), so such a call asks a
+            # second confirmation before it sends (`ToolDefinition.consequences`).
+            "_meta": {
+                TELLS_OWNER_META_KEY: list(OWNER_NOTICE_ARGS),
+                CONSEQUENCES_META_KEY: [SENDS],
+            },
             "description": (
                 "Notify the user via their configured notification channel(s) "
                 "(dashboard notification, plus any connected messaging channel such "

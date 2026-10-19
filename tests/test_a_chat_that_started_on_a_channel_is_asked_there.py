@@ -143,6 +143,9 @@ async def _ask(state, chat, request_id: str = "r-1") -> asyncio.Future:
         is_read_only=False,
         blast_radius=None,
         grant_agent="",
+        # A call that asks no second confirmation: one that does is never put to a channel
+        # (`test_a_channel_never_answers_a_call_that_asks_twice`).
+        confirms=(),
     )
     return future
 

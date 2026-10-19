@@ -47,6 +47,8 @@ const PENDING = {
   session_title: '', agent: '', risk: 'high', grant_agent: '', trigger: 'schedule:clock:morning-brief',
   trigger_name: 'Morning brief', asked_by: 'trigger:schedule:clock:morning-brief',
   source_label: 'trigger “Morning brief”',
+  // A subagent's start is PersonalClaw's own tool: the registry names no second confirmation.
+  confirms: [],
 } as PendingApproval
 
 /** Its Inbox row, as `DashboardApprovalState._raise_inbox_row` writes it. */

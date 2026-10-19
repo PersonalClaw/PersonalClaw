@@ -29,6 +29,7 @@ from typing import Any
 
 from personalclaw.agents.native.tool_names import model_safe_name
 from personalclaw.tool_providers.base import (
+    CONSEQUENCES_META_KEY,
     ToolDefinition,
     ToolFailure,
     ToolProvider,
@@ -36,6 +37,44 @@ from personalclaw.tool_providers.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def declared_consequences(
+    defs: list[ToolDefinition], index: dict[str, ToolProvider]
+) -> dict[str, tuple[str, ...]]:
+    """What each tool in *defs* declares a call may do past this machine
+    (``ToolDefinition.consequences``), by name, with *index* naming each tool's provider.
+
+    Every declaration is read once, here, strictly (``consequences_of``): one this reading cannot
+    follow is left out of the map, like a tool that declares nothing, so its calls ask whoever
+    ships it. A tool of a provider PersonalClaw ships (``registry.ships_with_core``) is
+    classified, so one that declares nothing at all declares neither. Not the MCP Tool Servers
+    app's nor ``app-routes``'s: those ship with PersonalClaw, but what they serve is a server's
+    and an app's, taken at its own word. A tool that declares nothing anywhere else is left out.
+    """
+    from personalclaw.tool_providers.app_routes import PROVIDER_NAME as APP_ROUTES
+    from personalclaw.tool_providers.base import consequences_of
+    from personalclaw.tool_providers.registry import EXTERNAL_MCP_PROVIDER, ships_with_core
+
+    out: dict[str, tuple[str, ...]] = {}
+    for t in defs:
+        if t.consequences is not None:
+            read = consequences_of(t.consequences)
+            if read is not None:
+                out[t.name] = read
+            continue
+        prov = index.get(t.name)
+        name = str(getattr(prov, "name", "") or "")
+        if prov is not None and name not in (APP_ROUTES, EXTERNAL_MCP_PROVIDER):
+            if ships_with_core(prov):
+                out[t.name] = ()
+    return out
+
+
+def _as_declared(raw: Any) -> Any:
+    """A ``_meta`` declaration of consequences as a definition keeps it, unread: a list as the
+    tuple it names, anything else as it is (``None`` for none)."""
+    return tuple(raw) if isinstance(raw, list) else raw
 
 
 def tool_definitions_to_openai_schema(tools: list[ToolDefinition]) -> list[dict]:
@@ -165,6 +204,9 @@ class InProcessMcpToolProvider(ToolProvider):
                     proposes=meta.get(PROPOSES_META_KEY) is True,
                     tells_owner=_owner_notice_args(meta.get(TELLS_OWNER_META_KEY)),
                     annotations=dict(annotations),
+                    # As declared: `declared_consequences` reads it, strictly, with every other
+                    # tool's, so one it cannot follow asks even though the tool is core's own.
+                    consequences=_as_declared(meta.get(CONSEQUENCES_META_KEY)),
                 )
             )
         self._tools = defs

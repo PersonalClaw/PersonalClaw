@@ -33,6 +33,7 @@ from personalclaw.acp.types import (
 from personalclaw.agents.instructions import agent_instructions
 from personalclaw.answer_rules import over_limit_notice
 from personalclaw.approval_brief import call_blast_radius
+from personalclaw.approval_confirms import call_confirms
 from personalclaw.audit_subject import FILE_CHANGE_KINDS, log_title
 from personalclaw.config.loader import AppConfig, resolve_agent_bindings
 from personalclaw.constants import CHAT_TURN_IDLE_LIMIT
@@ -4757,6 +4758,21 @@ async def run_chat(
                 perm_meta["reach"] = _reach_note = run_bounds.event_note(
                     event, session_key, cwd=_call_folder
                 )
+                # The second confirmation an Approve asks before the call runs, worked out once
+                # here from what the call's tool declares (`approval_confirms`): the runtime
+                # resolved the declaration, PersonalClaw's own tools classified, and an agent
+                # CLI's own tools declare nothing.
+                _confirms = call_confirms(
+                    getattr(event, "risk_level", "") or "",
+                    event.title,
+                    event.tool_kind,
+                    event.tool_input,
+                    cwd=_call_folder,
+                    consequences=getattr(event, "consequences", None),
+                    tells_owner=bool(getattr(event, "tells_owner", False)),
+                    named_files=tuple(getattr(event, "named_files", ()) or ()),
+                )
+                perm_meta["confirms"] = list(_confirms)
                 # Who asked for this turn, when it was not you: the card names them, offers your
                 # answer for this call alone, and every row of the ask says who it was
                 # (`approval_grants`, rule 4).
@@ -4843,6 +4859,7 @@ async def run_chat(
                         reach=_reach_note,
                         deny_effect=_deny_effect,
                         asked_for=_asked_for,
+                        confirms=_confirms,
                     )
                     outcome = await asyncio.wait_for(fut, timeout=approval_window)
                 except asyncio.TimeoutError:

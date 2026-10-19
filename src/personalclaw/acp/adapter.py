@@ -60,4 +60,5 @@ def acp_event_to_agent_event(e: AcpEvent) -> AgentEvent:
         proposes=declared.proposes,
         tells_owner=declared.tells_owner,
         work_asks=declared.work_asks,
+        consequences=declared.consequences,
     )

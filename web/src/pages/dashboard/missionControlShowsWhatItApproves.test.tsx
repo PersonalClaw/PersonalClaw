@@ -45,6 +45,7 @@ const worker = (over: Partial<PendingApproval>): PendingApproval => ({
   id: 'loop-0a1b2c3d:req-1', request_id: 'req-1', source: '', tool: 'write_file',
   tool_input: WRITE, tool_purpose: '',
   session: 'loop-0a1b2c3d', ts: 100, session_title: '', agent: 'personalclaw-coder', risk: 'caution',
+  confirms: [],
   is_read_only: false, grant_agent: '', source_label: 'loop “Fix the README”',
   // What the call can touch, as the backend composed it from the same reading as its risk.
   blast_radius: { writes: true, network: false, shell: false, saysReadOnly: false, readOnly: false },

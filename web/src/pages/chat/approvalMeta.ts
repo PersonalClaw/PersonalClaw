@@ -47,6 +47,18 @@ export function approvalRiskOf(raw: unknown): ApprovalRisk | undefined {
     : undefined
 }
 
+/** The second confirmations a row off the wire names (`PendingApproval.confirms`, an `approval`
+ *  frame's, a transcript row's), for the card to ask before it sends an Approve.
+ *
+ *  FAILS CLOSED. A row that carries no list, or a list with anything but words in it, says nothing
+ *  about what the call may do, so it is taken to be able to do any of the four: `undeclared`. Only
+ *  an established read (`safe`) is exempt, since a read deletes, changes, sends and spends nothing.
+ *  An unknown word is kept, and the card says it as the undeclared one. */
+export function confirmsOf(raw: unknown, risk: unknown): string[] {
+  if (Array.isArray(raw) && raw.every((k) => typeof k === 'string')) return [...new Set(raw as string[])]
+  return approvalRiskOf(risk) === 'safe' ? [] : ['undeclared']
+}
+
 /** The risks a surface treats as "may be destructive" — `task_modes.MAY_DESTROY`: the card
  *  withholds its standing grants for them until the user unlocks them. A shell command the
  *  screen could not check can do anything the shell can. */

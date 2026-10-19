@@ -11,7 +11,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 //      call would do and where it came from — not as that card plus its Inbox listing;
 //   2. an Inbox row whose approval is NOT listed stays visible — degrade, never vanish;
 //   3. Home's pills count it once: 1 approval waiting, and the inbox pill counts it zero times;
-//   4. Allow answers it by its REGISTRY id.
+//   4. Allow answers it by its REGISTRY id, after the delete's second confirmation and not before.
 
 const APPROVAL = {
   source_label: 'chat “Clean the scratch dir”',
@@ -19,6 +19,8 @@ const APPROVAL = {
   tool_input: '{"command": "rm -rf /tmp/scratch"}', tool_purpose: '',
   session: 'chat-a', session_title: 'Clean the scratch dir', agent: 'researcher',
   risk: 'destructive', grant_agent: '', ts: 1,
+  // A delete: the registry names its second confirmation.
+  confirms: ['deletes'],
 }
 const row = (id: string, message: string, refs: Record<string, string>, kind = 'agent_request') => ({
   id, channel: 'system', channel_name: 'system', message, sender_id: 'system', sender_name: 'system',
@@ -97,6 +99,12 @@ describe('To triage lists a pending chat approval once, with enough to decide', 
       fireEvent.click(screen.getByRole('button', { name: /^Allow bash — chat “Clean the scratch dir”/ }))
       await new Promise((res) => setTimeout(res, 0))
     })
+    expect(resolveApproval).not.toHaveBeenCalled()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Yes, run it/ }))
+      await new Promise((res) => setTimeout(res, 0))
+    })
+    expect(resolveApproval).toHaveBeenCalledTimes(1)
     expect(resolveApproval).toHaveBeenCalledWith('chat-a:1', 'approve')
   })
 })

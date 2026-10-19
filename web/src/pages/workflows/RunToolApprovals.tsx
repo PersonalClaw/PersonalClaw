@@ -54,9 +54,11 @@ export function RunToolApprovals({ runId }: { runId: string }) {
     setBusy(a.id)
     // `reportingWrite` so a refused decision says the server's own sentence instead of leaving
     // the row in place with nothing happening twice.
-    await reportingWrite(`${action} this approval`, () => api.resolveApproval(a.id, action))
+    const ok = await reportingWrite(`${action} this approval`, () => api.resolveApproval(a.id, action))
     setBusy(null)
     load()
+    // Whether it landed: the card stays decided on `true` (`ApprovalChoice.onClick`).
+    return ok
   }, [load])
 
   if (pending.length === 0) return null

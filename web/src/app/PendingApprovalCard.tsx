@@ -18,7 +18,7 @@ import { approvalDestination } from './approvalDestination'
  */
 export function PendingApprovalCard({ approval, onDecide, busy, opensSource = false }: {
   approval: ApprovalCardInput
-  onDecide: (action: 'approve' | 'reject') => void
+  onDecide: (action: 'approve' | 'reject') => void | Promise<unknown>
   busy?: boolean
   opensSource?: boolean
 }) {

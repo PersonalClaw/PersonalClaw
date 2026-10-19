@@ -13,6 +13,7 @@ import { openRefusal, standing, type OpenRefusal } from './openRefusal'
 import type { TermTab } from './TerminalPage'
 import { tabListKeys } from '../../lib/tabListKeys'
 import { useResizablePanel } from '../../ui/useResizablePanel'
+import { bindingLabel } from '../../app/keymap'
 
 const HEIGHT_KEY = 'terminal-drawer-h'
 const MIN_H = 160, MAX_FRAC = 0.85, DEF_H = 320
@@ -137,7 +138,7 @@ export function TerminalDrawer({ open, onClose, onOpenFull }: {
               </SquareIconButton>
             </div>
             <SquareIconButton icon={Maximize2} iconSize={13} label="Open full terminal" onClick={onOpenFull} className="shrink-0" />
-            <SquareIconButton icon={ChevronDown} iconSize={15} label="Hide terminal (⌘`)" onClick={onClose} className="shrink-0" />
+            <SquareIconButton icon={ChevronDown} iconSize={15} label={`Hide terminal (${bindingLabel('drawer')})`} onClick={onClose} className="shrink-0" />
           </div>
 
           {/* A refused New session, said where the tabs are. The empty state below renders only

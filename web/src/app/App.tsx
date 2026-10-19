@@ -3,7 +3,7 @@ import { MotionConfig, motion } from 'framer-motion'
 import { ease, duration } from '../design/motion'
 import { armCueAudio } from '../design/soundCues'
 import { installPushCuePlayback } from './pushCuePlayback'
-import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, Focus, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, PanelBottomClose, Radar, Settings, Smartphone, Sparkles, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
+import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, Radar, Settings, Smartphone, Sparkles, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
 import { IncidentBanner } from './IncidentBanner'
@@ -26,7 +26,10 @@ import { syncAppGenUiComponents } from './appGenUiLayer'
 import { api } from '../lib/api'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { ACTIVE_LOOP_STATUSES } from '../lib/loopStatus'
-import { CommandPalette, type Command } from './CommandPalette'
+import { CommandPalette, keymapCommands, type Command } from './CommandPalette'
+import { THREAD_NUMBERS, useKeyBinding, type CommandId } from './keymap'
+import { chatRoute, nextNeedsYouRoute } from './globalKeys'
+import { notify } from './appSdk'
 import { TerminalDrawer } from '../pages/terminal/TerminalDrawer'
 import { Toaster } from '../ui/Toaster'
 import { useApprovalToasts } from './useApprovalToasts'
@@ -42,7 +45,7 @@ import { resolveAppIcon } from '../pages/apps/appIcon'
 import { useWidgetActionLauncher } from '../ui/widget/useWidgetActionBridge'
 import { getNavApps, onNavAppsChange } from '../pages/apps/navApps'
 import { isDisclosed, undisclosedCount, useNavDisclosure } from './navDisclosure'
-import { ViewModesProvider, useViewModeKeys, useViewModeState, viewModeCommand, viewModeKeyLabel } from './viewModes'
+import { ViewModesProvider, useViewModeState } from './viewModes'
 import type { AppSummary } from '../lib/api'
 
 // Heavier / less-frequently-first-viewed pages are code-split so the initial
@@ -396,9 +399,6 @@ function AppInner() {
   // once a session registers (the drawer opens, its TerminalView registers).
   const pendingRun = useRef<string | null>(null)
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === '`' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); setTermDrawer((v) => !v) }
-    }
     // "Run in terminal" from a chat code block: open the drawer, queue the cmd.
     const onRun = (e: Event) => {
       const cmd = (e as CustomEvent).detail?.command
@@ -407,7 +407,6 @@ function AppInner() {
       pendingRun.current = cmd
       setTermDrawer(true)
     }
-    window.addEventListener('keydown', onKey)
     window.addEventListener('ne:run-in-terminal', onRun as EventListener)
     // flush the queued command once a terminal session becomes available. The
     // registration callback fires while the terminal's WebSocket is still
@@ -420,7 +419,7 @@ function AppInner() {
         runInTerminalWhenReady(cmd)
       }
     })
-    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('ne:run-in-terminal', onRun as EventListener); unsub() }
+    return () => { window.removeEventListener('ne:run-in-terminal', onRun as EventListener); unsub() }
   }, [])
 
   // A deliberate re-run of first-run setup, asked for from inside the shell (Settings → Account).
@@ -556,13 +555,59 @@ function AppInner() {
     pinNav(active)
   }, [active, navMode, navPinned, pinNav])
 
+  // The keymap's global rows (`keymap.ts`), each run where the thing it moves lives. Hooks, so
+  // they sit above every early return (React #310). ⌘⌥A and ⌘1 to
+  // ⌘9 read the lists fresh when pressed, so they follow what Home and the chat list show now.
+  const toggleDrawer = () => setTermDrawer((v) => !v)
+  const goNeedsYou = () => {
+    Promise.all([api.inboxOpen(), api.approvals()])
+      .then(([items, approvals]) => {
+        const to = nextNeedsYouRoute(items, approvals)
+        if (to) navigate(to)
+        else notify('Nothing is waiting on you.', 'info')
+      })
+      .catch(() => notify("Couldn't read what is waiting on you.", 'error'))
+  }
+  const goChat = (n: number) => {
+    api.chatSessions()
+      .then((sessions) => {
+        const to = chatRoute(sessions, n)
+        if (to) navigate(to)
+        else notify(`There is no chat ${n} in the list.`, 'info')
+      })
+      .catch(() => notify("Couldn't read the chat list.", 'error'))
+  }
   // Persist the embed flag at mount-time so in-page navigation (which strips the
   // query param from the hash) doesn't lose it. MUST be before any early return so
   // hook order is stable across renders (React #310).
   const embedRef = useRef(query.embed === '1')
   if (query.embed === '1') embedRef.current = true
-  // The two modes' keys, for the shell's own pages: an embedded page has no shell for them to change.
-  useViewModeKeys(embedRef.current ? {} : { 'focus-mode': toggleFocus, 'reading-mode': readsAChat ? toggleReading : undefined })
+  const keyRunners: Partial<Record<CommandId, () => void>> = {
+    sidebar: toggleNav,
+    drawer: toggleDrawer,
+    // The two modes change the shell, which an embedded page has none of; reading mode folds a
+    // chat's composer, so it runs only where a chat is on screen.
+    ...(embedRef.current ? {} : { 'focus-mode': toggleFocus, ...(readsAChat ? { 'reading-mode': toggleReading } : {}) }),
+    'next-needs-you': goNeedsYou,
+    'new-chat': () => navigate('chat/new'),
+    ...Object.fromEntries(THREAD_NUMBERS.map((n) => [`chat-${n}`, () => goChat(n)])),
+  }
+  useKeyBinding('sidebar', () => keyRunners.sidebar?.())
+  useKeyBinding('drawer', () => keyRunners.drawer?.())
+  useKeyBinding('focus-mode', keyRunners['focus-mode'])
+  useKeyBinding('reading-mode', keyRunners['reading-mode'])
+  useKeyBinding('next-needs-you', () => keyRunners['next-needs-you']?.())
+  useKeyBinding('new-chat', () => keyRunners['new-chat']?.())
+  useKeyBinding('chat-1', () => goChat(1))
+  useKeyBinding('chat-2', () => goChat(2))
+  useKeyBinding('chat-3', () => goChat(3))
+  useKeyBinding('chat-4', () => goChat(4))
+  useKeyBinding('chat-5', () => goChat(5))
+  useKeyBinding('chat-6', () => goChat(6))
+  useKeyBinding('chat-7', () => goChat(7))
+  useKeyBinding('chat-8', () => goChat(8))
+  useKeyBinding('chat-9', () => goChat(9))
+
 
   // Wait for the server identity before deciding — don't flash onboarding. `PageFallback` rather
   // than a bare spinner, so a Retry below is followed by an announced "Loading", not by silence.
@@ -750,10 +795,11 @@ function AppInner() {
     { id: 'go:mission-control', label: 'Mission Control', hint: 'Go to', icon: Radar, keywords: 'attention lanes approvals needs approval your turn working idle', run: () => navigate('mission-control') },
     { id: 'go:notifications', label: 'Notifications', hint: 'Go to', icon: Bell, keywords: 'alerts feed', run: () => navigate('notifications') },
     { id: 'go:discover', label: 'Discover', hint: 'Go to', icon: Compass, keywords: 'tips tour learn features guide', run: () => navigate('discover') },
-    { id: 'act:terminal-drawer', label: 'Toggle terminal drawer', hint: 'Action · ⌘`', icon: Terminal, keywords: 'shell pty console', run: () => setTermDrawer((v) => !v) },
-    viewModeCommand('focus-mode', Focus, toggleFocus),
-    ...(readsAChat ? [viewModeCommand('reading-mode', PanelBottomClose, toggleReading)] : []),
     { id: 'act:settings', label: 'Open Settings', hint: 'Action', icon: Settings, run: () => navigate('settings') },
+    // Every keyboard shortcut, from the keymap: the drawer, the sidebar, focus and reading mode, the
+    // chats, what needs you, and the keys a focused control handles, listed with why they don't run
+    // from here.
+    ...keymapCommands(keyRunners),
   ]
   return (
     <div className="flex h-full" style={{ background: 'var(--color-canvas)' }}>
@@ -772,7 +818,7 @@ function AppInner() {
       )}
       <main className="relative flex-1 min-w-0">
         {/* App-shell corner regions — float above page content, not a header row */}
-        <ShellCornerLeft collapsed={railCollapsed} onToggle={toggleNav} focusKey={railHidden ? viewModeKeyLabel('focus-mode') : undefined} />
+        <ShellCornerLeft collapsed={railCollapsed} onToggle={toggleNav} focusMode={railHidden} />
         <ShellCornerRight terminalOpen={termDrawer} onToggleTerminal={() => setTermDrawer((v) => !v)} navigate={navigate} />
         {/* Guardrails incident banner — spans the content area on every page while
             incident mode is active. Renders nothing otherwise. */}

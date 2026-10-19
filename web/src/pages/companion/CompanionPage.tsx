@@ -7,7 +7,7 @@ import { disableNativePush, enableNativePush, nativeBridge, watchNativePushTaps 
 import { useQuery } from '../../lib/data'
 import { FOLLOWS, useLiveLane } from './useLiveLane'
 import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
-import { blastRadiusOf, establishedFacets } from '../chat/approvalMeta'
+import { blastRadiusOf, confirmsOf, establishedFacets } from '../chat/approvalMeta'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
@@ -83,6 +83,8 @@ export function CompanionPage({ navigate, query }: RouteProps) {
     setResolved((s) => new Set(s).add(ap.id))
     try {
       await api.resolveApproval(ap.id, action)
+      // Landed: the card stays decided (`ApprovalChoice.onClick`) until the next read drops it.
+      return true
     } catch (e) {
       setResolved((s) => { const n = new Set(s); n.delete(ap.id); return n })
       // `api.*` rejects with an ApiError whose message is already the sentence a user should
@@ -90,6 +92,7 @@ export function CompanionPage({ navigate, query }: RouteProps) {
       window.dispatchEvent(new CustomEvent('ne:toast', {
         detail: { level: 'error', message: `Couldn't ${action} ${ap.tool} — ${(e as Error)?.message || 'the gateway did not respond'}` },
       }))
+      return false
     } finally {
       setBusy((s) => { const n = new Set(s); n.delete(ap.id); return n })
       refresh()
@@ -165,10 +168,12 @@ export function CompanionPage({ navigate, query }: RouteProps) {
                   purpose={ap.tool_purpose}
                   source={ap.source_label || undefined}
                   meta={<ApprovalMeta ap={ap} />}
+                  // The second confirmation the row names, as every other surface asks it.
+                  confirms={confirmsOf(ap.confirms, ap.risk)}
                   choices={[
                     // The accessible name carries the tool, because a queue paints one card
                     // per approval and four bare "Allow"s announce identically.
-                    { key: 'approve', icon: Check, label: 'Allow', tone: 'primary', name: `Allow ${ap.tool}`, busy: busy.has(ap.id), onClick: () => act(ap, 'approve') },
+                    { key: 'approve', icon: Check, label: 'Allow', tone: 'primary', approves: true, name: `Allow ${ap.tool}`, busy: busy.has(ap.id), onClick: () => act(ap, 'approve') },
                     // A Deny that ends the agent's turn says so here too, as the card's line does.
                     { key: 'reject', icon: Ban, label: 'Deny', tone: 'danger', name: `Deny ${ap.tool}${ap.deny_effect ? `. ${ap.deny_effect}` : ''}`, busy: busy.has(ap.id), onClick: () => act(ap, 'reject') },
                   ]}

@@ -70,6 +70,7 @@ export function ApprovalDecision({ approvalId, onDecided, ended = '' }: {
       onDecided?.()
     }
     void load()
+    return ok
   }
 
   if (answered) {

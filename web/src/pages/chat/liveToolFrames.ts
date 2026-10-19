@@ -5,7 +5,7 @@
  *
  *  Each function is pure over the segment list it is given, so the page's state updater can apply
  *  it whenever React renders. */
-import { approvalRiskOf, blastRadiusOf } from './approvalMeta'
+import { approvalRiskOf, blastRadiusOf, confirmsOf } from './approvalMeta'
 import { ungatedOf, type ApprovalSegment, type Segment, type ToolSegment } from './chatTypes'
 
 /** A gateway frame's payload, as the socket delivers it. */
@@ -70,6 +70,7 @@ export function applyApprovalFrame(segs: Segment[], d: Frame): Segment[] {
     ...(d.source ? { queued: true } : {}),
     ...(d.deny_effect ? { denyEffect: String(d.deny_effect) } : {}),
     ...(d.asked_for ? { askedFor: String(d.asked_for) } : {}),
+    confirms: confirmsOf(d.confirms, d.risk),
   }]
 }
 

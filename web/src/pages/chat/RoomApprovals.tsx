@@ -44,9 +44,11 @@ export function RoomApprovals({ roomId, onCount }: { roomId: string; onCount?: (
     setBusy(a.id)
     // `reportingWrite` so a refused answer (the room was archived meanwhile) says the server's own
     // sentence instead of leaving the card in place with nothing happening.
-    await reportingWrite(`${action} this approval`, () => api.resolveApproval(a.id, action))
+    const ok = await reportingWrite(`${action} this approval`, () => api.resolveApproval(a.id, action))
     setBusy(null)
     load()
+    // Whether it landed: the card stays decided on `true` (`ApprovalChoice.onClick`).
+    return ok
   }, [load])
 
   if (pending.length === 0) return null

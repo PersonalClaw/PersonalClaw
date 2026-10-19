@@ -1,5 +1,6 @@
 import type { PendingApproval } from '../../lib/api'
-import { approvalRiskOf, blastRadiusOf } from './approvalMeta'
+import { approvalRiskOf, blastRadiusOf, confirmsOf } from './approvalMeta'
+export { confirmsOf } from './approvalMeta'
 import type { ApprovalSegment, Segment } from './chatTypes'
 
 /** An approval's input as text: the registry sends a string, a native call's dict as JSON. */
@@ -12,7 +13,7 @@ export function approvalInputText(raw: unknown): string {
 export type ApprovalCardInput = Pick<
   PendingApproval,
   'id' | 'request_id' | 'tool' | 'tool_input' | 'tool_purpose' | 'risk' | 'blast_radius' | 'grant_agent'
-  | 'session' | 'source_label' | 'reach' | 'deny_effect' | 'asked_for'
+  | 'session' | 'source_label' | 'reach' | 'deny_effect' | 'asked_for' | 'confirms'
 >
 
 /** A registry row (`GET /api/approvals`, the `approval` frame) as the card's segment, so every
@@ -31,6 +32,7 @@ export function approvalSegmentOf(a: ApprovalCardInput): ApprovalSegment {
     reach: a.reach || '',
     ...(a.deny_effect ? { denyEffect: a.deny_effect } : {}),
     ...(a.asked_for ? { askedFor: a.asked_for } : {}),
+    confirms: confirmsOf(a.confirms, a.risk),
   }
 }
 

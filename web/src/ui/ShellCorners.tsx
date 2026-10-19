@@ -10,6 +10,7 @@ import { DegradedChip } from './DegradedChip'
 import { useIsMobile } from '../app/useIsMobile'
 import { WidgetBoundary } from '../app/ErrorBoundary'
 import { accentChip } from '../design/accent'
+import { bindingLabel } from '../app/keymap'
 
 /** The app shell's two persistent CORNER regions — not a full header row, just
  *  the two corners that carry native shell controls, floating above page content:
@@ -24,29 +25,32 @@ import { accentChip } from '../design/accent'
  *  Publishes its measured width to `--shell-corner-l` so page TopBars pad to
  *  clear it, and its height to `--shell-corner-lh`, which a TopBar whose row has
  *  moved below the corners (too narrow a band between them) clears instead. */
-export function ShellCornerLeft({ collapsed, onToggle, focusKey }: {
+export function ShellCornerLeft({ collapsed, onToggle, focusMode = false }: {
   collapsed: boolean
   onToggle: () => void
-  /** Set while focus mode hides the rail: the tab is then the visible way out of it, and names its
-   *  key. */
-  focusKey?: string
+  /** Set while focus mode hides the rail: the tab is then the visible way out of it, and names
+   *  focus mode's key. */
+  focusMode?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
   useShellCornerWidth(ref, '--shell-corner-l')
   useShellCornerHeight(ref, '--shell-corner-lh')
-  const label = focusKey ? 'Leave focus mode' : collapsed ? 'Expand sidebar' : 'Collapse sidebar'
+  const label = focusMode ? 'Leave focus mode' : collapsed ? 'Expand sidebar' : 'Collapse sidebar'
+  // The key the tab answers to, from the keymap: focus mode's while it hides the rail, else the
+  // sidebar's.
+  const key = bindingLabel(focusMode ? 'focus-mode' : 'sidebar')
   return (
     // A pull-tab hugging the nav's top-right edge: flush to the left (no gap),
     // rounded only on the right so it reads as physically attached to the rail.
     <div ref={ref} className="absolute left-0 top-0 z-30 py-2">
       <button type="button" onClick={onToggle}
-        aria-label={label} title={focusKey ? `${label} (${focusKey})` : label}
+        aria-label={label} title={`${label} (${key})`}
         className="grid h-9 w-8 place-items-center rounded-r-lg border border-l-0 border-outline-variant/40 bg-surface-low/80 text-on-surface-low backdrop-blur-sm transition-colors hover:bg-surface-low hover:text-on-surface">
         {/* the collapse/expand glyph morphs (spring scale+fade key-swap) as the
             rail toggles, so the pull-tab reflects the state change with life */}
         <AnimatePresence mode="wait" initial={false}>
-          <motion.span key={focusKey || collapsed ? 'open' : 'close'} initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }} transition={spring.spatialFast} className="grid place-items-center">
-            {focusKey || collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+          <motion.span key={focusMode || collapsed ? 'open' : 'close'} initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }} transition={spring.spatialFast} className="grid place-items-center">
+            {focusMode || collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
           </motion.span>
         </AnimatePresence>
       </button>
@@ -71,7 +75,8 @@ export function ShellCornerRight({ terminalOpen, onToggleTerminal, navigate }: {
     <div ref={ref} className="absolute right-0 top-0 z-30 flex items-center">
       <div className="flex items-center gap-1 rounded-bl-xl border border-r-0 border-t-0 border-outline-variant/40 bg-surface-low/80 px-1.5 py-1.5 backdrop-blur-sm">
         <button type="button" onClick={onToggleTerminal}
-          aria-label={terminalOpen ? 'Hide terminal' : 'Open terminal'} title={terminalOpen ? 'Hide terminal (⌘`)' : 'Open terminal (⌘`)'}
+          aria-label={terminalOpen ? 'Hide terminal' : 'Open terminal'}
+          title={`${terminalOpen ? 'Hide terminal' : 'Open terminal'} (${bindingLabel('drawer')})`}
           className="grid size-7 place-items-center rounded-pill transition-colors"
           style={terminalOpen
             ? accentChip
