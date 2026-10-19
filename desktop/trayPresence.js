@@ -232,6 +232,18 @@ function shouldQuitOnAllWindowsClosed({ platform, trayAvailable }) {
 }
 
 /**
+ * The menu-bar image for a platform, a file beside this module.
+ *
+ * macOS gets a black silhouette with alpha whose name ends in `Template`, which makes
+ * Electron treat it as a template image that macOS recolours for a light, dark or tinted
+ * menu bar. Elsewhere the image is the mark in its gradient. Both are rendered from the
+ * mark by `docs/brand/render_marks.mjs`, at 18 points with an `@2x` beside them.
+ */
+function trayImageFile(platform) {
+  return platform === "darwin" ? "trayTemplate.png" : "tray.png";
+}
+
+/**
  * The Electron-facing wrapper: builds the tray if it can, and reports honestly if it
  * cannot. Every Electron dependency is injected so tests drive fakes.
  *
@@ -239,27 +251,31 @@ function shouldQuitOnAllWindowsClosed({ platform, trayAvailable }) {
  * @param {Function} deps.TrayCtor Electron `Tray`
  * @param {{buildFromTemplate: Function}} deps.MenuCtor Electron `Menu`
  * @param {{createFromPath: Function}} deps.nativeImageMod Electron `nativeImage`
- * @param {string} deps.iconPath
+ * @param {string} deps.trayImagePath the platform's menu-bar image, drawn at 18 points
+ *        with an `@2x` beside it (`trayImageFile()`), loaded as it is
  * @param {object} deps.actions passed through to `buildTrayMenuTemplate`
  * @param {(msg: string) => void} [deps.log]
  */
-function makeTrayPresence({ TrayCtor, MenuCtor, nativeImageMod, iconPath, actions = {}, log = () => {} } = {}) {
+function makeTrayPresence({ TrayCtor, MenuCtor, nativeImageMod, trayImagePath, actions = {}, log = () => {} } = {}) {
   let tray = null;
   let presence = { ...EMPTY_PRESENCE };
   let loginItemState = { supported: false, enabled: false };
   let capturing = false;
   let tiles = [];
 
-  /** Load the icon, tolerating a missing/corrupt file. Returns null when unusable. */
+  /** Load the menu-bar image, tolerating a missing/corrupt file. Returns null when unusable. */
   function loadIcon() {
-    if (!nativeImageMod || !iconPath) return null;
+    if (!nativeImageMod || !trayImagePath) return null;
     try {
-      const image = nativeImageMod.createFromPath(iconPath);
+      // Taken as drawn: the file is already menu-bar sized, and Electron picks up the
+      // `@2x` beside it on a Retina display. A `Template` name is what makes macOS
+      // treat it as a template image and recolour it for the menu bar.
+      const image = nativeImageMod.createFromPath(trayImagePath);
       if (!image || (typeof image.isEmpty === "function" && image.isEmpty())) {
-        log(`tray icon at ${iconPath} is empty or unreadable`);
+        log(`tray icon at ${trayImagePath} is empty or unreadable`);
         return null;
       }
-      return typeof image.resize === "function" ? image.resize({ width: 18, height: 18 }) : image;
+      return image;
     } catch (err) {
       log(`tray icon failed to load: ${err.message}`);
       return null;
@@ -359,5 +375,6 @@ module.exports = {
   shouldHideOnClose,
   shouldQuitOnAllWindowsClosed,
   makeTrayPresence,
+  trayImageFile,
   truncateLabel,
 };

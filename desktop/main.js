@@ -11,7 +11,7 @@ const { makePushToTalk, registerPushToTalkIpc } = require("./pushToTalk");
 const {
   DEEP_LINKS,
   summarizePresence,
-  makeTrayPresence,
+  makeTrayPresence, trayImageFile,
   shouldHideOnClose,
   shouldQuitOnAllWindowsClosed,
 } = require("./trayPresence");
@@ -1122,7 +1122,7 @@ const trayPresence = makeTrayPresence({
   TrayCtor: Tray,
   MenuCtor: Menu,
   nativeImageMod: nativeImage,
-  iconPath: path.join(__dirname, "icon.png"),
+  trayImagePath: path.join(__dirname, trayImageFile(process.platform)),
   log: (msg) => console.warn(`tray: ${msg}`),
   actions: {
     open: () => showMainWindow(),
