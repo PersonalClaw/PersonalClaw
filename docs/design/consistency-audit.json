@@ -1,31 +1,21 @@
 {
   "totals": {
-    "driftHits": 8,
-    "filesScanned": 601,
-    "filesWithDrift": 7
+    "driftHits": 16,
+    "filesScanned": 823,
+    "filesWithDrift": 10
   },
   "byCategory": {
-    "color": 3,
-    "spacing": 1,
+    "color": 12,
+    "spacing": 0,
     "radius": 1,
     "shadow": 0,
     "duration": 3
   },
   "ranked": [
     {
-      "file": "pages/ChatPage.tsx",
-      "score": 37,
-      "detail": "14 raw-button, 9 raw-input"
-    },
-    {
-      "file": "pages/projects/ProjectsSection.tsx",
-      "score": 37,
-      "detail": "17 raw-button, 3 raw-input"
-    },
-    {
       "file": "pages/code/CodeCockpitPage.tsx",
-      "score": 32,
-      "detail": "14 raw-button, 4 raw-input"
+      "score": 30,
+      "detail": "13 raw-button, 4 raw-input"
     },
     {
       "file": "pages/loops/LoopPlanReview.tsx",
@@ -38,9 +28,24 @@
       "detail": "7 raw-button, 9 raw-input"
     },
     {
+      "file": "pages/ChatPage.tsx",
+      "score": 22,
+      "detail": "8 raw-button, 6 raw-input"
+    },
+    {
+      "file": "pages/projects/ProjectsSection.tsx",
+      "score": 22,
+      "detail": "9 raw-button, 4 raw-input"
+    },
+    {
+      "file": "app/onboarding/EssentialsStep.tsx",
+      "score": 20,
+      "detail": "4 color"
+    },
+    {
       "file": "pages/settings/MemoryPanel.tsx",
-      "score": 19,
-      "detail": "7 raw-button, 5 raw-input"
+      "score": 20,
+      "detail": "7 raw-button, 6 raw-input"
     },
     {
       "file": "pages/loops/LoopCockpitPage.tsx",
@@ -58,19 +63,14 @@
       "detail": "7 raw-button, 3 raw-input"
     },
     {
-      "file": "pages/settings/OllamaModelManager.tsx",
-      "score": 16,
-      "detail": "8 raw-button"
-    },
-    {
       "file": "pages/loops/DesignCockpitPage.tsx",
       "score": 14,
       "detail": "6 raw-button, 2 raw-input"
     },
     {
-      "file": "pages/tools/ToolsPage.tsx",
-      "score": 13,
-      "detail": "6 raw-button, 1 raw-input"
+      "file": "pages/dashboard/DashboardPage.tsx",
+      "score": 12,
+      "detail": "2 color, 1 raw-button"
     },
     {
       "file": "pages/knowledge/AudioRecorder.tsx",
@@ -93,6 +93,11 @@
       "detail": "5 raw-button, 1 raw-input"
     },
     {
+      "file": "pages/settings/SourcesPanel.tsx",
+      "score": 10,
+      "detail": "2 color"
+    },
+    {
       "file": "pages/code/WorkspacePicker.tsx",
       "score": 10,
       "detail": "4 raw-button, 2 raw-input"
@@ -113,12 +118,12 @@
       "detail": "5 raw-button"
     },
     {
-      "file": "pages/settings/ProjectionRulesPanel.tsx",
+      "file": "pages/settings/ProviderCard.tsx",
       "score": 10,
-      "detail": "2 raw-button, 6 raw-input"
+      "detail": "5 raw-button"
     },
     {
-      "file": "pages/tasks/TasksListPage.tsx",
+      "file": "pages/tools/ToolsPage.tsx",
       "score": 10,
       "detail": "5 raw-button"
     },
@@ -133,9 +138,9 @@
       "detail": "2 raw-button, 5 raw-input"
     },
     {
-      "file": "pages/settings/bento.tsx",
+      "file": "pages/settings/ProjectionRulesPanel.tsx",
       "score": 9,
-      "detail": "4 raw-button, 1 raw-input"
+      "detail": "2 raw-button, 5 raw-input"
     },
     {
       "file": "pages/chat/PromptPalette.tsx",
@@ -148,17 +153,12 @@
       "detail": "2 raw-button, 4 raw-input"
     },
     {
-      "file": "pages/prompts/PromptEditFields.tsx",
-      "score": 8,
-      "detail": "2 raw-button, 4 raw-input"
-    },
-    {
       "file": "pages/schedule/ScheduleForm.tsx",
       "score": 8,
       "detail": "2 raw-button, 4 raw-input"
     },
     {
-      "file": "pages/settings/ProviderCard.tsx",
+      "file": "pages/tasks/TasksListPage.tsx",
       "score": 8,
       "detail": "4 raw-button"
     },
@@ -214,17 +214,31 @@
     }
   ],
   "a11y": {
-    "outlineNoneCount": 147,
-    "outlineNoneFiles": 72,
-    "localFocusVisibleFiles": 37,
-    "reducedMotionFiles": 13,
-    "animatedFiles": 176,
+    "outlineNoneCount": 153,
+    "outlineNoneFiles": 75,
+    "localFocusVisibleFiles": 53,
+    "reducedMotionFiles": 17,
+    "animatedFiles": 183,
     "hasGlobalReducedMotion": true,
     "hasGlobalFocusRing": true
   },
   "byFile": {
     "app/Onboarding.tsx": {
       "color": 1,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 0
+    },
+    "app/onboarding/EssentialsStep.tsx": {
+      "color": 4,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 0
+    },
+    "pages/dashboard/DashboardPage.tsx": {
+      "color": 2,
       "spacing": 0,
       "radius": 0,
       "shadow": 0,
@@ -251,7 +265,21 @@
       "shadow": 0,
       "duration": 1
     },
+    "pages/settings/PacksPanel.tsx": {
+      "color": 1,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 0
+    },
     "pages/settings/SourcesPanel.tsx": {
+      "color": 2,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 0
+    },
+    "pages/workflows/LedgerRailsPanel.tsx": {
       "color": 1,
       "spacing": 0,
       "radius": 0,
@@ -262,13 +290,6 @@
       "color": 0,
       "spacing": 0,
       "radius": 1,
-      "shadow": 0,
-      "duration": 0
-    },
-    "ui/widget/WidgetFrame.tsx": {
-      "color": 0,
-      "spacing": 1,
-      "radius": 0,
       "shadow": 0,
       "duration": 0
     }
@@ -290,8 +311,8 @@
       "raw-dialog": 0
     },
     "pages/ChatPage.tsx": {
-      "raw-button": 14,
-      "raw-input": 9,
+      "raw-button": 8,
+      "raw-input": 6,
       "raw-dialog": 0
     },
     "pages/agents/AgentDetail.tsx": {
@@ -329,9 +350,19 @@
       "raw-input": 1,
       "raw-dialog": 0
     },
+    "pages/chat/AttachmentChips.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
     "pages/chat/ChatActivityPanel.tsx": {
       "raw-button": 3,
       "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/chat/ChatContextLine.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
       "raw-dialog": 0
     },
     "pages/chat/ContextLedger.tsx": {
@@ -354,6 +385,16 @@
       "raw-input": 4,
       "raw-dialog": 0
     },
+    "pages/chat/QuestionCard.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/SessionMapRail.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
     "pages/chat/SessionSkillsReview.tsx": {
       "raw-button": 2,
       "raw-input": 2,
@@ -365,7 +406,7 @@
       "raw-dialog": 0
     },
     "pages/code/CodeCockpitPage.tsx": {
-      "raw-button": 14,
+      "raw-button": 13,
       "raw-input": 4,
       "raw-dialog": 0
     },
@@ -375,7 +416,12 @@
       "raw-dialog": 0
     },
     "pages/code/CodeSection.tsx": {
-      "raw-button": 2,
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/CodeToast.tsx": {
+      "raw-button": 1,
       "raw-input": 0,
       "raw-dialog": 0
     },
@@ -400,7 +446,7 @@
       "raw-dialog": 0
     },
     "pages/dashboard/widgets/HeroPulse.tsx": {
-      "raw-button": 1,
+      "raw-button": 2,
       "raw-input": 0,
       "raw-dialog": 0
     },
@@ -445,21 +491,11 @@
       "raw-dialog": 0
     },
     "pages/files/comments/CommentLayer.tsx": {
-      "raw-button": 1,
+      "raw-button": 0,
       "raw-input": 2,
       "raw-dialog": 0
     },
-    "pages/inbox/InboxDetail.tsx": {
-      "raw-button": 1,
-      "raw-input": 0,
-      "raw-dialog": 0
-    },
     "pages/inbox/InboxPage.tsx": {
-      "raw-button": 1,
-      "raw-input": 0,
-      "raw-dialog": 0
-    },
-    "pages/inbox/WorkflowGateActions.tsx": {
       "raw-button": 1,
       "raw-input": 0,
       "raw-dialog": 0
@@ -489,14 +525,19 @@
       "raw-input": 3,
       "raw-dialog": 0
     },
-    "pages/knowledge/SourceCreatePage.tsx": {
-      "raw-button": 0,
-      "raw-input": 1,
-      "raw-dialog": 0
-    },
     "pages/loop/LoopComposer.tsx": {
       "raw-button": 2,
       "raw-input": 4,
+      "raw-dialog": 0
+    },
+    "pages/loop/LoopRuntimePill.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/loop/LoopSelfApproval.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
       "raw-dialog": 0
     },
     "pages/loops/CockpitPromptBar.tsx": {
@@ -520,8 +561,8 @@
       "raw-dialog": 0
     },
     "pages/projects/ProjectsSection.tsx": {
-      "raw-button": 17,
-      "raw-input": 3,
+      "raw-button": 9,
+      "raw-input": 4,
       "raw-dialog": 0
     },
     "pages/prompts/PromptDetail.tsx": {
@@ -530,12 +571,12 @@
       "raw-dialog": 0
     },
     "pages/prompts/PromptEditFields.tsx": {
-      "raw-button": 2,
-      "raw-input": 4,
+      "raw-button": 1,
+      "raw-input": 3,
       "raw-dialog": 0
     },
     "pages/prompts/PromptForm.tsx": {
-      "raw-button": 2,
+      "raw-button": 1,
       "raw-input": 1,
       "raw-dialog": 0
     },
@@ -560,7 +601,7 @@
       "raw-dialog": 0
     },
     "pages/prompts/SnippetForm.tsx": {
-      "raw-button": 2,
+      "raw-button": 1,
       "raw-input": 1,
       "raw-dialog": 0
     },
@@ -616,27 +657,22 @@
     },
     "pages/settings/MemoryPanel.tsx": {
       "raw-button": 7,
-      "raw-input": 5,
+      "raw-input": 6,
       "raw-dialog": 0
     },
     "pages/settings/ModelBackends.tsx": {
       "raw-button": 0,
-      "raw-input": 3,
+      "raw-input": 1,
       "raw-dialog": 0
     },
     "pages/settings/ModelsPanel.tsx": {
-      "raw-button": 3,
+      "raw-button": 2,
       "raw-input": 0,
       "raw-dialog": 0
     },
     "pages/settings/NotificationsPanel.tsx": {
       "raw-button": 0,
       "raw-input": 1,
-      "raw-dialog": 0
-    },
-    "pages/settings/OllamaModelManager.tsx": {
-      "raw-button": 8,
-      "raw-input": 0,
       "raw-dialog": 0
     },
     "pages/settings/PortabilityPanel.tsx": {
@@ -646,7 +682,7 @@
     },
     "pages/settings/ProjectionRulesPanel.tsx": {
       "raw-button": 2,
-      "raw-input": 6,
+      "raw-input": 5,
       "raw-dialog": 0
     },
     "pages/settings/PromptsPanel.tsx": {
@@ -655,13 +691,8 @@
       "raw-dialog": 0
     },
     "pages/settings/ProviderCard.tsx": {
-      "raw-button": 4,
+      "raw-button": 5,
       "raw-input": 0,
-      "raw-dialog": 0
-    },
-    "pages/settings/ProviderConfigForm.tsx": {
-      "raw-button": 0,
-      "raw-input": 4,
       "raw-dialog": 0
     },
     "pages/settings/RoutingPanel.tsx": {
@@ -670,7 +701,7 @@
       "raw-dialog": 0
     },
     "pages/settings/SearchPanel.tsx": {
-      "raw-button": 2,
+      "raw-button": 1,
       "raw-input": 0,
       "raw-dialog": 0
     },
@@ -690,7 +721,7 @@
       "raw-dialog": 0
     },
     "pages/settings/bento.tsx": {
-      "raw-button": 4,
+      "raw-button": 2,
       "raw-input": 1,
       "raw-dialog": 0
     },
@@ -725,7 +756,7 @@
       "raw-dialog": 0
     },
     "pages/tasks/TasksListPage.tsx": {
-      "raw-button": 5,
+      "raw-button": 4,
       "raw-input": 0,
       "raw-dialog": 0
     },
@@ -760,8 +791,8 @@
       "raw-dialog": 0
     },
     "pages/tools/ToolsPage.tsx": {
-      "raw-button": 6,
-      "raw-input": 1,
+      "raw-button": 5,
+      "raw-input": 0,
       "raw-dialog": 0
     },
     "pages/tools/schema.tsx": {
@@ -779,6 +810,11 @@
       "raw-input": 1,
       "raw-dialog": 0
     },
+    "pages/workflows/WorkflowDefEditor.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
     "pages/workflows/WorkflowRunDetail.tsx": {
       "raw-button": 1,
       "raw-input": 0,
@@ -788,51 +824,99 @@
   "drift": [
     {
       "file": "app/Onboarding.tsx",
-      "line": 295,
+      "line": 785,
       "category": "color",
-      "snippet": "(measured off the node: rgb(240,244,248)). There, the base accent is **4.37:1** against a"
+      "snippet": "`--color-canvas` (rgb(240,244,248)), where the base accent measured **4.37:1** against"
+    },
+    {
+      "file": "app/onboarding/EssentialsStep.tsx",
+      "line": 556,
+      "category": "color",
+      "snippet": "card, so the catalog below is unchanged. #3529 (containerised installs"
+    },
+    {
+      "file": "app/onboarding/EssentialsStep.tsx",
+      "line": 568,
+      "category": "color",
+      "snippet": "{/* #3529 — a provider type can be registered with NO route into it: its app is"
+    },
+    {
+      "file": "app/onboarding/EssentialsStep.tsx",
+      "line": 597,
+      "category": "color",
+      "snippet": "Sits alongside #3447's `verify` phase rather than merging with it: both are"
+    },
+    {
+      "file": "app/onboarding/EssentialsStep.tsx",
+      "line": 599,
+      "category": "color",
+      "snippet": "reads. #3447 guards a POSITIVE claim (a model is ready) made from a probe"
+    },
+    {
+      "file": "pages/dashboard/DashboardPage.tsx",
+      "line": 116,
+      "category": "color",
+      "snippet": "#3471: this section is NOT called \"Needs you\". That phrase belongs to the"
+    },
+    {
+      "file": "pages/dashboard/DashboardPage.tsx",
+      "line": 298,
+      "category": "color",
+      "snippet": "the APP's permissions, and the title alone cannot tell you that (#3632). A chat that"
     },
     {
       "file": "pages/knowledge/KnowledgeGraph.tsx",
-      "line": 345,
+      "line": 474,
       "category": "duration",
       "snippet": "<g transform={transform} style={{ transition: drag.current ? 'none' : 'transform 200ms ease-out' }}>"
     },
     {
       "file": "pages/settings/MemoryGraph.tsx",
-      "line": 108,
+      "line": 117,
       "category": "color",
       "snippet": "return `hsl(${h} 55% 60%)`"
     },
     {
       "file": "pages/settings/MemoryGraph.tsx",
-      "line": 154,
+      "line": 164,
       "category": "duration",
       "snippet": "<g transform={transform} style={{ transition: drag.current ? 'none' : 'transform 200ms ease-out' }}>"
     },
     {
       "file": "pages/settings/NotificationRulesMatrix.tsx",
-      "line": 98,
+      "line": 152,
       "category": "duration",
       "snippet": "<ChevronDown size={12} style={{ transform: isOpen ? 'rotate(180deg)' : undefined, transition: 'trans"
     },
     {
+      "file": "pages/settings/PacksPanel.tsx",
+      "line": 85,
+      "category": "color",
+      "snippet": "(issue #3490). It offered a URL the local connector set \"refreshes from\" and no refresh"
+    },
+    {
       "file": "pages/settings/SourcesPanel.tsx",
-      "line": 125,
+      "line": 107,
+      "category": "color",
+      "snippet": "it (issue #3490). It PATCHed 200 and survived a reload while NOTHING counted a request"
+    },
+    {
+      "file": "pages/settings/SourcesPanel.tsx",
+      "line": 140,
       "category": "color",
       "snippet": "(measured rgb(30,31,32) on rgb(30,31,32) dark, rgb(255,255,255) on rgb(255,255,255)"
+    },
+    {
+      "file": "pages/workflows/LedgerRailsPanel.tsx",
+      "line": 127,
+      "category": "color",
+      "snippet": "uses for the identical fact over the identical `step_completed` rows (#3400). Before"
     },
     {
       "file": "ui/composer/liveMarkdown.ts",
       "line": 121,
       "category": "radius",
       "snippet": "'.cm-rmd-code': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.9em', c"
-    },
-    {
-      "file": "ui/widget/WidgetFrame.tsx",
-      "line": 284,
-      "category": "spacing",
-      "snippet": "style={{ height: expanded ? 'calc(100% - 36px)' : height }}"
     }
   ]
 }

@@ -87,6 +87,33 @@ const FieldHintCtx = createContext<string | undefined>(undefined)
 export function useFieldHintId() { return useContext(FieldHintCtx) }
 export const FieldHintProvider = FieldHintCtx.Provider
 
+/** The third id a Field publishes: its ERROR's, while the value would be refused.
+ *
+ *  🔴 Before this, no form-family control ever set `aria-invalid`, and `FieldError` was tied to no
+ *  control: an error was a paragraph that announced itself once (`role="alert"`) and then belonged
+ *  to nothing. A screen-reader user who tabbed back to the field heard its name and its hint and not
+ *  the reason it was refused. Two raw inputs hand-rolled the wiring (the schedule form's cron field,
+ *  the security panel's add-a-host box); this is that shape, generalised.
+ *
+ *  Published only while an error is SHOWN. An advisory that warns but does not refuse (the schedule
+ *  interval floor) is a hint, not an error: the save accepts the value, so the control is not
+ *  invalid. */
+const FieldErrorCtx = createContext<string | undefined>(undefined)
+export function useFieldErrorId() { return useContext(FieldErrorCtx) }
+export const FieldErrorProvider = FieldErrorCtx.Provider
+
+/** What a form-family control renders from the hint and the error published around it:
+ *  `aria-describedby` naming the hint first and then the error, and `aria-invalid` only while an
+ *  error is shown — never `aria-invalid="false"`, which some screen readers announce. */
+export function useFieldDescription(): { describedBy?: string; invalid?: true } {
+  const hintId = useFieldHintId()
+  const errorId = useFieldErrorId()
+  return {
+    describedBy: [hintId, errorId].filter(Boolean).join(' ') || undefined,
+    invalid: errorId ? true : undefined,
+  }
+}
+
 /** Field wrapper — label row (optional right slot for a SoonTag) + control.
  *  The label carries a stable id and is exposed via context so the wrapped
  *  control associates with it for accessibility. */
@@ -101,15 +128,17 @@ export const FieldHintProvider = FieldHintCtx.Provider
  *
  *  `InlineError` stays the choice for a banner ABOVE a body (a tinted, dismissible strip).
  *  Reach for FieldError for the terse line that belongs to one control or one action. */
-export function FieldError({ children, className }: {
+export function FieldError({ children, className, id }: {
   children: ReactNode
   /** Per-site spacing only (e.g. `mt-2`, `mb-m`, `shrink-0`); the tone and size are fixed. */
   className?: string
+  /** The id a control's `aria-describedby` names (`FieldErrorProvider`). */
+  id?: string
 }) {
-  return <p role="alert" data-type="body-s" className={cx('text-danger', className)}>{children}</p>
+  return <p role="alert" id={id} data-type="body-s" className={cx('text-danger', className)}>{children}</p>
 }
 
-export function Field({ label, hint, right, children }: {
+export function Field({ label, hint, error, right, children }: {
   label: string
   /** A node, not just a string, because a hint can be AUTHORED prose rather than ours — an
    *  app's `meta.help` is markdown its author wrote, and it renders through `<Markdown inline>`
@@ -117,17 +146,24 @@ export function Field({ label, hint, right, children }: {
    *  carries are our own sentences, and running them through a markdown parser would turn a
    *  `snake_case` field name into emphasis. The publisher knows whether its text is markdown. */
   hint?: ReactNode
+  /** Why the value would be refused, while it would be. The control inside is then
+   *  `aria-invalid` and described by the message (after the hint), which renders as a
+   *  `FieldError` under the hint. Only a value the save refuses is an error: an advisory the save
+   *  accepts belongs in `hint`, or the control announces "invalid" for a value that works. */
+  error?: ReactNode
   right?: ReactNode
   children: ReactNode
 }) {
   const labelId = useId()
   const hintId = useId()
+  const errorId = useId()
   return (
     <FieldLabelCtx.Provider value={labelId}>
       {/* The hint id is published only when there IS a hint — an `aria-describedby` pointing at a
           missing element is worse than none, because assistive tech resolves it to nothing while the
-          attribute claims a description exists. */}
+          attribute claims a description exists. The error id follows the same rule. */}
       <FieldHintCtx.Provider value={hint ? hintId : undefined}>
+      <FieldErrorCtx.Provider value={error ? errorId : undefined}>
       <div>
         <div className="mb-1.5 flex items-center gap-s">
           <Eyebrow as="span" id={labelId}>{label}</Eyebrow>
@@ -135,7 +171,14 @@ export function Field({ label, hint, right, children }: {
         </div>
         {children}
         {hint && <p id={hintId} data-type="caption" className="mt-1 text-on-surface-low">{hint}</p>}
+        {/* Under the hint, so the hint never moves when an error comes and goes. It keeps
+            `role="alert"` although the control's description also names it: a description is read
+            when the control gains focus, and an error that arrives LATER — a check that settles after
+            typing stops, a save the server refuses — lands while focus is already there, where only
+            the live region tells anyone. */}
+        {error && <FieldError id={errorId} className="mt-1">{error}</FieldError>}
       </div>
+      </FieldErrorCtx.Provider>
       </FieldHintCtx.Provider>
     </FieldLabelCtx.Provider>
   )
@@ -269,7 +312,7 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
   disabledReason?: string
 }) {
   const labelId = useFieldLabelId()
-  const hintId = useFieldHintId()
+  const { describedBy, invalid } = useFieldDescription()
   const autoId = useId()
   // Accessible name: a labelless, name-less control that sits in a Field claims
   // that Field's published label via aria-labelledby. Otherwise (a control with
@@ -292,7 +335,7 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
   const input = (
     <input value={value} type={type} autoFocus={autoFocus} name={name} id={id || name || autoId} autoComplete={autoComplete}
       aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
-      aria-describedby={hintId}
+      aria-describedby={describedBy} aria-invalid={invalid}
       aria-required={required || undefined}
       maxLength={maxLength} minLength={minLength} pattern={pattern} min={min} max={max} step={step}
       disabled={disabled}
@@ -350,7 +393,7 @@ export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLab
    *  makes the cap reachable while typing instead of only as a rejection afterwards. */
   maxLength?: number }) {
   const labelId = useFieldLabelId()
-  const hintId = useFieldHintId()
+  const { describedBy, invalid } = useFieldDescription()
   const autoId = useId()
   // Prefer a Field's published label (aria-labelledby); else an explicit ariaLabel
   // for call-sites that wrap the control in their own (non-Field) section label.
@@ -361,7 +404,7 @@ export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLab
   // member. `aria-labelledby={labelId}` used to be unconditional, silently ignoring a caller's
   // ariaLabel.
   return (
-    <textarea value={value} rows={rows} autoFocus={autoFocus} id={id || autoId} aria-describedby={hintId} aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={!labelId || ariaLabel ? ariaLabel : undefined} onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} placeholder={placeholder}
+    <textarea value={value} rows={rows} autoFocus={autoFocus} id={id || autoId} aria-describedby={describedBy} aria-invalid={invalid} aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={!labelId || ariaLabel ? ariaLabel : undefined} onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} placeholder={placeholder}
       maxLength={maxLength}
       disabled={disabled} title={disabled ? disabledReason || undefined : undefined}
       data-type={mono ? 'body-s' : FIELD_ROLE[size]}
@@ -398,7 +441,7 @@ export function NumberField({ value, onChange, min, max, step, width = 'w-24', a
   ariaLabel?: string
 }) {
   const labelId = useFieldLabelId()
-  const hintId = useFieldHintId()
+  const { describedBy, invalid } = useFieldDescription()
   // Re-synced when the committed value CHANGES out from under us (external patch, clamp, another
   // editor), never on mount — see `useSyncedDraft` (the #624 rollback rail flaked ~7% on that).
   const [local, setLocal] = useSyncedDraft(String(value))
@@ -426,7 +469,7 @@ export function NumberField({ value, onChange, min, max, step, width = 'w-24', a
   }
   return (
     <input type="number" id={fieldId} autoComplete="off" value={local} min={min} max={max} step={step ?? 1}
-      aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={ariaLabel} aria-describedby={hintId}
+      aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={ariaLabel} aria-describedby={describedBy} aria-invalid={invalid}
       onChange={(e) => setLocal(e.target.value)} onBlur={commit}
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
       data-type="body-s"
@@ -436,10 +479,10 @@ export function NumberField({ value, onChange, min, max, step, width = 'w-24', a
 
 export function DateInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const labelId = useFieldLabelId()
-  const hintId = useFieldHintId()
+  const { describedBy, invalid } = useFieldDescription()
   const autoId = useId()
   return (
-    <input type="date" value={value} id={autoId} aria-labelledby={labelId} aria-describedby={hintId} onChange={(e) => onChange(e.target.value)}
+    <input type="date" value={value} id={autoId} aria-labelledby={labelId} aria-describedby={describedBy} aria-invalid={invalid} onChange={(e) => onChange(e.target.value)}
       data-type="body-m"
       className="h-10 rounded-md bg-surface-container px-m text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
   )
@@ -481,7 +524,7 @@ export function Select({ value, onChange, options, disabled, name, id, ariaLabel
    *  announce it as optional. */
   required?: boolean }) {
   const labelId = useFieldLabelId()
-  const hintId = useFieldHintId()
+  const { describedBy, invalid } = useFieldDescription()
   const autoId = useId()
   const claimsFieldLabel = !!labelId && !name && !ariaLabel
   return (
@@ -494,7 +537,7 @@ export function Select({ value, onChange, options, disabled, name, id, ariaLabel
     <div className="relative w-full">
       <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} name={name} id={id || name || autoId}
         aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
-        aria-describedby={hintId} aria-required={required || undefined}
+        aria-describedby={describedBy} aria-invalid={invalid} aria-required={required || undefined}
         title={disabled ? disabledReason || undefined : undefined}
         data-type={FIELD_ROLE[size]}
         className={cx('w-full appearance-none rounded-md pl-m pr-8 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-50', FIELD_SURFACE[surface], FIELD_SIZE[size])}>
@@ -560,7 +603,7 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions, ari
   const fieldRef = useRef<HTMLInputElement>(null)
   const listId = useId()
   const labelId = useFieldLabelId()
-  const hintId = useFieldHintId()
+  const { describedBy, invalid } = useFieldDescription()
   // Each entry once, up to `max`, after the ones already there.
   const addAll = (entries: string[]) => {
     const next = [...values]
@@ -611,7 +654,7 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions, ari
           e.preventDefault()
           addAll(entries)
         }}
-        list={remaining.length ? listId : undefined} name={`chip-${listId}`} aria-describedby={hintId} aria-labelledby={labelId} aria-label={labelId ? undefined : ariaLabel ?? 'Add a tag'}
+        list={remaining.length ? listId : undefined} name={`chip-${listId}`} aria-describedby={describedBy} aria-invalid={invalid} aria-labelledby={labelId} aria-label={labelId ? undefined : ariaLabel ?? 'Add a tag'}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() } else if (e.key === 'Backspace' && !draft && values.length) onChange(values.slice(0, -1)) }}
         onBlur={add}
         data-type="body-s"
@@ -648,6 +691,10 @@ export function Checkbox({ checked, onChange, ariaLabel, className, indeterminat
   // click by staying mixed would otherwise leave the box showing a state the prop no longer says.
   const ref = useRef<HTMLInputElement>(null)
   const fieldId = useId()
+  // The error and not the hint: a Checkbox is a per-row tick that names itself with its item, so a
+  // hint would describe every row identically (`fieldHintConsumed.test.tsx`). An error is different —
+  // it says the choice as it stands is refused, which is true of the tick it sits beside.
+  const errorId = useFieldErrorId()
   useLayoutEffect(() => {
     if (ref.current) ref.current.indeterminate = indeterminate
   })
@@ -658,6 +705,8 @@ export function Checkbox({ checked, onChange, ariaLabel, className, indeterminat
       type="checkbox"
       checked={checked}
       aria-label={ariaLabel}
+      aria-describedby={errorId}
+      aria-invalid={errorId ? true : undefined}
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => { e.stopPropagation(); onChange(e.target.checked) }}
       className={cx(

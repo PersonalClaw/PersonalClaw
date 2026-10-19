@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useFieldHintId } from './forms'
+import { useFieldDescription } from './forms'
 
 /**
  * A keyboard-shortcut recorder: click it, press the combination, done.
@@ -58,7 +58,7 @@ export function ShortcutRecorder({
   // Measured before this, in a browser: `aria-describedby` was null, so a screen-reader user got
   // "Push-to-talk shortcut: ⌘⇧Space — activate to change" and no idea what pressing it does. After:
   // it resolves to that sentence.
-  const hintId = useFieldHintId()
+  const { describedBy, invalid } = useFieldDescription()
   const [recording, setRecording] = useState(false)
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -82,7 +82,8 @@ export function ShortcutRecorder({
       aria-label={recording
         ? `Press the new ${label.toLowerCase()}, or Escape to cancel`
         : `${label}: ${format(value)} — activate to change`}
-      aria-describedby={hintId}
+      aria-describedby={describedBy}
+      aria-invalid={invalid}
       data-type="body-s"
       className={`inline-flex h-9 min-w-32 items-center justify-center rounded-md px-m font-mono transition-colors ${
         recording

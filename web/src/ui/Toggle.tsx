@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { spring } from '../design/motion'
-import { useFieldHintId } from './forms'
+import { useFieldDescription } from './forms'
 
 /** The ONE canonical on/off switch for the whole app. A pill track + a knob that
  *  springs across on toggle (bounce-tier settle). Track = primary when on, neutral
@@ -53,7 +53,7 @@ export function Toggle({
   // axe cannot see this: a paragraph that happens to sit beside a switch is valid HTML with no
   // rule to violate. It is SC 1.3.1 (Info and Relationships) — a relationship conveyed only by
   // proximity. It is NOT 4.1.2: the name, role and state were all present and correct.
-  const hintId = useFieldHintId()
+  const { describedBy: fieldDescribedBy, invalid } = useFieldDescription()
   const sm = size === 'sm'
   const knob = sm ? 14 : 16
   const travel = sm ? 16 : 18
@@ -74,7 +74,7 @@ export function Toggle({
     // it would point out of the a11y tree from a node the tree does not contain.
     return decorative
       ? <span aria-hidden className={trackCls} style={trackStyle}>{knobEl}</span>
-      : <span role="switch" aria-checked={on} aria-label={label} aria-describedby={hintId} className={trackCls} style={trackStyle}>{knobEl}</span>
+      : <span role="switch" aria-checked={on} aria-label={label} aria-describedby={fieldDescribedBy} aria-invalid={invalid} className={trackCls} style={trackStyle}>{knobEl}</span>
   }
   // 🪤 THE `sm` TRACK IS 20px TALL, AND A TARGET MUST BE 24px (WCAG 2.2 SC 2.5.8).
   //
@@ -119,11 +119,12 @@ export function Toggle({
   // transient and self-healing — clear the precondition, the switch stops being soft-off, and the
   // hint becomes its description on the same render. Announcing why a control is unusable beats
   // describing what it would do if it were.
-  const describedBy = softOff ? undefined : hintId
+  const describedBy = softOff ? undefined : fieldDescribedBy
   return (
     <button
       type="button" role="switch" aria-checked={on} aria-label={label}
       aria-describedby={describedBy}
+      aria-invalid={invalid}
       disabled={disabled && !softOff}
       aria-disabled={softOff || undefined}
       title={softOff ? disabledReason : undefined}
