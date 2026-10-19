@@ -23,7 +23,7 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 // that cancel failed silently, the original sends anyway — so the user gets BOTH their revision and
 // the message they thought they had replaced. A duplicate send, from a control that reported nothing.
 //
-// Six sites, two components ~2000 lines apart, one reporter. The reporter is at MODULE scope for
+// Six sites, across the page and its composer region, one reporter. The reporter is at MODULE scope for
 // exactly that reason: a per-component copy is the drift this converges away from, and TypeScript
 // caught the second scope when the first draft made it a closure.
 //
@@ -37,7 +37,13 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 // later pass does not "finish the job" by adding a revert nobody verified against the WS.
 
 const SRC = join(process.cwd(), 'src', 'pages', 'ChatPage.tsx')
-const raw = readSource(SRC)
+/** The chat's composer region, where the turn's Stop, the queue's cancels and the subagent interrupt live. */
+const COMPOSER = join(process.cwd(), 'src', 'pages', 'chat', 'composer', 'useChatComposer.ts')
+const COMPOSER_VIEW = join(process.cwd(), 'src', 'pages', 'chat', 'composer', 'ChatComposer.tsx')
+const page = readSource(SRC)
+const composer = readSource(COMPOSER)
+// The page and its composer region, read as one: the six sites are split between them.
+const raw = [page, composer, readSource(COMPOSER_VIEW)].join('\n')
 // `=>` neutralised before any bounded scan: the catch bodies ARE arrow functions.
 const scan = raw.replace(/=>/g, '⇒')
 
@@ -51,8 +57,11 @@ describe('a failed cancel tells the user the work did not stop', () => {
     // adopter of the callback form. The assertions follow it; the discipline does not change.
     // `failureSentence` joined the import for the INLINE form of the same sentence (the edit
     // editor's failure line), which is the export that module keeps for exactly that.
-    expect(raw, 'the shared sentence is imported').toMatch(
+    expect(page, 'the shared sentence is imported').toMatch(
       /import \{ failureSentence, reportActionFailure, reportingWrite \} from '\.\.\/app\/reportingWrite'/,
+    )
+    expect(composer, 'and by the composer, which stops the turn').toMatch(
+      /import \{ failureSentence, reportActionFailure \} from '\.\.\/\.\.\/\.\.\/app\/reportingWrite'/,
     )
     const shared = readSource(join(process.cwd(), 'src/app/reportingWrite.ts'))
     expect(shared).toMatch(/^export const reportActionFailure = \(what: string\) => \(e: unknown\) => \{$/m)
@@ -144,8 +153,8 @@ describe('a failed cancel tells the user the work did not stop', () => {
     // this press `stopped` it (`chat/turnEndIsAnnounced.test.tsx` drives both outcomes).
     // Bounded by stop()'s own closing brace: the message actions that used to follow it moved to the
     // transcript region, and an open-ended slice would read the rest of the page.
-    const stopAt = raw.indexOf('async function stop()')
-    const stopFn = raw.slice(stopAt, raw.indexOf('\n  }\n', stopAt))
+    const stopAt = composer.indexOf('async function stop()')
+    const stopFn = composer.slice(stopAt, composer.indexOf('\n  }\n', stopAt))
     expect(stopFn, 'stop() must still be found — an empty slice passes nothing').toContain('api.stopChat(')
     expect(stopFn.indexOf('markStreaming(false)'), 'stop() still settles the composer before the call')
       .toBeGreaterThan(-1)

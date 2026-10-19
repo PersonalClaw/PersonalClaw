@@ -131,8 +131,9 @@ describe('the determinate progress primitive', () => {
   it('the seven migrated call sites reach for the primitive', () => {
     // Named explicitly, so a revert of any one fails here by name and not by a generic sweep.
     const adopters: Array<[string, RegExp]> = [
-      [join('pages', 'ChatPage.tsx'), /label=\{`Uploading \$\{u\.name\}`\}/],
-      [join('pages', 'ChatPage.tsx'), /label="Prompt budget used by attached knowledge"/],
+      // The chat's two moved with its composer region (`pages/chat/composer/`).
+      [join('pages', 'chat', 'composer', 'ChatComposer.tsx'), /label=\{`Uploading \$\{u\.name\}`\}/],
+      [join('pages', 'chat', 'composer', 'ContextPickers.tsx'), /label="Prompt budget used by attached knowledge"/],
       [join('pages', 'chat', 'WorkflowProgressCard.tsx'), /steps finished`\}/],
       [join('pages', 'files', 'FilesSection.tsx'), /label=\{`Uploading \$\{u\.name\}`\}/],
       [join('pages', 'knowledge', 'KnowledgeCreatePage.tsx'), /label="Upload progress"/],

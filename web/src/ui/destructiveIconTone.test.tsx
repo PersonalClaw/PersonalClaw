@@ -111,7 +111,13 @@ describe('the nine persisted destroys adopted it', () => {
   it('🔑 the two hand-rolled copies are GONE from their className', () => {
     // The duplication this prop removes. If `hover:text-danger` reappears in a className, the site is
     // re-implementing the primitive instead of asking for it.
-    for (const rel of ['pages/ChatPage.tsx', 'pages/tasks/TaskDetail.tsx']) {
+    for (const rel of [
+      'pages/ChatPage.tsx', 'pages/tasks/TaskDetail.tsx',
+      // The chat's composer region, where four of ChatPage's tinted controls moved.
+      'pages/chat/composer/ChatComposer.tsx', 'pages/chat/composer/KnowledgeChips.tsx',
+      'pages/chat/composer/QueueStack.tsx', 'pages/chat/composer/PasteCards.tsx',
+      'pages/chat/composer/ContextPickers.tsx', 'pages/chat/composer/AutoNudgeMenuItem.tsx',
+    ]) {
       const code = codeOf(rel)
       const tags = [...code.matchAll(/<IconButton[\s\S]{0,420}?\/>/g)].map((m) => m[0])
       const offenders = tags.filter((t) => /className="[^"]*hover:text-danger/.test(t))
@@ -139,13 +145,14 @@ describe('🔴 the composer controls were ALREADY tinted, and that decision stan
   // on my classification would have REMOVED a tint the product deliberately has — a visual regression
   // imposed by taste over a consistent existing decision. They adopt the prop instead, which preserves
   // their appearance byte-for-byte and removes the duplicate.
-  // `Remove file` moved with the composer's attachment chips into their own module.
+  // `Remove file` moved with the composer's attachment chips into their own module, and the rest
+  // with the chat's composer region (`pages/chat/composer/`).
   const ALREADY_TINTED: [string, string][] = [
-    ['Cancel upload', 'pages/ChatPage.tsx'],
+    ['Cancel upload', 'pages/chat/composer/ChatComposer.tsx'],
     ['Remove file', 'pages/chat/AttachmentChips.tsx'],
-    ['Remove knowledge reference', 'pages/ChatPage.tsx'],
-    ['Cancel queued message', 'pages/ChatPage.tsx'],
-    ['Remove paste', 'pages/ChatPage.tsx'],
+    ['Remove knowledge reference', 'pages/chat/composer/KnowledgeChips.tsx'],
+    ['Cancel queued message', 'pages/chat/composer/QueueStack.tsx'],
+    ['Remove paste', 'pages/chat/composer/PasteCards.tsx'],
   ]
   for (const [label, rel] of ALREADY_TINTED) {
     it(`ChatPage — "${label}" keeps its danger tint, now via the prop`, () => {

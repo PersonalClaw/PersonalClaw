@@ -7,8 +7,8 @@
  *  from what the backend stored — is driven directly here, with a VACUITY leg proving the
  *  assertion can fail (the same message WITHOUT `meta.ui_label` renders the JSON).
  *
- *  🪤 The live-send half is asserted on ChatPage's SOURCE, not by rendering it. `ChatPage.tsx`
- *  is a 4k-line page that owns a socket, a composer and a dozen panels; there is no harness in
+ *  🪤 The live-send half is asserted on the chat composer's SOURCE (`chat/composer/useChatComposer.ts`,
+ *  which sends for `ChatPage.tsx`), not by rendering it. `ChatPage.tsx` is a 4k-line page that owns a socket, a composer and a dozen panels; there is no harness in
  *  this suite that mounts it, and inventing one to check two call sites would be a bigger
  *  fixture than the feature. What is checked is exactly the wiring a render would prove: the
  *  bridge consumer forwards `meta.label` as `uiLabel`, the local turn is built from `uiLabel`
@@ -22,7 +22,7 @@ import { hydrateTurns, type HistMsg } from './chatTypes'
 const MACHINE = '[UI] log_expense: {"amount":"12.40","vendor":"Acme"}'
 const LABEL = 'Log expense'
 
-const chatSource = readFileSync(join(process.cwd(), 'src/pages/ChatPage.tsx'), 'utf8')
+const chatSource = readFileSync(join(process.cwd(), 'src/pages/chat/composer/useChatComposer.ts'), 'utf8')
 
 function turnsFor(meta?: HistMsg['meta']) {
   return hydrateTurns([{ role: 'user', content: MACHINE, ts: '2026-08-24T00:00:00Z', meta }])

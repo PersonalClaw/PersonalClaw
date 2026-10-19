@@ -17,13 +17,20 @@ import { MEMORY_MODES, MEMORY_MODE_NOTICE } from './memoryModeCopy'
 const read = (p: string): string => readFileSync(join(process.cwd(), p), 'utf8')
 const GATEWAY = join('..', 'src', 'personalclaw')
 /** Only rendered text can mislead a user; comments that quote the old claim do not. */
+/** The chat's composer region, which renders the memory-mode picker and notice. */
+const COMPOSER_FILES = [
+  'src/pages/chat/composer/useChatComposer.ts', 'src/pages/chat/composer/ChatComposer.tsx',
+  'src/pages/chat/composer/ContextPickers.tsx', 'src/pages/chat/composer/KnowledgeChips.tsx',
+  'src/pages/chat/composer/QueueStack.tsx', 'src/pages/chat/composer/PasteCards.tsx',
+  'src/pages/chat/composer/AutoNudgeMenuItem.tsx',
+]
 const strip = (raw: string) =>
   raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
 
 describe('a chat that is not persistent says what is kept', () => {
   it('the chat page promises a restricted chat no place in the history that lists none of them', () => {
-    // The page and the stream it composes (`chat/useChatStream.ts`).
-    for (const file of ['src/pages/ChatPage.tsx', 'src/pages/chat/useChatStream.ts']) {
+    // The page and the stream and composer it composes (`chat/useChatStream.ts`, `chat/composer/`).
+    for (const file of ['src/pages/ChatPage.tsx', 'src/pages/chat/useChatStream.ts', ...COMPOSER_FILES]) {
       const page = strip(read(file))
       expect(page, file).not.toMatch(/saved in your history/)
       expect(page, file).not.toMatch(/forgotten when the session ends|Forget when the session ends/)
@@ -77,22 +84,27 @@ describe('a chat that is not persistent says what is kept', () => {
   })
 
   it('the chat page states none of it itself: the picker and the notice read the owner', () => {
-    const page = strip(read('src/pages/ChatPage.tsx'))
-    expect(page).toMatch(/from '\.\/chat\/memoryModeCopy'/)
-    expect(page).toMatch(/MEMORY_MODE_NOTICE\[memoryMode\]/)
-    expect(page, 'a mode sentence spelled at the call site again').not.toMatch(/'(Incognito|Temporary) — /)
+    // The picker and the notice render in the chat's composer region (`chat/composer/ChatComposer.tsx`).
+    const composer = strip(read('src/pages/chat/composer/ChatComposer.tsx'))
+    expect(composer).toMatch(/from '\.\.\/memoryModeCopy'/)
+    expect(composer).toMatch(/MEMORY_MODE_NOTICE\[memoryMode\]/)
+    for (const file of ['src/pages/ChatPage.tsx', ...COMPOSER_FILES])
+      expect(strip(read(file)), `${file}: a mode sentence spelled at the call site again`).not.toMatch(/'(Incognito|Temporary) — /)
   })
 
   it('the chat page keeps no copy of a Temporary chat that outlives the page', () => {
     const page = strip(read('src/pages/ChatPage.tsx'))
+    // The composer creates the session and seeds the cache with its first message.
+    const composer = strip(read('src/pages/chat/composer/useChatComposer.ts'))
     // The transcript cache lives with the chat's stream, which seeds and revalidates from it.
     const stream = strip(read('src/pages/chat/useChatStream.ts'))
     // The one writer of the transcript cache persists every mode but Temporary to session storage.
     expect(stream).toMatch(/writeQuery\(detailKey\(key\), d, d\.memory_mode !== 'temporary'\)/)
     expect(stream.match(/writeQuery\(detailKey\(/g)?.length, 'a second writer of the transcript cache').toBe(1)
     expect(page.match(/writeQuery\(detailKey\(/g), 'a second writer of the transcript cache').toBeNull()
+    expect(composer.match(/writeQuery\(detailKey\(/g), 'a second writer of the transcript cache').toBeNull()
     // The first message of a new chat is seeded with its mode, so that seed is not persisted either.
-    expect(page).toMatch(/messages: seedMessages, run_state: idleRunState\(created\.key\), memory_mode: memoryMode \}/)
+    expect(composer).toMatch(/messages: seedMessages, run_state: idleRunState\(created\.key\), memory_mode: memoryMode \}/)
     // A chat that is gone drops what the page held of it.
     expect(stream).toMatch(/status === 404\) \{ invalidateKeys\(detailKey\(sessionId\)\); setMissing\(true\) \}/)
   })

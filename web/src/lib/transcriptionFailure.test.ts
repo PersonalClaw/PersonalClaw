@@ -43,9 +43,11 @@ describe('§2 both composers say it', () => {
   const read = (path: string) => readFileSync(join(SRC, path), 'utf8')
 
   it('the chat composer keys on the code, not the words', () => {
-    const chat = read('pages/ChatPage.tsx')
+    // The chat composer's dictation lives in its controller (`chat/composer/useChatComposer.ts`).
+    const chat = read('pages/chat/composer/useChatComposer.ts')
     expect(chat).toMatch(/transcriptionFailure\(r\)/)
     expect(chat).not.toMatch(/\/not available\/i/)
+    expect(read('pages/ChatPage.tsx')).not.toMatch(/\/not available\/i/)
   })
 
   it('the loop composer says why too, instead of dropping the recording', () => {

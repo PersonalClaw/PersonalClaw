@@ -145,7 +145,8 @@ describe('the verdict actually reaches the user', () => {
 
 // ── the call sites, pinned narrowly ─────────────────────────────────────────────────────────
 describe('both optimize handlers route through the shared verdict', () => {
-  const chat = read('pages/ChatPage.tsx')
+  // The chat's optimize handler moved with its composer region.
+  const chat = read('pages/chat/composer/useChatComposer.ts')
   const loop = read('pages/loop/LoopComposer.tsx')
 
   it('neither handler still reads `changed` by hand', () => {

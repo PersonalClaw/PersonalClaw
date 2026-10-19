@@ -64,10 +64,14 @@ describe('widget bridge: single path', () => {
   })
 
   it('keeps the chat host a consumer of the hook, never a second listener', () => {
-    const chat = files.find((f) => f.rel === join('pages', 'ChatPage.tsx'))?.text ?? ''
+    // The chat page and its composer region (`chat/composer/useChatComposer.ts`), which sends the action.
+    const page = files.find((f) => f.rel === join('pages', 'ChatPage.tsx'))?.text ?? ''
+    const chat = files.find((f) => f.rel === join('pages', 'chat', 'composer', 'useChatComposer.ts'))?.text ?? ''
     expect(chat).toContain('useWidgetActionBridge(')
     expect(chat).toContain('takePendingWidgetAction()')
     expect(chat).not.toContain("addEventListener('message'")
+    expect(page, 'the page is not a second host').not.toContain('useWidgetActionBridge(')
+    expect(page).not.toContain("addEventListener('message'")
   })
 })
 

@@ -45,12 +45,12 @@ describe('sessionTemplatePatch — only the fields the starter carries', () => {
 })
 
 // The other half of the clause — "prefills the … prompt and enables Send" — is a composer-INPUT
-// write inside ChatPage's `applyTemplate`. ChatPage is not rendered in this suite (its own tests
+// write inside the chat composer's `applyTemplate` (`composer/useChatComposer.ts`). ChatPage is not rendered in this suite (its own tests
 // read source structurally, e.g. sessionLoadHonesty.test.ts), so this pins the wiring the same
 // way: the prompt is prefilled through `setInput(t.first_prompt)`, guarded so an empty starter
 // leaves the composer untouched. A non-empty input is what enables Send.
 describe('applyTemplate wires the prompt prefill (ChatPage source)', () => {
-  const src = readFileSync(join(__dirname, '..', 'ChatPage.tsx'), 'utf-8')
+  const src = readFileSync(join(__dirname, 'composer', 'useChatComposer.ts'), 'utf-8')
   it('applies the patch via the shared helper and prefills the prompt through setInput', () => {
     expect(src).toContain('const patch = sessionTemplatePatch(t)')
     expect(src).toContain('if (t.first_prompt) setInput(t.first_prompt)')

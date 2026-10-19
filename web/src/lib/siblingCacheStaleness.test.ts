@@ -120,9 +120,11 @@ describe('every mutation site busts the collection it changed', () => {
   it('the picker key lives in its COLLECTION namespace, not the chat one', () => {
     // 🪤 The rename is load-bearing: `chat:artifact-picker` could never be caught by an
     // artifacts-prefix bust, so the naming was the defect's other half.
-    const chat = codeOf('pages/ChatPage.tsx')
+    // The picker is the chat composer's (`chat/composer/ContextPickers.tsx`); the page keeps none.
+    const chat = codeOf('pages/chat/composer/ContextPickers.tsx')
     expect(chat).toMatch(/useQuery\('artifacts:chat-picker'/)
     expect(chat, 'the old surface-namespaced key must be gone').not.toMatch(/chat:artifact-picker/)
+    expect(codeOf('pages/ChatPage.tsx'), 'the old surface-namespaced key must be gone').not.toMatch(/chat:artifact-picker/)
   })
 
   it('prefix mode is actually reachable — it was dead code before this change', () => {

@@ -68,6 +68,8 @@ describe('deliverableToOpenSession — the one session gate', () => {
 const CHAT_PAGE = readFileSync(join(process.cwd(), 'src', 'pages', 'ChatPage.tsx'), 'utf8')
 /** The chat's stream (`useChatStream.ts`), where ChatPage's frames are dispatched. */
 const CHAT_STREAM = readFileSync(join(process.cwd(), 'src', 'pages', 'chat', 'useChatStream.ts'), 'utf8')
+/** The chat's composer (`composer/useChatComposer.ts`), which sends and gates the routing chip. */
+const CHAT_COMPOSER = readFileSync(join(process.cwd(), 'src', 'pages', 'chat', 'composer', 'useChatComposer.ts'), 'utf8')
 /** Comments describe the old duplication on purpose, so the rail must read CODE only. */
 const stripComments = (s: string) =>
   s.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -112,13 +114,19 @@ describe('the session gate is resolved in ONE place', () => {
 
   it('the routing chip is rendered from a DERIVED value, never from raw pending state', () => {
     const src = stripComments(CHAT_PAGE)
+    const composer = stripComments(CHAT_COMPOSER)
     // The render gate is the proof that a suggestion cannot be shown for the wrong session:
     // `routingSuggestion` only exists when the resolver says the payload is ours.
-    expect(src).toMatch(
+    expect(composer).toMatch(
       /const routingSuggestion = deliverableToOpenSession\(pendingRouting\?\.session, sessionId\)/,
+    )
+    expect(src, 'ChatSession hands the composer the pending payload it was given').toMatch(
+      /useChatComposer\(\{[^}]*\bpendingRouting\b/,
     )
     expect(src, 'ChatSession must not own the pending payload — the remount destroys it')
       .not.toMatch(/useState<RoutingSuggestion \| null>\(null\)[\s\S]{0,200}function ChatSession/)
+    expect(composer, 'nor may the composer, which remounts with it')
+      .not.toMatch(/useState<RoutingSuggestion \| null>/)
   })
 
   it('the pending payload is owned ABOVE the remount boundary', () => {
@@ -145,7 +153,7 @@ describe('the session gate is resolved in ONE place', () => {
   })
 
   it('the send response applies the suggestion, with no identity logic of its own', () => {
-    const src = stripComments(CHAT_PAGE)
+    const src = stripComments(CHAT_COMPOSER)
     expect(src, 'the send response is the transport that reaches a just-created session').toMatch(
       /if \(sent\?\.routing_suggestion\?\.agent\) setRoutingSuggestion\(sent\.routing_suggestion\)/,
     )

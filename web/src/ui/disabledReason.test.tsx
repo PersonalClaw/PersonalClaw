@@ -167,6 +167,8 @@ describe('the migrated submits pass a reason', () => {
     'pages/loops/LoopCockpitPage.tsx',
     'pages/apps/AppsSection.tsx',
     'pages/ChatPage.tsx',
+    // Auto-nudge's Arm, which moved with the chat's composer region.
+    'pages/chat/composer/AutoNudgeMenuItem.tsx',
   ]
 
   for (const rel of ADOPTERS) {

@@ -73,6 +73,8 @@ const stripComments = (s: string) =>
   s.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 const CODE = stripComments(CHAT_PAGE)
 const STREAM = stripComments(CHAT_STREAM)
+/** The composer, whose first send creates the session and so causes the remount. */
+const COMPOSER = stripComments(readFileSync(join(process.cwd(), 'src', 'pages', 'chat', 'composer', 'useChatComposer.ts'), 'utf8'))
 
 describe('ChatPage wires the handoff', () => {
   it('initialises `streaming` from it, not from a bare false', () => {
@@ -111,8 +113,9 @@ describe('ChatPage wires the handoff', () => {
   })
 
   it('records it BEFORE the navigate that causes the remount', () => {
-    const set = CODE.indexOf('setLiveRun(created.key)')
-    const nav = CODE.indexOf('navigate(`chat/${created.key}`')
+    const set = COMPOSER.indexOf('setLiveRun(created.key)')
+    const nav = COMPOSER.indexOf('navigate(`chat/${created.key}`')
+    expect(CODE, 'ChatSession must hand the composer the handoff setter').toMatch(/useChatComposer\(\{[^}]*\bsetLiveRun\b/)
     expect(set, 'ensureSession must hand the live run across').toBeGreaterThan(-1)
     expect(nav).toBeGreaterThan(-1)
     expect(set, 'recorded after the navigate, the replacement has already mounted idle').toBeLessThan(nav)

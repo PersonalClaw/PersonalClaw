@@ -34,6 +34,9 @@ const strip = (s: string) => s.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\
 const CODE = strip(SRC)
 /** The chat's transcript controller, whose "Switch to Agent & run it" writes the task mode too. */
 const TRANSCRIPT = strip(readFileSync(join(process.cwd(), 'src/pages/chat/transcript/useTranscript.ts'), 'utf8'))
+/** The chat's composer controller, which owns the selection and every write that persists it. */
+const COMPOSER_SRC = readFileSync(join(process.cwd(), 'src/pages/chat/composer/useChatComposer.ts'), 'utf8')
+const COMPOSER = strip(COMPOSER_SRC)
 
 /** Every api call that persists a piece of the composer's selection onto a session. */
 const SELECTION_WRITES = [
@@ -47,14 +50,14 @@ const SELECTION_WRITES = [
 
 describe('a selection that fails to persist tells the user', () => {
   it('the reporter exists and carries the server’s message', () => {
-    expect(CODE).toMatch(/const persistSelection = <T,>\(what: string, p: Promise<T>\)/)
-    expect(CODE).toMatch(/notify\(`Couldn't apply \$\{what\} to this session: \$\{String\(\(e as Error\)\?\.message \|\| e\)\}`, 'error'\)/)
+    expect(COMPOSER).toMatch(/const persistSelection = <T,>\(what: string, p: Promise<T>\)/)
+    expect(COMPOSER).toMatch(/notify\(`Couldn't apply \$\{what\} to this session: \$\{String\(\(e as Error\)\?\.message \|\| e\)\}`, 'error'\)/)
   })
 
   it('no selection write swallows its rejection', () => {
     // The ratchet. Any of these six reintroduced with a bare catch fails here, wherever in the file.
     const offenders: string[] = []
-    for (const code of [CODE, TRANSCRIPT]) {
+    for (const code of [CODE, COMPOSER, TRANSCRIPT]) {
       for (const call of SELECTION_WRITES) {
         for (const m of code.matchAll(new RegExp(`api\\.${call}\\(`, 'g'))) {
           const chain = code.slice(m.index!, m.index! + 320)
@@ -68,7 +71,7 @@ describe('a selection that fails to persist tells the user', () => {
   it('every selection write goes through the one reporter', () => {
     // Not just "does not swallow" — they must share the reporter, or the copy and the level drift.
     let routed = 0
-    for (const m of CODE.matchAll(/persistSelection\('([^']+)', api\.(\w+)\(/g)) {
+    for (const m of COMPOSER.matchAll(/persistSelection\('([^']+)', api\.(\w+)\(/g)) {
       expect(SELECTION_WRITES, `unexpected call routed: ${m[2]}`).toContain(m[2])
       routed++
     }
@@ -78,19 +81,20 @@ describe('a selection that fails to persist tells the user', () => {
   it('each report names WHICH pick failed', () => {
     // "Couldn't apply this session" would be useless when five things can fail independently.
     for (const what of ['this agent', 'this model', 'this approval mode', 'this task mode', 'this reasoning effort', 'this natural-voice setting'])
-      expect(CODE, `missing a report for ${what}`).toContain(`persistSelection('${what}'`)
+      expect(COMPOSER, `missing a report for ${what}`).toContain(`persistSelection('${what}'`)
   })
 
   it('the composer still updates OPTIMISTICALLY — the fix reports, it does not block', () => {
     // If this ever awaits the round-trip, the composer stalls on every pick and the reasoning in the
     // header ("deliberately fire-and-forget") is stale.
-    expect(CODE).toMatch(/const nextSel = \{ \.\.\.selection, \.\.\.patch \}\s*\n\s*setSelection\(nextSel\)/)
+    expect(COMPOSER).toMatch(/const nextSel = \{ \.\.\.selection, \.\.\.patch \}\s*\n\s*setSelection\(nextSel\)/)
   })
 
   it('and it does NOT revert the selection — the deliberate non-fix', () => {
     // Recorded as a decision, not an omission. A revert would fight input the user is still editing.
-    const at = CODE.indexOf('const persistSelection')
-    const body = CODE.slice(at, at + 320)
+    const at = COMPOSER.indexOf('const persistSelection')
+    expect(at, 'persistSelection must exist in the composer controller').toBeGreaterThan(-1)
+    const body = COMPOSER.slice(at, at + 320)
     expect(body, 'the reporter must not roll local state back').not.toMatch(/setSelection\(/)
   })
 
@@ -118,5 +122,6 @@ describe('a selection that fails to persist tells the user', () => {
     expect(SRC).toMatch(/import \{ notify \} from '\.\.\/app\/appSdk'/)
     const uses = (CODE.match(/notify\(/g) || []).length
     expect(uses, 'ChatPage already reported failures this way').toBeGreaterThan(5)
+    expect(COMPOSER_SRC, 'the composer reports through the same notify').toMatch(/import \{ notify \} from '\.\.\/\.\.\/\.\.\/app\/appSdk'/)
   })
 })
