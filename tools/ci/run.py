@@ -314,6 +314,7 @@ def run_job(
     env: Mapping[str, str] | None = None,
     grace: float = GRACE,
     before_stop: Callable[[int], None] | None = None,
+    budget: float | None = None,
 ) -> Result:
     """Run *argv* in *cwd* with :func:`job_env`, in a process group of its own, and say how it
     ended.
@@ -334,14 +335,21 @@ def run_job(
 
     Only the main thread can take SIGINT and SIGTERM, so on any other thread this raises
     :class:`RuntimeError` and starts nothing, as it does when :func:`real_home` can't be told.
-    *timeout* must be a finite number of seconds above 0, and *grace* a finite number of seconds,
-    0 or more."""
+    *budget* is the seconds a timeout's reason names: the time the caller gave the job, when
+    *timeout* is only what is left of it as this step starts (it defaults to *timeout*). So a
+    job with a 2 s budget always reads "timed out after 2s", however late a step started.
+
+    *timeout* and *budget* must be finite numbers of seconds above 0, and *grace* a finite number
+    of seconds, 0 or more."""
     if threading.current_thread() is not threading.main_thread():
         raise RuntimeError("run_job runs a job only on the main thread, which takes its signals")
     if not _finite(timeout) or timeout <= 0:
         raise ValueError(f"a job's timeout must be a finite number of seconds above 0: {timeout!r}")
     if not _finite(grace) or grace < 0:
         raise ValueError(f"a job's grace must be a finite number of seconds, 0 or more: {grace!r}")
+    named = timeout if budget is None else budget
+    if not _finite(named) or named <= 0:
+        raise ValueError(f"a job's budget must be a finite number of seconds above 0: {budget!r}")
     full_env = job_env(scratch, path=path, env=env)
     watched = real_home() / _PERSONALCLAW_DIR
     was_there = os.path.lexists(watched)
@@ -375,7 +383,7 @@ def run_job(
             signal.signal(restored, handler)  # type: ignore[arg-type]
     violations: list[str] = []
     if timed_out:
-        violations.append(f"the job timed out after {timeout:g}s")
+        violations.append(f"the job timed out after {named:g}s")
     if noted.signals:
         violations.append(f"interrupted by {signal.Signals(noted.signals[0]).name}")
     elif not timed_out and proc.returncode != 0:
