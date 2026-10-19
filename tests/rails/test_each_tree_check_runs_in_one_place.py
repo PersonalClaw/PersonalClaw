@@ -293,10 +293,6 @@ KNOWN_FILE_COPIES: frozenset[tuple[str, str]] = frozenset(
         ("breadth.yml security-corpus", "tests/security/test_scanner_runtime_use.py"),
         ("breadth.yml security-corpus", "tests/test_supply_chain_gates.py"),
         ("breadth.yml security-corpus", "tests/test_supply_chain_scanner.py"),
-        ("ci.yml browse-live", "tests/test_browse_behavioural_proof_is_reachable.py"),
-        ("ci.yml browse-live", "tests/test_browse_cdp_live.py"),
-        ("ci.yml browse-live", "tests/test_browse_safety_script.py"),
-        ("ci.yml rails-checks", "tests/test_npm_advisory_floors.py"),
         ("ci.yml security-corpus", "tests/security/test_app_data_reads_never_follow_links.py"),
         ("ci.yml security-corpus", "tests/security/test_app_installs_what_was_scanned.py"),
         ("ci.yml security-corpus", "tests/security/test_app_signature.py"),
@@ -311,6 +307,24 @@ KNOWN_FILE_COPIES: frozenset[tuple[str, str]] = frozenset(
         ("ci.yml security-corpus", "tests/test_supply_chain_scanner.py"),
     }
 )
+
+_NO_BROWSER = (
+    "browse-live runs it on Linux with a browser; the shards' run is its only run on macOS and "
+    "its only run without one, where the live cases skip and the string and structure tests run"
+)
+
+#: Files a workflow job runs by name that the shards keep collecting on purpose, each with why.
+#: ``(workflow job, file): reason``. An exemption whose file is no longer a copy fails, so the
+#: list shrinks with the tree.
+EXEMPT_FILE_COPIES: Mapping[tuple[str, str], str] = {
+    ("ci.yml browse-live", "tests/test_browse_behavioural_proof_is_reachable.py"): _NO_BROWSER,
+    ("ci.yml browse-live", "tests/test_browse_cdp_live.py"): (
+        f"{_NO_BROWSER}; it is security-marked, so no leg selects it out"
+    ),
+    ("ci.yml browse-live", "tests/test_browse_safety_script.py"): (
+        f"{_NO_BROWSER}; it is security-marked, so no leg selects it out"
+    ),
+}
 
 
 # ── reading a module ──────────────────────────────────────────────────────────────────────────
@@ -632,9 +646,35 @@ def test_no_whole_tree_check_gains_a_copy_in_the_suite() -> None:
     )
 
 
+def exemption_problems(
+    found: set[tuple[str, str]], exempt: Mapping[tuple[str, str], str]
+) -> list[str]:
+    """Each exemption with no reason, or whose file is no longer run in its job and the shards."""
+    problems = [
+        f"exempt with no reason: {a} {b}"
+        for (a, b), why in sorted(exempt.items())
+        if not why.strip()
+    ]
+    problems += [
+        f"exempt, but no longer a file copy: {a} {b}" for a, b in sorted(set(exempt) - found)
+    ]
+    return problems
+
+
 def test_no_test_file_runs_in_a_job_and_in_the_shards() -> None:
-    problems = _diff(file_copies(REPO), KNOWN_FILE_COPIES, "file run in a job and the shards")
+    found = file_copies(REPO)
+    problems = _diff(
+        found - set(EXEMPT_FILE_COPIES), KNOWN_FILE_COPIES, "file run in a job and the shards"
+    )
+    problems += exemption_problems(found, EXEMPT_FILE_COPIES)
     assert not problems, "\n  ".join(problems)
+
+
+def test_an_exemption_naming_security_marked_says_so_only_where_it_is() -> None:
+    """A reason that calls its file security-marked is checked against the file's marker."""
+    for (_job, rel), why in EXEMPT_FILE_COPIES.items():
+        marked = "pytest.mark.security" in (REPO / rel).read_text(encoding="utf-8")
+        assert ("security-marked" in why) is marked, (rel, why)
 
 
 def job_owned_problems(root: Path, owned: Mapping[str, str]) -> list[str]:
@@ -923,6 +963,17 @@ def test_a_file_left_to_a_job_that_no_longer_runs_it_fails(tmp_path) -> None:
     assert "tests/test_gone.py is left to ci.yml lint, but pytest would not collect it" in (
         job_owned_problems(root, gone)
     )
+
+
+def test_an_exemption_that_is_no_longer_a_copy_or_has_no_reason_fails(tmp_path) -> None:
+    found = file_copies(_planted_repo(tmp_path, _NAMED), {})
+    assert exemption_problems(found, {("ci.yml lint", "tests/test_a.py"): "a reason"}) == []
+    assert exemption_problems(found, {("ci.yml lint", "tests/test_a.py"): " "}) == [
+        "exempt with no reason: ci.yml lint tests/test_a.py"
+    ]
+    assert exemption_problems(found, {("ci.yml e2e", "tests/test_a.py"): "a reason"}) == [
+        "exempt, but no longer a file copy: ci.yml e2e tests/test_a.py"
+    ]
 
 
 def test_a_docs_reader_the_shards_leave_to_its_job_is_not_the_suites(tmp_path) -> None:

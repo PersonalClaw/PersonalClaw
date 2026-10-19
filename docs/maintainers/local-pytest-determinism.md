@@ -43,7 +43,8 @@ still collects them.
 
 No shard runs a test file that a workflow job runs by name, either. Each such file is listed,
 with its job, in `JOB_OWNED` in `tools/ci/shards.py`, so it runs once per CI run, in that job:
-`tests/test_website_installer.py` runs in `ci.yml`'s `lint` job.
+`tests/test_website_installer.py` runs in `ci.yml`'s `lint` job, and
+`tests/test_npm_advisory_floors.py` in its `rails-checks` job.
 
 ## Measurement protocol
 
