@@ -93,7 +93,8 @@ describe('both surfaces that ask use the one status-keyed hook', () => {
   const read = (rel: string) => readFileSync(join(process.cwd(), 'src', rel), 'utf8')
 
   it('🔑 the code cockpit no longer decides "missing" by matching the error text', () => {
-    const cockpit = read('pages/code/CodeCockpitPage.tsx')
+    // The cockpit asks from its controller, where its state moved.
+    const cockpit = read('pages/code/cockpit/useCodeCockpit.ts')
     expect(cockpit).toContain('useWorkspaceMissing(')
     expect(cockpit.toLowerCase()).not.toContain(".includes('no such directory')")
   })

@@ -696,7 +696,7 @@ redirecting a run-backed loop (`run_id`) to its run page, `#/workflows/runs/<id>
 
 ### The code cockpit's regions (web)
 
-`CodeCockpitPage.tsx` is being split into region controllers under
+`CodeCockpitPage.tsx` is a composition of region controllers under
 `web/src/pages/code/cockpit/`, each a hook and its component:
 
 - **The terminal** — `useBottomTerminal.ts` opens a PTY in the workspace,
@@ -753,6 +753,21 @@ redirecting a run-backed loop (`run_id`) to its run page, `#/workflows/runs/<id>
   cockpit cannot do something: a command not on PATH, a runtime that cannot run
   the project, a worker asked again for its finding, a brownfield draft with no
   workspace, a workspace folder that is gone.
+- **The cockpit's state** — `useCodeCockpit.ts` keeps the project for one code
+  loop: read on mount and from a cached snapshot for the first paint, kept
+  current from the run stream and a poll while it runs, `missing` once the loop
+  is gone, and a failed read said and polled until it recovers. It also keeps
+  the run's flags, the worker's live activity per session from the chat socket,
+  and the terminal, toast and answer-panel state the regions share.
+  `cockpitActions.ts` is what the page derives from a project it has and does
+  to it: run controls behind one guard, a runtime move, the build or test
+  command in the terminal, a brownfield draft's workspace, and delete. It is a
+  plain function, called once the page knows it has a project.
+
+The page itself calls `useCodeCockpit`, shows the loading, missing or
+load-error shell until there is a project, and then lays the regions out:
+header, meta strip, prompt bar, notices, the files rail, the editor and the
+Tasks panel, with the workspace picker and the toast over them.
 
 What more than one region reads lives in `cockpitShared.ts` (the statuses a
 steer still reaches and the ones that end a run, a stage's key, a worker path

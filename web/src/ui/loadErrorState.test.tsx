@@ -441,6 +441,9 @@ describe('the migrated surfaces read the error', () => {
       'pages/chat/history/useChatHistory.ts', 'pages/chat/history/ChatHistoryPage.tsx',
       'pages/chat/history/ChatHistorySidePanel.tsx', 'pages/chat/composer/ContextPickers.tsx',
     ],
+    // The cockpit renders the error, its controller captures it, and its actions are the rest of
+    // what the page used to hold.
+    'pages/code/CodeCockpitPage.tsx': ['pages/code/cockpit/useCodeCockpit.ts', 'pages/code/cockpit/cockpitActions.ts'],
   }
   const surfaceOf = (rel: string): string[] => [rel, ...(ADOPTER_PARTS[rel] ?? [])]
   const ADOPTERS = [
@@ -538,9 +541,9 @@ describe('the migrated surfaces read the error', () => {
     // routes 404/400 to a permanent `'missing'` state and everything else into `loadErr`, which is now the
     // rejection itself rather than a pre-flattened string, so the server's own message reaches the
     // primitive. Two things worth knowing before trusting this row:
-    //   ⚠️ The capture matcher below is FILE-SCOPED, and this file also contains an unrelated
-    //      `.catch((e) => { if (alive) setErr(…) })` (the terminal-session error, ~:2990) that satisfies it
-    //      on its own. The real capture is `setLoadErr` in `load()`; the rail cannot tell the two apart.
+    //   ⚠️ The capture matcher below is FILE-SCOPED. It once met an unrelated terminal-session catch
+    //      in this file; since the page was split into regions it meets only a comment, so the real
+    //      capture, `setLoadErr` in `useCodeCockpit`'s `load()`, has its own pin after this list.
     //   ⚠️ The `cachedCalls` key scan only matches SINGLE-QUOTED keys, so this file's one `useQuery`
     //      — `` `code:project:${id}` ``, a template literal — is invisible to both swallow checks. That
     //      call DOES `.catch(() => null)`, deliberately: it is an instant-paint seed (`persist:false`) that
@@ -615,6 +618,14 @@ describe('the migrated surfaces read the error', () => {
       ).toBe(true)
     })
   }
+
+  it("the code cockpit's load captures its rejection into `loadErr`", () => {
+    // The capture matcher above is file-scoped, and across the cockpit's files it is satisfied by a
+    // COMMENT ("teardown error" in the delete handler), not by the capture. The real one is
+    // `load()`'s catch, whose braces the matcher's `[^}]*` cannot cross, so it is pinned here.
+    expect(readSource(join(SRC, 'pages/code/cockpit/useCodeCockpit.ts')))
+      .toMatch(/\.catch\(\(e\) => \{[\s\S]{0,800}?else setLoadErr\(new Error\(/)
+  })
 
   it('no OTHER consumer of an adopter\'s cache key swallows either', () => {
     // 🔴 THE ONE THAT ACTUALLY BIT. `useQuery` caches by KEY, so a swallow at ANY call site
@@ -798,10 +809,6 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // The two that moved out of `ChatPage` with the docked panes, the same debt under their new address.
   'pages/chat/panes/useChatPanes.ts': 2,
   'pages/chat/SessionSkillsReview.tsx': 1,
-  // 4 → 1: three moved out with the files rail (below, under `pages/code/cockpit/files/`). The one
-  // left is the one this file already documented as a deliberate keep: an instant-paint seed that
-  // only ever SETS `project` when it has data, so a failed seed cannot mask the page's real `loadErr`.
-  'pages/code/CodeCockpitPage.tsx': 1,
   // A status-DISCRIMINATING branch, and the reason this map counts form B at all rather than trusting
   // a braced body: `if (e.status === 404) setResume(null)` reads a 404 as the answer "there is no
   // draft to resume", which is exactly what a 404 means. Left as debt rather than teaching the scanner
@@ -824,6 +831,10 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // search in the finder reads as no matches.
   'pages/code/cockpit/files/ChangesPanel.tsx': 2,
   'pages/code/cockpit/files/FileFinder.tsx': 1,
+  // The one this file already documented as a deliberate keep, moved out of `CodeCockpitPage` with
+  // the cockpit's state: an instant-paint seed that only ever SETS `project` when it has data, so a
+  // failed seed cannot mask the cockpit's real `loadErr`. The page itself swallows nothing now.
+  'pages/code/cockpit/useCodeCockpit.ts': 1,
   'pages/dashboard/PinnedTiles.tsx': 2,
   // Path autocomplete. No sentence is composed from the result, so an empty suggestion list asserts
   // nothing — the narrow line the settings-hub keeps below are also on the right side of.
@@ -1392,7 +1403,8 @@ describe('§B no fetcher swallows its own rejection, tree-wide and by COUNT', ()
 const FETCHER_SWALLOW_BUDGET: Record<string, number> = {
   'app/usePlatform.ts': 1,
   'pages/agents/AgentDetail.tsx': 1,
-  'pages/code/CodeCockpitPage.tsx': 1,
+  // The cockpit's instant-paint seed, moved out of `CodeCockpitPage` with its state.
+  'pages/code/cockpit/useCodeCockpit.ts': 1,
   'pages/dashboard/PinnedTiles.tsx': 2,
   'pages/inbox/InboxPage.tsx': 1,
   'pages/knowledge/KnowledgeCreatePage.tsx': 1,
@@ -1469,7 +1481,8 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   // fallback the hook states at the call: hands-free hears the shipped phrases, and "Speak
   // replies aloud" stays off.
   'pages/chat/voiceConfig.ts': 1,
-  'pages/code/CodeCockpitPage.tsx': 1,
+  // The cockpit's instant-paint seed, moved out of `CodeCockpitPage` with its state.
+  'pages/code/cockpit/useCodeCockpit.ts': 1,
   'pages/companion/CompanionPage.tsx': 1,
   'pages/dashboard/DashboardPage.tsx': 1,
   'pages/dashboard/PinnedTiles.tsx': 2,

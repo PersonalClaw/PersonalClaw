@@ -68,7 +68,8 @@ describe('the loop cockpit says whether its feed is alive', () => {
     // This test previously asserted the OPPOSITE (that CodeCockpitPage was not yet wired), so the gap
     // could not be mistaken for done. Wiring it and leaving that guard would have turned the rail red —
     // which is exactly what a guard like that is for.
-    const code = read('pages/code/CodeCockpitPage.tsx')
+    // The stream is read in the cockpit's controller, where its state moved.
+    const code = read('pages/code/cockpit/useCodeCockpit.ts')
     expect(code).toMatch(/const \{ connected \} = useRunStream/)
     // The dot and its word moved with the cockpit's header into its own module.
     const header = read('pages/code/cockpit/header/CockpitHeader.tsx')
@@ -85,7 +86,7 @@ describe('the loop cockpit says whether its feed is alive', () => {
 
   it('the remaining consumers still compile against the new return', () => {
     // Backwards-compatible by construction: they ignore the value.
-    for (const rel of ['pages/loops/DesignCockpitPage.tsx', 'pages/code/CodeCockpitPage.tsx', 'pages/loops/LoopPlanReview.tsx']) {
+    for (const rel of ['pages/loops/DesignCockpitPage.tsx', 'pages/code/cockpit/useCodeCockpit.ts', 'pages/loops/LoopPlanReview.tsx']) {
       expect(read(rel), `${rel} calls the hook`).toMatch(/useRunStream\(/)
     }
   })
