@@ -6,14 +6,16 @@
 # A PUSH TO MAIN REPEATS NO WORK ITS PULL REQUEST DID ON THE SAME TREE. `tree-check` asks
 # whether a green pull-request run already tested the tree the push lands
 # (tools/ci/tree_tested.py, the previous main commit's copy). Yes: every job that run did is
-# skipped, and only the always-run set runs — `tree-check`, `changes`, `security-corpus`, and
-# `apps-contract` when the SDK changed. No, or no answer: every job runs on the pushed tree,
-# `test-macos` included. The suite's shards are the one exception: during a burst of merges a
-# newer push's waiting shard can replace this one's (see the concurrency header below).
+# skipped, and only the always-run set runs — `tree-check`, `changes`, `security-corpus`,
+# `browse-live`, and `apps-contract` when the plan names it. No, or no answer: every job runs on
+# the pushed tree, `test-macos` included. The suite's shards are the one exception: during a
+# burst of merges a newer push's waiting shard can replace this one's (see the concurrency
+# header below).
 #
-# The browser-driven `e2e` job takes a `needs:` on the cheap `changes` job, so a diff that cannot
-# reach a rendered pixel does not pay for a Chromium — see that job's header for the
-# measurements and for why its verdict defaults to TRUE.
+# The `changes` job plans the run from the diff with main's planner (tools/ci/plan.py, #3945):
+# the browser-driven `e2e` job and `apps-contract` run only when the plan names them, so a diff
+# that cannot reach a rendered pixel does not pay for a Chromium. See that job's header for why
+# an unread plan runs them.
 #
 # TWO SIBLING WORKFLOWS EXIST BECAUSE THIS ONE CANNOT TALK TO A FORK PR.
 #   dco.yml          pull_request_target — so sign-off is checked without a maintainer first
@@ -107,7 +109,7 @@ jobs:
     # answer is no. It is standard-library Python, run on the image's own python3, so nothing
     # this push brings is installed or run. Its docstring states what yes needs.
     #
-    # 🪤 THE ANSWER IS VALIDATED BEFORE IT IS PUBLISHED, as `changes` does with its verdict.
+    # 🪤 THE ANSWER IS VALIDATED BEFORE IT IS PUBLISHED, as `changes` does with its plan.
     # Anything but exactly `tested=true` or `tested=false` becomes `false`, and every gated
     # job reads `!= 'true'`, so a crashed or missing check runs the whole gate. The summary
     # is a pointer for people; no gate reads it.
@@ -152,122 +154,155 @@ jobs:
           printf '%s\n' "$answer" >> "$GITHUB_OUTPUT"
 
   changes:
-    # ── The browser gates' admission decision (#3110) ─────────────────────────────────────────
-    # The `e2e` job boots a real gateway and drives a real Chromium. When this gate was added the
-    # same work was three jobs, `e2e-a11y`, `e2e-walkthrough` and `e2e-pwa`; MEASURED 2026-09-19
-    # over the last 14 CONCLUDED runs of this
-    # workflow: `e2e-a11y` took 19.9-29.4 min (median 21.9) and was the run's TAIL in 10 of 14,
-    # so it added a median 6.4 and up to 14.0 min to time-to-ripe — and it has neither a path
-    # filter nor a `needs:`, so it paid that on every PR. Over 60 recent merged PRs, 22 touched
-    # no `web/` file at all.
+    # ── The plan: which jobs this diff can reach (#3945) ────────────────────────────────────
+    # One planner, tools/ci/plan.py, reads the changed paths against the catalogue's declared
+    # inputs (tools/ci/catalogue.toml) and answers with the jobs to run. The gated jobs read its
+    # list; no classifier sits beside it. docs/maintainers/ci.md, "Planning a run", says how a
+    # path schedules a job. It is ~20s: a depth-1 checkout, a depth-1 fetch of main's tip, the
+    # API calls, no uv and no npm.
     #
-    # This job answers one question — can the diff reach a rendered pixel or the harness boot —
-    # and the `e2e` job takes a `needs:` on it. It is ~20s: a depth-1 checkout plus one
-    # API call, no uv and no npm. That 20s sits in front of jobs that measured 0.1-33.3 min of
-    # runner QUEUE wait in the same sample, so it is noise against what it saves.
+    # 🪤 THE PLANNER IS MAIN'S, NEVER THIS CHECKOUT'S. A pull request's catalogue and overrides
+    # are its input, read from this checkout; what judges them is tools/ci as main's tip has it
+    # (on a push to main, the commit the push replaced, as `tree-check` reads its check), archived
+    # into a folder of its own and run from there. Where there is none to fetch, nothing plans and
+    # the whole tier runs.
     #
-    # 🪤 THE VERDICT DEFAULTS TO TRUE, AND `scripts/ci_touches_frontend.py` IS AN IGNORE-LIST,
-    # NOT A TRIGGER-LIST. "Run when `web/**` changes" is the same function inverted and fails in
-    # the dangerous direction: a new top-level directory or a renamed asset root silently stops
-    # paying the gate and nothing reports it. Default-deny means forgetting to update that file
-    # costs wasted minutes, never a missed regression. The reasons per entry are in its
-    # docstring; `tests/test_ci_e2e_path_gate.py` rails both the classifier and this wiring.
+    # 🪤 WHAT THE PLANNER CANNOT READ RUNS THE WHOLE TIER. An empty or failed enumeration, a path
+    # no job's input names, a planner that cannot be fetched, crashes or answers in the wrong
+    # shape, and the `ci:full` label all end as `full=true`, never as a skipped job: the absence
+    # of an answer must not arrive as a pass.
     #
-    # 🪤 `src/personalclaw/**` IS NOT IGNORABLE, which is the biggest possible saving and is
-    # unsound. web/playwright.config.ts's header states the dependency: without the gateway the
-    # SPA "renders the ONBOARDING screen for every route… axe then reports a clean tree for 96
-    # surfaces it never actually visited." Sixteen of eighteen routes in web/e2e/routes.ts are
-    # `needsData: true`. A backend diff can change scanned DOM, so a backend diff pays.
+    # 🪤 THE ANSWER IS VALIDATED BEFORE IT IS PUBLISHED. Appending the planner's stdout straight to
+    # $GITHUB_OUTPUT fails in the silent direction: if the interpreter is missing or the planner
+    # raises, NO key is written and a gate reads the empty string. So only `full=true|false` and
+    # a JSON list of job ids, as the planner prints it, are published, anything else becomes
+    # `full=true`, and the gates read `full != 'false'` and survive a failed job
+    # (`!cancelled()`), so even an unwritten output runs them.
+    # tests/rails/test_ci_plan_step_tree.py runs this step as written against planted answers.
+    #
+    # The browser run keeps its saving: the `e2e` job (MEASURED 2026-09-19 at 19.9-29.4 min when
+    # it was three jobs) is planned only for the diffs its inputs reach, as the ignore-list it
+    # replaces did. src/personalclaw/** is always in its reach: a backend diff can change the DOM
+    # the browser run scans.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read   # `pulls/{n}/files` below. READ only, and a fork PR's token is
                             # read-only regardless — both calls are GETs, so that is enough.
+      actions: read         # main's recent CI runs and their telemetry, for the rails floor
     outputs:
-      frontend: ${{ steps.verdict.outputs.frontend }}
-      sdk: ${{ steps.sdk.outputs.sdk }}
+      full: ${{ steps.plan.outputs.full }}
+      jobs: ${{ steps.plan.outputs.jobs }}
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
         run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
-      # Depth 1 deliberately: the classifier reads a path LIST, never history, so the
-      # `fetch-depth: 0` the `harness` job needs would be pure latency in front of three jobs.
+      # Depth 1 deliberately: the planner reads a path LIST and the catalogue, never history.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: enumerate the changed paths, and decide
-        id: verdict
+      - name: enumerate the changed paths, and plan
+        id: plan
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.sha }}
           BEFORE: ${{ github.event.before }}
+          # `true` when the pull request carries the `ci:full` label. The labels are the event's,
+          # so a label added later counts from the next push.
+          FULL_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
         run: |
           set -uo pipefail
-          # NOT `set -e`: a failed enumeration must fall through to the empty-file case, which
-          # the classifier reads as "unknown diff → run the gates". Exiting non-zero here would
-          # red a PR over an API hiccup; exiting zero with no paths would be worse still, since
-          # it would skip. Falling through to `frontend=true` is the only safe third option.
-          : > /tmp/changed.txt
+          # GitHub runs this under `bash -e`, and each command here that can fail is guarded: a
+          # failed enumeration falls through to the empty list, which the planner answers with
+          # the whole tier, and a planner that cannot be fetched or run gives no answer, which
+          # becomes the whole tier below. Exiting non-zero here would red a PR over an API hiccup.
+          listed="$RUNNER_TEMP/changed.json"
+          changed="$RUNNER_TEMP/changed.txt"
+          : > "$listed"
+          judge_ref=""
+          # Each name as a JSON string on a line of its own, so a name with a newline in it
+          # stays one name.
           if [ -n "${PR_NUMBER:-}" ]; then
             # Every `pull_request` run, fork included — the payload carries the number, so the
             # read-only fork token never has to resolve it.
             gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
-              --jq '.[].filename' > /tmp/changed.txt || : > /tmp/changed.txt
+              --jq '.[].filename | @json' > "$listed" || : > "$listed"
+            judge_ref="refs/heads/main"
           elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${BEFORE:-}" ] \
                && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
             # A push to main: what this push changed, against the commit it replaced. The
             # default branch here would be this very commit, and an empty diff.
             echo "base: the previous main commit $BEFORE"
             gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/${BEFORE}...${HEAD_SHA}" \
-              --jq '.files[].filename' > /tmp/changed.txt || : > /tmp/changed.txt
+              --jq '.files[].filename | @json' > "$listed" || : > "$listed"
+            judge_ref="$BEFORE"
           else
             # Neither: a push to main whose `before` is all-zeros or missing. A feature branch
             # starts no push run here (the trigger admits main alone, #3915). Compared against
             # the DEFAULT branch, which can enumerate nothing for main itself; an empty list is
-            # read as an unknown diff, so the gates run.
+            # read as an unknown diff, so the gates run. There is no commit to judge from either.
             gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/main...${HEAD_SHA}" \
-              --jq '.files[].filename' > /tmp/changed.txt || : > /tmp/changed.txt
+              --jq '.files[].filename | @json' > "$listed" || : > "$listed"
           fi
-          echo "enumerated $(wc -l < /tmp/changed.txt) changed path(s)"
-          # stdout carries `frontend=<bool>`; stderr carries the human verdict table, which goes
-          # to the run summary so the decision is readable without opening the log.
-          #
-          # 🪤 THE VERDICT IS VALIDATED BEFORE IT IS PUBLISHED, and that is the whole safety
-          # argument for this step. Appending the script's stdout straight to $GITHUB_OUTPUT
-          # looks equivalent and fails in the silent direction: if the interpreter is missing or
-          # the script raises, NO `frontend` key is written, `needs.changes.outputs.frontend`
-          # resolves to the EMPTY STRING, `== 'true'` is false, and the browser gate skips
-          # on a green run. A crashed classifier would disable the gates it exists to schedule.
-          # So anything that is not exactly one of the two legal answers becomes `true`.
-          verdict=$(python3 scripts/ci_touches_frontend.py \
-                      < /tmp/changed.txt 2>> "$GITHUB_STEP_SUMMARY") || verdict=""
-          case "$verdict" in
-            frontend=true|frontend=false) ;;
+          # The names NUL-separated, for the planner's -z: one with a newline in it reaches the
+          # planner whole, which cannot read it as a path and plans the whole tier. A line that
+          # is not one JSON string empties the list, which plans the whole tier too.
+          python3 -c 'import json, sys; names = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]; assert all(isinstance(n, str) and "\0" not in n for n in names); sys.stdout.write("".join(n + "\0" for n in names))' "$listed" > "$changed" || : > "$changed"
+          echo "enumerated $(tr -cd '\000' < "$changed" | wc -c) changed path(s)"
+          # The planner as main has it, never this checkout's (see the job's header). Only a
+          # whole archive is run: one that fails part way plans nothing.
+          judge="$RUNNER_TEMP/judge"
+          judged=""
+          if [ -n "$judge_ref" ] && rm -rf "$judge" && mkdir -p "$judge" \
+             && git fetch --no-tags --depth=1 origin "$judge_ref" \
+             && git archive FETCH_HEAD tools/ci | tar -x -C "$judge"; then
+            echo "planner: tools/ci at $judge_ref"
+            judged="yes"
+          fi
+          full_flag=""
+          if [ "${FULL_LABEL:-}" = "true" ]; then
+            echo "the ci:full label asks for the whole tier"
+            full_flag="--full"
+          fi
+          answer=""
+          if [ -n "$judged" ]; then
+            # stdout carries the two output lines. stderr carries the plan as JSON and any
+            # warning: all of it goes to the run summary, and the warnings to this log as well.
+            : > "$RUNNER_TEMP/plan.err"
+            answer=$(cd "$judge" && python3 -m tools.ci plan merge \
+                       --catalogue "$GITHUB_WORKSPACE/tools/ci/catalogue.toml" \
+                       --root "$GITHUB_WORKSPACE" --paths "$changed" -z \
+                       --repo "$GITHUB_REPOSITORY" --outputs ${full_flag:+"$full_flag"} \
+                       2> "$RUNNER_TEMP/plan.err") || answer=""
+            cat "$RUNNER_TEMP/plan.err" >> "$GITHUB_STEP_SUMMARY"
+            sed -n '/^::warning[ :]/p' "$RUNNER_TEMP/plan.err"
+          else
+            echo "no planner from main to plan with"
+          fi
+          full=$(printf '%s\n' "$answer" | sed -n 's/^full=//p')
+          jobs=$(printf '%s\n' "$answer" | sed -n 's/^jobs=//p')
+          # Only a JSON list of job ids, exactly as the planner prints it, is published; anything
+          # else is no answer.
+          if ! python3 -c 'import json, re, sys; s = sys.argv[1]; v = json.loads(s); assert isinstance(v, list) and all(isinstance(j, str) and re.fullmatch("[a-z0-9][a-z0-9-]*", j) for j in v) and json.dumps(v, separators=(",", ":")) == s' "$jobs" 2>/dev/null; then
+            full=""
+          fi
+          case "$full" in
+            true|false) ;;
             *)
-              echo "::warning title=e2e gate inconclusive::the classifier produced" \
-                   "'${verdict:-no output}' instead of frontend=true|false, so the browser gates" \
-                   "RUN. An unanswered question must not arrive as a skipped job."
-              verdict="frontend=true"
+              # On one line, so nothing the planner printed reads as a workflow command.
+              shown=${answer//$'\n'/ }
+              shown=${shown//$'\r'/ }
+              echo "::warning title=plan inconclusive::the planner produced" \
+                   "'${shown:-no output}' instead of a plan, so the whole tier RUNS." \
+                   "An unanswered question must not arrive as a skipped job."
+              full=true
+              jobs='[]'
               ;;
           esac
-          echo "verdict: $verdict"
-          printf '%s\n' "$verdict" >> "$GITHUB_OUTPUT"
-      # The same path list answers `apps-contract`'s question: can this diff change a published
-      # SDK signature? A trigger-list is sound here (see scripts/ci_touches_sdk.py) because the
-      # signature snapshot every such change must regenerate lives under src/personalclaw/sdk/.
-      # Same fail-safe as above: anything but the two legal answers runs the job.
-      - name: does the diff change what the apps build against
-        id: sdk
-        run: |
-          verdict=$(python3 scripts/ci_touches_sdk.py < /tmp/changed.txt) || verdict=""
-          case "$verdict" in
-            sdk=true|sdk=false) ;;
-            *) verdict="sdk=true" ;;
-          esac
-          echo "verdict: $verdict"
-          printf '%s\n' "$verdict" >> "$GITHUB_OUTPUT"
+          echo "full=$full jobs=$jobs"
+          printf 'full=%s\njobs=%s\n' "$full" "$jobs" >> "$GITHUB_OUTPUT"
 
   apps-contract:
     # The first-party apps' SDK contract checks, run against THIS core (#3599 → PersonalClawApps
@@ -280,8 +315,11 @@ jobs:
     # contract checks, not every app's suite. A problem on an SDK symbol this change did not
     # touch is the app's own and is reported, not charged, so one app's bug cannot red every
     # core PR.
+    # Gated on the plan (#3945): run unless the planner answered `full=false` without this job.
+    # `!cancelled()` keeps it when `changes` itself failed or timed out, whose outputs are then
+    # never written, and so read as no answer.
     needs: [changes]
-    if: ${{ needs.changes.outputs.sdk == 'true' }}
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'apps-contract')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -1114,23 +1152,15 @@ jobs:
     # `visual.spec.ts` stays out (`--grep-invert @visual`): tests/test_e2e_specs_are_executed.py
     # declares that exemption.
     #
-    # The browse behavioural proof runs here too, after Playwright whatever it answered, on the
-    # same Chromium: two guarantees of the browse safety script that only a real browser can show
-    # (a page's `fetch()` / `media.play()` / `navigator.bluetooth` blocked, a client-side redirect
-    # re-evaluated per `Page.frameNavigated`). Without a browser those cases skip, and a skip reads
-    # as a pass, so PERSONALCLAW_REQUIRE_BROWSE_PROOF turns a missing browser into a failure. It is
-    # set on that step ONLY: a contributor without a Chromium still gets a skip.
-    # tests/test_browse_live_legs_run_in_ci.py holds this job to all of it. Its JUnit report keeps
-    # the `junit-browse-live` name, which tools/browse_live_quarantine_frequency.py reads.
+    # The browse behavioural proof is the `browse-live` job: security evidence, which no plan
+    # leaves out, so it runs on every diff while this job runs on the diffs its inputs reach.
     #
-    # Gated on `changes` (#3110) — see that job's header for why the verdict defaults to TRUE.
+    # Gated on the plan (#3945) — see the `changes` job's header for why it defaults to running.
     needs: [changes, tree-check, web]
-    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && needs.changes.outputs.frontend == 'true' }}
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && (needs.changes.outputs.full != 'false' || contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'e2e')) }}
     runs-on: ubuntu-24.04
-    # The browser run's budget is 12 min; the browse proof launches two browsers (as launched,
-    # and site-isolated), and its 54 frame and navigation cases took about 2 min locally, the two
-    # browsers on two workers. 30 is slack for a loaded runner, and still ends a wedged browser
-    # long before the default 360.
+    # The browser run's budget is 12 min; 30 is slack for a loaded runner, and still ends a
+    # wedged browser long before the default 360.
     timeout-minutes: 30
     steps:
       - name: Runner identity
@@ -1144,7 +1174,7 @@ jobs:
         with:
           python-version: "3.12.15"
           node: "true"
-      # The harness starts `../.venv/bin/personalclaw`, and the browse proof is pytest.
+      # The harness starts `../.venv/bin/personalclaw`.
       - name: Install (locked)
         run: uv sync --locked --extra dev
       # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828).
@@ -1173,13 +1203,66 @@ jobs:
         if: ${{ !cancelled() }}
         working-directory: web
         run: node e2e/assert-no-route-skips.mjs e2e-report.json
+      # The JSON report (every test with its isolation mode, the stateful seed in its metadata),
+      # the blob report `merge-reports` reads, the traces, the axe reports and the HTML report.
+      - name: upload the browser run's reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-reports
+          path: |
+            web/e2e-report.json
+            web/blob-report/
+            web/test-results/
+            web/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  browse-live:
+    # ── The browse behavioural proof, in a real browser, on every diff ────────────────────────
+    # Two guarantees of the browse safety script that only a real browser can show (a page's
+    # `fetch()` / `media.play()` / `navigator.bluetooth` blocked, a client-side redirect
+    # re-evaluated per `Page.frameNavigated`). Without a browser those cases skip, and a skip reads
+    # as a pass, so PERSONALCLAW_REQUIRE_BROWSE_PROOF turns a missing browser into a failure. It is
+    # set on that step ONLY: a contributor without a Chromium still gets a skip.
+    # tests/test_browse_live_legs_run_in_ci.py holds this job to all of it. Its JUnit report keeps
+    # the `junit-browse-live` name, which tools/browse_live_quarantine_frequency.py reads.
+    #
+    # Its own job, not a step of `e2e` (#3945): it is security evidence, which no plan leaves out
+    # and no run reuses, while the browser run is planned only for the diffs its inputs reach. So
+    # it waits on neither `changes` nor `tree-check`, and a push to main runs it even on a tree a
+    # pull-request run tested. It needs no built dashboard, so it does not wait on `web`.
+    runs-on: ubuntu-24.04
+    # Two browsers (as launched, and site-isolated), 54 frame and navigation cases: about 2 min
+    # locally. 20 is slack for the installs and a loaded runner.
+    timeout-minutes: 20
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
+        with:
+          python-version: "3.12.15"
+          node: "true"
+      # The browse proof is pytest.
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828), for Playwright's
+      # browser installer.
+      - name: npm ci (root)
+        run: npm ci
+      - name: install chromium (the browser the proof drives)
+        run: npx playwright install --with-deps chromium
       # One process, pytest's default: the live fixture is module-scoped and launches a browser,
       # so xdist would launch one per worker for no gain. The modules are named explicitly rather
       # than globbed — a glob that matches nothing exits clean, and "the proof ran" is a claim
       # about specific files. test_browse_live_legs_run_in_ci.py asserts this line names every
       # module that calls the browser gate, and that each path it names exists.
       - name: browse behavioural proof in a REAL browser (safety script · redirect re-eval)
-        if: ${{ !cancelled() }}
         env:
           PERSONALCLAW_REQUIRE_BROWSE_PROOF: "1"
           # No PERSONALCLAW_HOME (the no-global-home contract), and app backends are not part of
@@ -1194,20 +1277,6 @@ jobs:
         with:
           name: junit-browse-live
           path: reports/junit-browse-live.xml
-          if-no-files-found: ignore
-          retention-days: 7
-      # The JSON report (every test with its isolation mode, the stateful seed in its metadata),
-      # the blob report `merge-reports` reads, the traces, the axe reports and the HTML report.
-      - name: upload the browser run's reports
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: e2e-reports
-          path: |
-            web/e2e-report.json
-            web/blob-report/
-            web/test-results/
-            web/playwright-report/
           if-no-files-found: ignore
           retention-days: 7
 

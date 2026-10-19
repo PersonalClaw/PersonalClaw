@@ -78,7 +78,7 @@ UNSHIPPED_FILES: dict[str, str] = {
     "sdk/signatures.json": (
         "the reviewed snapshot of the published SDK surface: scripts/sdk_signature_snapshot.py "
         "writes it, and tests/test_sdk_signature_snapshot.py and scripts/apps_sdk_contract.py "
-        "compare against it. It sits beside the SDK because scripts/ci_touches_sdk.py runs the "
+        "compare against it. It sits beside the SDK because the catalogue plans the "
         "apps' contract check on any change under sdk/, and nothing in the product reads it"
     ),
 }

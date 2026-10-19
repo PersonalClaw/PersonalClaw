@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import posixpath
 import subprocess
+import sys
 import textwrap
 from functools import lru_cache
 
@@ -18,7 +19,6 @@ import pytest
 import yaml
 from rails_repo import REPO
 
-from scripts import ci_touches_sdk
 from tools.ci import catalogue
 from tools.ci import plan as planner
 
@@ -117,23 +117,69 @@ def test_e2e_never_excludes_the_backend() -> None:
         assert planner.reaches(e2e.inputs, path), path
 
 
-def _classifier_reasons() -> list[tuple[str, str]]:
-    tree = ast.parse((REPO / "scripts" / "ci_touches_frontend.py").read_text(encoding="utf-8"))
-    for node in tree.body:
-        if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", "") == "IGNORABLE":
-            return list(ast.literal_eval(node.value))
-    raise AssertionError("scripts/ci_touches_frontend.py has no IGNORABLE")
+#: The six exclusions of e2e's inputs, each with the reason the deleted ignore-list
+#: (scripts/ci_touches_frontend.py) gave, word for word. The catalogue's comment must carry each.
+_E2E_REASONS: tuple[tuple[str, str], ...] = (
+    (
+        "docs/**",
+        (
+            "prose only. Nothing under docs/ is served by the gateway or packaged into the "
+            "wheel at runtime — pyproject.toml references it only as a Documentation URL."
+        ),
+    ),
+    (
+        "*.md at the repo root",
+        (
+            "README / CHANGELOG / CONTRIBUTING / AGENTS / SECURITY. Deliberately NOT '*.md "
+            "anywhere': src/personalclaw/config/prompt_snippets/*.md is model input, not "
+            "prose."
+        ),
+    ),
+    (
+        "tests/**",
+        (
+            "the pytest suite does not run inside the Playwright harness — the harness boots "
+            "the gateway, not pytest — so a test-only change cannot alter scanned DOM."
+        ),
+    ),
+    (
+        "harness/**",
+        (
+            "repo-inner self-verification infra. src/personalclaw/ imports no `harness` "
+            "module (grepped), so it is absent from the gateway the harness boots."
+        ),
+    ),
+    (
+        "packages/personalclaw-client-py/**",
+        (
+            "independently versioned/published client, NOT part of the core uv workspace "
+            "(ci.yml's `client` job builds it in its own venv) and not imported by "
+            "src/personalclaw/."
+        ),
+    ),
+    (
+        ".github/** except workflows/ci.yml and actions/**",
+        (
+            "issue templates, dependabot config and the other workflows cannot change a "
+            "rendered pixel. ci.yml and the local actions under .github/actions/ are EXCLUDED "
+            "from this exemption because they define the `e2e` job itself: ci.yml writes its "
+            "steps, and a local action runs its own steps inside the job wherever the job "
+            "calls it. Editing either must re-validate the job, or a broken job definition "
+            "would be waved through by the very gate it broke."
+        ),
+    ),
+)
 
 
 def _flat(text: str) -> str:
     return " ".join(text.split())
 
 
-def test_each_e2e_exclusion_carries_the_classifiers_reason_word_for_word() -> None:
+def test_each_e2e_exclusion_carries_its_reason_word_for_word() -> None:
     source = (REPO / catalogue.CATALOGUE).read_text(encoding="utf-8")
     block = source[: source.index('[[job]]\nid = "e2e"')]
     comment = _flat(" ".join(line.lstrip("# ") for line in block.splitlines()[-40:]))
-    reasons = _classifier_reasons()
+    reasons = list(_E2E_REASONS)
     assert len(reasons) == 6
     for what, why in reasons:
         assert _flat(f"{what}: {why}") in comment, what
@@ -400,17 +446,33 @@ def test_a_new_root_markdown_file_is_known_through_e2es_exclusion() -> None:
     assert "e2e" not in p.jobs and "apps-contract" not in p.jobs
 
 
-def test_apps_contracts_inputs_are_ci_ymls_classifier_triggers() -> None:
-    """ci.yml runs apps-contract on what scripts/ci_touches_sdk.py says, and the catalogue says
-    its inputs are that classifier's triggers: the two lists are one."""
-    assert set(_CAT.job("apps-contract").inputs) == set(ci_touches_sdk.TRIGGERS)
+#: The triggers of the SDK classifier ci.yml ran apps-contract by before the plan
+#: (scripts/ci_touches_sdk.py, deleted), word for word, less that classifier's own file: a path
+#: that starts with a folder here, or is a file here, ran the job.
+_SDK_TRIGGERS: tuple[str, ...] = (
+    "src/personalclaw/sdk/",
+    "scripts/apps_sdk_contract.py",
+    "scripts/sdk_signature_snapshot.py",
+    ".github/workflows/ci.yml",
+    ".github/actions/",
+)
 
 
-def test_every_tracked_path_ci_yml_runs_apps_contract_on_plans_it() -> None:
+def _the_classifier_ran_apps_contract(path: str) -> bool:
+    return any(path.startswith(t) if t.endswith("/") else path == t for t in _SDK_TRIGGERS)
+
+
+def test_apps_contracts_inputs_are_the_sdk_classifiers_triggers() -> None:
+    """ci.yml ran apps-contract on what the SDK classifier said, and the catalogue's inputs are
+    that classifier's triggers: the two lists are one."""
+    assert set(_CAT.job("apps-contract").inputs) == set(_SDK_TRIGGERS)
+
+
+def test_every_tracked_path_the_classifier_ran_apps_contract_on_plans_it() -> None:
     """python-suite names every top-level entry but the flake, so the unknown-path fallback no
     longer plans apps-contract for a path its inputs miss: each tracked path the classifier
-    runs it on must plan it."""
-    sdk = [p for p in _tracked() if ci_touches_sdk.touches_sdk([p])]
+    ran it on must plan it."""
+    sdk = [p for p in _tracked() if _the_classifier_ran_apps_contract(p)]
     assert len(sdk) > 20, sdk
     missed = [p for p in sdk if "apps-contract" not in _plan(p).jobs]
     assert not missed, missed
@@ -439,8 +501,6 @@ def test_the_harness_replay_reason_is_kept_beside_the_overrides() -> None:
 
 
 def test_the_planner_imports_only_the_standard_library() -> None:
-    import sys
-
     tree = ast.parse(textwrap.dedent((REPO / "tools/ci/plan.py").read_text(encoding="utf-8")))
     imported = {
         alias.name.split(".")[0]
@@ -454,3 +514,89 @@ def test_the_planner_imports_only_the_standard_library() -> None:
     }
     imported.discard("__future__")
     assert imported and imported <= set(sys.stdlib_module_names)
+
+
+# ── the wiring: ci.yml runs the planner, and the gated jobs read its answer ──────────────────
+
+_CI = REPO / ".github" / "workflows" / "ci.yml"
+
+
+def _ci() -> dict:
+    return yaml.safe_load(_CI.read_text(encoding="utf-8"))
+
+
+# The `changes` job's plan step, run as written against planted and real answers, is
+# tests/rails/test_ci_plan_step_tree.py's: what it publishes, its judge, the label, its warnings.
+
+
+#: Each gated job's whole condition. A job output is a string, so `full` is compared with
+#: the string 'false', and an unwritten output (the empty string) runs the job.
+GATED_IF = {
+    "e2e": (
+        "${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && "
+        "(needs.changes.outputs.full != 'false' || "
+        "contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'e2e')) }}"
+    ),
+    "apps-contract": (
+        "${{ !cancelled() && (needs.changes.outputs.full != 'false' || "
+        "contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'apps-contract')) }}"
+    ),
+}
+
+
+@pytest.mark.parametrize("job", sorted(GATED_IF))
+def test_each_gated_job_takes_both_the_needs_and_the_condition(job: str) -> None:
+    spec = _ci()["jobs"][job]
+    assert "changes" in (spec.get("needs") or []), f"{job} does not `needs: [changes]`"
+    condition = " ".join(str(spec.get("if") or "").split())
+    assert condition == GATED_IF[job], f"{job}'s condition is {condition!r}"
+
+
+def test_every_planned_job_the_workflow_gates_is_a_catalogue_job() -> None:
+    gated = {
+        job_id
+        for job_id, spec in _ci()["jobs"].items()
+        if "needs.changes.outputs" in str(spec.get("if") or "")
+    }
+    assert gated == set(GATED_IF)
+    assert gated <= {j.id for j in _CAT.jobs}
+
+
+def test_the_browse_proof_is_a_job_of_its_own_that_no_plan_gates() -> None:
+    """browse-live is security evidence: it runs on every diff, not inside the gated e2e job,
+    and is never reused, so a push to main whose tree a pull-request run tested runs it too."""
+    jobs = _ci()["jobs"]
+    browse = jobs["browse-live"]
+    assert "needs" not in browse and "if" not in browse, (browse.get("needs"), browse.get("if"))
+    runs = " ".join(str(s.get("run", "")) for s in jobs["e2e"]["steps"])
+    assert "test_browse_safety_script.py" not in runs
+
+
+@pytest.mark.parametrize(
+    "mutant",
+    [
+        "needs.changes.outputs.full == 'true'",
+        "needs.changes.outputs.full != 'true'",
+        "!(needs.changes.outputs.full != 'false')",
+        "needs.changes.outputs.full != 'false' && false",
+        "contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'e2e')",
+        "(needs.changes.outputs.full != 'false' || "
+        "contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'web'))",
+    ],
+    ids=[
+        "full must be true",
+        "an unwritten full skips",
+        "wrapped in a not",
+        "an always-false clause",
+        "the list alone",
+        "another job's id",
+    ],
+)
+def test_the_condition_check_refuses_a_wrong_gate(mutant: str, monkeypatch) -> None:
+    """The planted control: each wrong condition on e2e fails the check above."""
+    jobs = _ci()["jobs"]
+    condition = "${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && " + mutant + " }}"
+    planted = {**jobs, "e2e": {**jobs["e2e"], "if": condition}}
+    monkeypatch.setattr(sys.modules[__name__], "_ci", lambda: {"jobs": planted})
+    with pytest.raises(AssertionError):
+        test_each_gated_job_takes_both_the_needs_and_the_condition("e2e")

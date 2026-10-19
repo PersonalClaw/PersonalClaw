@@ -22,8 +22,12 @@ the repository, a list that cannot be read, and any error inside the planner. A 
 therefore runs everything, never nothing.
 
 Every plan reports the rails floor: the median minutes of the ``rails`` job over the passing
-CI runs in a folder of telemetry history (``tools/ci/telemetry.py``), or "not measured" when
-there is none, never a guessed number.
+CI runs in a folder of telemetry history (``tools/ci/telemetry.py``), or, with ``--repo``, over
+main's newest collected CI runs (:func:`rails_floor_from_ci`); "not measured" when there is
+none, never a guessed number. The floor is a report: nothing it reads changes the jobs.
+
+``--outputs`` prints the two lines ``ci.yml``'s ``changes`` job publishes, ``full=true|false``
+and ``jobs=<JSON list>``, on stdout, and the plan on stderr.
 
 Standard library only, like every ``tools/ci`` module. Pathspecs are read as git reads them;
 a test holds :func:`reaches` to ``git ls-files`` over the forms the catalogue accepts, and the
@@ -34,19 +38,23 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import functools
+import io
 import json
 import math
 import posixpath
 import re
 import statistics
 import sys
-from collections.abc import Iterable, Mapping, Sequence
+import time
+import zipfile
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
-from . import catalogue
+from . import catalogue, shards
 from .catalogue import Catalogue, Job, Override
 
 #: What :func:`rails_floor` says when no passing rails run is recorded.
@@ -285,6 +293,7 @@ def plan(
     full: bool = False,
     history: Path | None = None,
     root: Path | None = None,
+    floor: Mapping[str, Any] | None = None,
 ) -> Plan:
     """The plan for ``tier`` over the ``changed`` paths, with the area map's ``overrides``
     (:func:`catalogue.read_areas`). A tier with no job in the catalogue raises ValueError,
@@ -294,10 +303,13 @@ def plan(
         raise ValueError(f"{tier!r} is not a tier: one of {', '.join(catalogue.TIERS)}")
     if not cat.tier(tier):
         raise ValueError(f"the {tier} tier has no job in the catalogue, so its plan runs nothing")
-    try:
-        floor = rails_floor(history)
-    except Exception:  # noqa: BLE001 - a history it cannot read measures nothing
-        floor = dict(NOT_MEASURED)
+    if floor is not None:
+        floor = dict(floor)
+    else:
+        try:
+            floor = rails_floor(history)
+        except Exception:  # noqa: BLE001 - a history it cannot read measures nothing
+            floor = dict(NOT_MEASURED)
     try:
         if full:
             return _whole(cat, tier, ["the run asked for the whole tier (--full)"], floor)
@@ -386,6 +398,27 @@ def _measured(job: object) -> float | None:
     return float(minutes)
 
 
+#: How many recorded CI runs the floor is the median of, and how long reading them may take.
+FLOOR_RUNS, FLOOR_SECONDS = 3, 60.0
+
+
+def _rails_minutes(head: object) -> float | None:
+    """The passing ``rails`` job's minutes in one history file's run line, when they are a
+    measurement (:func:`_measured`)."""
+    if not isinstance(head, dict) or head.get("kind") != "run":
+        return None
+    if head.get("workflow") != FLOOR_WORKFLOW or not isinstance(head.get("jobs"), list):
+        return None
+    found = [m for m in map(_measured, head["jobs"]) if m is not None]
+    return found[0] if found else None
+
+
+def _floor(minutes: Sequence[float]) -> dict[str, Any]:
+    if not minutes:
+        return dict(NOT_MEASURED)
+    return {"minutes": round(statistics.median(minutes), 2), "runs": len(minutes)}
+
+
 def rails_floor(folder: Path | None) -> dict[str, Any]:
     """The median minutes of the passing ``rails`` job over the CI runs whose history files
     are in ``folder``, and how many runs that is; :data:`NOT_MEASURED` without one. A head it
@@ -401,9 +434,99 @@ def rails_floor(folder: Path | None) -> dict[str, Any]:
         if head.get("workflow") != FLOOR_WORKFLOW or not isinstance(head.get("jobs"), list):
             continue
         minutes += [m for m in map(_measured, head["jobs"]) if m is not None]
-    if not minutes:
-        return dict(NOT_MEASURED)
-    return {"minutes": round(statistics.median(minutes), 2), "runs": len(minutes)}
+    return _floor(minutes)
+
+
+def _archive_heads(archive: bytes, run: int) -> list[object]:
+    """Each history file's run line in one archive, read within the history's line bound, and
+    only a line that describes ``run``."""
+    heads: list[object] = []
+    with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
+        for member in zipped.infolist():
+            if not member.filename.endswith(".jsonl"):
+                continue
+            with zipped.open(member) as handle:
+                raw = handle.readline(shards.MAX_HISTORY_LINE_BYTES + 1)
+            if len(raw) > shards.MAX_HISTORY_LINE_BYTES:
+                continue
+            head = json.loads(raw.decode("utf-8"))
+            if isinstance(head, dict) and head.get("run_id") == run:
+                heads.append(head)
+    return heads
+
+
+T = TypeVar("T")
+
+
+def _within(
+    call: Callable[..., T], clock: Callable[[], float], deadline: float
+) -> Callable[..., T]:
+    """``call`` (a gh call taking ``timeout``) given only the time left before ``deadline``,
+    and never more than one gh call may take; past the deadline it is not made at all."""
+
+    def bounded(*args: str) -> T:
+        left = deadline - clock()
+        if left <= 0:
+            raise TimeoutError(f"reading the rails floor took its {FLOOR_SECONDS:g} seconds")
+        return call(*args, timeout=min(float(shards.GH_TIMEOUT_SECONDS), left))
+
+    return bounded
+
+
+def rails_floor_from_ci(
+    repo: str,
+    *,
+    text: shards.Text,
+    binary: shards.Binary,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict[str, Any]:
+    """The rails floor from main's recorded CI runs: the median over the newest
+    :data:`FLOOR_RUNS` completed main runs of ``ci.yml`` whose history the collector itself
+    uploaded (``shards.TelemetryRecord`` checks who uploaded each archive), counting a red run
+    whose rails job passed and never a cancelled one.
+
+    ``text`` and ``binary`` are gh calls that take a ``timeout``. Each is given only what is
+    left of :data:`FLOOR_SECONDS`, and none is made once they are spent, so the whole read ends
+    within them. Any failure, running out of time included, gives what was read so far, never a
+    guess, with a warning on stderr."""
+    deadline = clock() + FLOOR_SECONDS
+    text, binary = _within(text, clock, deadline), _within(binary, clock, deadline)
+    minutes: list[float] = []
+    try:
+        record = shards.TelemetryRecord(repo, text=text, binary=binary)
+        listed = text(
+            "api",
+            f"repos/{repo}/actions/workflows/{FLOOR_WORKFLOW}/runs"
+            "?branch=main&status=completed&per_page=30",
+            "--jq",
+            '.workflow_runs[] | "\\(.id) \\(.conclusion) \\(.head_repository.full_name)"',
+        )
+        for line in listed.splitlines():
+            if len(minutes) == FLOOR_RUNS:
+                break
+            ident, conclusion, owner = (line.split() + ["", "", ""])[:3]
+            if not ident.isdigit() or conclusion not in record.COUNTED or owner != repo:
+                continue
+            archive = record._archive(int(ident))
+            if archive is None:
+                continue
+            try:
+                heads = _archive_heads(archive, int(ident))
+            except (zipfile.BadZipFile, ValueError, UnicodeDecodeError, OSError, EOFError):
+                continue
+            found = [m for m in (_rails_minutes(h) for h in heads) if m is not None]
+            if found:
+                minutes.append(found[0])
+    except Exception as exc:  # noqa: BLE001 - the floor is a report, never a gate
+        print(f"::warning title=rails floor not read::{type(exc).__name__}: {exc}", file=sys.stderr)
+    return _floor(minutes)
+
+
+def _ci_floor(repo: str) -> dict[str, Any]:
+    """:func:`rails_floor_from_ci` over gh, with anything it prints sent to stderr: stdout
+    carries the plan alone, or under ``--outputs`` the two output lines alone."""
+    with contextlib.redirect_stdout(sys.stderr):
+        return rails_floor_from_ci(repo, text=shards._gh_text, binary=shards._gh_binary)
 
 
 # ── the command ──────────────────────────────────────────────────────────────────────────────
@@ -444,6 +567,14 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--full", action="store_true", help="plan the whole tier")
     parser.add_argument("--history", type=Path, default=None, help="a folder of telemetry")
     parser.add_argument("--root", type=Path, default=catalogue.REPO, help="the repository root")
+    parser.add_argument(
+        "--repo", default=None, help="owner/name: read the rails floor from main's CI history"
+    )
+    parser.add_argument(
+        "--outputs",
+        action="store_true",
+        help="print GitHub output lines (full=<bool>, jobs=<JSON>) and the plan on stderr",
+    )
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -459,6 +590,7 @@ def main(argv: list[str]) -> int:
             full=args.full,
             history=args.history,
             root=args.root,
+            floor=_ci_floor(args.repo) if args.repo else None,
         )
         text = json.dumps(result.as_json(), sort_keys=True, indent=1, allow_nan=False)
     except (OSError, ValueError, catalogue.CatalogueError) as exc:
@@ -466,5 +598,10 @@ def main(argv: list[str]) -> int:
         for problem in problems:
             print(f"plan: {problem}", file=sys.stderr)
         return 2
+    if args.outputs:
+        print(text, file=sys.stderr)
+        print(f"full={'true' if result.full else 'false'}")
+        print("jobs=" + json.dumps(list(result.jobs), separators=(",", ":")))
+        return 0
     print(text)
     return 0

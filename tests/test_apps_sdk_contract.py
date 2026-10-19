@@ -1,11 +1,10 @@
 """The apps' SDK contract runs on every change that can alter the SDK, and charges it fairly.
 
 ``ci.yml``'s ``apps-contract`` job checks out PersonalClawApps and runs its SDK contract checks
-against the core under review (``scripts/apps_sdk_contract.py``); the ``changes`` job decides
-whether it runs (``scripts/ci_touches_sdk.py``). Railed here in three parts:
+against the core under review (``scripts/apps_sdk_contract.py``); the catalogue's declared
+inputs decide whether it runs (``tools/ci/plan.py``, held in
+``tests/rails/test_apps_sdk_contract_tree.py``). Railed here in two parts:
 
-* the trigger — every SDK path runs it, other paths do not, an unanswered question runs it, and
-  the workflow wires the verdict to the job (a classifier nobody calls decides nothing);
 * the charge — a problem on an SDK symbol this change did not touch is the app's own and does
   not red a core PR (a scan of the apps must not make one app's bug every PR's red), while one
   on a touched symbol, or one that maps to nothing, does;
@@ -20,45 +19,14 @@ fake apps checkout whose ``apps_testkit`` reports one problem — the shape of t
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 import textwrap
 from pathlib import Path
 
-import pytest
 from apps_sdk_contract_shared import REPO
 
 from scripts import apps_sdk_contract as job
-from scripts import ci_touches_sdk
 from scripts import sdk_signature_snapshot as snap
-
-# ── the trigger ───────────────────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "path", ["src/personalclaw/context.py", "web/src/App.tsx", "docs/guides/x.md", "tests/t.py"]
-)
-def test_other_paths_alone_do_not(path):
-    """`context.py` among them: a signature change there must regenerate the snapshot, which is
-    what puts the change under src/personalclaw/sdk/."""
-    assert not ci_touches_sdk.touches_sdk([path])
-
-
-def test_an_unenumerated_diff_runs_the_job():
-    assert ci_touches_sdk.touches_sdk([]) and ci_touches_sdk.touches_sdk(["", "  "])
-
-
-def test_the_classifier_runs_as_a_cli():
-    out = subprocess.run(
-        [sys.executable, "scripts/ci_touches_sdk.py"],
-        input="src/personalclaw/sdk/cli.py\n",
-        cwd=REPO,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert out.stdout.strip() == "sdk=true"
-
 
 # ── the charge ────────────────────────────────────────────────────────────────────────────────
 

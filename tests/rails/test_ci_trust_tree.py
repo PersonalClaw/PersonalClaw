@@ -293,8 +293,6 @@ def test_the_real_workflows_name_the_entry_points_they_run(tmp_path: Path) -> No
         "Makefile",
         "package.json",
         "scripts/ci_pr_feedback.mjs",
-        "scripts/ci_touches_frontend.py",
-        "scripts/ci_touches_sdk.py",
         "scripts/gate_report.py",
         "scripts/apps_sdk_contract.py",
         "scripts/lint_bundled_apps.py",
