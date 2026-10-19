@@ -172,6 +172,36 @@ def test_a_live_job_is_never_reused(reuse: str) -> None:
     assert f"rails: reuse is {reuse}, but a live job's evidence is never reused" in problems
 
 
+#: rails's pytest step, seeded from the run's number as the randomized-order leg's is.
+_SEEDED = '"tests/rails", "--random-order-seed", "{run_number}1"]'
+
+#: Where an entry may name ``{run_number}``: an argument, its step's env, or its job's env.
+_RUN_NUMBER_SITES = {
+    "an argument": ('"tests/rails"]', _SEEDED),
+    "a step env": ('"tests/rails"] }', '"tests/rails"], env = { SEED = "{run_number}1" } }'),
+    "the job env": ("timeout_min = 10\n", 'timeout_min = 10\nenv = { SEED = "{run_number}1" }\n'),
+}
+
+
+@pytest.mark.parametrize("site", sorted(_RUN_NUMBER_SITES))
+@pytest.mark.parametrize("reuse", ["tree", "ttl:24"])
+def test_a_job_whose_steps_name_the_run_number_is_never_reused(reuse: str, site: str) -> None:
+    """``{run_number}`` is another value every run, and a key holds a placeholder unfilled, so
+    a result of one run's steps would stand for another run's other steps."""
+    old, new = _RUN_NUMBER_SITES[site]
+    text = _with('reuse = "tree"', f'reuse = "{reuse}"')
+    assert old in text, old
+    assert (
+        f"rails: reuse is {reuse}, but its steps name {{run_number}}, another value every run,"
+        " so its evidence is never reused"
+    ) in _refused(text.replace(old, new, 1))
+
+
+def test_a_job_that_names_the_run_number_and_is_never_reused_loads() -> None:
+    job = catalogue.load(_with('reuse = "tree"\n', "").replace('"tests/rails"]', _SEEDED, 1))
+    assert job.job("rails").command[0].argv[-1] == "{run_number}1"
+
+
 def test_a_command_and_a_script_together_are_refused() -> None:
     problems = _refused(
         _with("timeout_min = 10", 'timeout_min = 10\nscript = "x.sh"\ncontainer = "img"')

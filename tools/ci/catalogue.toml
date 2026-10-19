@@ -9,9 +9,9 @@
 #
 # A step is an argv run from the repository root, or from `workdir` under it, with `env` (its
 # workflow step's own env) set on top of its job's. A value only the runner knows is a
-# placeholder: {runner_temp}, {shard} or {base}. An install (`uv sync`, `npm ci`, the Playwright
-# browser install) is never a step: it is the job's toolchain, which whatever runs the job
-# installs first, and each job names every install it needs.
+# placeholder: {runner_temp}, {shard}, {base}, {python} or {run_number}. An install (`uv sync`,
+# `npm ci`, the Playwright browser install) is never a step: it is the job's toolchain, which
+# whatever runs the job installs first, and each job names every install it needs.
 #
 # `inputs` are git pathspecs, and tools/ci/plan.py plans each run from them: a changed path a
 # job's inputs reach, or a path one of its steps runs, schedules that job. A path no input but
@@ -333,6 +333,32 @@ command = [
   { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-canary.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-canary-{shard}.txt"] },
 ]
 
+# The suite in two seeded orders every night (#3949; tests/random_order.py): each shard runs its
+# share twice, seeded the run's number times 10 plus 1 and plus 2, so a rerun of the run repeats
+# the orders. It runs the suite, so the security-marked modules: security posture, and never
+# reused, as its seeds change every run ({run_number}). Both orders write the shard's ids, which
+# shard-union holds to planned-ids-random-order.
+[[job]]
+id = "random-order"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = ["shard-history"]
+toolchain = ["uv-sync", "tmux"]
+cache = ["uv"]
+security = "security"
+platform = "ubuntu-24.04"
+python = "3.13.16"
+timeout_min = 60
+workers = "auto"
+shards = 4
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-random-order-1.xml", "reports/junit-random-order-2.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "random-order", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--random-order-seed", "{run_number}1", "--junitxml=reports/junit-random-order-1.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-random-order-{shard}.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--random-order-seed", "{run_number}2", "--junitxml=reports/junit-random-order-2.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-random-order-{shard}.txt"] },
+]
+
 [[job]]
 id = "coverage-shard"
 tiers = ["breadth"]
@@ -531,7 +557,26 @@ command = [
   { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "tests", "--shard-list", "{runner_temp}/universe.txt", "--junitxml=reports/junit-planned-canary.xml", "--shard-ids", "{runner_temp}/ids/planned-ids-canary.txt"] },
 ]
 
-# The union of the four legs whose red is the run's. The canary's is its own job, advisory as
+[[job]]
+id = "planned-ids-random-order"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+platform = "ubuntu-24.04"
+python = "3.13.16"
+timeout_min = 20
+workers = 0
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-planned-random-order.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "universe", "--out", "{runner_temp}/universe.txt"] },
+  { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "tests", "--shard-list", "{runner_temp}/universe.txt", "--junitxml=reports/junit-planned-random-order.xml", "--shard-ids", "{runner_temp}/ids/planned-ids-random-order.txt"] },
+]
+
+# The union of the five legs whose red is the run's. The canary's is its own job, advisory as
 # the canary is, so the next image's red never reds this one.
 [[job]]
 id = "shard-union"
@@ -543,9 +588,9 @@ cache = ["uv"]
 security = "ordinary"
 python = "3.13.16"
 timeout_min = 10
-after = ["suite-ubuntu", "suite-macos", "suite-arm", "coverage-shard", "planned-ids-ubuntu", "planned-ids-macos", "planned-ids-arm", "planned-ids-coverage-shard"]
+after = ["suite-ubuntu", "suite-macos", "suite-arm", "coverage-shard", "planned-ids-ubuntu", "planned-ids-macos", "planned-ids-arm", "planned-ids-coverage-shard", "random-order", "planned-ids-random-order"]
 command = [
-  { argv = ["{python}", "-m", "tools.ci", "shards", "union", "--dir", "{runner_temp}/ids", "--leg", "ubuntu:4", "--leg", "macos:6", "--leg", "arm:4", "--leg", "coverage-shard:6"] },
+  { argv = ["{python}", "-m", "tools.ci", "shards", "union", "--dir", "{runner_temp}/ids", "--leg", "ubuntu:4", "--leg", "macos:6", "--leg", "arm:4", "--leg", "coverage-shard:6", "--leg", "random-order:4"] },
 ]
 
 [[job]]

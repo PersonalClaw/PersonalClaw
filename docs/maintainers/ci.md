@@ -245,7 +245,9 @@ entry to the `ci.yml` and `breadth.yml` jobs it maps to, in both directions:
 - `breadth.yml` names each suite leg and its shard count as literals (`--leg ubuntu --shard
   ${{ matrix.shard }}/4`), as `ci.yml` does. Its steps that must not install the project first
   run the uv-managed interpreter of the job's Python, `"$(uv python find "$PY")"`, which the
-  catalogue writes `{python}`; `run-job` fills it from `uv python find <python>`.
+  catalogue writes `{python}`; `run-job` fills it from `uv python find <python>`. The
+  randomized-order leg's seeds are spelled `${{ github.run_number }}1` and `...2`, which the
+  catalogue writes `{run_number}1` and `{run_number}2`.
 
 The map from entry to job lives in that row.
 
@@ -325,7 +327,9 @@ whitespace, and named once. A command is a list of steps. Each step is an argv r
 repository root, or from `workdir` under it, with its own `env` set on top of the job's: the
 workflow step's own `env:`, such as a flag that turns a skip into a failure. A value only the runner
 knows is written as a placeholder: `{runner_temp}`, `{shard}`, `{base}` (the commit a diff is taken
-against) or `{python}` (the uv-managed interpreter of the entry's `python`). An argument or an `env`
+against), `{python}` (the uv-managed interpreter of the entry's `python`) or `{run_number}` (the
+run's number, which every attempt of the run keeps; another value every run, so a job whose steps
+name it is never reused, by TTL or by tree). An argument or an `env`
 value containing `$`, or a placeholder the catalogue does not have, is refused, so no step reads the
 environment around the catalogue. An `env` name is a variable name (`[A-Z_][A-Z0-9_]*`), and not one
 the runner owns (`tools.ci.run.runner_owns`: `PATH`, `HOME`, `TMPDIR`, the locale, git's variables
@@ -823,12 +827,13 @@ stops running its file, so a file left out of the shards never runs nowhere.
 shards to test ids, as a net under it. Every suite shard passes `--shard-ids FILE`, which writes
 each id the run collected, as many times as the run holds it (under xdist the controller writes
 the list its workers collected, which xdist runs only when every worker's is the same), and
-uploads it as `shard-ids-<leg>-<i>`. For each suite leg, a `planned-ids-<leg>` job on that
+uploads it as `shard-ids-<leg>-<i>`; the randomized-order leg's two orders write the one file,
+which then holds the later order's. For each suite leg, a `planned-ids-<leg>` job on that
 leg's own runner and Python (its `PY` and setup-uv's, which `uv run pytest` collects on)
 collects the planned suite (`shards universe` writes every file the plan covers, with the same
 exclusions) and uploads `planned-ids-<leg>`. So a platform or a Python never reads as a
-mismatch. `shard-union` then runs `shards union` over the four legs whose red
-is the run's (ubuntu, macos, arm and coverage-shard), which fails, naming each leg, on an id no
+mismatch. `shard-union` then runs `shards union` over the five legs whose red is the run's
+(ubuntu, macos, arm, coverage-shard and random-order), which fails, naming each leg, on an id no
 shard collected, an id the planned suite lacks, an id collected twice (by two shards or one),
 an id the planned suite holds twice, an id file that is not text, and a shard or a planned
 collection that uploaded no ids. It is red, never absent. The canary's shards are held to its
@@ -910,8 +915,8 @@ The rest of the platform breadth runs nightly (09:37 UTC) and on dispatch:
 - **Legs that run every night:** the suite on Ubuntu 24.04 on 3.13, on macOS 26 on 3.12 (six
   shards, two at a time), on Ubuntu 24.04 on arm64 on 3.13, and under coverage; the security
   corpus on Ubuntu 24.04 on 3.12 and on macOS 26 on 3.13, a canary on the next Ubuntu image
-  (advisory), the installer smoke, and the dependency audit. `NON_REUSABLE` in
-  `tools/ci/breadth_evidence.py` names them. The suite legs
+  (advisory), the randomized-order leg, the installer smoke, and the dependency audit.
+  `NON_REUSABLE` in `tools/ci/breadth_evidence.py` names them. The suite legs
   are here because the suite runs the security-marked modules, and a security result is never
   carried from an earlier night: each runs every night, which costs runner time and nothing
   else. The canary differs from the ubuntu-24.04 leg
@@ -930,8 +935,10 @@ The rest of the platform breadth runs nightly (09:37 UTC) and on dispatch:
   differ from every red's closes it. A green on any red's inputs is a flake: it is added to the
   issue, does not close it, and the record keeps the leg red. A rerun of the run produces one,
   whatever the clock says, because it keeps the run's night. So does a later night of the
-  security corpus or the canary while none of their recorded inputs has changed: they stay red
-  until a change of input, or until the issue is closed by hand. The installer smoke and the
+  security corpus, the canary or the randomized-order leg while none of their recorded inputs
+  has changed: they stay red until a change of input, or until the issue is closed by hand. The
+  randomized-order leg's seeds are no input (its entries keep them beside their inputs), so a
+  green on the next night's seeds keeps its issue open. The installer smoke and the
   audit record the night as an input, because their outside state moves daily, so for them the
   next scheduled night is a changed input. It holds `issues: write` and writes issues only on
   `main`.
@@ -1293,8 +1300,10 @@ shadow mode, and the recall study.
   step (`CI=true`, which the e2e jobs' Playwright config reads for its JSON report, retries and
   server; never `GITHUB_ACTIONS`, which says the run is on GitHub), then the workflow's
   (`UV_PYTHON_PREFERENCE`), then the job's, then the step's; of the caller's it gets only
-  `PATH`. `{runner_temp}` is the job's own temporary folder, `{shard}` the shard asked for, and
-  `{base}` `--base` or the merge base with `origin/main`.
+  `PATH`. `{runner_temp}` is the job's own temporary folder, `{shard}` the shard asked for,
+  `{base}` `--base` or the merge base with `origin/main`, and `{run_number}` the run's
+  `GITHUB_RUN_NUMBER` on GitHub and `0` here, where no numbered run runs, whatever the caller
+  set.
 - **Caches, managed Pythons and the project venv** go under `.local/run-job/cache`, never the
   caller's own: uv's cache and Pythons, the venv `uv sync` installs, npm's cache and the
   Playwright browsers. `npm ci` reinstalls the checkout's own `node_modules`, as it does on CI,
@@ -1435,7 +1444,8 @@ Each step runs through `tools/ci/run.py`, which runs one command from an empty e
   every job's entry, each install, and each step as this run runs it (a local `--workers` in its
   pytest worker count) with its folder; the placeholders stay unfilled: `{runner_temp}` is this
   run's own scratch folder, `{shard}` takes each of its values in every run of the job and the
-  shard count is keyed, and `{base}` is keyed as the full id of the commit it names. Then the
+  shard count is keyed, `{base}` is keyed as the full id of the commit it names, and
+  `{run_number}`, another value every run, is named only by jobs that are never reused. Then the
   commit's tree, each partner's head, the digests of `uv.lock` and `package-lock.json`, each
   toolchain program and each program an install or step starts from the job's `PATH` or by an
   absolute path (its path and the sha256 of its bytes; nothing is started), the Python it asks
@@ -1821,8 +1831,38 @@ worker that turns red later.
 
 Not read yet: files a test writes outside its temporary paths. Under xdist every worker writes
 to one tree, so a per-test listing would charge one worker's writes to another worker's test;
-the real-home guard already fails writes to the real home. The randomized-order leg and the
-bisect tool come later in #3949.
+the real-home guard already fails writes to the real home. The bisect tool comes later in
+#3949.
+
+### The randomized-order leg
+
+`tests/random_order.py` adds `--random-order-seed N`: the modules, then the tests within each,
+in the order `random.Random(N)` draws, and nothing else, so every xdist worker draws the same
+order and a different seed a different one. A module stays whole. Each process writes the tests
+it ran, in its order, with its real worker and position, to
+`reports/random-order/order-<seed>-<worker>.jsonl`.
+
+`breadth.yml`'s `random-order` leg runs it every night: four shards of the run's plan on
+Ubuntu 24.04 and 3.13, each running its share in two orders, seeded `run number × 10 + 1` and
+`+ 2` (`${{ github.run_number }}1` and `...2`), so a rerun of the run repeats the same orders.
+Each order is its own step, so the second runs whatever the first did, and the shard is red
+when either was. The catalogue's `random-order` entry holds its steps, token for token: it runs
+the suite, so the security-marked modules, and is security posture. It is never reused
+(`NON_REUSABLE`): a green is about tonight's orders alone. Both orders write the shard's ids
+(`--shard-ids`), and `shard-union` holds them to `planned-ids-random-order`, the planned suite
+collected on the leg's own runner and Python, so the leg runs every test the suite runs; the
+file holds the later order's collection, since a seed only reorders what was collected.
+
+Each entry keeps its seeds beside its inputs (`ran --seeds`), never among them: a red order is
+the tree's, so a green on the next night's seeds is no changed input. A red stays open, as the
+security corpus's does, until one of its inputs changes, and the leg's issue
+(`breadth: random-order is red`) names the seeds of its red shards. Each shard uploads, whatever
+its result, `random-order-<shard>`: every worker's order file for each seed, the state-leak
+report for each seed (taken before any fence restored), and the shard's file list. A failing
+worker's own sequence is its order file. Under `--dist worksteal` a worker runs a share of the
+seed's order and then tests it steals from the tail of another's, so
+`pytest -n 0 tests --shard-list <shard.txt> --random-order-seed <seed>`, which reruns the
+seed's whole order in one process, runs no one worker's sequence.
 
 ## The release manifest
 
