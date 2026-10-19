@@ -1225,6 +1225,15 @@ change to one region touches that region's files:
   own reaches them through its sinks: the routing suggestion, a reading's audio,
   a finished reply that may be read out, and the composer's posture from the
   first read.
+- **The transcript** — `web/src/pages/chat/transcript/`. `useTranscript.ts`
+  keeps the view (following a turn the owner sent, scrolled up, the turn nodes
+  the find bar and the Session Map jump to), the find bar and its `?find=` deep
+  link, the Session Map's `?map` state, and what a turn offers: answering a card,
+  approving, editing and resending, rewinding, regenerating, branching, switching
+  the answer, and switching to Agent to run a continuation. `Transcript.tsx`
+  draws the Session Map rail and the scrolling turns; an assistant turn is
+  `AssistantSegments.tsx`, with `UserEditor`, `RewindDivider`,
+  `SelectionQuote` and `MessagesSkeleton` beside it.
 
 ## Prompt entities
 

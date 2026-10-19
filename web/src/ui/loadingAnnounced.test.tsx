@@ -136,14 +136,15 @@ describe('the census is closed: no busy region without an announcement', () => {
 
   it('finds the population — the scan is not vacuous', () => {
     const files = walk(SRC).filter((abs) => /aria-busy="true"/.test(readSource(abs)))
-    // At the MEASURED population, not below it: ui/ListScaffold + ChatPage + ProvidersPanel +
-    // ModelBackends + AppsPanel + NodeInspectorDrawer + WorkspacePanel.
-    expect(files.length, 'files with a busy region').toBeGreaterThanOrEqual(7)
+    // At the MEASURED population, not below it: ui/ListScaffold + ChatPage + the chat transcript's
+    // MessagesSkeleton + ProvidersPanel + ModelBackends + AppsPanel + NodeInspectorDrawer +
+    // WorkspacePanel.
+    expect(files.length, 'files with a busy region').toBeGreaterThanOrEqual(8)
   })
 
   it('the hand-rolled regions kept their specific wording', () => {
     const read = (rel: string) => readSource(join(SRC, rel))
-    expect(read('pages/ChatPage.tsx')).toMatch(/LoadingStatus what="conversation"/)
+    expect(read('pages/chat/transcript/MessagesSkeleton.tsx')).toMatch(/LoadingStatus what="conversation"/)
     expect(read('pages/settings/ProvidersPanel.tsx')).toMatch(/LoadingStatus what="providers"/)
     expect(read('pages/settings/ModelBackends.tsx')).toMatch(/LoadingStatus what="model providers"/)
     expect(read('pages/workflows/NodeInspectorDrawer.tsx')).toMatch(/LoadingStatus what="node detail"/)

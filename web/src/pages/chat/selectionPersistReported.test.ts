@@ -30,7 +30,10 @@ import { join } from 'node:path'
 // next pass does not "finish the job" by adding a revert.
 
 const SRC = readFileSync(join(process.cwd(), 'src/pages/ChatPage.tsx'), 'utf8')
-const CODE = SRC.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+const strip = (s: string) => s.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+const CODE = strip(SRC)
+/** The chat's transcript controller, whose "Switch to Agent & run it" writes the task mode too. */
+const TRANSCRIPT = strip(readFileSync(join(process.cwd(), 'src/pages/chat/transcript/useTranscript.ts'), 'utf8'))
 
 /** Every api call that persists a piece of the composer's selection onto a session. */
 const SELECTION_WRITES = [
@@ -51,10 +54,12 @@ describe('a selection that fails to persist tells the user', () => {
   it('no selection write swallows its rejection', () => {
     // The ratchet. Any of these six reintroduced with a bare catch fails here, wherever in the file.
     const offenders: string[] = []
-    for (const call of SELECTION_WRITES) {
-      for (const m of CODE.matchAll(new RegExp(`api\\.${call}\\(`, 'g'))) {
-        const chain = CODE.slice(m.index!, m.index! + 320)
-        if (/\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(chain)) offenders.push(`${call} @${CODE.slice(0, m.index).split('\n').length}`)
+    for (const code of [CODE, TRANSCRIPT]) {
+      for (const call of SELECTION_WRITES) {
+        for (const m of code.matchAll(new RegExp(`api\\.${call}\\(`, 'g'))) {
+          const chain = code.slice(m.index!, m.index! + 320)
+          if (/\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(chain)) offenders.push(`${call} @${code.slice(0, m.index).split('\n').length}`)
+        }
       }
     }
     expect(offenders, 'a swallowed selection write leaves the composer lying').toEqual([])
@@ -96,8 +101,9 @@ describe('a selection that fails to persist tells the user', () => {
     // ... so the continuation turn runs under Agent's gate"), and it used to swallow the flip and send
     // anyway, running the turn under the posture the user was escalating OUT of while the composer showed
     // Agent. Proceeding on a failed flip is the one outcome the click did not authorise.
-    const at = CODE.indexOf('async function switchToAgentAndRun')
-    const body = CODE.slice(at, at + 700)
+    const at = TRANSCRIPT.indexOf('async function switchToAgentAndRun')
+    expect(at, 'switchToAgentAndRun must exist in the transcript controller').toBeGreaterThan(-1)
+    const body = TRANSCRIPT.slice(at, at + 700)
     expect(body, 'the flip must be captured').toMatch(/try \{ await api\.setTaskMode\('agent', s\) \}/)
     expect(body, 'it must report').toMatch(/notify\(`Couldn't switch this session to Agent/)
     // 🪤 No `\n` in this regex: the generator that wrote this file turned an escaped newline into a real

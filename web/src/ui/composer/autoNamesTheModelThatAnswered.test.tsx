@@ -114,9 +114,12 @@ describe('the chat page hands the served model and the chain to both readers', (
   })
 
   it('the composer is given the latest served model and the chain, and the chip its turn\'s', () => {
+    // The turn's chip is drawn by the transcript region (`chat/transcript/`).
+    const transcript = readFileSync(join(__dirname, '../../pages/chat/transcript/Transcript.tsx'), 'utf8')
+    const turn = readFileSync(join(__dirname, '../../pages/chat/transcript/AssistantSegments.tsx'), 'utf8')
     expect(page).toContain('servedModel={lastServedModel(turns)} autoChain={autoChain}')
-    expect(page).toContain('servedModel={turn.servedModel}')
-    expect(page).toContain('served={servedModel}')
+    expect(transcript).toContain('servedModel={turn.servedModel}')
+    expect(turn).toContain('served={servedModel}')
   })
 
   it('the chain is read from session detail and from setting the working directory', () => {

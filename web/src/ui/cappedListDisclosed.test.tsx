@@ -279,7 +279,8 @@ describe('every list whose label states a total discloses its cap', () => {
   it('a string SUMMARY keeps its own grammar', () => {
     // Pinned so the exclusion above is a judgement on record rather than a hole: this one already
     // tells the user what it omits, in the only form that reads correctly inline.
-    const src = strip(readSource(join(SRC, 'pages/ChatPage.tsx')))
+    // The folded work's summary, in the chat transcript's assistant turn.
+    const src = strip(readSource(join(SRC, 'pages/chat/transcript/AssistantSegments.tsx')))
     expect(src, 'the tool-name summary still discloses its own residue').toMatch(
       /toolNames\.slice\(0, 3\)\.join\(', '\)[\s\S]{0,60}toolNames\.length - 3\} more/,
     )

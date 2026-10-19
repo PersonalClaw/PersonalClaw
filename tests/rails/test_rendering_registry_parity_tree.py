@@ -139,4 +139,9 @@ def test_only_a_chat_reply_runs_widgets():
         n = len(re.findall(r"<Markdown\b[^\n>]*\swidgets\b", _code_only(source_index.text(p))))
         if n:
             opted_in[str(p.relative_to(_WEB))] = n
-    assert opted_in == {"pages/ChatPage.tsx": 3}
+    # The reply in the chat's transcript, and the history page's peek at a chat (its saved replies
+    # and the one streaming in): the same three sites since the transcript left ChatPage.tsx.
+    assert opted_in == {
+        "pages/ChatPage.tsx": 2,
+        "pages/chat/transcript/AssistantSegments.tsx": 1,
+    }

@@ -248,11 +248,13 @@ describe('Nothing in the tree consumes an activity index', () => {
     // satisfied by deleting the map. So the survivor is asserted positively: the map's entries —
     // The model grouped one per user message — have a production consumer, and the rail is
     // mounted in the page.
+    // The chat's transcript region holds both since it left ChatPage.tsx: the entries in its
+    // controller, the rail in its view.
     const entryUsers = hits(scanned, /sessionMapEntries\(/).filter((rel) => !/\.test\.tsx?$/.test(rel))
     expect(entryUsers, 'the map\'s model has no non-test consumer — the session would have NO index').not.toHaveLength(0)
-    expect(entryUsers).toContain(join('src', 'pages', 'ChatPage.tsx'))
+    expect(entryUsers).toContain(join('src', 'pages', 'chat', 'transcript', 'useTranscript.ts'))
     const railUsers = hits(scanned, /<SessionMapRail\b/)
-    expect(railUsers, 'the Session Map rail is mounted nowhere — deleting the Index tab would leave no in-session index').toContain(join('src', 'pages', 'ChatPage.tsx'))
+    expect(railUsers, 'the Session Map rail is mounted nowhere — deleting the Index tab would leave no in-session index').toContain(join('src', 'pages', 'chat', 'transcript', 'Transcript.tsx'))
   })
 })
 
@@ -274,10 +276,12 @@ describe('The survivor still navigates', () => {
     rail.unmount()
   })
 
-  it('🔑 ChatPage still hands the rail its one jump handler, un-wrapped', () => {
-    const page = readSource(join(SRC, 'pages/ChatPage.tsx'))
+  it('🔑 the transcript still hands the rail its one jump handler, un-wrapped', () => {
+    // The rail is mounted by the chat's transcript view, and the handler is its controller's.
+    const page = readSource(join(SRC, 'pages/chat/transcript/Transcript.tsx'))
+    const controller = readSource(join(SRC, 'pages/chat/transcript/useTranscript.ts'))
     const open = page.indexOf('<SessionMapRail ')
-    expect(open, 'no <SessionMapRail> call site in ChatPage.tsx — the map is not mounted').toBeGreaterThan(-1)
+    expect(open, 'no <SessionMapRail> call site in Transcript.tsx — the map is not mounted').toBeGreaterThan(-1)
     const tag = page.slice(open, page.indexOf('/>', open))
     const expr = tag.match(/onJumpTo=\{([^}]*)\}/)
     expect(expr, '<SessionMapRail> passes no onJumpTo prop').not.toBeNull()
@@ -285,7 +289,10 @@ describe('The survivor still navigates', () => {
     // coordinate on the way in, which is the dual path the shared jump closed and this change must not reopen.
     expect(expr![1].trim(), `<SessionMapRail> passes an expression, not the shared handler: ${expr![1]}`).toMatch(/^[A-Za-z_$][\w$]*$/)
     const name = expr![1].trim()
-    const defs = page.match(new RegExp(`(?:function|const)\\s+${name}\\b`, 'g')) ?? []
-    expect(defs, `expected one definition of \`${name}\` in ChatPage.tsx, found ${defs.length}`).toHaveLength(1)
+    const defs = controller.match(new RegExp(`(?:function|const)\\s+${name}\\b`, 'g')) ?? []
+    expect(defs, `expected one definition of \`${name}\` in useTranscript.ts, found ${defs.length}`).toHaveLength(1)
+    // …and the view takes that one from its controller rather than defining a second.
+    expect(page.match(new RegExp(`(?:function|const)\\s+${name}\\b`, 'g')), `Transcript.tsx defines its own \`${name}\``).toBeNull()
+    expect(page).toMatch(new RegExp(`const \\{[^}]*\\b${name}\\b[^}]*\\} = transcript`))
   })
 })

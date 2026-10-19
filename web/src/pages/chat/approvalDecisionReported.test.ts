@@ -32,9 +32,12 @@ import { join } from 'node:path'
 // resolving — which reads as "my click did nothing" (the data-driven shape in
 // `tools/toggleFailureReported`). Both symptoms, one missing report.
 
-const SRC = join(process.cwd(), 'src', 'pages', 'ChatPage.tsx')
+// `approve` is the chat transcript's (`useTranscript`, which ChatPage composes); the ratchet below
+// sweeps both files, so a second call cannot come back in either.
+const SRC = join(process.cwd(), 'src', 'pages', 'chat', 'transcript', 'useTranscript.ts')
+const PAGE = join(process.cwd(), 'src', 'pages', 'ChatPage.tsx')
 const raw = readFileSync(SRC, 'utf8')
-const scan = raw.replace(/=>/g, '⇒')
+const scans = [raw, readFileSync(PAGE, 'utf8')].map((t) => t.replace(/=>/g, '⇒'))
 
 /** `approve`'s body, so every assertion below is about THIS control and not the file at large. */
 function approveBody(): string {
@@ -97,14 +100,16 @@ describe('a permission decision that fails says so, and moves nothing', () => {
 
   it('no OTHER api.approve call in the file swallows — the ratchet', () => {
     const offenders: string[] = []
-    for (const m of scan.matchAll(/api\.approve\(/g)) {
-      const chain = scan.slice(m.index!, m.index! + 200)
-      if (/\.catch\(\s*\(\s*\)\s*⇒\s*\{\s*\}\s*\)/.test(chain)) {
-        offenders.push(`line ${scan.slice(0, m.index).split('\n').length}`)
+    for (const scan of scans) {
+      for (const m of scan.matchAll(/api\.approve\(/g)) {
+        const chain = scan.slice(m.index!, m.index! + 200)
+        if (/\.catch\(\s*\(\s*\)\s*⇒\s*\{\s*\}\s*\)/.test(chain)) {
+          offenders.push(`line ${scan.slice(0, m.index).split('\n').length}`)
+        }
       }
     }
     expect(offenders).toEqual([])
     // Vacuity: the sweep must actually find the call it is guarding.
-    expect([...scan.matchAll(/api\.approve\(/g)].length).toBeGreaterThanOrEqual(1)
+    expect(scans.flatMap((scan) => [...scan.matchAll(/api\.approve\(/g)]).length).toBeGreaterThanOrEqual(1)
   })
 })

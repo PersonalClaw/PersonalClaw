@@ -142,7 +142,10 @@ describe('a failed cancel tells the user the work did not stop', () => {
     // BEFORE the call, which is this rail's premise. What stop() no longer does is SAY the turn
     // ended on that flip — the live region announces a stop only when the gateway's answer says
     // this press `stopped` it (`chat/turnEndIsAnnounced.test.tsx` drives both outcomes).
-    const stopFn = raw.slice(raw.indexOf('async function stop()'), raw.indexOf('// ── message actions'))
+    // Bounded by stop()'s own closing brace: the message actions that used to follow it moved to the
+    // transcript region, and an open-ended slice would read the rest of the page.
+    const stopAt = raw.indexOf('async function stop()')
+    const stopFn = raw.slice(stopAt, raw.indexOf('\n  }\n', stopAt))
     expect(stopFn, 'stop() must still be found — an empty slice passes nothing').toContain('api.stopChat(')
     expect(stopFn.indexOf('markStreaming(false)'), 'stop() still settles the composer before the call')
       .toBeGreaterThan(-1)

@@ -112,25 +112,28 @@ describe('api.sessionsSearch keeps the source the endpoint reports', () => {
 
 // ── Source-structural pins for the two ChatPage wirings (shell too heavy to mount) ──────
 const src = readFileSync(join(process.cwd(), 'src', 'pages', 'ChatPage.tsx'), 'utf8')
+// The find bar is the chat transcript's: its state in `useTranscript`, the bar in `Transcript`.
+const transcript = readFileSync(join(process.cwd(), 'src', 'pages', 'chat', 'transcript', 'useTranscript.ts'), 'utf8')
+const transcriptView = readFileSync(join(process.cwd(), 'src', 'pages', 'chat', 'transcript', 'Transcript.tsx'), 'utf8')
 
 describe('ChatSession auto-opens the find bar from a ?find deep-link', () => {
   it('reads the find param through the URL-state idiom', () => {
-    expect(src).toMatch(/useQueryParam\(query, setQuery, 'find', '', \{ replace: true \}\)/)
+    expect(transcript).toMatch(/useQueryParam\(query, setQuery, 'find', '', \{ replace: true \}\)/)
   })
 
   it('seeds + opens the bar, then clears the param so a re-render/Back does not re-fire', () => {
     // The three-line body of the deep-link effect, in order.
-    expect(src).toMatch(/setFindSeed\(findParam\)/)
-    expect(src).toMatch(/setFindOpen\(true\)/)
-    expect(src).toMatch(/setFindParam\(''\)/)
+    expect(transcript).toMatch(/setFindSeed\(findParam\)/)
+    expect(transcript).toMatch(/setFindOpen\(true\)/)
+    expect(transcript).toMatch(/setFindParam\(''\)/)
   })
 
   it('passes the captured seed to the find bar as initialQuery', () => {
-    expect(src).toMatch(/initialQuery=\{findSeed\}/)
+    expect(transcriptView).toMatch(/initialQuery=\{findSeed\}/)
   })
 
   it('a manual ⌘F clears the seed first, so it never inherits the deep-link term', () => {
-    expect(src).toMatch(/setFindSeed\(''\)\s*\n\s*setFindOpen\(\(o\) => !o\)/)
+    expect(transcript).toMatch(/setFindSeed\(''\)\s*\n\s*setFindOpen\(\(o\) => !o\)/)
   })
 })
 

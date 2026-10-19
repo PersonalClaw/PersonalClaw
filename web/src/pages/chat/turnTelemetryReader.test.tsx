@@ -178,16 +178,17 @@ describe('C — the fold is wired (the reader is not an unreachable component)',
       .toBe('context')
   })
 
-  describe('the call sites in ChatPage.tsx', () => {
+  describe('the call sites in the transcript', () => {
     const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
-    const chatPage = read('../ChatPage.tsx')
+    // The assistant turn the fold lives in moved out of ChatPage.tsx into the transcript region.
+    const chatPage = read('./transcript/AssistantSegments.tsx')
     const ledger = read('./ContextLedger.tsx')
     const chatTypes = read('./chatTypes.ts')
 
     it('VACUITY FLOOR — the scan actually reached the page', () => {
       // A `readFileSync` pointed at the wrong relative path throws, but a page that had been
       // gutted would make every `not.toContain` below pass on an empty string.
-      expect(chatPage.length).toBeGreaterThan(100_000)
+      expect(chatPage.length).toBeGreaterThan(10_000)
       expect(chatPage).toContain('function AssistantSegments(')
       expect(ledger).toContain('export function ContextLedger(')
     })
@@ -205,7 +206,7 @@ describe('C — the fold is wired (the reader is not an unreachable component)',
 
     it('hands the folded text to the component that renders it', () => {
       expect(chatPage).toContain('stats={ledger.stats}')
-      expect(chatPage).toContain("import { ContextLedger } from './chat/ContextLedger'")
+      expect(chatPage).toContain("import { ContextLedger } from '../ContextLedger'")
     })
 
     it('keeps the stats line OUT of the inline step flow, so it renders once', () => {
