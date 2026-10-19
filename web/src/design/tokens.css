@@ -358,6 +358,27 @@
   --color-ansi-bright-white: var(--gray-949);
 }
 
+/* ── layer 2: the shared brand and state tokens (#3809). One set for coral, the agent orb, the buddy
+   and the status language, so a scheme recolours them together. Each is an alias of a colour the
+   orb, the buddy and the status docs already name, so none carries a value of its own and each
+   follows the mode and the scheme through what it aliases:
+     brand          coral, the one live accent: the scheme's primary, never a literal
+     orb-alive      the orb's dots, and the buddy's, while an agent is alive (working or waiting)
+     orb-rest       the same dots where nothing is alive (at rest, done, blocked): the idle-icon ink
+     state-<family> the colour each of the four families reads in (lib/workPhase.ts): quiet at rest,
+                    active coral, waiting the warn tone (it needs the owner), blocked the danger tone
+   The buddy has no token of its own (web/DESIGN.md §2): it draws with the orb's. A state is never
+   shown by these alone; its words go beside it (ui/StateMark). ── */
+:root {
+  --color-brand: var(--color-primary);
+  --color-orb-alive: var(--color-brand);
+  --color-orb-rest: var(--color-on-surface-var);
+  --color-state-quiet: var(--color-orb-rest);
+  --color-state-active: var(--color-orb-alive);
+  --color-state-waiting: var(--color-warn);
+  --color-state-blocked: var(--color-danger);
+}
+
 /* ── layer 3: the editor-compatible layer. Each token is named after the key it feeds: Monaco's
    colour id (`editor.selectionBackground` → `--editor-selection-background`) or xterm's ITheme
    field (`brightBlack` → `--terminal-bright-black`), so design/editorTheme.ts maps them one to one.
