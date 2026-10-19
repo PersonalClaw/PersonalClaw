@@ -219,6 +219,11 @@ at the tag: a dispatch builds the ref it runs on, and has no input to point it a
 else. A workflow fix merged afterwards helps the next tag only. So land release-path
 fixes, and rehearse (step 5), before you tag.
 
+Tag only a `main` commit whose **own** push run of `ci.yml` is green. During a burst of
+merges a commit's suite shard can be replaced by a newer push's, and its `test` check then
+reads red as `superseded by <newer commit>`: its tree was not tested on its own. Tag the newer
+commit once its own run is green instead. Nothing enforces this yet; #3911's release gate must.
+
 Tag the **merge commit on `main`**, not your branch tip:
 
 ```bash

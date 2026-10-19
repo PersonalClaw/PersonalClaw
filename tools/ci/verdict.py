@@ -109,6 +109,9 @@ class Reason:
 class Verdict:
     green: bool
     reasons: tuple[Reason, ...] = ()
+    #: On a push to main only (:func:`decide_main_push`): the newer commit whose run replaced
+    #: this one, when that is the whole of why it is red. Empty everywhere else. Never green.
+    superseded_by: str = ""
 
 
 def _fault(result: JobResult, candidate: Identity) -> tuple[str, str] | None:
@@ -183,6 +186,68 @@ def decide(planned: Iterable[str], results: Iterable[JobResult], candidate: Iden
         if fault:
             reasons.append(Reason(key, *fault))
     return Verdict(green=not reasons, reasons=tuple(reasons))
+
+
+#: The reason a push to main's planned job reads red when a newer push's run replaced it.
+SUPERSEDED = "superseded"
+
+
+#: The one run the main-push reading accepts: a push, to the full ref of main.
+MAIN_PUSH = ("push", "refs/heads/main")
+
+
+def decide_main_push(
+    planned: Iterable[str],
+    results: Iterable[JobResult],
+    pushed: Identity,
+    proven: Mapping[str, str],
+    *,
+    event: str,
+    ref: str,
+) -> Verdict:
+    """The verdict on a push to ``main``: :func:`decide`, with one more name for a red.
+
+    ``event`` and ``ref`` are the run's own (``github.event_name`` and ``github.ref``), and
+    anything but a push to ``refs/heads/main`` is refused, so a pull request's run, a
+    ``pull_request_target`` run on main's ref or a tag named ``main`` can never read a job as
+    superseded. ``proven`` maps a planned key to the newer commit whose run replaced it, as
+    ``tools/ci/superseded.py`` proved from the API. A key whose result is ``cancelled`` and that
+    ``proven`` names reads ``superseded`` instead of ``cancelled``. It is still red: #3915 leaves
+    a commit in the middle of a burst unverified on its own. ``superseded_by`` names the newer
+    commit only when every reason is superseded by that one commit. A failed, skipped or missing
+    job keeps its own reason whatever ``proven`` says. A candidate's reading is :func:`decide`,
+    which takes no proof, so a pull request's cancelled job is never superseded.
+    """
+    if (event, ref) != MAIN_PUSH:
+        raise Refused(
+            f"only a push to refs/heads/main may read a job as superseded, not a {event!r} run "
+            f"on {ref!r}"
+        )
+    checked: dict[str, str] = {}
+    for key, newer in proven.items():
+        if not isinstance(key, str) or not key:
+            raise Refused(f"a superseded key must be a non-empty string, got {key!r}")
+        if not isinstance(newer, str) or not _SHA.fullmatch(newer):
+            raise Refused(
+                f"the commit that superseded {key} must be a full object id, got {newer!r}"
+            )
+        if newer == pushed.head_sha:
+            raise Refused(f"the commit that superseded {key} is the pushed commit")
+        checked[key] = newer
+    base = decide(planned, results, pushed)
+    if base.green:
+        return base
+    reasons = tuple(
+        (
+            Reason(r.key, SUPERSEDED, f"by {checked[r.key]}")
+            if r.kind == CANCELLED and r.key in checked
+            else r
+        )
+        for r in base.reasons
+    )
+    by = {checked[r.key] for r in reasons if r.kind == SUPERSEDED}
+    whole = len(by) == 1 and all(r.kind == SUPERSEDED for r in reasons)
+    return Verdict(green=False, reasons=reasons, superseded_by=by.pop() if whole else "")
 
 
 def _no_repeats(pairs: list[tuple[str, object]]) -> dict[str, object]:

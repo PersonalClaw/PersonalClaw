@@ -8,7 +8,8 @@
 # (tools/ci/tree_tested.py, the previous main commit's copy). Yes: every job that run did is
 # skipped, and only the always-run set runs — `tree-check`, `changes`, `security-corpus`, and
 # `apps-contract` when the SDK changed. No, or no answer: every job runs on the pushed tree,
-# `test-macos` included, as that tree's one execution.
+# `test-macos` included. The suite's shards are the one exception: during a burst of merges a
+# newer push's waiting shard can replace this one's (see the concurrency header below).
 #
 # The browser-driven `e2e` job takes a `needs:` on the cheap `changes` job, so a diff that cannot
 # reach a rendered pixel does not pay for a Chromium — see that job's header for the
@@ -68,6 +69,22 @@ on:
 # untested merge's run could be dropped before it started, and nothing would ever check that
 # tree. Keyed on the commit, every push to main gets its own run. A tested push is a few
 # minutes of the always-run set, so a group per commit costs little.
+#
+# THE SUITE ON MAIN IS THE EXCEPTION (decision 9 of #3915). `test-shard` and `test-macos` each
+# join a group of their own per shard, shared by every first-attempt push to main, with
+# cancel-in-progress false. A running shard is never cancelled, and while it runs the next
+# shard to join waits; a later request's waiting shard replaces the one before it. So a burst of
+# merges usually runs the suite once on its newest commit instead of once per commit. The group
+# replaces by order of joining, not by commit: an older push whose tree-check or shard-plan ran
+# slower can evict the newest commit's waiting shard, which then reads "unproven" (red, fail
+# closed) until it is re-run. A commit whose shard was replaced is not verified on its own:
+# its gate (`test`, or `test-macos-gate`) reds it as "superseded by <newer commit>" when the API
+# proves it (tools/ci/superseded.py), "unproven" otherwise. No release gate reads CI yet: until
+# #3911 lands, the release runbook tags only a commit whose own main-push run was green. A re-run
+# keeps its run
+# id, so on main it keys on its own commit instead and cannot replace the tip's waiting shard.
+# On a pull request the same groups key on the head repository and branch, as the group below
+# does, so they add nothing there.
 concurrency:
   group: ci-${{ github.ref == 'refs/heads/main' && github.sha || github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -569,6 +586,11 @@ jobs:
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 55
+    # On main, one group per shard for every push (see the header): a newer push's waiting
+    # shard replaces this one if it has not started, and the `test` gate names that red.
+    concurrency:
+      group: ci-suite-${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' && github.ref_name || github.ref == 'refs/heads/main' && github.sha || github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}-test-shard-${{ matrix.shard }}
+      cancel-in-progress: false
     strategy:
       # fail-fast:false so one red shard does not cancel the others — you want every failing
       # shard's report in one push, not a fix-push-rediscover loop (same reason breadth.yml's legs
@@ -723,34 +745,82 @@ jobs:
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read   # this run's jobs and main's later runs, for the superseded proof
+      checks: read    # a cancelled shard's annotations
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
         run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
       - name: every test shard passed
+        # The same script as `test-macos-gate`'s, which differs only in this env.
+        # tests/rails/test_ci_contract.py runs it on planted answers and holds its exit codes.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          RESULT: ${{ needs.test-shard.result }}
+          SHARD_JOB: test-shard
+          GROUP_PREFIX: ci-suite-main-main-test-shard-
         run: |
-          result='${{ needs.test-shard.result }}'
+          result="$RESULT"
           # Reachable only when a SHARD was cancelled while this run itself lived on — the job
           # above is skipped outright when the run is cancelled. A missing answer on a live run
           # is red, never green: same doctrine as breadth.yml's install-smoke legs.
+          #
+          # On a push to main the shards share one group per shard with every other push
+          # (#3915), so a newer push's waiting shard can replace one of these before it starts.
+          # That is still red: this commit was not tested on its own. It is named for what it
+          # is only when the PREVIOUS main commit's copy of tools/ci/superseded.py, fetched as
+          # tree-check's is and run under `python3 -I`, proves it from the API. Any other
+          # cancellation, or no answer, is unproven. Either way this step exits 1.
           if [ "$result" = "cancelled" ]; then
-            echo "::error title=test shards unproven::a test shard was cancelled while this run" \
-                 "was still live, so the suite measured nothing. This is NOT the superseded-run" \
-                 "case (that skips this job entirely) — re-run and, if it repeats, look for a" \
-                 "runner the shard is losing rather than a failing test."
+            newer=""
+            if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+              check="$RUNNER_TEMP/superseded.py"
+              if gh api -H "Accept: application/vnd.github.raw" \
+                   "repos/${GITHUB_REPOSITORY}/contents/tools/ci/superseded.py?ref=${BEFORE}" \
+                   > "$check"; then
+                GITHUB_OUTPUT="$RUNNER_TEMP/answer.txt" python3 -I "$check" --workflow ci.yml \
+                  --job "$SHARD_JOB" --group-prefix "$GROUP_PREFIX" || true
+                line=$(cat "$RUNNER_TEMP/answer.txt" 2>/dev/null || true)
+                case "$line" in
+                  superseded=*) newer="${line#superseded=}" ;;
+                esac
+              fi
+            fi
+            # Exactly one full object id: lowercase hex, 40 or 64 characters, on one line.
+            case "$newer" in
+              *[!0-9a-f]*) newer="" ;;
+            esac
+            case "${#newer}" in
+              40|64) ;;
+              *) newer="" ;;
+            esac
+            if [ -n "$newer" ]; then
+              echo "::error title=test shards superseded::a newer push to main replaced this" \
+                   "commit's waiting shard, so the suite did not run on this commit on its own:" \
+                   "superseded by ${newer}. It stays red; that commit's run is the one to read."
+            else
+              echo "::error title=test shards unproven::a test shard was cancelled while this run" \
+                   "was still live, and no newer push to main is proven to have replaced it, so" \
+                   "the suite measured nothing on this commit. Look for a cancellation by hand or" \
+                   "a runner the shard is losing. A re-run runs in this commit's own group, so a" \
+                   "burst of merges cannot replace it."
+            fi
             exit 1
           fi
           if [ "$result" != "success" ]; then
-            echo "::error title=test shards failed::the sharded test matrix result was '$result'" \
-                 "(expected 'success'). Open the red 'test-shard (N)' job(s) above, or download the" \
-                 "JUnit report — \`gh run download <run-id> --name junit-test-shard-N\` — to see WHICH" \
-                 "tests failed without reading the log. If that report names NO failing test" \
-                 "(failures=0), the shard exited nonzero without a test failing: read" \
-                 "\`--name real-home-guard-shard-N\`, which carries the real-home guard's verdict: the" \
-                 "accesses it refused that no test owned, each with its thread and stack (#3386)."
+            echo "::error title=test shards failed::the ${SHARD_JOB} matrix result was '$result'" \
+                 "(expected 'success'). Open the red '${SHARD_JOB} (N)' job(s) above, or download" \
+                 "the JUnit report — \`gh run download <run-id> --name junit-${SHARD_JOB}-N\` — to" \
+                 "see WHICH tests failed without reading the log. If that report names NO failing" \
+                 "test (failures=0), the shard exited nonzero without a test failing: read that" \
+                 "shard's real-home guard report, which carries the guard's verdict: the accesses it" \
+                 "refused that no test owned, each with its thread and stack (#3386)."
             exit 1
           fi
-          echo "all 4 test shards passed"
+          echo "every ${SHARD_JOB} shard passed"
 
   test-macos:
     # ── The suite on macOS, before the merge (#3913) ────────────────────────────────────────
@@ -765,6 +835,11 @@ jobs:
     # tested. A feature branch has no push run here (#3915); its pull request runs it.
     needs: [tree-check, shard-plan]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && ((github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+    # As `test-shard`'s: one group per shard for every push to main, never cancelling a running
+    # shard, so a burst queues one macOS suite, not one per commit.
+    concurrency:
+      group: ci-suite-${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' && github.ref_name || github.ref == 'refs/heads/main' && github.sha || github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}-test-macos-${{ matrix.shard }}
+      cancel-in-progress: false
     runs-on: macos-26
     timeout-minutes: 50
     strategy:
@@ -825,6 +900,94 @@ jobs:
           path: reports/real-home-guard.txt
           if-no-files-found: ignore
           retention-days: 7
+
+  test-macos-gate:
+    # ── Aggregation gate for the macOS shards (#3915) ─────────────────────────────────────
+    # `test`'s twin over `test-macos`, with the same script: a failed shard is red, and on a
+    # push to main a shard a newer push replaced is red as "superseded by <newer commit>",
+    # proven by the previous main commit's copy of tools/ci/superseded.py for this job's own
+    # group; anything else cancelled is "unproven". It runs whenever `test-macos` was
+    # planned, the same condition, so on a pull request not into main both are skipped.
+    needs: [tree-check, test-macos]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && ((github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read   # this run's jobs and main's later runs, for the superseded proof
+      checks: read    # a cancelled shard's annotations
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - name: every macOS shard passed
+        # The same script as `test`'s, which differs only in this env.
+        # tests/rails/test_ci_contract.py runs it on planted answers and holds its exit codes.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          RESULT: ${{ needs.test-macos.result }}
+          SHARD_JOB: test-macos
+          GROUP_PREFIX: ci-suite-main-main-test-macos-
+        run: |
+          result="$RESULT"
+          # Reachable only when a SHARD was cancelled while this run itself lived on — the job
+          # above is skipped outright when the run is cancelled. A missing answer on a live run
+          # is red, never green: same doctrine as breadth.yml's install-smoke legs.
+          #
+          # On a push to main the shards share one group per shard with every other push
+          # (#3915), so a newer push's waiting shard can replace one of these before it starts.
+          # That is still red: this commit was not tested on its own. It is named for what it
+          # is only when the PREVIOUS main commit's copy of tools/ci/superseded.py, fetched as
+          # tree-check's is and run under `python3 -I`, proves it from the API. Any other
+          # cancellation, or no answer, is unproven. Either way this step exits 1.
+          if [ "$result" = "cancelled" ]; then
+            newer=""
+            if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+              check="$RUNNER_TEMP/superseded.py"
+              if gh api -H "Accept: application/vnd.github.raw" \
+                   "repos/${GITHUB_REPOSITORY}/contents/tools/ci/superseded.py?ref=${BEFORE}" \
+                   > "$check"; then
+                GITHUB_OUTPUT="$RUNNER_TEMP/answer.txt" python3 -I "$check" --workflow ci.yml \
+                  --job "$SHARD_JOB" --group-prefix "$GROUP_PREFIX" || true
+                line=$(cat "$RUNNER_TEMP/answer.txt" 2>/dev/null || true)
+                case "$line" in
+                  superseded=*) newer="${line#superseded=}" ;;
+                esac
+              fi
+            fi
+            # Exactly one full object id: lowercase hex, 40 or 64 characters, on one line.
+            case "$newer" in
+              *[!0-9a-f]*) newer="" ;;
+            esac
+            case "${#newer}" in
+              40|64) ;;
+              *) newer="" ;;
+            esac
+            if [ -n "$newer" ]; then
+              echo "::error title=test shards superseded::a newer push to main replaced this" \
+                   "commit's waiting shard, so the suite did not run on this commit on its own:" \
+                   "superseded by ${newer}. It stays red; that commit's run is the one to read."
+            else
+              echo "::error title=test shards unproven::a test shard was cancelled while this run" \
+                   "was still live, and no newer push to main is proven to have replaced it, so" \
+                   "the suite measured nothing on this commit. Look for a cancellation by hand or" \
+                   "a runner the shard is losing. A re-run runs in this commit's own group, so a" \
+                   "burst of merges cannot replace it."
+            fi
+            exit 1
+          fi
+          if [ "$result" != "success" ]; then
+            echo "::error title=test shards failed::the ${SHARD_JOB} matrix result was '$result'" \
+                 "(expected 'success'). Open the red '${SHARD_JOB} (N)' job(s) above, or download" \
+                 "the JUnit report — \`gh run download <run-id> --name junit-${SHARD_JOB}-N\` — to" \
+                 "see WHICH tests failed without reading the log. If that report names NO failing" \
+                 "test (failures=0), the shard exited nonzero without a test failing: read that" \
+                 "shard's real-home guard report, which carries the guard's verdict: the accesses it" \
+                 "refused that no test owned, each with its thread and stack (#3386)."
+            exit 1
+          fi
+          echo "every ${SHARD_JOB} shard passed"
 
   web:
     needs: [tree-check]

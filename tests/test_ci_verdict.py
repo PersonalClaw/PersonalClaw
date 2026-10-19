@@ -537,6 +537,148 @@ def test_a_reason_naming_a_key_that_is_not_text_still_reaches_the_summary(
     assert "`\\ud800`: missing" in summary.read_text(encoding="utf-8")
 
 
+# ── the main-push reading: superseded, still red ──────────────────────────────────────────────
+#
+# On a push to main, a suite shard that GitHub's concurrency group replaced with a newer push's
+# waiting shard is cancelled. ``tools/ci/superseded.py`` proves that from the API; this reading
+# only names it. It is never green, and ``decide`` (every candidate's reading) never says it.
+
+NEWER = "f" * 40
+PUSHED = Identity(HEAD, {})
+
+
+def pushed(key: str, result: str = "success") -> JobResult:
+    return JobResult(key, result, PUSHED, 1)
+
+
+#: (name, planned, results, proven superseded, the reasons, superseded_by)
+MAIN_PUSH_ROWS: list[
+    tuple[str, list[str], list[JobResult], dict[str, str], list[tuple[str, str]], str]
+] = [
+    (
+        "a cancelled shard proven superseded",
+        ["s1", "s2"],
+        [pushed("s1"), pushed("s2", "cancelled")],
+        {"s2": NEWER},
+        [("s2", "superseded")],
+        NEWER,
+    ),
+    (
+        "a cancelled shard with no proof",
+        ["s1", "s2"],
+        [pushed("s1"), pushed("s2", "cancelled")],
+        {},
+        [("s2", "cancelled")],
+        "",
+    ),
+    (
+        "a failed shard named as superseded",
+        ["s1", "s2"],
+        [pushed("s1"), pushed("s2", "failure")],
+        {"s2": NEWER},
+        [("s2", "failure")],
+        "",
+    ),
+    (
+        "one superseded shard beside a failed one",
+        ["s1", "s2"],
+        [pushed("s1", "failure"), pushed("s2", "cancelled")],
+        {"s2": NEWER},
+        [("s1", "failure"), ("s2", "superseded")],
+        "",
+    ),
+    (
+        "two shards superseded by different commits",
+        ["s1", "s2"],
+        [pushed("s1", "cancelled"), pushed("s2", "cancelled")],
+        {"s1": NEWER, "s2": OTHER},
+        [("s1", "superseded"), ("s2", "superseded")],
+        "",
+    ),
+    (
+        "a cancelled shard proven superseded, missing another",
+        ["s1", "s2"],
+        [pushed("s2", "cancelled")],
+        {"s2": NEWER},
+        [("s1", "missing"), ("s2", "superseded")],
+        "",
+    ),
+]
+
+
+MAIN = {"event": "push", "ref": "refs/heads/main"}
+
+
+def test_a_superseded_shard_on_main_reads_red_under_its_own_name(subtests: object) -> None:
+    assert len(MAIN_PUSH_ROWS) == 6, "a row was dropped from the table"
+    for name, planned, results, proven, reasons, by in MAIN_PUSH_ROWS:
+        with row(subtests, case=name):
+            got = verdict.decide_main_push(planned, results, PUSHED, proven, **MAIN)
+            assert not got.green, f"{name}: read green"
+            assert [(r.key, r.kind) for r in got.reasons] == reasons, f"{name}: {got.reasons}"
+            assert got.superseded_by == by, f"{name}: {got.superseded_by!r}"
+
+
+def test_a_green_push_is_green_whatever_the_proof_names() -> None:
+    got = verdict.decide_main_push(["s1"], [pushed("s1")], PUSHED, {"s1": NEWER}, **MAIN)
+    assert got.green and got.reasons == () and got.superseded_by == ""
+
+
+def test_the_main_push_reading_refuses_a_proof_it_cannot_trust(subtests: object) -> None:
+    rows: list[tuple[str, dict[object, object], str]] = [
+        ("a newer commit that is the pushed one", {"s1": HEAD}, "is the pushed commit"),
+        ("a newer commit that is not an object id", {"s1": "abc123"}, "full object id"),
+        ("a newer commit with a trailing newline", {"s1": NEWER + "\n"}, "full object id"),
+        ("an empty key", {"": NEWER}, "non-empty"),
+    ]
+    assert len(rows) == 4, "a refusal was dropped from the table"
+    for name, proven, why in rows:
+        with row(subtests, case=name):
+            with pytest.raises(Refused, match=why):
+                verdict.decide_main_push(
+                    ["s1"],
+                    [pushed("s1", "cancelled")],
+                    PUSHED,
+                    proven,  # type: ignore[arg-type]
+                    **MAIN,
+                )
+
+
+#: (name, event, ref): only a push to main may read a shard as superseded.
+NOT_MAIN_PUSHES: list[tuple[str, str, str]] = [
+    ("a pull request", "pull_request", "refs/pull/41/merge"),
+    ("a pull_request_target run on main's ref", "pull_request_target", "refs/heads/main"),
+    ("a push to a feature branch", "push", "refs/heads/feature-a"),
+    ("a tag named main", "push", "refs/tags/main"),
+    ("a scheduled run on main", "schedule", "refs/heads/main"),
+]
+
+
+def test_the_main_push_reading_refuses_any_other_run(subtests: object) -> None:
+    assert len(NOT_MAIN_PUSHES) == 5, "a row was dropped from the table"
+    for name, event, ref in NOT_MAIN_PUSHES:
+        with row(subtests, case=name):
+            with pytest.raises(Refused, match="only a push to refs/heads/main"):
+                verdict.decide_main_push(
+                    ["s1"], [pushed("s1", "cancelled")], PUSHED, {"s1": NEWER}, event=event, ref=ref
+                )
+
+
+def test_a_candidates_cancelled_job_is_never_superseded(subtests: object) -> None:
+    # `decide` is every candidate's reading: it takes no proof, so nothing can argue a pull
+    # request's cancelled job into the word, and no red row produces it.
+    import inspect
+
+    assert "superseded" not in inspect.signature(decide).parameters
+    for name, planned, results, _key, _kind in RED_ROWS:
+        with row(subtests, case=name):
+            got = decide(planned, results, CANDIDATE)
+            assert all(r.kind != "superseded" for r in got.reasons), f"{name}: {got.reasons}"
+            assert got.superseded_by == "", f"{name}: {got.superseded_by!r}"
+    got = decide(["test"], [as_("test", "cancelled")], CANDIDATE)
+    assert [(r.key, r.kind) for r in got.reasons] == [("test", "cancelled")]
+
+
 def test_a_trusted_job_can_run_the_script_on_its_own(tmp_path: Path, subtests: object) -> None:
     # `python3 -I tools/ci/verdict.py`: isolated mode, no package on the path, so the script must
     # import nothing but the standard library.

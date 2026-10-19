@@ -80,6 +80,19 @@ MASKED: tuple[Masked, ...] = (
     ),
     Masked(
         _CI,
+        '--job "$SHARD_JOB" --group-prefix "$GROUP_PREFIX" || true',
+        "The `test` and `test-macos-gate` gates' superseded proof: a check that crashes writes "
+        "no answer, and the gate reads anything but superseded=<sha> as unproven. It exits 1 "
+        "either way; the contract row runs the script and holds that.",
+    ),
+    Masked(
+        _CI,
+        'line=$(cat "$RUNNER_TEMP/answer.txt" 2>/dev/null || true)',
+        "The `test` and `test-macos-gate` gates' superseded proof: no answer file reads as "
+        "empty, which is unproven, and the gate exits 1 either way.",
+    ),
+    Masked(
+        _CI,
         "--jq '.[0].number // empty' 2>/dev/null || true",
         "The feedback relay's pull request number, looked up by branch: none found means there "
         "is nothing to post to, and the step says so.",
