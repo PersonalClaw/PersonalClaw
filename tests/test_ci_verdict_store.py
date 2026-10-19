@@ -968,3 +968,124 @@ def test_inputs_for_another_job_are_refused(repo: Path) -> None:
     with pytest.raises(vs.Refused):
         store, start = vs.Store.for_repo(repo), vs.begin(repo)
         vs.decide([_job("tree")], inputs, store, now=NOW, start=start)
+
+
+# ── A reused job in the run's verdict ───────────────────────────────────────────────────────
+#
+# A reused job leaves no job record, so the run judges it by its receipt (judge_reused): it counts
+# only as a reused decision of a job the store may reuse, on this run's tree, from a clean run.
+# The receipts below are planted, as a forged or stale receipt would be: decide() never writes them.
+
+
+def _reused(job: catalogue.Job, tree: str, **changes: Any) -> vs.Decision:
+    inputs = _inputs(tree, job_id=job.id)
+    base = vs.Decision(
+        id=job.id,
+        reuse=str(vs.reuse_class(job)),
+        key=vs.key(inputs),
+        inputs=inputs,
+        reused=True,
+        reason="a recorded pass of this key (tree)",
+        source=vs.Source("a" * 40, 60.0, 0),
+    )
+    return dataclasses.replace(base, **changes)
+
+
+def test_a_reused_tree_job_on_this_tree_counts(repo: Path) -> None:
+    job, tree = _job("tree"), _tree(repo)
+    counted, reasons = vs.judge_reused(vs.Receipt(False, (_reused(job, tree),)), [job], tree=tree)
+    assert counted == {job.id} and reasons == []
+
+
+def test_a_job_that_ran_is_not_counted_as_reused(repo: Path) -> None:
+    job, tree = _job("tree"), _tree(repo)
+    ran = _reused(job, tree, reused=False, source=None, reason="no recorded pass for this key")
+    counted, reasons = vs.judge_reused(vs.Receipt(False, (ran,)), [job], tree=tree)
+    assert counted == set() and reasons == []
+
+
+def test_a_receipt_that_reuses_a_never_job_is_refused(repo: Path, subtests: Any) -> None:
+    """A security, live or never job is never reused, so a receipt that says it was is refused
+    outright, whatever class the receipt itself claims for it."""
+    tree = _tree(repo)
+    never = {
+        "security": _job("tree", security="security"),
+        "live": _job("ttl:24", live=True),
+        "a live feed": _job("tree", external=("advisory-feed",)),
+        "class never": _job("never"),
+        "no class": _job(None),
+    }
+    assert len(never) == 5
+    for name, job in never.items():
+        for claimed in ("never", "tree"):
+            with row(subtests, job=name, claimed=claimed):
+                receipt = vs.Receipt(False, (_reused(job, tree, reuse=claimed),))
+                with pytest.raises(vs.Refused, match="never reused"):
+                    vs.judge_reused(receipt, [job], tree=tree)
+
+
+def test_a_reused_job_of_another_tree_reads_missing(repo: Path) -> None:
+    job, tree = _job("tree"), _tree(repo)
+    receipt = vs.Receipt(False, (_reused(job, "b" * 40),))
+    counted, reasons = vs.judge_reused(receipt, [job], tree=tree)
+    assert counted == set()
+    [reason] = reasons
+    assert reason.key == job.id and reason.kind == "missing"
+    assert "b" * 40 in reason.detail and tree in reason.detail
+
+
+def test_a_reused_job_whose_key_is_not_its_inputs_reads_missing(repo: Path) -> None:
+    job, tree = _job("tree"), _tree(repo)
+    receipt = vs.Receipt(False, (_reused(job, tree, key="9" * 64),))
+    counted, [reason] = vs.judge_reused(receipt, [job], tree=tree)
+    assert counted == set() and reason.kind == "missing"
+
+
+def test_a_receipt_the_judge_cannot_trust_is_refused(repo: Path, subtests: Any) -> None:
+    job, tree = _job("tree"), _tree(repo)
+    other = _named(_job("tree"), "web-unit")
+    planted = {
+        "reused in a dirty run": (vs.Receipt(True, (_reused(job, tree),)), [job]),
+        "reused with no source": (vs.Receipt(False, (_reused(job, tree, source=None),)), [job]),
+        "a job the plan does not name": (vs.Receipt(False, (_reused(other, tree),)), [job]),
+        "a job named twice": (vs.Receipt(False, (_reused(job, tree),) * 2), [job]),
+        "inputs of another job": (
+            vs.Receipt(False, (_reused(job, tree, inputs=_inputs(tree, job_id="static")),)),
+            [job],
+        ),
+    }
+    assert len(planted) == 5
+    for name, (receipt, jobs) in planted.items():
+        with row(subtests, receipt=name):
+            with pytest.raises(vs.Refused):
+                vs.judge_reused(receipt, jobs, tree=tree)
+
+
+def test_a_receipt_decide_wrote_is_judged_as_it_says(repo: Path) -> None:
+    """The positive control end to end: a recorded pass, decided, then judged."""
+    tree_job, never_job = _job("tree"), _named(_job("tree", security="security"), "python-suite")
+    for job in (tree_job, never_job):
+        _recorded(repo, _inputs(_tree(repo), job_id=job.id))
+    receipt = _decide(repo, [tree_job, never_job], now=NOW)
+    counted, reasons = vs.judge_reused(receipt, [tree_job, never_job], tree=_tree(repo))
+    assert counted == {tree_job.id} and reasons == []
+
+
+def test_a_run_that_replays_nothing_reads_no_entry(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--no-reuse: every job runs, no entry is read, and a never job keeps its class's reason."""
+    tree_job = _named(_job("ttl:6"), "served")
+    never_job = _named(_job("tree", security="security"), "python-suite")
+    for job in (tree_job, never_job):
+        _recorded(repo, _inputs(_tree(repo), job_id=job.id))
+    monkeypatch.setattr(vs.Store, "lookup", lambda self, k: pytest.fail(f"read the entry {k}"))
+    inputs = {job.id: _inputs(_tree(repo), job_id=job.id) for job in (tree_job, never_job)}
+    store, start = vs.Store.for_repo(repo), vs.begin(repo)
+    receipt = vs.decide([tree_job, never_job], inputs, store, now=NOW, start=start, replay=False)
+    by_id = {d.id: d for d in receipt.jobs}
+    assert not any(d.reused for d in receipt.jobs)
+    assert "--no-reuse" in by_id["served"].reason
+    assert by_id["python-suite"].reason == "security evidence is never reused"
+    assert all(d.ttl_age_seconds is None and d.source is None for d in receipt.jobs)
+    assert by_id["served"].key == vs.key(inputs["served"])

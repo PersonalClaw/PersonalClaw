@@ -12,6 +12,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A chat's task mode is in its address (`?mode=plan`), so a reload, a copied address or a `personalclaw://` link opens a new thread in that mode, and an existing thread keeps its own, so an address never changes how a chat runs; a link into a new thread that is already open moves it to the link's mode with its approval back to Normal.**
 
+### Changed
+
+- **CI: `make gate` reuses a job's earlier clean pass on the same tree, inputs and machine, for the jobs whose class allows it, and says which job it reused and from which commit; `--no-reuse` runs every job.**
+
 ## [0.2.3] — 2026-10-19
 
 A patch release on 0.2.2. ⌘Enter approves only the approval that has keyboard focus, and a delete,
