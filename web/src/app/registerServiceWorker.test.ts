@@ -41,7 +41,7 @@ describe('registerServiceWorker', () => {
     const registration = { scope: '/' }
     const register = vi.fn().mockResolvedValue(registration)
     vi.stubGlobal('navigator', { serviceWorker: { register } })
-    vi.stubGlobal('window', { isSecureContext: true })
+    vi.stubGlobal('isSecureContext', true)
     await expect(registerServiceWorker(true)).resolves.toBe(registration)
     // Root scope is not cosmetic: a worker registered under /assets/ could not
     // control the SPA at /.
@@ -53,7 +53,7 @@ describe('registerServiceWorker', () => {
     const register = vi.fn().mockRejectedValue(new Error('nope'))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.stubGlobal('navigator', { serviceWorker: { register } })
-    vi.stubGlobal('window', { isSecureContext: true })
+    vi.stubGlobal('isSecureContext', true)
     await expect(registerServiceWorker(true)).resolves.toBeNull()
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
