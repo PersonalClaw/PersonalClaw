@@ -735,7 +735,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
               if (await confirmStopLoop(p.status, p.name)) act('stop')
             }} />}
           {/* A shell only makes sense in a real codebase (gate on `ws`). */}
-          {!!ws && <HeaderControl icon={TerminalSquare} label={showTerm ? 'Hide terminal' : 'Terminal'} onClick={() => setShowTerm(!showTerm)} active={showTerm} />}
+          {!!ws && <HeaderControl icon={TerminalSquare} label={showTerm ? 'Hide terminal' : 'Terminal'} onClick={() => setShowTerm(!showTerm)} active={showTerm} ariaExpanded={showTerm} />}
           {/* Run the configured build/test command in the cockpit terminal (only with a
               real workspace + the command configured). Low priority → overflow first. */}
           {!!ws && p.verify_command && <HeaderControl icon={Play}
