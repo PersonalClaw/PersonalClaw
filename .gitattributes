@@ -1,0 +1,3 @@
+# A site baseline lists one site per line (tests/site_baseline.py). The union driver keeps
+# both sides' new lines, so two branches that each add a site merge without a conflict.
+*.sites.jsonl merge=union

@@ -113,6 +113,7 @@ tests/rails/test_session_acquisition_census.py
 tests/rails/test_session_key_census_tree.py
 tests/rails/test_session_share_tree.py
 tests/rails/test_settings_control_coverage_tree.py
+tests/rails/test_site_baseline_tree.py
 tests/rails/test_skill_allocation_tree.py
 tests/rails/test_spawn_ceiling_audit_tree.py
 tests/rails/test_spawn_preexec_guard.py
