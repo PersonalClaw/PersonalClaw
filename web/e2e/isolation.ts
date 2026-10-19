@@ -38,6 +38,7 @@ export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
   },
   'chatHalo.spec.ts': { mode: 'shared', why: 'adds its own chat sessions and reads only its own' },
   'chatHeaderGeometry.spec.ts': { mode: 'shared', why: 'answers its chat reads with route stubs' },
+  'focusAndReadingModes.spec.ts': { mode: 'shared', why: 'adds its own chat session and reads only its own' },
   'nonAxeA11yChecks.spec.ts': { mode: 'shared', why: 'plants its defects in the page, writes nothing' },
   'onboardingGeometry.spec.ts': {
     mode: 'shared',

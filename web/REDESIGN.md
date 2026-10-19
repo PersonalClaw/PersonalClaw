@@ -119,9 +119,12 @@ new chrome.
   one keystroke away in the palette, with its shortcut shown.
 - Status stays at the periphery (the status line, sidebar pips) until it needs a decision, then
   moves to the centre.
-- Focus mode: one key hides the sidebar and the right pane. Selecting something that needs a pane
-  opens only that pane. Nothing is hover-only: what a hover shows is also reachable by keyboard and
-  by touch.
+- Focus mode (⌘\): one key hides the sidebar and the right pane. Selecting something that needs a
+  pane opens only that pane, one at a time while the mode lasts. The same key, the palette or the
+  sidebar's own control leaves it, and the sidebar and the panes it closed come back. It lasts
+  across reloads, as the collapsed sidebar does. On a phone the sidebar is already a drawer, so
+  focus mode only closes the pane. Nothing is hover-only: what a hover shows is also reachable by
+  keyboard and by touch.
 - Every route and substate round-trips through the URL and browser history.
 
 **The per-screen checklist.** Every redesign PR answers it for its screen:
@@ -179,7 +182,9 @@ new chrome.
     workspace files are a toggle beside its conversation. Stored files live in Library. The owner
     opens them without leaving the work they belong to.
 11. **A reading mode.** While the owner reads long output, the composer folds away, and comes back
-    on a key or when they start typing. The whole height goes to the text being read.
+    on a key or when they start typing. The whole height goes to the text being read. It folds to
+    one line over the end of the transcript, which says what it opens and shows the start of a
+    draft, and it also comes back on that line or on focus, with everything it held.
 
 ## 6. Keyboard model
 
@@ -198,9 +203,12 @@ Keys are written for macOS. Elsewhere ⌘ is Ctrl and ⌥ is Alt.
 | ⌘1 to ⌘9 | the first nine threads |
 | ⌘N | a new thread |
 | ↑ in an empty composer | restores the last prompt |
+| ⌘\ | focus mode: hides the sidebar and the right pane |
+| ⌘⇧. | reading mode: folds a thread's composer |
 
-Focus mode and reading mode get one key each, chosen by #3825 against the keys browsers and the
-desktop app already take.
+Focus mode's and reading mode's keys were chosen against the keys browsers and the desktop app
+already take: ⌘⇧F, the first proposal, is a browser's full screen on a Mac, and ⌘⇧\ a browser's tab
+overview.
 
 **Rules**
 

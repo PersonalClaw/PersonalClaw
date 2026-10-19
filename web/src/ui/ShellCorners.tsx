@@ -24,22 +24,29 @@ import { accentChip } from '../design/accent'
  *  Publishes its measured width to `--shell-corner-l` so page TopBars pad to
  *  clear it, and its height to `--shell-corner-lh`, which a TopBar whose row has
  *  moved below the corners (too narrow a band between them) clears instead. */
-export function ShellCornerLeft({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+export function ShellCornerLeft({ collapsed, onToggle, focusKey }: {
+  collapsed: boolean
+  onToggle: () => void
+  /** Set while focus mode hides the rail: the tab is then the visible way out of it, and names its
+   *  key. */
+  focusKey?: string
+}) {
   const ref = useRef<HTMLDivElement>(null)
   useShellCornerWidth(ref, '--shell-corner-l')
   useShellCornerHeight(ref, '--shell-corner-lh')
+  const label = focusKey ? 'Leave focus mode' : collapsed ? 'Expand sidebar' : 'Collapse sidebar'
   return (
     // A pull-tab hugging the nav's top-right edge: flush to the left (no gap),
     // rounded only on the right so it reads as physically attached to the rail.
     <div ref={ref} className="absolute left-0 top-0 z-30 py-2">
       <button type="button" onClick={onToggle}
-        aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        aria-label={label} title={focusKey ? `${label} (${focusKey})` : label}
         className="grid h-9 w-8 place-items-center rounded-r-lg border border-l-0 border-outline-variant/40 bg-surface-low/80 text-on-surface-low backdrop-blur-sm transition-colors hover:bg-surface-low hover:text-on-surface">
         {/* the collapse/expand glyph morphs (spring scale+fade key-swap) as the
             rail toggles, so the pull-tab reflects the state change with life */}
         <AnimatePresence mode="wait" initial={false}>
-          <motion.span key={collapsed ? 'open' : 'close'} initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }} transition={spring.spatialFast} className="grid place-items-center">
-            {collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+          <motion.span key={focusKey || collapsed ? 'open' : 'close'} initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }} transition={spring.spatialFast} className="grid place-items-center">
+            {focusKey || collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
           </motion.span>
         </AnimatePresence>
       </button>

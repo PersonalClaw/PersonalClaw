@@ -311,3 +311,46 @@ test.describe('a11y (WCAG AA): desktop viewport — the Session Map rail, OPEN',
     })
   }
 })
+
+// ── Tier 7: FOCUS MODE AND READING MODE, BOTH ON ────────────────────────────
+// Focus mode removes the rail and reading mode folds the composer to one line, so a chat with both
+// on is a state no route sweep reaches. Folded, the composer is clipped to nothing and transparent
+// but stays in the tab order, so focus can reach it and opening it is what focus does — which makes
+// this the state to scan for a control that is focusable and unseen. The floor comes first: the rail
+// is gone, the composer is folded, and the line it folds to is on screen, so a key that stopped
+// working cannot pass as a clean scan of the page it failed to change.
+test.describe('a11y (WCAG AA): a chat in focus mode and reading mode', () => {
+  test.use({ viewport: { width: 1280, height: 900 } })
+  // A real turn waits on the backend, as Tiers 5 and 6 do.
+  test.describe.configure({ timeout: 180_000 })
+
+  for (const theme of THEMES) {
+    test(`chat: focus mode + reading mode (${theme})`, async ({ page }, testInfo) => {
+      await seedTheme(page, theme)
+      await gotoRoute(page, 'chat')
+      await driveScriptedTurns(page, 'Read me a long answer, please', 1)
+      await page.keyboard.press('ControlOrMeta+Backslash')
+      await page.keyboard.press('ControlOrMeta+Shift+Period')
+      await expect(page.locator('nav[data-tour="rail"]')).toHaveCount(0)
+      await expect(page.locator('[data-composer-region]')).toHaveAttribute('data-folded', 'true')
+      await expect(page.getByRole('button', { name: /^Write a reply/ })).toBeVisible()
+      await settleEntranceAnimations(page)
+
+      const results = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+        .analyze()
+      const blocking = results.violations.filter((v) => BLOCKING.has(v.impact ?? ''))
+      await testInfo.attach(`axe-focus-and-reading-${theme}.json`, {
+        body: JSON.stringify(results.violations, null, 2),
+        contentType: 'application/json',
+      })
+      expect(
+        blocking,
+        `serious/critical a11y violations on a chat in focus and reading mode (${theme}):\n` +
+          blocking.map((v) => `  [${v.impact}] ${v.id}: ${v.help} — ${v.nodes.length} node(s)`).join('\n'),
+      ).toEqual([])
+
+      await expectNoNonAxeA11yDefects(page, `chat in focus and reading mode (${theme})`)
+    })
+  }
+})
