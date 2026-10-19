@@ -32,12 +32,13 @@ buddy's stills stand in on the tray and the dock only to show its state, while B
   exact phase: the badge unfolds into them, and the focused status card shows them. Colour, motion
   and the small drawing never carry the phase alone.
 - **No colours of its own.** While an agent is alive, working or waiting on the owner, the dots are
-  the active scheme's primary, `--color-primary`, as the agent orb's are
+  `--color-orb-alive`, the active scheme's primary, as the agent orb's are
   ([`agent-orb.md`](../agent-orb.md#the-component)), so in a teal scheme they are teal: the buddy
   never hard-codes coral. Where nothing is alive (at rest, done, blocked or asleep) they are
-  `--color-on-surface-var`, the neutral the app already uses for idle icons
-  ([`web/DESIGN.md` §2](../../../web/DESIGN.md#neutral)). The buddy names no colour token of its
-  own.
+  `--color-orb-rest`, which is `--color-on-surface-var`, the neutral the app already uses for idle
+  icons ([`web/DESIGN.md` §2](../../../web/DESIGN.md#neutral)). Both are the agent orb's, from the shared
+  brand and state tokens ([`web/DESIGN.md` §2](../../../web/DESIGN.md#the-token-layers)); the buddy
+  names no colour token of its own.
 - **Semantic colour for alerts only, as a badge or a wash, never as the whole orb:** warn for an
   approval, info for a question, danger for an error, ok for done. The wash is a soft gradient up
   from the orb's lower edge, in the alert's tone. While an agent works there is no wash: the dots

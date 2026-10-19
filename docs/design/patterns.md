@@ -127,6 +127,23 @@ itself — `whileTap` composes its own `transform` and would clobber the centeri
 icon `<button>`. The round pill (`IconButton`) and this square dense form are the
 two canonical icon-action shapes — pick by density, don't hand-roll a third.
 
+## States
+
+### `StateMark` — `web/src/ui/StateMark.tsx`
+
+A state shown the one way every surface shows it: a small mark in its family's shared state token and the words that name the state.
+
+```tsx
+import { StateMark } from '../../ui/StateMark'
+import { phaseFamily, phaseLabel } from '../../lib/workPhase'
+
+<StateMark family={phaseFamily(run.phase)}>{run.line || phaseLabel(run.phase)}</StateMark>
+```
+
+- **The family comes from the phase contract** (`lib/workPhase.ts`), never from the colour wanted. Quiet is the idle neutral, active coral, waiting the warn tone, blocked the danger tone (`--color-state-*`, `web/DESIGN.md` §2), the same tokens the agent orb and the buddy read.
+- **The words are required.** The mark is `aria-hidden`; colour never carries a state alone. In forced colours its fill gives way and its ring stays, in the system's text colour.
+- Gallery tests (`design/stateTokens.test.tsx`): every phase and system state with its words, forced colours, high contrast (mark 3:1, words 7:1 on every resting ground) and the editor and terminal surfaces, in all 12 schemes and both modes.
+
 ## Dialogs (existing — `web/src/ui/Modal.tsx`)
 
 `Modal` is already the sole canonical dialog (the audit found **0** bespoke `<dialog>`/`role="dialog"` outside `ui/`). Keep it that way — the primitive-adoption ratchet guards against regression.
