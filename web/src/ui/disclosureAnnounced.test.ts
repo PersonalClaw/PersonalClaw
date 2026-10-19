@@ -95,9 +95,10 @@ describe('a button that reveals content says that it does', () => {
   it("the cockpit's Terminal button is a disclosure, not a setting", () => {
     // It shows and hides the terminal drawer. `active` keeps its look, and `ariaExpanded` is what a
     // screen reader hears: `HeaderControl` drops `aria-pressed` once it is passed. This file's
-    // prop-toggle census reads the page as announced only while it holds some `aria-expanded`, and
-    // until this pin that was the finding card's, a different control.
-    expect(read('code/CodeCockpitPage.tsx'))
+    // prop-toggle census reads a file as announced only while it holds some `aria-expanded`, and on
+    // the page that once held this toggle it was the finding card's, a different control. The
+    // toggle now lives in the cockpit's header.
+    expect(read('code/cockpit/header/CockpitHeader.tsx'))
       .toMatch(/label=\{showTerm \? 'Hide terminal' : 'Terminal'\} onClick=\{\(\) => setShowTerm\(!showTerm\)\} active=\{showTerm\} ariaExpanded=\{showTerm\}/)
   })
 

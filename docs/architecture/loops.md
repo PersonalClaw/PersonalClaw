@@ -745,11 +745,20 @@ redirecting a run-backed loop (`run_id`) to its run page, `#/workflows/runs/<id>
   (ticking while it runs), its cycles against the budget, its workspace and the
   Project that contains it. `meta/CockpitMeta.tsx` draws it around
   `meta/StageTrail.tsx`, the plan's stages in a row.
+- **The header** — `header/useTitleRename.ts` renames the project from its
+  title: Escape cancels, the Enter and the blur after it save once, and a
+  failed rename is said. `header/CockpitHeader.tsx` draws the title bar: back
+  to the containing Project, the name, whether the feed is live, and the run's
+  actions. `header/CockpitNotices.tsx` draws the strips that say why the
+  cockpit cannot do something: a command not on PATH, a runtime that cannot run
+  the project, a worker asked again for its finding, a brownfield draft with no
+  workspace, a workspace folder that is gone.
 
 What more than one region reads lives in `cockpitShared.ts` (the statuses a
 steer still reaches and the ones that end a run, a stage's key, a worker path
 resolved against the workspace), `FilesTouched.tsx` (the file chips) and
-`cockpitCommands.ts` (a build or test command whose program is not on PATH).
+`cockpitCommands.ts` (a build or test command whose program is not on PATH),
+and `codeProject.ts` turns the unified Loop into the shape they all draw.
 
 ## Related docs
 

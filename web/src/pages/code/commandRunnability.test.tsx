@@ -46,16 +46,20 @@ describe('code command runnability', () => {
   })
 
   it('annotates and disables dead run controls instead of opening a terminal', () => {
-    const source = readFileSync(join(process.cwd(), 'src/pages/code/CodeCockpitPage.tsx'), 'utf8')
+    // The run controls live in the cockpit's header and the notice in its notices, each moved out of
+    // `CodeCockpitPage` into its own module.
+    const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/.*$/gm, '')
-    const controls = source.slice(
-      source.indexOf('p.verify_command && <HeaderControl'),
-      source.indexOf('onNewTarget && !active'),
+    const header = read('src/pages/code/cockpit/header/CockpitHeader.tsx')
+    const controls = header.slice(
+      header.indexOf('p.verify_command && <HeaderControl'),
+      header.indexOf('onNewTarget && !active'),
     )
     expect(controls).toMatch(/missingBuild[\s\S]*?not on PATH[\s\S]*?disabled=\{!!missingBuild\}/)
     expect(controls).toMatch(/missingTest[\s\S]*?not on PATH[\s\S]*?disabled=\{!!missingTest\}/)
 
+    const source = read('src/pages/code/cockpit/header/CockpitNotices.tsx')
     const notice = source.slice(
       source.indexOf('missingCommands.length > 0'),
       source.indexOf("p.status === 'ready' && p.project_kind"),

@@ -161,7 +161,7 @@ describe('VACUITY: the destruction this copy warns about is real', () => {
     // or discard (`manager.end_run`); delete discards it, and says so. Kept as a rail so the two
     // cannot drift into the same sentence. The cockpit's Stop asks the one Stop confirm every Stop
     // control shares (`pages/loop/stopLoop.ts`), which is where its words live.
-    expect(strip(read('pages/code/CodeCockpitPage.tsx')), 'the cockpit asks the shared Stop confirm')
+    expect(strip(read('pages/code/cockpit/header/CockpitHeader.tsx')), 'the cockpit asks the shared Stop confirm')
       .toMatch(/confirmStopLoop\(p\.status, p\.name\)/)
     expect(strip(read('pages/loop/stopLoop.ts')), 'Stop says the unmerged work is kept')
       .toMatch(/isn't merged yet is kept on its own branch/)
