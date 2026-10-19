@@ -123,13 +123,16 @@ describe('#/chat’s two prompt strips distinguish "still asking" from "none ava
   // `import.meta.dirname` rather than `process.cwd()`, which differs between a root-level
   // `npm run test:web` and a `cd web && vitest`.
   const REPO = join(import.meta.dirname, '..', '..', '..')
-  const chat = readFileSync(join(REPO, 'web', 'src', 'pages', 'ChatPage.tsx'), 'utf8')
+  // The strips moved with the new chat's hero (`chat/hero/ChatHero.tsx`).
+  const chat = readFileSync(join(REPO, 'web', 'src', 'pages', 'chat', 'hero', 'ChatHero.tsx'), 'utf8')
 
-  /** The body of one strip: from its `function <name>(` to the next top-level `function` after it. */
+  /** The body of one strip: from its `function <name>(` to the next top-level `function` after it,
+   *  exported or not (the hero's own `export function ChatHero` follows the last strip). */
   function strip(name: string): string | null {
     const at = chat.indexOf(`function ${name}(`)
     if (at < 0) return null
-    const next = chat.indexOf('\nfunction ', at + 1)
+    const nexts = ['\nfunction ', '\nexport function '].map((p) => chat.indexOf(p, at + 1)).filter((i) => i >= 0)
+    const next = nexts.length ? Math.min(...nexts) : -1
     return chat.slice(at, next < 0 ? chat.length : next)
   }
 
@@ -139,7 +142,7 @@ describe('#/chat’s two prompt strips distinguish "still asking" from "none ava
     // Each assertion below is a regex against a file this rail does not own. If a rename makes one
     // stop matching, every property after it passes on an empty string and reports nothing.
     for (const [name, body] of Object.entries(strips)) {
-      expect(body, `${name} was not found in ChatPage.tsx — this rail has gone vacuous, fix the anchor`).toBeTruthy()
+      expect(body, `${name} was not found in ChatHero.tsx — this rail has gone vacuous, fix the anchor`).toBeTruthy()
       expect(body!.length, `${name}'s body is implausibly short (${body!.length} chars)`).toBeGreaterThan(400)
       // The anchor that proves we sliced a strip and not some neighbour: each one reads its list
       // through useQuery and caps it.

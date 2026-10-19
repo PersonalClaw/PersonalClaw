@@ -38,7 +38,8 @@ function capIn(source: string, marker: string): number | null {
 
 describe('both suggestion surfaces show the same amount of the same list', () => {
   const widget = read('web/src/pages/dashboard/widgets/Suggestions.tsx')
-  const chat = read('web/src/pages/ChatPage.tsx')
+  // The chat hero's strip, which moved out of ChatPage with the new chat's hero.
+  const chat = read('web/src/pages/chat/hero/ChatHero.tsx')
   const py = read('src/personalclaw/suggestions.py')
 
   const dashCap = capIn(widget, 'items.slice')
@@ -61,7 +62,7 @@ describe('both suggestion surfaces show the same amount of the same list', () =>
     // comparison below passes on `null === null` and the rail reports clean while measuring
     // nothing — which is the failure mode this whole file exists to prevent elsewhere.
     expect(dashCap, "the dashboard widget's slice(0, N) was not found").not.toBeNull()
-    expect(chatCap, "ChatPage's SuggestionChips slice(0, N) was not found").not.toBeNull()
+    expect(chatCap, "the chat hero's SuggestionChips slice(0, N) was not found").not.toBeNull()
     expect(parserCap, "_parse_suggestions' [:N] cap was not found in suggestions.py").not.toBeNull()
   })
 

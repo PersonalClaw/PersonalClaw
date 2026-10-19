@@ -1443,13 +1443,17 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   // 6 → 5: the chat's voice-settings read moved to `pages/chat/voiceConfig.ts`, below. 5 → 3: the
   // stream's two settings reads (the reveal cadence, thinking shown inline) moved with it to
   // `pages/chat/useChatStream.ts`, below. 3 → 2: the "Show timestamps" read moved with the
-  // transcript to `pages/chat/transcript/Transcript.tsx`, below.
-  'pages/ChatPage.tsx': 2,
+  // transcript to `pages/chat/transcript/Transcript.tsx`, below. `pages/ChatPage.tsx` then left
+  // this budget: its last two, the hero's suggestion and starter strips, moved to
+  // `pages/chat/hero/ChatHero.tsx`, below, still owed.
   'pages/agents/AgentDetail.tsx': 1,
   'pages/apps/AppsSection.tsx': 2,
   // The "Show timestamps" read that moved out of `ChatPage` with the transcript: same debt, and an
   // unanswered read shows no times, which is the setting's default.
   'pages/chat/transcript/Transcript.tsx': 1,
+  // The new chat's two strips, moved out of `ChatPage` with the hero: the same debt under their new
+  // address. Each binds `loading` and shows a placeholder while it reads, and neither says a read failed.
+  'pages/chat/hero/ChatHero.tsx': 2,
   // The two settings reads that moved out of `ChatPage` with the chat's stream, the same debt under
   // its new address: each is a `dashboardConfig` read whose consumer falls back to the shipped
   // behaviour (the smooth reveal, thinking hidden) while it is unanswered.
