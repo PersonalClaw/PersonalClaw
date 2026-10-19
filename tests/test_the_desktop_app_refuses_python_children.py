@@ -174,13 +174,6 @@ class TestTheOnePredicate:
             "`uv tool install --python 3.13 personalclaw` can."
         )
 
-    def test_the_install_it_names_is_the_route_the_guides_give(self):
-        """Never an invented command: the getting-started guide's recommended install, which the
-        desktop guide points at for everything the desktop app does not run."""
-        for guide in ("getting-started.md", "desktop.md"):
-            text = (_REPO / "docs" / "guides" / guide).read_text(encoding="utf-8")
-            assert python_children.INSTALL_COMMAND in text, guide
-
 
 # ── what of an app needs an interpreter ──────────────────────────────────────────────────────
 

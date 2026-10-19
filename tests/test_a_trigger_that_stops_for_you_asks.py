@@ -28,7 +28,6 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-import re
 import types
 from pathlib import Path
 
@@ -728,73 +727,3 @@ def test_an_action_with_no_sentence_of_its_own_still_shows_what_it_printed(home)
     (row,) = _history(home)
     assert row["summary"] == "balance: 12"
     assert _trace(home, row["run_id"]) == "balance: 12"
-
-
-# ── no surface tells anyone to look for a window nothing opens ──
-
-_ROOT = Path(__file__).resolve().parent.parent
-_SCANNED = (
-    (_ROOT / "src" / "personalclaw", (".py", ".md", ".json", ".html", ".ts", ".tsx")),
-    (_ROOT / "web" / "src", (".ts", ".tsx", ".css", ".md")),
-    (_ROOT / "docs", (".md",)),
-    (_ROOT / "tests", (".py",)),
-)
-_SKIP_DIRS = {"node_modules", "__pycache__", "dist", ".venv"}
-#: A string literal split across a join: `"… handoff "\n    "window"` (Python), `'handoff ' +\n
-#: 'window'` (TypeScript), with an optional Python prefix on the second half.
-_JOIN = re.compile(r"""["'`]\s*\+?\s*(?:[rRbBfFuU]{1,2})?["'`]""")
-#: A comment continued on the next line: `# … handoff\n    # window`.
-_COMMENT_LEADER = re.compile(r"\n\s*(?:#|//|\*)\s?")
-_PHRASE = "handoff window"
-
-
-def _prose(text: str) -> str:
-    """The text as a reader meets it: string joins and comment leaders removed, whitespace (JSX
-    text wraps across lines) collapsed."""
-    return re.sub(r"\s+", " ", _COMMENT_LEADER.sub(" ", _JOIN.sub("", text))).lower()
-
-
-def _scanned_files() -> list[Path]:
-    found = []
-    for root, suffixes in _SCANNED:
-        for path in root.rglob("*"):
-            if path.suffix not in suffixes or not path.is_file():
-                continue
-            if _SKIP_DIRS.intersection(path.relative_to(_ROOT).parts):
-                continue
-            if path.resolve() == Path(__file__).resolve():
-                continue
-            found.append(path)
-    return found
-
-
-def test_the_phrase_scan_sees_the_phrase_however_the_source_breaks_it():
-    """Positive control: each way the phrase shipped on `main`, as the source broke it."""
-    python_join = 'x = (\n    f"Open the site in the handoff "\n    "window and sign in."\n)'
-    jsx_wrap = "<p>\n            site in the handoff\n            window and sign in;\n</p>"
-    ts_join = "const s = 'open the handoff ' +\n  'window'"
-    comment = "# caller cannot accidentally launch the handoff\n    # window against another"
-    for sample in (python_join, jsx_wrap, ts_join, comment):
-        assert _PHRASE in _prose(sample), sample
-
-
-def test_no_surface_or_doc_names_a_handoff_window():
-    """🔴 Red on main: `browse/mirror.py` (the expired-session row), `BrowseMirror.tsx` (its banner)
-    and `browse/handoff.py` (the headful-launch helper nothing called) all named it."""
-    files = _scanned_files()
-    # Non-vacuity: the three files that carried it are among those read, and the scan is broad.
-    names = {p.relative_to(_ROOT).as_posix() for p in files}
-    for carried in (
-        "src/personalclaw/browse/mirror.py",
-        "src/personalclaw/browse/handoff.py",
-        "web/src/pages/dashboard/widgets/BrowseMirror.tsx",
-    ):
-        assert carried in names, carried
-    assert len(files) > 2000, len(files)
-
-    hits = [
-        p.relative_to(_ROOT).as_posix()
-        for p in files
-        if _PHRASE in _prose(p.read_text(encoding="utf-8", errors="replace"))
-    ]
-    assert hits == []

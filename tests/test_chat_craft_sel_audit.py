@@ -35,13 +35,13 @@ conftest's own rail.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 from aiohttp import FormData, web
 from aiohttp.test_utils import TestClient, TestServer
+from chat_craft_sel_shared import EMITTERS
 from chat_test_helpers import _make_state
 
 from personalclaw.dashboard import chat_plan
@@ -623,19 +623,10 @@ class TestClientOnlyMechanicsAreCorrectlySilent:
 
 
 class TestTheAuditIsComplete:
-    #: Every operation the nine mechanics emit, mapped to the module that emits it. This is
-    #: the audit's contract in one place: one distinct name per action, and the name the
-    #: user-facing guide prints is the name the code actually writes.
-    _EMITTERS = {
-        "chat.rewind": "dashboard/chat_regenerate.py",
-        "chat.fork_rewound": "dashboard/chat_fork.py",
-        "chat.session_fork": "dashboard/chat_fork.py",
-        "chat.plan_activate": "dashboard/chat_plan.py",
-        "chat.plan_approve": "dashboard/chat_plan.py",
-        "dashboard_interrupt": "dashboard/chat_handlers.py",
-        "chat_followups": "dashboard/chat_followups.py",
-        "upload.file": "dashboard/handlers/files.py",
-    }
+    #: Every operation the nine mechanics emit, mapped to the module that emits it
+    #: (``tests/chat_craft_sel_shared.py``). The chat-surface guide's half of this contract,
+    #: that it prints every one, is ``tests/rails/test_chat_craft_sel_audit_tree.py``.
+    _EMITTERS = EMITTERS
 
     def test_every_operation_name_is_distinct_and_written_where_it_is_claimed(self):
         """Eight actions, eight names, each present in the module that owns it.
@@ -649,35 +640,6 @@ class TestTheAuditIsComplete:
         for op, rel in self._EMITTERS.items():
             src = (_ROOT / "src" / "personalclaw" / rel).read_text(encoding="utf-8")
             assert f'"{op}"' in src, f"{op} is not emitted anywhere in {rel}"
-
-    def test_the_guide_documents_all_nine_mechanics_and_everything_they_record(self):
-        """The guide's coverage as a rail rather than a promise.
-
-        The guide is the only place a user learns what the chat surface can do and what it
-        records. Two mechanics shipped *after* it was written (Branch, plan mode) and it
-        went on saying "seven" with three operations missing from its table — a wrong count
-        in the one document whose job is the count. So the count, the section numbering and
-        every recorded operation are asserted here, beside the audit they describe.
-        """
-        guide = (_ROOT / "docs" / "guides" / "chat-surface.md").read_text(encoding="utf-8")
-        numbered = re.findall(r"(?m)^## (\d+)\. ", guide)
-        assert numbered == [str(i) for i in range(1, 10)], numbered
-        assert "nine things the chat surface can do" in guide
-        assert "of these nine change something a security log" in guide
-        for op in self._EMITTERS:
-            assert f"`{op}`" in guide, f"the guide's recording table never mentions {op}"
-
-    def test_the_two_newest_mechanics_are_named_in_the_guide_as_the_ui_names_them(self):
-        """The guide's "Where:" line has to match the control a user is hunting for. Both
-        new mechanics are reached by a label, so the label is checked against the frontend
-        that renders it — a renamed affordance leaves the guide pointing at nothing."""
-        guide = (_ROOT / "docs" / "guides" / "chat-surface.md").read_text(encoding="utf-8")
-        actions = (_WEB / "pages" / "chat" / "MessageActions.tsx").read_text(encoding="utf-8")
-        page = (_WEB / "pages" / "chat" / "composer" / "ChatComposer.tsx").read_text(
-            encoding="utf-8"
-        )
-        assert 'label="Branch from here"' in actions and "**Branch from here**" in guide
-        assert 'label="Plan this first"' in page and "**Plan this first**" in guide
 
     @pytest.mark.asyncio
     async def test_the_whole_log_after_one_of_each_is_exactly_seven_events(
