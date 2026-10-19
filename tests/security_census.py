@@ -51,8 +51,8 @@ NAME_PREFIXES: dict[str, str] = {
 }
 
 #: Clause 3, one module at a time: the browser safety tests, the real-home and credential guards,
-#: and the quarantine's rules, which no entry may waive. Each was read for what it asserts; a name
-#: that only mentions a credential is not here.
+#: the quarantine's rules, which no entry may waive, and the rules a recorded CI pass is reused by.
+#: Each was read for what it asserts; a name that only mentions a credential is not here.
 NAMED_MODULES: dict[str, str] = {
     "tests/test_browse_safety_script.py": "a browsed page's fetch, media and devices are blocked",
     "tests/test_browse_cdp_live.py": "a denied navigation never reaches the network, in a browser",
@@ -127,6 +127,10 @@ NAMED_MODULES: dict[str, str] = {
     ),
     "tests/test_quarantine.py": (
         "only a capped, assigned, expiring entry waives a failure, and nothing else waives one"
+    ),
+    "tests/test_ci_verdict_store.py": (
+        "a recorded pass stands only for identical inputs from a clean checkout; security and "
+        "live jobs never reuse one"
     ),
 }
 
