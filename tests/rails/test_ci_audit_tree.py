@@ -14,7 +14,7 @@ import pytest
 import yaml
 from rails_repo import REPO
 
-from tools.ci import audit
+from tools.ci import audit, supply_chain
 
 _no_summary = ci_audit_shared._no_summary
 
@@ -38,6 +38,24 @@ def test_each_graph_names_the_extras_its_artifact_installs() -> None:
     }
     assert syncs == {audit.PYTHON_GRAPHS["desktop-bundle"]}, syncs
     assert audit.PYTHON_GRAPHS["wheel"] == ()
+
+
+def test_every_lock_under_deploy_docker_is_an_audited_graph() -> None:
+    """An image installs its npm tools from a lock under deploy/docker/ (tools/ci/supply_chain.py
+    holds that), so each such lock is a graph that ships, and the audit reads every one."""
+    locks = {
+        path.relative_to(REPO).as_posix()
+        for path in (REPO / "deploy/docker").rglob("package-lock.json")
+        if "node_modules" not in path.parts
+    }
+    tree = supply_chain.read_tree(REPO)
+    locks |= {
+        rel.rpartition("/")[0] + "/package-lock.json" for rel in supply_chain.image_manifests(tree)
+    }
+    assert locks, "no image installs an npm lock any more: this test holds nothing"
+    audited = {lock for _graph, lock in audit.npm_graphs(REPO)}
+    assert "package-lock.json" in audited
+    assert locks <= audited, sorted(locks - audited)
 
 
 def _job(workflow: str, job: str) -> dict:

@@ -707,6 +707,7 @@ def test_the_teardown_stops_the_container_before_removing_it(
     monkeypatch.setattr(smoke, "_assert_shell", lambda base, token: "/assets/x.js")
     monkeypatch.setattr(smoke, "_assert_installed_record", lambda name: None)
     monkeypatch.setattr(smoke, "_assert_login_shell_finds_personalclaw", lambda name: None)
+    monkeypatch.setattr(smoke, "_assert_login_shell_finds_the_agent_clis", lambda *a: None)
     monkeypatch.setattr(sys, "argv", ["smoke", "--readme", str(readme), "--image", "local:ci"])
 
     assert smoke.main() == 0
@@ -755,4 +756,48 @@ def test_the_login_shell_step_fails_unless_it_finds_the_images_own(
     _fake_login_shell(monkeypatch, returncode=returncode, stdout=stdout)
     with pytest.raises(SystemExit) as exc:
         smoke._assert_login_shell_finds_personalclaw("c")
+    assert exc.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# Step 8: a login shell in the image finds each agent CLI the image bundles
+# ---------------------------------------------------------------------------
+
+
+def test_the_agent_commands_are_what_the_locks_own_tools_declare() -> None:
+    lock = {
+        "packages": {
+            "": {"dependencies": {"@scope/adapter": "1.0.0", "cli": "2.0.0"}},
+            "node_modules/@scope/adapter": {"version": "1.0.0", "bin": {"adapter": "x.js"}},
+            "node_modules/cli": {"version": "2.0.0", "bin": {"cli": "a.js", "cli-two": "b.js"}},
+            "node_modules/dep": {"version": "3.0.0", "bin": {"dep": "c.js"}},
+        }
+    }
+    assert smoke.agent_commands(json.dumps(lock)) == ["adapter", "cli", "cli-two"]
+
+
+def test_the_agent_cli_step_resolves_each_command_through_a_login_shell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _fake_login_shell(
+        monkeypatch, returncode=0, stdout="/usr/local/bin/adapter\n/usr/local/bin/cli\n"
+    )
+    smoke._assert_login_shell_finds_the_agent_clis("c", ["adapter", "cli"])
+    assert calls == [("exec", "c", "bash", "-lc", "command -v adapter cli")]
+
+
+@pytest.mark.parametrize(
+    "returncode, stdout",
+    [
+        (1, "/usr/local/bin/adapter\n"),  # a link that does not resolve: the gateway would npx
+        (0, "/usr/local/bin/adapter\n/tmp/cli\n"),  # something else answers to the name
+        (0, ""),
+    ],
+)
+def test_the_agent_cli_step_fails_unless_each_resolves_to_the_images_link(
+    monkeypatch: pytest.MonkeyPatch, returncode: int, stdout: str
+) -> None:
+    _fake_login_shell(monkeypatch, returncode=returncode, stdout=stdout)
+    with pytest.raises(SystemExit) as exc:
+        smoke._assert_login_shell_finds_the_agent_clis("c", ["adapter", "cli"])
     assert exc.value.code == 1

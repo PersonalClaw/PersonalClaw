@@ -2,9 +2,10 @@
 only what it needs.
 
 ``check`` reads a tree (repository-relative path to text): the workflows, the local actions,
-every Dockerfile, the Dependabot file, ``.nvmrc``, the root npm lock and the policy. It returns
-one ``Violation`` per broken rule, with the policy file's exceptions applied. It never raises on
-a malformed input: that reads as a violation too. The rules:
+every Dockerfile, the Dependabot file, ``.nvmrc``, the root npm manifest and lock, each image's
+npm manifest and lock under ``deploy/docker/``, and the policy. It returns one ``Violation`` per
+broken rule, with the policy file's exceptions applied. It never raises on a malformed input:
+that reads as a violation too. The rules:
 
 - ``action-sha``: a ``uses:`` names a 40-character commit SHA and its release as ``# vX.Y.Z``,
   on one line the reader can read; a ``docker://`` action is an image and is judged as one; a
@@ -17,7 +18,11 @@ a malformed input: that reads as a violation too. The rules:
 - ``run-install``: a command that installs a tool, wherever the shell would run it
   (tools/ci/shell_installs.py), names its exact version, takes it from a lock, or installs this
   project; a download is never run by a shell or an interpreter, but the project's own installer
-  in the one step that tests it. OS packages are outside the rule.
+  in the one step that tests it. OS packages are outside the rule. An image's npm manifest under
+  ``deploy/docker/`` pins each tool exactly, under ``dependencies`` only; the lock beside it was
+  generated from it, and fetches every package from the npm registry under a sha512 integrity;
+  a Dockerfile stage copies the lock in and runs ``npm ci`` after the copy; and no other install
+  fetches a tool that manifest names.
 - ``setup-floating``: a setup or install action pins a literal exact version (or the file that
   names one), never ``check-latest``; QEMU and BuildKit images are pinned by digest; an action
   the check does not know fails until it is listed.
@@ -28,7 +33,10 @@ a malformed input: that reads as a violation too. The rules:
   policy, no top-level write reaches a job unasked, and no workflow-, job- or container-level
   ``env:`` hands a token to every step.
 - ``dependabot``: every folder that holds a Dockerfile has a Dependabot ``docker`` entry, and no
-  base is named through an ``ARG`` Dependabot cannot move.
+  base is named through an ``ARG`` Dependabot cannot move. Every image's npm manifest folder has
+  an ``npm`` entry that waits a seven-day cooldown and moves every package in one group, and a
+  workflow whose ``paths:`` run it on a change of a Dockerfile also runs on a change of each
+  lock that Dockerfile installs.
 - ``release-tooling``: the pull-request smoke of the release's QEMU and buildx steps runs
   release.yml's own pins and the images' own node base, on every change of either file, holding
   no permission, always running, building every platform the release builds, and nothing else.
@@ -49,7 +57,7 @@ import os
 import re
 import shlex
 import tomllib
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -153,7 +161,17 @@ def tree_paths(root: Path) -> list[Path]:
         root / ".nvmrc",
         root / "package.json",
         root / "package-lock.json",
+        *image_manifest_paths(root),
     ]
+
+
+def image_manifest_paths(root: Path) -> list[Path]:
+    """Each image's npm manifest under deploy/docker/, with the lock beside it."""
+    found: list[Path] = []
+    for manifest in sorted((root / IMAGE_FOLDER).glob("**/package.json")):
+        if "node_modules" not in manifest.parts:
+            found += [manifest, manifest.with_name("package-lock.json")]
+    return found
 
 
 def read_tree(root: Path) -> dict[str, str]:
@@ -716,36 +734,33 @@ def _literal_env(*scopes: object) -> dict[str, str]:
     return values
 
 
-def _installs_the_lock(words: list[str], directory: str) -> bool:
-    """Whether a command is `npm ci` run from the repository root."""
-    return (
-        words[:2] == ["npm", "ci"]
-        and directory in ("", ".", "./")
-        and not any(w.startswith("--prefix") for w in words)
-    )
+def _npm_ci(words: list[str]) -> bool:
+    """Whether a command is `npm ci` of the lock where it runs, not of one under --prefix."""
+    return words[:2] == ["npm", "ci"] and not any(w.startswith("--prefix") for w in words)
 
 
 def _script_problems(
     script: shell_installs.Script,
-    binaries: set[str],
-    installed: list[bool],
+    installs: Collection[str],
+    have: set[str],
     in_workflow: bool,
     values: dict[str, str],
     own: str | None,
-    directory: str = "",
+    locked: Mapping[str, str],
 ) -> list[str]:
-    """Each install or download problem of *script*, in order. *installed* is a one-item flag
-    the caller keeps per job (or stage): whether the root lock is installed by now."""
+    """Each install or download problem of *script*, in order. *installs* is what an `npm ci`
+    here installs: the packages and binaries of the locks where it runs. *have* is what the
+    caller's job (or stage) has installed by now, and grows with each `npm ci`. *locked* is each
+    tool an image lock installs, which no other install may fetch."""
     found: list[str] = []
     for _, line in script.lines:
         found += shell_installs.download_problems(line, own)
         for commands in shell_installs.pipelines(line):
             for words in commands:
-                if _installs_the_lock(words, directory):
-                    installed[0] = True
-                problem = shell_installs.command_problem(
-                    words, binaries if installed[0] else set(), in_workflow, values
-                )
+                if _npm_ci(words):
+                    have |= set(installs)
+                found += _outside_the_lock(words, locked)
+                problem = shell_installs.command_problem(words, have, in_workflow, values)
                 if problem:
                     found.append(problem)
     return found
@@ -779,24 +794,43 @@ def _run_body(line: str) -> tuple[str | None, str]:
     return shlex.join(argv), ""
 
 
-def dockerfile_runs(text: str) -> Iterator[tuple[int, str, str]]:
-    """Each ``RUN`` of a Dockerfile as (line, stage, shell text): heredocs it runs joined in,
-    and an unreadable exec form as the text ``\0`` with its reason."""
+def _carried_lock(source: str) -> str:
+    """The npm lock a ``COPY`` source brings in: the lock itself, or the one at the top of the
+    folder it names (``.`` is the build context's root)."""
+    path = source.removeprefix("./").rstrip("/")
+    if path in ("", "."):
+        return "package-lock.json"
+    if path == "package-lock.json" or path.endswith("/package-lock.json"):
+        return path
+    return f"{path}/package-lock.json"
+
+
+def dockerfile_runs(text: str) -> Iterator[tuple[int, str, str, frozenset[str]]]:
+    """Each ``RUN`` of a Dockerfile as (line, stage, shell text, locks): heredocs it runs joined
+    in, an unreadable exec form as the text ``\0`` with its reason, and the npm locks its stage
+    has copied in from the build context by then (``COPY --from`` copies another stage's file,
+    not the context's)."""
     script = shell_installs.read_script(text)
-    stage = ""
+    stage, copied = "", frozenset[str]()
     for number, line in script.lines:
         words = line.split()
-        if words and words[0].upper() == "FROM":
+        head = words[0].upper() if words else ""
+        if head == "FROM":
             named = [w for w in words[1:] if not w.startswith("--")]
             stage = named[2] if len(named) > 2 and named[1].upper() == "AS" else str(number)
+            copied = frozenset()
             continue
-        if not (words and words[0].upper() == "RUN"):
-            if words and words[0].upper() in _INSTRUCTIONS:
+        if head in ("COPY", "ADD") and not any(w.startswith("--from") for w in words):
+            sources = [w for w in words[1:-1] if not w.startswith("--")]
+            copied |= {_carried_lock(source) for source in sources}
+            continue
+        if head != "RUN":
+            if head in _INSTRUCTIONS:
                 continue
-            yield number, stage, line  # a heredoc body line the RUN above runs
+            yield number, stage, line, copied  # a heredoc body line the RUN above runs
             continue
         body, why = _run_body(line)
-        yield number, stage, body if body is not None else "\0" + why
+        yield number, stage, body if body is not None else "\0" + why, copied
 
 
 #: Dockerfile instructions, so a heredoc body line is told apart from the next instruction.
@@ -824,40 +858,218 @@ _INSTRUCTIONS = {
 
 def run_install(tree: Tree) -> list[Violation]:
     bad: list[Violation] = []
-    binaries = lock_binaries(tree.get("package-lock.json", ""))
+
+    @functools.cache
+    def binaries(lock: str) -> frozenset[str]:
+        return frozenset(lock_binaries(tree.get(lock, "")))
+
+    locked = _image_locked_names(tree)
     workflows = dict(_workflows(tree))
     for rel, job_id, job, steps in _step_lists(tree):
-        installed = [False]
+        have: set[str] = set()
         top = workflows.get(rel, {}).get("env")
         for step in steps:
             name = step_name(step)
             own = OWN_INSTALLER if (rel, job_id, name) == OWN_INSTALLER_STEP else None
             values = _literal_env(top, job.get("env"), step.get("env"))
             script = shell_installs.read_script(str(step.get("run", "")))
+            # A step's `npm ci` installs the root lock when it runs from the checkout's root.
             directory = str(step.get("working-directory", "") or "")
-            found = _script_problems(script, binaries, installed, True, values, own, directory)
+            installs = binaries("package-lock.json") if directory in ("", ".", "./") else ()
+            found = _script_problems(script, installs, have, True, values, own, locked)
             for problem in _numbered(found):
                 ref = f"{job_id} {name}: {problem}"
                 bad.append(Violation("run-install", rel, ref, ref))
     for rel, text in _dockerfiles(tree):
         args = _arg_defaults(text.splitlines())
         found = []
-        stage, installed = None, [False]
-        for number, at_stage, body in dockerfile_runs(text):
+        stage, have = None, set()
+        for number, at_stage, body, copied in dockerfile_runs(text):
             if at_stage != stage:
-                stage, installed = at_stage, [False]
+                stage, have = at_stage, set()
             if body.startswith("\0"):
                 found.append(f"RUN at line {number}: {body[1:]}")
                 continue
+            # A stage's `npm ci` installs the locks that stage has copied in, and no other.
+            installs = frozenset[str]().union(*(binaries(lock) for lock in copied))
             script = shell_installs.read_script(body)
-            for problem in _script_problems(script, binaries, installed, False, args, None):
-                found.append(problem)
+            found += _script_problems(script, installs, have, False, args, None, locked)
         for problem in _numbered(found):
             bad.append(Violation("run-install", rel, problem, problem))
-    return bad
+    return bad + image_npm_locks(tree)
 
 
 lock_binaries = shell_installs.lock_binaries
+
+
+# ── the images' own npm locks ────────────────────────────────────────────────────────────────
+
+#: Where an image's npm tools are declared: a ``package.json`` under this folder, installed by a
+#: Dockerfile stage with ``npm ci`` from the ``package-lock.json`` beside it.
+IMAGE_FOLDER = "deploy/docker/"
+_REGISTRY = "https://registry.npmjs.org/"
+
+
+def image_manifests(tree: Tree) -> list[str]:
+    """Each ``package.json`` under deploy/docker/: the npm tools one image installs."""
+    return sorted(
+        rel
+        for rel in tree
+        if rel.startswith(IMAGE_FOLDER)
+        and rel.endswith("/package.json")
+        and "/node_modules/" not in rel
+    )
+
+
+def _json_object(text: str | None) -> dict[str, Any] | None:
+    try:
+        data = json.loads(text) if text else None
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+#: The fields a manifest names packages in. `npm ci --omit=dev` installs optional and peer
+#: dependencies too, so an image's manifest names its tools under `dependencies` and no other.
+_DEPENDENCY_FIELDS = (
+    "dependencies",
+    "optionalDependencies",
+    "peerDependencies",
+    "devDependencies",
+)
+
+
+def _dependencies(entry: object, field: str = "dependencies") -> dict[str, str]:
+    deps = entry.get(field) if isinstance(entry, dict) else None
+    return {str(k): str(v) for k, v in deps.items()} if isinstance(deps, dict) else {}
+
+
+def _image_locked_names(tree: Tree) -> dict[str, str]:
+    """Each tool an image's manifest names, with the lock beside it that installs it."""
+    out: dict[str, str] = {}
+    for rel in image_manifests(tree):
+        lock = rel.rpartition("/")[0] + "/package-lock.json"
+        for name in _dependencies(_json_object(tree.get(rel))):
+            out.setdefault(name, lock)
+    return out
+
+
+def _npm_name(target: str) -> str:
+    """The package an npm install target names, without its version."""
+    if target.startswith("@"):
+        return "@" + target[1:].split("@", 1)[0]
+    return target.split("@", 1)[0]
+
+
+def _outside_the_lock(words: list[str], locked: Mapping[str, str]) -> list[str]:
+    """Each package an `npm install` of *words* installs that an image lock already locks."""
+    if not (words and words[0].rsplit("/", 1)[-1] == "npm"):
+        return []
+    if words[1:2] not in (["install"], ["i"], ["add"]):
+        return []
+    targets, _ = shell_installs.operands(words[2:])
+    return [
+        f"npm install of {t} installs a package {locked[_npm_name(t)]} locks; "
+        "install it from that lock with npm ci"
+        for t in targets
+        if _npm_name(t) in locked
+    ]
+
+
+def _runs_npm_ci(body: str) -> bool:
+    for _, line in shell_installs.read_script(body).lines:
+        for commands in shell_installs.pipelines(line):
+            if any(_npm_ci(words) for words in commands):
+                return True
+    return False
+
+
+def _locks_installed(tree: Tree) -> dict[str, set[str]]:
+    """Each lock a Dockerfile stage copies in from the build context (itself or its folder)
+    and then installs with a later `npm ci` of the same stage, with the Dockerfiles that do."""
+    found: dict[str, set[str]] = {}
+    for rel, text in _dockerfiles(tree):
+        for _, _stage, body, copied in dockerfile_runs(text):
+            if copied and _runs_npm_ci(body):
+                for lock in copied:
+                    found.setdefault(lock, set()).add(rel)
+    return found
+
+
+def image_npm_locks(tree: Tree) -> list[Violation]:
+    """An image's npm tools come from a lock: its ``package.json`` pins each one exactly, under
+    `dependencies` only, the lock beside it was generated from that file, every package it locks
+    is fetched from the npm registry under a sha512 integrity, and a Dockerfile stage installs
+    it with `npm ci`."""
+    bad: list[Violation] = []
+
+    def fail(rel: str, ref: str, message: str) -> None:
+        bad.append(Violation("run-install", rel, ref, message))
+
+    installed = _locks_installed(tree)
+    for rel in image_manifests(tree):
+        folder = rel.rpartition("/")[0]
+        lock_rel = f"{folder}/package-lock.json"
+        manifest = _json_object(tree.get(rel))
+        if manifest is None:
+            fail(rel, "manifest", f"{rel} does not parse as a JSON object")
+            continue
+        deps = _dependencies(manifest)
+        for name, spec in sorted(deps.items()):
+            if not _EXACT.fullmatch(spec):
+                fail(rel, f"{name} {spec}", f"{rel}: {name} {spec} is not an exact X.Y.Z")
+        for field in _DEPENDENCY_FIELDS[1:]:
+            if field in manifest:
+                message = (
+                    f"{rel} declares {field}, which npm ci installs or resolves beside the "
+                    "tools; name each tool under `dependencies`, pinned exactly"
+                )
+                fail(rel, field, message)
+        lock = _json_object(tree.get(lock_rel))
+        packages = lock.get("packages") if lock else None
+        if not isinstance(packages, dict):
+            message = (
+                f"{rel} has no readable package-lock.json beside it, so no image can install "
+                "it with npm ci"
+            )
+            fail(rel, "no lock", message)
+            continue
+
+        def locked_version(name: str) -> object:
+            entry = packages.get(f"node_modules/{name}")
+            return entry.get("version") if isinstance(entry, dict) else None
+
+        # The same names at the same versions in the manifest, the lock's root and the
+        # node_modules entries the lock installs them from.
+        drift = {n for n, version in deps.items() if locked_version(n) != version}
+        for field in _DEPENDENCY_FIELDS:
+            want = _dependencies(manifest, field)
+            held = _dependencies(packages.get(""), field)
+            drift |= {n for n in set(want) | set(held) if want.get(n) != held.get(n)}
+        if drift:
+            differ = ", ".join(sorted(drift))
+            message = (
+                f"{lock_rel} was not generated from its package.json: {differ} differ; "
+                f"regenerate it with `npm install --package-lock-only` in {folder}"
+            )
+            fail(lock_rel, "drift", message)
+        for key, entry in sorted(packages.items()):
+            if not key:
+                continue
+            resolved = str(entry.get("resolved", "")) if isinstance(entry, dict) else ""
+            integrity = str(entry.get("integrity", "")) if isinstance(entry, dict) else ""
+            if not (resolved.startswith(_REGISTRY) and integrity.startswith("sha512-")):
+                message = (
+                    f"{lock_rel}: {key} is locked without a registry URL and a sha512 integrity"
+                )
+                fail(lock_rel, key, message)
+        if lock_rel not in installed:
+            message = (
+                f"{lock_rel} is installed by no Dockerfile stage: copy it in from the build "
+                "context with its package.json, and run `npm ci` after the copy, in that stage"
+            )
+            fail(lock_rel, "not installed", message)
+    return bad
 
 
 # ── setup actions ────────────────────────────────────────────────────────────────────────────────
@@ -985,7 +1197,7 @@ def node_versions(tree: Tree) -> list[tuple[str, str]]:
                 r"\$\{?([A-Za-z_]\w*)\}?", lambda m: args.get(m.group(1), m.group(0)), tag
             )
             found.append((rel, _node_line(resolved)))
-        for _, _stage, body in dockerfile_runs(text):
+        for _, _stage, body, _locks in dockerfile_runs(text):
             if _OS_NODE.search(body):
                 found.append((rel, OS_PACKAGE_NODE))
     return found
@@ -1240,6 +1452,73 @@ def _watches(pattern: str, folder: str) -> bool:
     return match(0, 0)
 
 
+#: How long Dependabot waits after a release before it moves an image's npm tools to it.
+COOLDOWN_DAYS = 7
+
+
+def _directories(update: Mapping[str, Any]) -> list[str]:
+    listed = update.get("directories")
+    if isinstance(listed, list):
+        return [str(d) for d in listed]
+    return [str(update["directory"])] if "directory" in update else []
+
+
+def _glob(pattern: str) -> re.Pattern[str]:
+    """A workflow `paths:` glob as GitHub reads it: `*` and `?` within one path segment, `**`
+    across segments, and `**/` any number of folders, none included."""
+    out, i = "", 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out, i = out + "(?:.*/)?", i + 3
+        elif pattern.startswith("**", i):
+            out, i = out + ".*", i + 2
+        else:
+            out += {"*": "[^/]*", "?": "[^/]"}.get(pattern[i], re.escape(pattern[i]))
+            i += 1
+    return re.compile(out)
+
+
+def _selects(paths: list[str], path: str) -> bool:
+    """Whether a workflow `paths:` filter runs on a change of *path*: the last pattern that
+    matches decides, and a `!pattern` takes the path back out."""
+    selected = False
+    for pattern in paths:
+        negated = pattern.startswith("!")
+        if _glob(pattern[1:] if negated else pattern).fullmatch(path):
+            selected = not negated
+    return selected
+
+
+def _image_smoke_paths(tree: Tree) -> list[Violation]:
+    """A workflow whose `paths:` run it on a change of a Dockerfile also runs on a change of
+    each npm lock that Dockerfile installs, so the pull request Dependabot opens to move a lock
+    builds the image that installs it."""
+    bad: list[Violation] = []
+    installed = _locks_installed(tree)
+    for rel, data in _workflows(tree):
+        loaded: dict[Any, Any] = data
+        triggers = loaded.get("on", loaded.get(True))
+        if not isinstance(triggers, dict):
+            continue
+        for event in ("pull_request", "push"):
+            filters = triggers.get(event)
+            paths = filters.get("paths") if isinstance(filters, dict) else None
+            if not isinstance(paths, list):
+                continue
+            patterns = [str(p) for p in paths]
+            for lock, dockerfiles in sorted(installed.items()):
+                if not tree.get(lock) or _selects(patterns, lock):
+                    continue
+                for dockerfile in sorted(d for d in dockerfiles if _selects(patterns, d)):
+                    message = (
+                        f"{rel} runs on a {event} that changes {dockerfile} but not on one that "
+                        f"changes {lock}, which it installs, so a Dependabot pull request that "
+                        "moves the lock never builds the image"
+                    )
+                    bad.append(Violation("dependabot", rel, f"{event} {lock}", message))
+    return bad
+
+
 def dependabot(tree: Tree) -> list[Violation]:
     try:
         data = yaml.safe_load(tree.get(DEPENDABOT_FILE, "")) or {}
@@ -1250,16 +1529,40 @@ def dependabot(tree: Tree) -> list[Violation]:
     if not isinstance(updates, list):
         message = f"{DEPENDABOT_FILE} is not a mapping with an `updates:` list"
         return [Violation("dependabot", DEPENDABOT_FILE, "yaml", message)]
-    patterns: list[str] = []
-    for u in updates:
-        if not (isinstance(u, dict) and u.get("package-ecosystem") == "docker"):
-            continue
-        listed = u.get("directories")
-        if isinstance(listed, list):
-            patterns += [str(d) for d in listed]
-        elif "directory" in u:
-            patterns.append(str(u["directory"]))
+
+    def entries(ecosystem: str) -> list[dict[str, Any]]:
+        return [
+            u for u in updates if isinstance(u, dict) and u.get("package-ecosystem") == ecosystem
+        ]
+
     bad: list[Violation] = []
+
+    def fail(file: str, ref: str, message: str) -> None:
+        bad.append(Violation("dependabot", file, ref, message))
+
+    for rel in image_manifests(tree):
+        folder = "/" + rel.rpartition("/")[0]
+        moving = [u for u in entries("npm") if any(_watches(p, folder) for p in _directories(u))]
+        if not moving:
+            message = f"no Dependabot npm entry watches {folder}, so its lock never moves"
+            fail(DEPENDABOT_FILE, folder, message)
+        for update in moving:
+            cooldown = update.get("cooldown")
+            days = cooldown.get("default-days") if isinstance(cooldown, dict) else None
+            if not (type(days) is int and days >= COOLDOWN_DAYS):
+                message = (
+                    f"the Dependabot npm entry for {folder} waits no cooldown of at least "
+                    f"{COOLDOWN_DAYS} days, so a release can reach the image before a broken or "
+                    "compromised one is pulled"
+                )
+                fail(DEPENDABOT_FILE, f"{folder} cooldown", message)
+            groups = update.get("groups")
+            if not (isinstance(groups, dict) and list(groups.values()) == [{"patterns": ["*"]}]):
+                message = (
+                    f"the Dependabot npm entry for {folder} does not move every package in one "
+                    'group (`patterns: ["*"]`), so an adapter can move without the CLI it drives'
+                )
+                fail(DEPENDABOT_FILE, f"{folder} groups", message)
     for rel, text in _dockerfiles(tree):
         for line in text.splitlines():
             words = [w for w in line.split() if not w.startswith("--")]
@@ -1268,12 +1571,13 @@ def dependabot(tree: Tree) -> list[Violation]:
                     f"{rel}: FROM {words[1]} names its base through an ARG, which Dependabot "
                     "cannot read or move; write the base on the FROM line"
                 )
-                bad.append(Violation("dependabot", rel, words[1], message))
+                fail(rel, words[1], message)
+    patterns = [p for u in entries("docker") for p in _directories(u)]
     for folder in sorted({"/" + rel.rpartition("/")[0] for rel, _ in _dockerfiles(tree)}):
         if not any(_watches(p, folder) for p in patterns):
             message = f"no Dependabot docker entry watches {folder}, so its bases never move"
-            bad.append(Violation("dependabot", DEPENDABOT_FILE, folder, message))
-    return bad
+            fail(DEPENDABOT_FILE, folder, message)
+    return bad + _image_smoke_paths(tree)
 
 
 # ── the release's image tooling, run before a tag needs it ──────────────────────────────────

@@ -1234,7 +1234,8 @@ in `tools/ci/shell_installs.py`), the policy they read in `tools/ci/supply-chain
 It reads every workflow (`.yml` and `.yaml`), every local action's `action.yml` (its steps
 are judged as if they ran in the job that calls it), every Dockerfile or Containerfile in the
 tree whatever its spelling, `.github/dependabot.yml`, `.nvmrc`, the root `package.json` and
-`package-lock.json`, and the policy. A workflow or action file that does not parse fails
+`package-lock.json`, each image's npm manifest and lock under `deploy/docker/`, and the policy.
+A workflow or action file that does not parse fails
 (`workflow-yaml`), and that rule cannot be waived.
 
 It does not read, and review holds instead:
@@ -1288,12 +1289,25 @@ It does not read, and review holds instead:
   a `$VAR` is never this project. A version through a variable counts only when the step's,
   job's or workflow's `env:`, or the Dockerfile's `ARG` default, gives it a literal exact value.
   `npm install` in a workflow, `npx` of a package neither pinned nor installed by an `npm ci`
-  earlier in the job (or stage), `uvx`, `pipx run` and `uv run --with` without a version,
-  `uv pip sync` without hashes, and installers of other ecosystems (`go install`, `cargo`,
-  `gem`, `pnpm`, `yarn`, `bun`) all fail. The command is found wherever the shell would run it:
-  after `if`/`then`/`do`, inside `( )`, `{ }` and `$( )`, behind `sudo`, `env`, `timeout`,
-  `xargs` and the like, in `sh -c "…"`, behind a Dockerfile `RUN`'s flags, in its exec form and
-  in its heredocs. A `#` comment after a pin is not part of it.
+  earlier in the job (from the checkout's root, for the root lock) or in the Dockerfile stage
+  (of a lock that stage copied in from the build context before it), `uvx`, `pipx run` and
+  `uv run --with` without a version, `uv pip sync` without hashes, and installers of other
+  ecosystems (`go install`, `cargo`, `gem`, `pnpm`, `yarn`, `bun`) all fail. The command is
+  found wherever the shell would run it: after `if`/`then`/`do`, inside `( )`, `{ }` and
+  `$( )`, behind `sudo`, `env`, `timeout`, `xargs` and the like, in `sh -c "…"`, behind a
+  Dockerfile `RUN`'s flags, in its exec form and in its heredocs. A `#` comment after a pin is
+  not part of it.
+- **An image's npm tools:** a `package.json` under `deploy/docker/` (today
+  `deploy/docker/agent-clis/`, the gateway image's four agent CLIs) pins each tool exactly, with
+  no range, under `dependencies` and no other field (`npm ci` installs optional and peer
+  dependencies too). The `package-lock.json` beside it must have been generated from it: the
+  same names at the same versions in the manifest, in the lock's root and in the lock's
+  `node_modules` entries. Every package that lock holds, direct or deep in the tree, is fetched
+  from the npm registry under a sha512 integrity. A Dockerfile stage copies the pair in from
+  the build context and runs `npm ci` after the copy, in that stage. No install anywhere else
+  (`npm install -g`, `npm i`, `npm add`, a pinned one included, in a workflow or a Dockerfile)
+  fetches one of the tools that manifest names. To move a tool, edit its pin and run
+  `npm install --package-lock-only` in that folder, or take Dependabot's PR, which does both.
 - **A download a shell or an interpreter runs** fails: piped into `sh`, `bash`, `python` and the
   like (through `tee` or `sudo -E` too), or given as `<(curl …)` or `"$(curl …)"`. The one
   allowed is the public installer, `https://personalclaw.dev/install`, piped into `sh` in
@@ -1343,6 +1357,16 @@ arrive, and images have no separate security-update path.
   change also moves `.nvmrc`, `release-image-tooling.yml`'s base (held equal to
   `Dockerfile.web`'s) and `[node_end_of_life]`, so it is a reviewed edit. The contract's plants
   read today's pins from the tree, so a refresh needs no test edit.
+- **The gateway image's agent CLIs:** Dependabot's `npm` ecosystem for
+  `deploy/docker/agent-clis/`, weekly, in one group, so the adapters and the CLIs they drive
+  move together. Its PR moves the exact pins and the lock in one change, and
+  `docker-single-container.yml` builds and smokes the image on it: the smoke resolves each of
+  the lock's commands in a login shell, and the image build fails on a command whose link does
+  not reach an executable. The contract fails a folder under `deploy/docker/` with an npm
+  manifest that no Dependabot `npm` entry watches, an entry for one that waits less than seven
+  days or moves its packages in anything but one `patterns: ["*"]` group, and a workflow whose
+  `paths:` run it on a change of a Dockerfile but not on a change of a lock that Dockerfile
+  installs.
 - **Workflow containers, QEMU, BuildKit and buildx:** a reviewed edit, by hand. The release's
   QEMU and buildx steps are also run by `release-image-tooling.yml`'s `pin-smoke` job on every
   pull request that changes `release.yml`: a two-platform build of a two-line image on the
@@ -1404,7 +1428,10 @@ resolution would be clean:
   audited by `pip-audit --no-deps --disable-pip`. `tests/test_ci_audit.py` reads each graph's
   extras from the file that installs them.
 - **npm:** `npm audit --package-lock-only` on the root `package-lock.json`, every workspace
-  and build tool included, since build tools run in CI and shape the artifacts.
+  and build tool included, since build tools run in CI and shape the artifacts, and on each
+  image's own lock under `deploy/docker/` (today the gateway image's agent CLIs), from its
+  folder with `--prefix`, as a graph of its own: a waiver names that lock as its `file`.
+  `tests/rails/test_ci_audit_tree.py` holds every lock under `deploy/docker/` to be one.
 
 It fails on a tool that did not run (no report, or one that cannot be read), on a high or
 critical finding no live waiver covers, and on a waiver that is expired, more than 30 days
@@ -1447,8 +1474,5 @@ The day an exception expires, or a Node line reaches its end of life, CI goes re
 change to the repository. That is the policy: a dated exception is a deadline, and a Node past
 its end of life gets no security fixes. Renew or fix before the date.
 
-The exceptions today:
-
-| File | Rule | What it waives | Ends when |
-|---|---|---|---|
-| `deploy/docker/Dockerfile.backend` | `run-install` | the four agent CLIs installed at their newest | a lock under `deploy/docker/` names them |
+There are no exceptions today. The contract's exception rows plant their own exception beside a
+planted install, so they hold whether or not the policy has one.

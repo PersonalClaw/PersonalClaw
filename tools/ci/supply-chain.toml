@@ -86,11 +86,4 @@ reason = "Keeps one issue per red nightly leg, titled `breadth: <leg> is red`, a
 # reason. An expired entry, one more than 30 days out, one that matches nothing or more than one
 # violation, and one missing a field all fail. `file`, `scope` and `reference` are the
 # violation's own, as the row prints them; on the expiry day CI goes red, which is the point.
-
-[[exception]]
-file = "deploy/docker/Dockerfile.backend"
-scope = "run-install"
-reference = "npm install of @agentclientprotocol/claude-agent-acp, @agentclientprotocol/codex-acp, @anthropic-ai/claude-code, @openai/codex names no exact version"
-owner = "maintainers"
-reason = "The gateway image installs the four agent CLIs at their newest. Pinning them by hand would leave them on one release with nothing to move them. This ends when a lock file under deploy/docker/ names them, and Dependabot's npm ecosystem refreshes it."
-expires = 2026-11-16
+# There are none.
