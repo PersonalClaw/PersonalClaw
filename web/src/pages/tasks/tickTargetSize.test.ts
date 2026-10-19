@@ -65,12 +65,12 @@ describe("the task panel's tick targets clear the 24px floor", () => {
   const tags = buttonTags()
 
   it('the scan found the panel\'s buttons (vacuity floor)', () => {
-    // FIVE at the time of writing, and the number is measured, not guessed: my first draft floored it
-    // at 6 and the rail failed against a correct parse. `grep -c '<button'` on the file agrees at 5 —
-    // the two ticks, two dependency rows, and the comment composer. A floor, not an equality, so adding
-    // a button does not red this; but if the matcher ever stops matching, the per-tick assertions below
-    // would pass by finding nothing, which is the failure mode this guards.
-    expect(tags.length, 'no <button> tags parsed out of TaskDetail.tsx').toBeGreaterThanOrEqual(5)
+    // FOUR, and the number is measured, not guessed: my first draft floored it at 6 and the rail failed
+    // against a correct parse. `grep -c '<button'` on the file agrees at 4 — the two ticks and two
+    // dependency rows. It was 5 until the comment composer's send became an `IconButton`. A floor, not
+    // an equality, so adding a button does not red this; but if the matcher ever stops matching, the
+    // per-tick assertions below would pass by finding nothing, which is the failure mode this guards.
+    expect(tags.length, 'no <button> tags parsed out of TaskDetail.tsx').toBeGreaterThanOrEqual(4)
     for (const label of TICKS) {
       expect(tags.some((t) => t.includes(label)), `no button matched ${label}`).toBe(true)
     }

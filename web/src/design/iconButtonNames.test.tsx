@@ -101,8 +101,9 @@ describe('the two singleton icon buttons', () => {
   })
 
   it('the task comment send button is named', () => {
+    // An `IconButton` now, whose required `label` is its `aria-label`.
     expect(strip(readSource(join(SRC, 'pages/tasks/TaskDetail.tsx'))))
-      .toMatch(/aria-label="Post comment"/)
+      .toMatch(/<IconButton icon=\{Send\} label="Post comment"/)
   })
 })
 
@@ -138,7 +139,11 @@ describe('the rail: no icon-only button ships without a name', () => {
       scanned.find((s) => s.rel === rel)?.buttons.some((b) => b.named && needle.test(b.tag)) ?? false
     expect(named('ui/forms.tsx', /Remove \$\{v\}/)).toBe(true)
     expect(named('pages/knowledge/KnowledgeListPage.tsx', /Close the intent editor/)).toBe(true)
-    expect(named('pages/tasks/TaskDetail.tsx', /Post comment/)).toBe(true)
+    // The third, TaskDetail's `Post comment`, is an `IconButton` now: it left the raw population this
+    // scanner reads, and the primitive's required `label` names it (the singleton test above).
+    const taskDetail = scanned.find((s) => s.rel === 'pages/tasks/TaskDetail.tsx')
+    expect(taskDetail, 'TaskDetail must still be scanned').toBeDefined()
+    expect(taskDetail!.buttons.some((b) => /Post comment/.test(b.tag))).toBe(false)
 
     // And it must still FLAG the nameless shape, including across an inline arrow handler and with a
     // single-letter icon — the exact two shapes that defeated the earlier version.

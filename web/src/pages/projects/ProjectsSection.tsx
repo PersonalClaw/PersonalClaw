@@ -19,7 +19,7 @@ import { confirm } from '../../ui/dialog'
 import { Modal } from '../../ui/Modal'
 import { SidePanel } from '../../ui/SidePanel'
 import { Button } from '../../ui/Button'
-import { FieldHintProvider, FieldLabelProvider, TextArea, TextInput, useSyncedDraft } from '../../ui/forms'
+import { Checkbox, FieldHintProvider, FieldLabelProvider, TextArea, TextInput, useSyncedDraft } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { StatusPill } from '../../ui/StatusPill'
 import { WorkspacePicker } from '../code/WorkspacePicker'
@@ -190,7 +190,7 @@ function ProjectListPage({ onOpen, onOpenLoops, query, setQuery }: { onOpen: (id
         // and Home's "loops running" pill lands here — which had no way to the loops at all
         // (measured 2026-09-25).
         right={<HeaderActions><HeaderControl icon={Repeat} label="Loops" onClick={onOpenLoops} /><HeaderControl icon={Upload} label="Import" onClick={() => importInput.current?.click()} hint="Import a project archive (.zip) exported from PersonalClaw" /><HeaderControl icon={Plus} label="New project" onClick={() => setCreating(true)} variant="primary" priority="primary" /></HeaderActions>} />
-      {/* Forwarded to by the header's Import control, which is the keyboard-reachable control. */}
+      {/* Raw: no primitive draws a file picker. Forwarded to by the header's Import control, which is the keyboard-reachable control. */}
       <input ref={importInput} type="file" accept=".zip,application/zip" className="hidden"
         onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void previewImport(file) }} />
 
@@ -596,7 +596,8 @@ function NewProjectModal({ busy, onClose, onCreate }: {
           </div>
         </Field>
         <label className="flex items-center gap-2 text-[0.8125rem] text-on-surface-var cursor-pointer">
-          <input type="checkbox" checked={makeDefault} onChange={(e) => setMakeDefault(e.target.checked)} className="size-4 accent-primary" />
+          <Checkbox checked={makeDefault} onChange={setMakeDefault}
+            ariaLabel="Make it your default project — new tasks and loops start here, on every device" />
           Make it your default project — new tasks and loops start here, on every device
         </label>
         <div className="flex items-center justify-end gap-2 pt-1">
@@ -807,10 +808,10 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
   // widgets) + Tasks — with task detail opening in a SidePanel.
   const titleNode = renaming ? (
     <div className="flex items-center gap-2">
-      <input autoFocus aria-label="Rename this project" value={nameDraft} onChange={(e) => setNameDraft(e.target.value)}
+      <TextInput autoFocus ariaLabel="Rename this project" value={nameDraft} onChange={setNameDraft}
         maxLength={MAX_NAME_LEN}
         onKeyDown={(e) => { if (e.key === 'Enter') { patch({ name: nameDraft.trim(), name_locked: true }); setRenaming(false) } else if (e.key === 'Escape') setRenaming(false) }}
-        className="min-w-0 rounded-md bg-surface-high px-2.5 py-1 text-on-surface text-[1.0625rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+        size="sm" surface="high" />
       {/* Its sibling Cancel below carries an `aria-label`; this one did not — the confirm half of a
           two-button pair announced as bare "button". That asymmetry is the tell. */}
       <Button size="sm" ariaLabel="Save the project name" onClick={() => { patch({ name: nameDraft.trim(), name_locked: true }); setRenaming(false) }} disabled={!nameDraft.trim()}
@@ -1143,6 +1144,7 @@ function WorkRowCard({ row, onResume, onOpen, onStop }: {
 }) {
   const [open, setOpen] = useState(!row.collapsed)
   if (row.collapsed && !open) {
+    // Raw: a full-width Work-board row at its sibling rows' px-2.5 inset; no primitive draws a list row.
     return (
       <button type="button" onClick={() => setOpen(true)}
         className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-left text-[0.75rem] text-on-surface-low hover:bg-surface-high">
@@ -1161,6 +1163,7 @@ function WorkRowCard({ row, onResume, onOpen, onStop }: {
       {outcome && OutcomeIcon
         ? <OutcomeIcon size={13} className="shrink-0" style={{ color: outcome.tone }} role="img" aria-label={outcome.label} />
         : <CircleDot size={13} className="shrink-0 text-primary" />}
+      {/* Raw: the row's truncating title is its open target in row ink; TextLink would re-ink it coral. */}
       <button type="button" onClick={onOpen} title={`Open ${row.title}`}
         className="min-w-0 flex-1 truncate text-left hover:text-on-surface hover:underline">{row.title}</button>
       {outcome && (
@@ -1203,6 +1206,7 @@ function FolderChip({ label, icon: Icon, path, emptyText, title, onPeek, onBrows
       <span className="shrink-0 text-on-surface-low uppercase tracking-wide text-[0.75rem]">{label}</span>
       {path ? (
         onPeek
+          // Raw: a truncating mono path chip; no primitive draws a code-chip button.
           ? <button type="button" onClick={onPeek} title={`${path} — view contents`}
               className="min-w-0 max-w-[22rem] truncate rounded bg-surface-high px-1.5 py-0.5 font-mono text-on-surface-var hover:text-primary">{path}</button>
           : <code className="min-w-0 max-w-[22rem] truncate rounded bg-surface-high px-1.5 py-0.5 font-mono text-on-surface-var" title={path}>{path}</code>
@@ -1224,6 +1228,7 @@ function FolderChip({ label, icon: Icon, path, emptyText, title, onPeek, onBrows
  *  the list's tasks in the side panel. Shows the list's task count when known. */
 export function TaskListRow({ list, active, onOpen }: { list: TaskListItem; active: boolean; onOpen: () => void }) {
   const count = list.task_count
+  // Raw: a full-row clickable list item with its selected ring; no primitive draws a list row.
   return (
     <button type="button" onClick={onOpen}
       className={`group flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[0.8125rem] transition-colors ${active ? 'bg-surface-high text-on-surface ring-1 ring-primary' : 'bg-surface-high/60 text-on-surface-var hover:bg-surface-high hover:text-on-surface'}`}>
@@ -1246,6 +1251,7 @@ function TaskListPanel({ list, onOpenTask }: { list: TaskListItem; onOpenTask: (
     <ul className="flex flex-col gap-0.5">
       {tasks.map((t) => (
         <li key={t.id}>
+          {/* Raw: a full-row clickable list item; no primitive draws a list row. */}
           <button type="button" onClick={() => onOpenTask(t.id)}
             className="group flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-[0.8125rem] hover:bg-surface-high">
             {/* 🔑 THE STATUS COMES FROM `taskMeta.statusMeta`, WHICH OWNS IT — icon, label and tone
@@ -1306,7 +1312,7 @@ function DirTreePanel({ path, onOpenInFiles }: { path: string; onOpenInFiles: ()
   return (
     <div className="flex flex-col gap-2">
       <Button size="sm" variant="ghost" onClick={onOpenInFiles}><FolderOpen size={14} /> Open in Files</Button>
-      {/* breadcrumb — root + drilled-into subfolders; click to pop back */}
+      {/* breadcrumb — root + drilled-into subfolders; click to pop back. Raw: crumb segments with a current-crumb ink, which no primitive draws. */}
       <div className="flex flex-wrap items-center gap-0.5 text-[0.75rem] text-on-surface-low">
         <button type="button" onClick={() => setCur(path)} className={`truncate rounded px-1 py-0.5 hover:bg-surface-high ${cur === path ? 'text-on-surface' : 'hover:text-on-surface'}`}>{path.split('/').pop() || path}</button>
         {crumbs.map((seg, i) => (
@@ -1334,6 +1340,7 @@ function DirTreePanel({ path, onOpenInFiles }: { path: string; onOpenInFiles: ()
 function DirEntryRow({ entry, onClick }: { entry: FsEntry; onClick: () => void }) {
   return (
     <li>
+      {/* Raw: a full-row clickable list item; no primitive draws a list row. */}
       <button type="button" onClick={onClick}
         className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[0.8125rem] text-on-surface-var hover:bg-surface-high hover:text-on-surface">
         {entry.is_dir ? <Folder size={14} className="shrink-0 text-primary" /> : <FileIcon size={14} className="shrink-0 text-on-surface-low" />}
@@ -1352,10 +1359,9 @@ function BriefRow({ brief, onSave }: { brief: string; onSave: (b: string) => voi
   if (editing) {
     return (
       <div className="flex flex-col gap-1.5">
-        <textarea autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} rows={3}
+        <TextArea autoFocus value={draft} onChange={setDraft} rows={3} size="sm" surface="high"
           onKeyDown={(e) => { if (e.key === 'Escape') { setDraft(brief); setEditing(false) } }}
-          placeholder="Project brief — the goal, scope, and background. Shared as context with every agent working on this project's sessions and loops."
-          className="resize-y rounded-md bg-surface-high px-2.5 py-1.5 text-[0.8125rem] leading-relaxed text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          placeholder="Project brief — the goal, scope, and background. Shared as context with every agent working on this project's sessions and loops." />
         <div className="flex items-center gap-1.5">
           <Button size="sm" onClick={() => { onSave(draft.trim()); setEditing(false) }}><Check size={13} /> Save brief</Button>
           <Button variant="ghost" size="xs" onClick={() => { setDraft(brief); setEditing(false) }}>Cancel</Button>
@@ -1363,6 +1369,7 @@ function BriefRow({ brief, onSave }: { brief: string; onSave: (b: string) => voi
       </div>
     )
   }
+  // Raw: a click-to-edit preview of a two-line brief; no primitive draws a multi-line preview row.
   return (
     <button type="button" onClick={() => setEditing(true)} title="Edit project brief"
       className="group flex items-start gap-2 rounded-md px-1 py-0.5 text-left hover:bg-surface-high/50">

@@ -147,11 +147,12 @@ const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !
 // `app/Onboarding.tsx` left this list when its raw submit did: the name step's Continue was an
 // arrow `<button>` inside the name field, and it is now the flow's navigation-bar `<Button>` with
 // a `disabledReason` ("Enter your name first"), the path `ui/disabledReason.test.tsx` covers.
+// `pages/tasks/TaskDetail.tsx` left it the same way: its comment composer's raw send is an
+// `IconButton` now, and a test in the block below pins its reason and its in-flight state.
 const ADOPTERS = [
   'ui/PlanningWalkthrough.tsx',
   'pages/ChatPage.tsx',
   'pages/chat/ChatActivityPanel.tsx',
-  'pages/tasks/TaskDetail.tsx',
   'pages/settings/SecurityPanel.tsx',
   'pages/settings/VoicePanel.tsx',
   'pages/settings/ProjectionRulesPanel.tsx',
@@ -173,6 +174,16 @@ describe('every converted raw submit uses the helper', () => {
       expect(src, 'must import it').toMatch(/import \{[^}]*\bunavailableWhen\b[^}]*\} from '[^']*unavailable'/)
     })
   }
+
+  it('pages/tasks/TaskDetail.tsx, which left the list, keeps its reason and its in-flight state', () => {
+    // What the helper gave the raw send, the primitive gives it now: the reason while the draft is
+    // empty (on `title`, with the tab stop kept) and `aria-busy` while the post is in flight.
+    const src = readSource(join(SRC, 'pages/tasks/TaskDetail.tsx'))
+    expect(src, 'the send must be the primitive').toMatch(/<IconButton icon=\{Send\} label="Post comment"/)
+    expect(src, 'with its reason').toMatch(
+      /label="Post comment"[\s\S]{0,200}?disabledReason=\{!draft\.trim\(\) \? 'Write a comment first' : undefined\}/)
+    expect(src, 'and its in-flight state').toMatch(/label="Post comment"[\s\S]{0,300}?loading=\{sending\}/)
+  })
 
   it('every converted button dims at ITS OWN level, not a blanket one', () => {
     // The old `disabled:opacity-*` no longer fires — nothing sets the native attribute — so each
