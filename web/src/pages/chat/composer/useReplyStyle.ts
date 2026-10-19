@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, type ReplyStyle, type ReplyStylePreview, type ReplyStyleState } from '../../lib/api'
-import { notify } from '../../app/appSdk'
+import { api, type ReplyStyle, type ReplyStylePreview, type ReplyStyleState } from '../../../lib/api'
+import { notify } from '../../../app/appSdk'
 
 /** What the composer's reply-style picker shows for the open chat. */
 export interface ReplyStylePillState {

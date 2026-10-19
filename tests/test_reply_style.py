@@ -192,7 +192,7 @@ class TestThePlatformDefault:
 
     @pytest.mark.asyncio
     async def test_the_config_api_sets_it_and_refuses_a_value_outside_the_set(self):
-        """What the chat guide says sets it until Settings carries a control."""
+        """The route Settings → Agent defaults saves it through, held to the closed set."""
         from aiohttp import web
 
         from personalclaw.dashboard.handlers import api_personalclaw_config_patch

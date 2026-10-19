@@ -104,7 +104,8 @@ _TITLES: dict[str, str] = {s.id: s.title for s in STYLES}
 #:   edits that agent.
 #: * ``agent`` — what the bound agent's definition carries, so a style travels with the agent.
 #: * ``platform`` — the owner's default for every agent, ``agent.reply_style`` in the config (set
-#:   through the config API). Always states a style, which is what makes the walk total.
+#:   in Settings → Agent defaults → Reply style). Always states a style, which is what makes the
+#:   walk total.
 REPLY_STYLE_PRECEDENCE: tuple[str, ...] = ("conversation", "agent", "platform")
 
 #: What the platform scope states when nothing valid is stored: no instruction. A style nobody

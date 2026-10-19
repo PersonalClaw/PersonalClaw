@@ -271,6 +271,48 @@ export function ReasoningPill({ value, efforts, onSelect, openSignal }: {
 /** A reply style the picker lists: the backend's `GET /api/chat/reply-styles` rows. */
 export type ReplyStyleOption = { id: string; title: string; description: string }
 
+/** What the next turn carries for its voice, as the backend previews it (`reply_style.preview`). */
+export type ReplyStylePreviewView = {
+  applies: 'style' | 'persona' | 'none'
+  style: string; persona: string
+  instruction: string; first_turn_only: boolean; refused: string
+}
+
+/** A persona theme's id as a name: `retro-terminal` → "Retro Terminal". */
+const personaName = (id: string) => id.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+
+/** The preview line under the picker: which voice the next turn carries and, on request, the exact
+ *  text it appends. Rendered as the backend sent it; nothing here composes an instruction. */
+function ReplyStylePreviewLine({ preview, title }: { preview: ReplyStylePreviewView; title: (id: string) => string }) {
+  const [shown, setShown] = useState(false)
+  const said = preview.refused
+    ? preview.refused
+    : preview.applies === 'style'
+      ? `Next reply: the ${title(preview.style)} style, on every turn.`
+      : preview.applies === 'persona'
+        ? `Next reply: the ${personaName(preview.persona)} voice, on a new chat\u2019s first turn.`
+        : 'Next reply: no style instruction is added.'
+  return (
+    <div className="border-t border-outline-variant/30 px-m py-2 flex flex-col gap-1">
+      <span data-type="body-s">{said}</span>
+      {preview.applies === 'style' && preview.persona && !preview.refused && (
+        <span data-type="caption" className="text-on-surface-low">It replaces the {personaName(preview.persona)} voice while it is chosen.</span>
+      )}
+      {preview.instruction && (
+        <>
+          <button type="button" data-type="caption" className="self-start underline text-on-surface-low"
+            aria-expanded={shown} onClick={() => setShown((v) => !v)}>
+            {shown ? 'Hide what is sent' : 'Show what is sent'}
+          </button>
+          {shown && (
+            <pre data-type="caption" className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-surface-container p-2 text-on-surface-low">{preview.instruction.trim()}</pre>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 /** Who chose the style, as the pill says it; the conversation's own choice needs no word. */
 const REPLY_STYLE_CHOSEN_BY: Record<string, string> = { agent: ' (agent)', platform: ' (default)' }
 
@@ -286,7 +328,7 @@ const REPLY_STYLE_CHOSEN_BY: Record<string, string> = { agent: ' (agent)', platf
  *
  *  The pill shows the EFFECTIVE style and who chose it, so a change in how replies read can be
  *  traced to a control the owner can see. */
-export function ReplyStylePill({ choice, effective, source, agentDefault, styles, onSelect }: {
+export function ReplyStylePill({ choice, effective, source, agentDefault, styles, preview, onSelect }: {
   /** What THIS conversation states: a style id, or `''` to follow the agent. */
   choice: string
   /** The style the next turn resolves to (a style id). */
@@ -297,6 +339,8 @@ export function ReplyStylePill({ choice, effective, source, agentDefault, styles
   /** What the bound agent's definition states, for the reset row's hint. */
   agentDefault: string
   styles: ReplyStyleOption[]
+  /** What the next turn carries for its voice, from the backend; absent before the chat exists. */
+  preview?: ReplyStylePreviewView | null
   onSelect: (style: string) => void
 }) {
   const title = (id: string) => styles.find((s) => s.id === id)?.title ?? id
@@ -316,6 +360,7 @@ export function ReplyStylePill({ choice, effective, source, agentDefault, styles
             <MenuRow key={s.id} label={s.id === 'default' ? 'No style' : s.title} hint={s.description}
               selected={choice === s.id} onClick={() => { onSelect(s.id); close() }} />
           ))}
+          {preview && <ReplyStylePreviewLine preview={preview} title={title} />}
           <div data-type="caption" className="border-t border-outline-variant/30 px-m py-2 text-on-surface-low">
             Changes style only, never a fact, a caveat or a refusal. A choice here applies to this conversation and does not edit the agent.
           </div>
