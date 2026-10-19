@@ -728,20 +728,6 @@ def test_an_after_cycle_is_refused():
         jobs.ordered([a, b])
 
 
-def test_selection_never_leaves_out_a_security_job_and_keeps_what_after_names():
-    ordinary = _job("docs", "pass")
-    secure = _job("secure", "pass", security="security")
-    built = _job("build", "pass")
-    needs = _job("e2e", "pass", after=("build",))
-    chosen = jobs.select([ordinary, secure, built, needs], ["web/x.ts"], lambda j: j.id == "e2e")
-    assert [j.id for j in chosen] == ["secure", "build", "e2e"]
-
-
-def test_selection_of_no_change_runs_every_job():
-    every = [_job("a", "pass"), _job("b", "pass")]
-    assert jobs.select(every, [], lambda j: False) == every
-
-
 def test_changed_runs_every_job_when_a_path_is_in_no_jobs_inputs(repo, tmp_path):
     base = _git(repo, "rev-parse", "HEAD")
     (repo / "elsewhere.txt").write_text("x")
@@ -774,6 +760,84 @@ def test_changed_leaves_out_a_job_whose_inputs_the_diff_does_not_touch(repo, tmp
         changed=True,
     )
     assert [o.key for o in outcomes] == ["t"] and code == run.OK and judged.green
+
+
+def test_changed_runs_the_job_a_file_moved_out_of(repo, tmp_path):
+    """A move is two changes: the job whose inputs lost the file runs, and so does the job whose
+    inputs gained it. A diff that reads the move as a rename names only where the file went."""
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "notes").mkdir()
+    _git(repo, "mv", "tests/test_a.py", "notes/test_a.py")
+    _git(repo, "commit", "-q", "-m", "a test moved into the notes")
+    tests_job = _job("t", "pass", inputs=("tests/",))
+    docs_job = _job("d", "pass", inputs=("notes/",))
+    code, outcomes, judged = jobs.run_tier(
+        Catalogue((tests_job, docs_job)),
+        "change",
+        _host(repo),
+        jobs.Options(base=base),
+        tmp_path / "work",
+        changed=True,
+    )
+    assert [o.key for o in outcomes] == ["t", "d"] and code == run.OK and judged.green
+
+
+def test_changed_reads_a_path_git_would_quote_as_the_path_itself(repo, tmp_path, capsys):
+    """git quotes a path with a byte outside printable ASCII unless it is asked for NUL-separated
+    names; a quoted name is no path in the repository, so it would plan the whole tier."""
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "notes").mkdir()
+    (repo / "notes" / "naïve.md").write_text("prose\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "a note with an accent in its name")
+    tests_job = _job("t", "pass", inputs=("tests/",))
+    docs_job = _job("d", "pass", inputs=("notes/",))
+    code, outcomes, _ = jobs.run_tier(
+        Catalogue((tests_job, docs_job)),
+        "change",
+        _host(repo),
+        jobs.Options(base=base),
+        tmp_path / "work",
+        changed=True,
+    )
+    assert [o.key for o in outcomes] == ["d"] and code == run.OK, capsys.readouterr().err
+
+
+def test_changed_plans_with_the_overrides_it_is_given(repo, tmp_path):
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "tests" / "test_a.py").write_text("def test_it():\n    assert 3\n")
+    _git(repo, "commit", "-q", "-am", "a test change")
+    tests_job = _job("t", "pass", inputs=("tests/",))
+    docs_job = _job("d", "pass", inputs=("docs/",))
+    whole = catalogue.Override(("tests/",), (), True, "a planted override of the whole tier")
+    code, outcomes, _ = jobs.run_tier(
+        Catalogue((tests_job, docs_job)),
+        "change",
+        _host(repo),
+        jobs.Options(base=base),
+        tmp_path / "work",
+        changed=True,
+        overrides=(whole,),
+    )
+    assert [o.key for o in outcomes] == ["t", "d"] and code == run.OK
+
+
+def test_changed_never_leaves_out_a_security_job(repo, tmp_path):
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "tests" / "test_a.py").write_text("def test_it():\n    assert 2\n")
+    _git(repo, "commit", "-q", "-am", "a test change")
+    tests_job = _job("t", "pass", inputs=("tests/",))
+    docs_job = _job("d", "pass", inputs=("docs/",))
+    secure = _job("s", "pass", inputs=("docs/",), security="security")
+    code, outcomes, _ = jobs.run_tier(
+        Catalogue((tests_job, docs_job, secure)),
+        "change",
+        _host(repo),
+        jobs.Options(base=base),
+        tmp_path / "work",
+        changed=True,
+    )
+    assert [o.key for o in outcomes] == ["t", "s"] and code == run.OK
 
 
 # ── the command line ─────────────────────────────────────────────────────────────────────────
@@ -865,6 +929,7 @@ _SHARDS = "sharded runs in 4 shards: give --shard i/4"
         (["run-job", "plain", "--base", "HEAD", "--base", "HEAD~1"], "--base: given twice"),
         (["run", "nightly"], "'nightly' is not a tier"),
         (["run", "weekly"], "the weekly tier has no job"),
+        (["run", "change", "--changed"], "areas.toml"),
         (["run-job"], "the following arguments are required: job"),
     ],
 )
@@ -877,6 +942,21 @@ def test_input_it_cannot_run_exits_partial_and_says_why(argv, why, tmp_path, cap
     out = tmp_path / "out"
     assert main([*argv, "--catalogue", str(planted), "--out", str(out)]) == run.PARTIAL
     assert why in capsys.readouterr().err
+    assert not out.exists(), "nothing ran"
+
+
+def test_run_changed_reads_the_overrides_beside_the_catalogue(tmp_path, capsys):
+    from tools.ci.__main__ import main
+
+    planted = tmp_path / "catalogue.toml"
+    planted.write_text(_PLANTED, encoding="utf-8")
+    (tmp_path / "areas.toml").write_text(
+        '[[override]]\npaths = ["docs/"]\njobs = ["static"]\nreason = "a job it lacks"\n'
+    )
+    out = tmp_path / "out"
+    argv = ["run", "change", "--changed", "--catalogue", str(planted), "--out", str(out)]
+    assert main(argv) == run.PARTIAL
+    assert "names static, which is no job of the catalogue" in capsys.readouterr().err
     assert not out.exists(), "nothing ran"
 
 

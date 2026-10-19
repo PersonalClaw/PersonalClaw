@@ -41,6 +41,9 @@ from . import run
 #: The catalogue, relative to the repository root.
 CATALOGUE = "tools/ci/catalogue.toml"
 
+#: The area map's explicit overrides, beside the catalogue whose jobs they name.
+AREAS = "tools/ci/areas.toml"
+
 #: The repository this module sits in.
 REPO = Path(__file__).resolve().parents[2]
 
@@ -175,11 +178,13 @@ _PYTHON = re.compile(r"image|[0-9]+\.[0-9]+(\.[0-9]+)?")
 _VARIABLE = re.compile(r"[A-Z_][A-Z0-9_]*")
 #: Git's short pathspec magic: a colon, the signs for top (``/``) and exclude (``!``, ``^``),
 #: and an optional colon that ends them.
-_SHORT_MAGIC = re.compile(r"\A:[/!^]*:?")
+SHORT_MAGIC = re.compile(r"\A:[/!^]*:?")
 
 #: The catalogue's tables besides its jobs, and what each may hold.
 _TIER_TABLES = frozenset({"merge"})
 _TIER_KEYS = frozenset({"jobs"})
+#: What an ``[[override]]`` of the areas file may hold.
+_OVERRIDE_KEYS = frozenset({"paths", "jobs", "whole_tier", "reason"})
 
 #: The job that holds every rail. A merge tier without it is refused, so no rail is skipped.
 MERGE_NEEDS_JOB = "rails"
@@ -311,6 +316,18 @@ class Job:
 
 
 @dataclass(frozen=True)
+class Override:
+    """An ``[[override]]`` of ``tools/ci/areas.toml``: jobs a path schedules beyond what the
+    jobs' declared inputs say, and why. ``whole_tier``: the path plans the whole tier. An
+    override only adds: it never names a path known, so it never leaves a job out."""
+
+    paths: tuple[str, ...]
+    jobs: tuple[str, ...]
+    whole_tier: bool
+    reason: str
+
+
+@dataclass(frozen=True)
 class Catalogue:
     jobs: tuple[Job, ...]
     #: ``[tier.merge] jobs``: the jobs the merge tier must run, held against each job's tiers.
@@ -381,8 +398,11 @@ class _Fields:
         return value
 
 
-def _pathspec_fault(spec: str) -> str | None:
-    """What is wrong with a pathspec, its magic read as git reads it, long form or short."""
+def pathspec_fault(spec: str) -> str | None:
+    """What is wrong with a pathspec, its magic read as git reads it, long form or short. Its
+    path is in git's one normal form, since git reads ``.`` as the tree but ``:(top).`` as
+    nothing; and a wildcard is one ``tools/ci/plan.py`` reads as git does."""
+    words: set[str] = set()
     if spec.startswith(":("):
         end = spec.find(")")
         if end < 0:
@@ -391,11 +411,35 @@ def _pathspec_fault(spec: str) -> str | None:
         unknown = sorted(words - PATHSPEC_MAGIC)
         if unknown:
             return f"uses unknown magic {', '.join(unknown)}"
+        if {"literal", "glob"} <= words:
+            return "uses literal and glob together, which git refuses"
         spec = spec[end + 1 :]
     else:
-        spec = _SHORT_MAGIC.sub("", spec, count=1)
-    if spec.startswith("/") or ".." in Path(spec).parts:
+        spec = SHORT_MAGIC.sub("", spec, count=1)
+    parts = spec.split("/")
+    if spec.startswith("/") or ".." in parts:
         return "leaves the repository"
+    if spec and (any(part in ("", ".") for part in parts[:-1]) or parts[-1] == "."):
+        return "is not in git's normal form (an empty or . part): name the path itself"
+    return None if "literal" in words else _wildcard_fault(spec)
+
+
+def _wildcard_fault(spec: str) -> str | None:
+    """A wildcard git reads otherwise than the planner: an escape, or a class it cannot read."""
+    if "\\" in spec:
+        return "has a backslash, which git reads as an escape: use :(literal)"
+    i = spec.find("[")
+    while i >= 0:
+        j = i + 1 + (spec[i + 1 : i + 2] in ("!", "^"))
+        j += spec[j : j + 1] == "]"
+        end = spec.find("]", j)
+        if end < 0:
+            return "opens a [ it never closes: use :(literal)"
+        if "/" in spec[i:end]:
+            return "has a / in a class, which never matches a folder's /"
+        if "[:" in spec[i + 1 : end]:
+            return "uses a [:name:] character class: list the characters"
+        i = spec.find("[", end + 1)
     return None
 
 
@@ -504,7 +548,7 @@ def _job(raw: object, n: int, problems: list[str]) -> Job | None:
     if "inputs" in raw and not inputs:
         fields.fault("inputs", "names at least one pathspec")
     for spec in inputs:
-        fault = _pathspec_fault(spec)
+        fault = pathspec_fault(spec)
         if fault:
             fields.fault("inputs", f"pathspec {spec!r} {fault}")
     external = fields.strings("external_inputs", allowed=EXTERNAL_INPUTS)
@@ -613,6 +657,67 @@ def load(text: str, source: str = CATALOGUE) -> Catalogue:
     if problems:
         raise CatalogueError(list(dict.fromkeys(problems)))
     return cat
+
+
+def load_areas(text: str, cat: Catalogue, source: str = AREAS) -> tuple[Override, ...]:
+    """Read the area map's overrides against ``cat``, or raise :class:`CatalogueError` naming
+    every fault: each ``[[override]]`` names pathspecs, the catalogue jobs it adds or
+    ``whole_tier``, and a reason, and nothing else is in the file."""
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise CatalogueError([f"{source} is not TOML: {exc}"]) from None
+    problems = [f"{source}: unknown table {key!r}" for key in data if key != "override"]
+    overrides = _overrides(data.get("override", []), {j.id for j in cat.jobs}, source, problems)
+    if problems:
+        raise CatalogueError(list(dict.fromkeys(problems)))
+    return overrides
+
+
+def read_areas(root: Path, cat: Catalogue) -> tuple[Override, ...]:
+    """The overrides at ``root``, read against ``cat``."""
+    path = root / AREAS
+    source = str(path.relative_to(root))
+    return load_areas(_text(path, source), cat, source)
+
+
+def _overrides(
+    raw: object, ids: set[str], source: str, problems: list[str]
+) -> tuple[Override, ...]:
+    if not isinstance(raw, list):
+        problems.append(f"{source}: override is a list of [[override]] tables")
+        return ()
+    out: list[Override] = []
+    for n, item in enumerate(raw, 1):
+        label = f"{source}: override {n}"
+        if not isinstance(item, dict):
+            problems.append(f"{label}: is not a table")
+            continue
+        before = len(problems)
+        fields = _Fields(item, label, problems)
+        for key in sorted(set(item) - _OVERRIDE_KEYS):
+            problems.append(f"{label}: unknown key {key!r}")
+        paths = fields.strings("paths")
+        if not paths:
+            fields.fault("paths", "names at least one pathspec")
+        for spec in paths:
+            fault = pathspec_fault(spec)
+            if fault:
+                fields.fault("paths", f"pathspec {spec!r} {fault}")
+        jobs = fields.strings("jobs")
+        for job_id in jobs:
+            if job_id not in ids:
+                fields.fault("jobs", f"names {job_id}, which is no job of the catalogue")
+        whole = fields.flag("whole_tier")
+        reason = item.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            fields.fault("reason", "is a non-empty string")
+            reason = ""
+        if not jobs and not whole:
+            problems.append(f"{label}: adds no job and is not whole_tier")
+        if len(problems) == before:
+            out.append(Override(paths, jobs, whole, reason))
+    return tuple(out)
 
 
 def _tier_merge(raw: object, source: str, problems: list[str]) -> tuple[str, ...]:

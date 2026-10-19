@@ -13,9 +13,11 @@
 # browser install) is never a step: it is the job's toolchain, which whatever runs the job
 # installs first, and each job names every install it needs.
 #
-# `inputs` are git pathspecs. Nothing selects jobs by them yet, so an entry whose job ci.yml
-# gates on a classifier (scripts/ci_touches_frontend.py, scripts/ci_touches_sdk.py) declares the
-# whole tree until selection moves here: a wider input runs a job more often, never less.
+# `inputs` are git pathspecs, and tools/ci/plan.py plans each run from them: a changed path a
+# job's inputs reach, or a path one of its steps runs, schedules that job. A path no input but
+# the whole tree names plans the whole tier. Every job but e2e and apps-contract still declares
+# the whole tree; each is narrowed in a change of its own, with its reason and a planted path.
+# tools/ci/areas.toml holds the explicit overrides, which add jobs for named paths and only add.
 
 # The jobs the merge tier must run. Each job whose tiers claim merge is listed here, and only
 # those, so dropping one from the merge tier takes two edits.
@@ -219,11 +221,38 @@ command = [
   { argv = ["uv", "run", "--no-project", "python", "scripts/verify_wheel.py", "--wheel", "dist/*.whl"] },
 ]
 
-# ci.yml runs it only when scripts/ci_touches_frontend.py says the diff reaches the frontend.
+# The browser run boots the gateway and drives a real Chromium. Its inputs are the whole tree
+# less what provably cannot reach a rendered pixel or the harness boot; each exclusion below
+# carries scripts/ci_touches_frontend.py's reason, word for word. src/personalclaw/** is never
+# excluded: a backend diff can change the DOM the browser run scans.
+# - docs/**: prose only. Nothing under docs/ is served by the gateway or packaged into the wheel at
+#   runtime — pyproject.toml references it only as a Documentation URL.
+# - *.md at the repo root: README / CHANGELOG / CONTRIBUTING / AGENTS / SECURITY. Deliberately NOT
+#   '*.md anywhere': src/personalclaw/config/prompt_snippets/*.md is model input, not prose.
+# - tests/**: the pytest suite does not run inside the Playwright harness — the harness boots the
+#   gateway, not pytest — so a test-only change cannot alter scanned DOM.
+# - harness/**: repo-inner self-verification infra. src/personalclaw/ imports no `harness` module
+#   (grepped), so it is absent from the gateway the harness boots.
+# - packages/personalclaw-client-py/**: independently versioned/published client, NOT part of the
+#   core uv workspace (ci.yml's `client` job builds it in its own venv) and not imported by
+#   src/personalclaw/.
+# - .github/** except workflows/ci.yml: issue templates, dependabot config and the other workflows
+#   cannot change a rendered pixel. ci.yml is EXCLUDED from this exemption because it defines the
+#   `e2e` job itself: editing it must re-validate it, or a broken job definition would be waved
+#   through by the very gate it broke.
+# That exception is tools/ci/areas.toml's override of every workflow, which plans the whole tier.
 [[job]]
 id = "e2e"
 tiers = ["merge"]
-inputs = [":(glob)**"]
+inputs = [
+  ":(glob)**",
+  ":(exclude)docs/",
+  ":(exclude,glob)*.md",
+  ":(exclude)tests/",
+  ":(exclude)harness/",
+  ":(exclude)packages/personalclaw-client-py/",
+  ":(exclude).github/",
+]
 external_inputs = ["browser-download"]
 toolchain = ["uv-sync", "node", "npm-ci", "chromium"]
 cache = ["uv", "npm"]
