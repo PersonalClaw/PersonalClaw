@@ -187,6 +187,7 @@ export function WorkspaceTree({ ws, running, isProjectDir }: { ws: string; runni
             <input autoFocus value={newName} onChange={(e) => { setNewName(e.target.value); if (createErr) setCreateErr('') }}
               onKeyDown={(e) => { if (e.key === 'Enter') submitCreate(); if (e.key === 'Escape') cancelCreate() }}
               onBlur={() => { if (!createErr) submitCreate() }} placeholder={creating === 'file' ? 'new-file.ext' : 'new-folder'}
+              aria-label={creating === 'file' ? 'New file name' : 'New folder name'}
               aria-invalid={createErr ? true : undefined} aria-describedby={createErr ? createErrId : undefined}
               data-type="body-s" className={`h-7 min-w-0 flex-1 rounded-md bg-surface-high px-2 text-on-surface outline-none focus:ring-2 placeholder:text-on-surface-low ${createErr ? 'focus:ring-danger/50 ring-2 ring-danger/40' : 'focus:ring-primary'}`} />
           ) : (
