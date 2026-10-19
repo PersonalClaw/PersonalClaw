@@ -40,6 +40,17 @@ describe('ChatHero', () => {
     await screen.findByText('Summarise my week')
   })
 
+  it('opens on the agent orb at its 64 px size, still in the rest colour: nothing runs in a new chat', async () => {
+    const { container } = render(<ChatHero name="Ada" stage={null} onPickStarter={vi.fn()} onPickSuggestion={vi.fn()} />)
+    const orb = container.querySelector('[data-agent-orb]') as HTMLElement
+    expect(orb.dataset.orbSize).toBe('64')
+    expect(orb.dataset.orbPhase).toBe('idle')
+    expect(orb.dataset.agentOrb, 'a still frame: no animation runs on a page with no turn').toBe('still')
+    expect(orb.dataset.orbInkToken).toBe('--color-orb-rest')
+    expect(screen.queryByRole('img', { name: 'PersonalClaw' }), 'the morphing brand blob is gone').toBeNull()
+    await screen.findByText('Summarise my week')
+  })
+
   it('fills the composer from a suggestion or a starter, and sends nothing', async () => {
     const onPickStarter = vi.fn(); const onPickSuggestion = vi.fn()
     render(<ChatHero name="Ada" stage={null} onPickStarter={onPickStarter} onPickSuggestion={onPickSuggestion} />)

@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { Sparkles } from 'lucide-react'
-import { ClawMark } from '../../../ui/ClawMark'
+import { AgentOrb } from '../../../ui/AgentOrb'
 import { Skeleton, LoadingStatus } from '../../../ui/ListScaffold'
 import { NeedsModelNote } from '../NoModelSetupState'
 import { firstNameOf } from '../../../app/identity'
@@ -11,9 +11,11 @@ import { useQuery, invalidateKeys } from '../../../lib/data'
 
 // ── The new chat's hero ────────────────────────────────────────────────────────────────────────
 //
-// What a new chat opens on: the mark and a greeting, the composer, and two strips beneath it — the
-// owner's saved starters and suggestions drawn from memory and recent activity. Picking one fills
-// the composer; nothing is sent until the owner sends it.
+// What a new chat opens on: the agent orb and a greeting, the composer, and two strips beneath it —
+// the owner's saved starters and suggestions drawn from memory and recent activity. Picking one
+// fills the composer; nothing is sent until the owner sends it. The orb is its 64 px drawing, still
+// and in the rest colour: nothing runs in a new chat, so nothing on it moves
+// (`docs/design/agent-orb.md`, "Placement").
 
 function greeting(name: string): string {
   const h = new Date().getHours()
@@ -145,7 +147,7 @@ export function ChatHero({ name, stage, onPickStarter, onPickSuggestion }: {
     <div className="relative flex-1 flex flex-col items-center justify-center px-l">
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={spring.spatialDefault}
         className="flex flex-col items-center gap-l mb-2xl">
-        <ClawMark size={44} animated blob />
+        <AgentOrb phase="idle" size={64} />
         <h1 data-type="display-s" className="text-on-surface text-center">{greeting(name)}</h1>
       </motion.div>
       <div className="flex w-full flex-col items-center gap-2xl" style={{ maxWidth: 'var(--content-width)' }}>

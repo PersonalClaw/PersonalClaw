@@ -4,18 +4,21 @@ import { motion } from 'framer-motion'
 import { Loader2, ArrowRight, ArrowUp } from 'lucide-react'
 import { Button } from '../../../ui/Button'
 import { ListSkeleton } from '../../../ui/ListScaffold'
-import { Spark } from '../../../ui/Spark'
 import { Markdown } from '../../../ui/Markdown'
 import { parseOptions, parseSwitchToAgent } from '../parseAssistant'
+import { TurnHead, type TurnEnding } from '../transcript/TurnHead'
 import { notify } from '../../../app/appSdk'
 import { spring } from '../../../design/motion'
-import { api, type ChatHistoryMsg } from '../../../lib/api'
+import { api, type ChatHistoryMsg, type RunState } from '../../../lib/api'
+import { livePhaseOf, workPhaseOf, type WorkPhase } from '../../../lib/workPhase'
 import { useChatSocket } from '../../../lib/useChatSocket'
 
 /** Body of the history page's session PEEK panel: a LIVE mini-chat — the latest
  *  turns plus a compact composer for quick replies without opening the full chat
  *  UI. Streams over the shared WS; "Continue" (full page) is a small control in
- *  the composer's action row. */
+ *  the composer's action row. While the chat's turn runs, wherever it was sent from, the head of
+ *  its reply is the chat's own (`transcript/TurnHead`): the agent orb and the gateway's line for
+ *  the turn's phase, from the chat's run state and its `work_phase` frames. */
 export function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: () => void }) {
   const [detail, setDetail] = useState<{ title: string; messages: ChatHistoryMsg[] } | null>(null)
   const [failed, setFailed] = useState(false)
@@ -23,16 +26,38 @@ export function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; on
   const [busy, setBusy] = useState(false)
   // The in-flight streamed reply (grows chunk by chunk; folds into `detail` on done).
   const [streamText, setStreamText] = useState<string | null>(null)
+  // What the chat's turn is doing while it runs, and how it ended once its last frame says so.
+  const [live, setLive] = useState<{ phase: WorkPhase; line: string } | null>(null)
+  const [ending, setEnding] = useState<TurnEnding | null>(null)
+  const runSeqRef = useRef(-1)
   const endRef = useRef<HTMLDivElement | null>(null)
+
+  /** Take a run state: a snapshot's always (a restarted gateway stamps from the start again), a
+   *  `work_phase` frame's only when it is newer than the one held. A snapshot's idle run state
+   *  says nothing of a turn this panel watched, so only a frame sets the ending. */
+  const takeRunState = (rs: RunState | null | undefined, from: 'frame' | 'snapshot') => {
+    if (!rs || typeof rs.seq !== 'number' || (from === 'frame' && rs.seq <= runSeqRef.current)) return
+    runSeqRef.current = rs.seq
+    setLive(livePhaseOf(rs))
+    if (from === 'frame') {
+      const ended = rs.turn ? null : workPhaseOf(rs.phase)
+      setEnding(ended === 'done' || ended === 'error' ? { phase: ended, line: String(rs.line ?? '') } : null)
+    }
+  }
 
   useEffect(() => {
     let alive = true
     setDetail(null); setFailed(false); setStreamText(null); setBusy(false)
+    setLive(null); setEnding(null); runSeqRef.current = -1
     api.chatSessionDetail(sessionKey)
-      .then((d) => { if (alive) setDetail({ title: d.title, messages: d.messages ?? [] }) })
+      .then((d) => {
+        if (!alive) return
+        setDetail({ title: d.title, messages: d.messages ?? [] })
+        takeRunState(d.run_state, 'snapshot')
+      })
       .catch(() => { if (alive) setFailed(true) })
     return () => { alive = false }
-  }, [sessionKey])
+  }, [sessionKey]) // eslint-disable-line react-hooks/exhaustive-deps -- takeRunState writes only state and a ref
 
   // The socket came back: a reply that ended while it was down sent its chunks and its end to
   // nobody, and a restart ends every reply. The saved chat says how it ended, so it is read again
@@ -43,14 +68,18 @@ export function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; on
         setDetail({ title: d.title, messages: d.messages ?? [] })
         setStreamText(null)
         setBusy(!!d.run_state.turn)
+        takeRunState(d.run_state, 'snapshot')
       })
       .catch(() => { /* the last read stays: a failed re-read is no news about the chat */ })
   }
-  // Live stream: append chunks to the pending reply; land it on chat_done.
+  // Live stream: append chunks to the pending reply; land it on chat_done. The turn's phase
+  // frames drive the head of the reply.
   useChatSocket((m) => {
     const d = m.data || {}
     if (d.session !== sessionKey) return
-    if (m.type === 'chat_chunk') {
+    if (m.type === 'work_phase') {
+      takeRunState(d as unknown as RunState, 'frame')
+    } else if (m.type === 'chat_chunk') {
       setStreamText((t) => (t ?? '') + String(d.content ?? ''))
     } else if (m.type === 'chat_done') {
       setBusy(false)
@@ -66,7 +95,7 @@ export function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; on
   const send = async () => {
     const text = input.trim()
     if (!text || busy) return
-    setInput(''); setBusy(true)
+    setInput(''); setBusy(true); setEnding(null)
     setDetail((prev) => prev && { ...prev, messages: [...prev.messages, { role: 'user', content: text } as ChatHistoryMsg] })
     try { await api.sendChat(text, sessionKey) }
     catch { setBusy(false); notify('Could not send the message', 'error') }
@@ -98,16 +127,15 @@ export function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; on
             </div>
           )
         ))}
+        {/* The head of the running turn's reply, one element for the whole turn: above the
+            streaming reply, so the reply appearing under it restarts neither its timing nor its
+            drawing. A message sent from here is waiting to start until the gateway says more. */}
+        <TurnHead running={busy || live !== null} phase={live?.phase ?? null} line={live?.line ?? ''} ending={ending}
+          onShown={() => endRef.current?.scrollIntoView({ block: 'end' })} className="mr-2" />
         {/* the streaming reply, growing live */}
         {streamText && (
           <div className="mr-2 min-w-0 text-[0.8125rem]">
             <Markdown widgets streaming className="[&_p]:text-[0.8125rem]">{streamText}</Markdown>
-          </div>
-        )}
-        {busy && !streamText && (
-          <div className="flex items-center gap-s">
-            <Spark size={16} />
-            <motion.span className="text-on-surface-low text-[0.8125rem]" animate={{ opacity: [0.5, 1, 0.5] }} transition={{ duration: 1.8, ease: 'easeInOut', repeat: Infinity }}>Thinking…</motion.span>
           </div>
         )}
         <div ref={endRef} />
