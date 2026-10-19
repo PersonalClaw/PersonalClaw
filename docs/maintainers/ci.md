@@ -400,11 +400,33 @@ overrides (`--areas`, beside the catalogue by default):
 `run --changed` plans the same way, from `git diff --name-only --no-renames -z` against the
 base, so a move names both the path it left and the path it reached.
 
-Every job but `e2e` and `apps-contract` declares the whole tree today. `e2e`'s inputs are the
-whole tree less the paths that cannot reach the browser run, each exclusion carrying its reason
-in the catalogue. Narrowing another job is a change of its own: its inputs, the reason, and a
-planted path in `tests/rails/test_ci_plan_tree.py`, which also plants a path per override and
-finds the override's reason in its plan.
+`e2e`, `apps-contract` and `python-suite` name their inputs; every other job declares the whole
+tree today. `e2e`'s inputs are the whole tree less the paths that cannot reach the browser run,
+each exclusion carrying its reason in the catalogue. `apps-contract`'s are the triggers of
+`scripts/ci_touches_sdk.py`, the classifier ci.yml runs it by. `python-suite`'s are every
+top-level entry but `flake.nix` and `flake.lock`. The suite reads every tracked path: its
+publication-hygiene tests list the tracked tree and open each file in it, and suite modules name
+`docs/`, `web/`, `deploy/` and the root files besides.
+`tests/rails/test_ci_python_suite_inputs_tree.py` holds the list to that census (the hygiene
+check's own `tracked_files`, and every repository path a suite module names), so a tracked path
+the list does not name fails the rail however a test reads it. The flake is left out by choice,
+and the rail holds the choice in one row: the suite reads it too, but it is what the Nix workflow
+builds and checks, a workflow of its own and no catalogue job, so a change to it alone is named
+by no input and plans the whole tier.
+
+The list does not decide whether `python-suite` runs: it is a security job, so every plan holds
+it, as every plan holds `python-suite-macos` and `browse-live`. It decides which paths are known.
+Because it names `src/`, a `src/` diff is known: the plan is not the whole tier, and
+`apps-contract` runs only when the diff reaches one of its classifier's triggers. So two kinds of
+rule now decide plans alone, and `tests/rails/test_ci_plan_tree.py` holds each across the tree:
+`apps-contract`'s inputs, held to the classifier's triggers and planned on every tracked path the
+classifier runs the job on, and the whole-tier overrides of folders (`.github/workflows/`,
+`.github/actions/`, `tools/ci/`, `deploy/docker/`), each planning the whole tier for every tracked
+file under it. A docs-only plan without the suite needs a security-posture decision, not a
+narrower list, and an entry leaves the list only when no suite test reads it, which waits on the
+publication-hygiene tests' real-tree runs moving to `tests/rails`. Narrowing another job is a
+change of its own: its inputs, the reason, and a planted path in `tests/rails/test_ci_plan_tree.py`,
+which also plants a path per override and finds the override's reason in its plan.
 
 To add a rule, prefer a declared input of the job it affects; use an override only for a path
 that is no job's input but changes a job's result, and give it a reason that says how.

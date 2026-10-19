@@ -13,8 +13,9 @@
 #
 # Paths that need no override:
 # - README.md: no CI job builds or inspects the sdist (package builds and inspects the wheel
-#   alone, and pyproject.toml declares no readme). The jobs whose tests read README.md declare
-#   the whole tree, and the image smoke's own workflow runs on it through its paths: list.
+#   alone, and pyproject.toml declares no readme). The jobs whose tests read README.md name it
+#   (python-suite) or declare the whole tree, and the image smoke's own workflow runs on it
+#   through its paths: list.
 # - The harness keeps its own replay rule until it calls this planner: a change to
 #   web/src/pages/chat/, web/src/pages/loops/ or src/personalclaw/dashboard/sse.py forces the
 #   harness replay, which guards the stream-coalescer, run-fold and journal-to-widget-stream bug
