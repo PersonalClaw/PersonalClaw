@@ -18,7 +18,7 @@ import type { ComponentType } from 'react'
 // alive through two passes over this issue.
 //
 // 🪤 WHY THIS RAIL IS BEHAVIOURAL AND NOT A ROW IN THE SWALLOW BUDGET, which is what #532's last
-// instruction asked for. `ui/loadErrorState.test.tsx`'s census counts a fabricated `[]`/`null`/
+// instruction asked for. `ui/loadErrorCensus.test.ts`'s census counts a fabricated `[]`/`null`/
 // `''`/`{…}` and has NO true/false member (`SWALLOW_SHAPE`), so it scores this drawer **0** — a
 // fabricated boolean is invisible to it. Its ratchet is exact (`census < budget` reds, "fixing one
 // ratchets the number down"), so a budget row of `1` against a census of `0` is `0 < 1` = RED: the

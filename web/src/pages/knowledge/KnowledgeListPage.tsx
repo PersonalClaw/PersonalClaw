@@ -137,7 +137,7 @@ function EmbeddingChip({ stats, reindex, starting, onReindex }: {
 }
 
 export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSources, onOpenReports, onOpenChat, onOpenModels, query, setQuery }: { onCreate: () => void; onOpenItem: (id: string) => void; onOpenReader?: (id: string) => void; onOpenSources: () => void; onOpenReports: () => void; onOpenChat: () => void; /** Settings → Models — where a missing model is fixed. Optional: a host with no route for it omits the action rather than rendering a dead button. */ onOpenModels?: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
-  // 🪤 The default stays 'library', measured rather than preferred: `pages/listDestinationLoadError`
+  // 🪤 The default stays 'library', measured rather than preferred: `pages/loadErrorSurfaces`
   // mounts this page with an empty query and asserts the ITEM LIST's failed-read and empty-library
   // branches, both of which a different default lens hides. Making Home the landing view is a
   // one-word change here plus that file's re-scoping, which is a separate decision from building it.
@@ -1056,7 +1056,7 @@ export function IntentsView({ selectedId, onSelect, reloadKey }: {
   // failed `GET /api/knowledge/intents` rendered "No intents yet" — and, once the empty state grew a
   // create button, would have pitched "New intent" to a user whose intents merely could not be read.
   // Capturing it is what lets the error branch run FIRST. (Per-site rather than an
-  // `ui/loadErrorState.test.tsx` ADOPTERS row: that rail's no-swallow check is FILE-scoped, and this
+  // `ui/loadErrorCensus.test.ts` ADOPTERS row: that rail's no-swallow check is FILE-scoped, and this
   // 1000-line page carries several deliberate decoration-read fallbacks it would flag.)
   const [intentsErr, setIntentsErr] = useState<unknown>(null)
   // Per-row, not a single page-wide flag: pausing one intent must not disable every other

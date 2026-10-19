@@ -212,7 +212,7 @@ describe('the channel list is read under two keys, and every bust reaches both',
   // renders as an unready card there (`settingsReadPosture.test.tsx` pins it). The chat's
   // "Continue on" list and an app's Configure page render a failure instead, so they read under
   // their own key. Shared, the `[]` the tolerant read caches on a failure reached them as a success
-  // (`loadErrorState.test.tsx`, "no OTHER consumer of an adopter's cache key swallows"). Two keys
+  // (`ui/loadErrorCensus.test.ts`, "no OTHER consumer of an adopter's cache key swallows"). Two keys
   // over the same content hold only while every bust reaches both: a pairing on one page must not
   // leave the other painting the channel without its owner.
   it('the two readers that render a failure share a key of their own', () => {

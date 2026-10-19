@@ -51,7 +51,7 @@ function walk(dir: string): string[] {
  *  header lists `"Needs you" vs "Needs input"` among the drifts it retired. All three are exactly
  *  the writing this rail wants future readers to find, so a scanner that reds them is a scanner
  *  that punishes documentation. Newlines are preserved so nothing shifts line for line — the same
- *  stripper `ui/loadErrorState.test.tsx` arrived at after the same mistake, made there four times. */
+ *  stripper `ui/loadErrorCensus.test.ts` arrived at after the same mistake, made there four times. */
 const codeOf = (abs: string) =>
   readSource(abs)
     .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))

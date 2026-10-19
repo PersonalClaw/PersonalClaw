@@ -127,7 +127,7 @@ describe('a floor that stands for a population sits at the population', () => {
     // Type (b): if a future pass "finishes the audit" by tightening these, every added file breaks CI.
     expect(read('pages/dashboard/widgets/widgetsReachable.test.ts'), 'a directory listing guard stays loose')
       .toMatch(/expect\(modules\.length\)\.toBeGreaterThan\(5\)/)
-    expect(read('ui/loadErrorState.test.tsx'), 'a tree-walk guard stays loose')
+    expect(read('ui/loadErrorCensus.test.ts'), 'a tree-walk guard stays loose')
       .toMatch(/walk\(SRC\)\.length, 'the walker must find the tree'\)\.toBeGreaterThan\(200\)/)
   })
 

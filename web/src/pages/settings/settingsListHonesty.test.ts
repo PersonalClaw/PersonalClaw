@@ -41,7 +41,7 @@ import { join } from 'node:path'
 //     → the canonical `InlineError` band + a Retry button. `LoadError`'s `py-2xl` and second heading
 //     would be wrong at that scale, and inventing a third error shape would make three.
 //
-// Archive and Audit join the shared ADOPTERS ratchet in `ui/loadErrorState.test.tsx`. The other three
+// Archive and Audit join the shared ADOPTERS ratchet in `ui/loadErrorCensus.test.ts`. The other three
 // cannot: `MemoryPanel` is a 1200-line multi-tab file whose FIRST `<ListSkeleton>` belongs to a
 // different tab (so that rail's source-order reachability proxy rejects it), and the two band adopters
 // do not render `<LoadError>` at all. Same reason `#/chat` got `sessionLoadHonesty.test.ts` — a

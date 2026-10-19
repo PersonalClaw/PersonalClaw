@@ -58,7 +58,7 @@ const EXEMPT: Record<string, string> = {
   // Not an adapter over its reads: the chat's stream (moved out of `ChatPage`) reads two settings
   // that tune how it folds frames (the reveal cadence, thinking shown inline) and returns neither.
   // An unanswered read is the shipped behaviour at the use site, the smooth reveal and thinking
-  // hidden; `loadErrorState.test.tsx` budgets the pair as its own debt.
+  // hidden; `ui/loadErrorCensus.test.ts` budgets the pair as its own debt.
   'pages/chat/useChatStream.ts:useChatStream': 'reads stream settings it never returns — unanswered is the shipped default',
   // Moved out of `ChatPage` with the chat's header: the channels this chat can continue on. A failed
   // read offers no channel, on purpose and in its own comment, so the header's "Continue on …"
@@ -66,7 +66,7 @@ const EXEMPT: Record<string, string> = {
   'pages/chat/header/useChatHeader.ts:useChatHeader': 'a failed channel read offers no channel — the handoff controls are absent, by design',
   // Moved out of `CodeCockpitPage` with the cockpit's state: its one `useQuery` is the instant-paint
   // seed, a cached snapshot that only ever SETS the project when it has data. The project's real read
-  // is `load()`, whose failure the hook does return, as `loadErr`; `loadErrorState.test.tsx` budgets
+  // is `load()`, whose failure the hook does return, as `loadErr`; `ui/loadErrorCensus.test.ts` budgets
   // the seed as its own keep.
   'pages/code/cockpit/useCodeCockpit.ts:useCodeCockpit': 'its useQuery is a first-paint seed — the real read is load(), whose loadErr it returns',
 }

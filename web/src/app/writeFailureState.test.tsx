@@ -8,7 +8,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A write path whose SUCCESS branch exists and whose FAILURE branch does not ─────────────────────
 //
-// `ui/loadErrorState.test.tsx` rails the two READ halves of this contract: a fetcher that resolves
+// `ui/loadErrorCensus.test.ts` rails the two READ halves of this contract: a fetcher that resolves
 // its own rejection into a value the server never sent (`FETCHER_SWALLOW_BUDGET`), and a `useQuery`
 // call site that binds neither `error` nor `status` so a dead load is indistinguishable from one
 // still in flight (`UNBOUND_ERROR_BUDGET`). This is the WRITE half, and it is a different property:
@@ -21,7 +21,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // state it was already in — a spinner, a stale warning, an optimistic row that never lands, or a
 // dialog that will not close.
 //
-// ── §0 WHY THIS IS ITS OWN FILE, AND NOT A THIRD MAP IN `loadErrorState.test.tsx` ─────────────────
+// ── §0 WHY THIS IS ITS OWN FILE, AND NOT A THIRD MAP IN `loadErrorCensus.test.ts` ─────────────────
 //
 // That file's own header argues against two maps measuring ONE property, and it is right; it does
 // not argue against two files. Its exists because "the right shape for *does this file lie about
@@ -33,12 +33,12 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // concrete consequences:
 //
 //   · The one thing genuinely shared is comment stripping — and that already lives extracted, in
-//     `design/tokenLintRule.stripComments`. Importing it is exactly what `loadErrorState` does, and
+//     `design/tokenLintRule.stripComments`. Importing it is exactly what `loadErrorCensus` does, and
 //     exactly what its own header instructs ("THE FIX IS TO REUSE THE ONE THAT ALREADY EXISTS").
 //   · The read census deliberately EXCLUDES form C (`.catch(() => {})`) on the stated ground that it
 //     is "fire-and-forget mutations" — i.e. the read half's declared out-of-scope set is this half's
 //     POPULATION. Folding them into one map would make one number mean two opposite rulings.
-//   · `loadErrorState.test.tsx` is 1403 lines and is the merge serialiser of the moment (#3480 and
+//   · the read census was one file of 1403 lines then, and the merge serialiser of the moment (#3480 and
 //     #3522 both edit it while this lands). A third property there buys a conflict and no coherence.
 //
 // ── §0b THE FIVE RAILS THIS EXTENDS, AND THE ONE GAP THEY ALL LEAVE ───────────────────────────────
@@ -61,7 +61,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // `\.catch\(` anywhere in the enclosing function, so `.catch(() => {})` satisfies it — that hole is
 // the reason a per-site handler inspection is the unit here. And `closeReportsFailure`'s exact-equality
 // list is the closest prior art: it is tree-wide, which is right, over a `[^;]{0,200}` window on ONE
-// spelling, which is the character-window bug `loadErrorState`'s header records fixing twice. Its
+// spelling, which is the character-window bug `loadErrorCensus`'s header records fixing twice. Its
 // `KnowledgeDetailPage` row is removed by this change, on its own siblings' reasoning — see the note
 // left in its place.
 //
@@ -69,7 +69,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 // Every census in this tree that scanned raw source has matched the PROSE EXPLAINING THE FIX, so the
 // commit that removes the defect is the commit the rail reds — four times in one session, and
-// `loadErrorState.test.tsx` makes the argument four separate times ("a rail measures the PROGRAM,
+// `loadErrorCensus.test.ts` makes the argument four separate times ("a rail measures the PROGRAM,
 // not the explanation of it"). This file would do it to itself immediately: the comments the fixes
 // below carry quote `.catch(() => {})`, `try { … } finally { … }` and `if (r?.ok)` verbatim. So all
 // scanning goes through `codeOfText` → `stripComments`, and the vacuity block proves the stripping
@@ -508,7 +508,7 @@ function silentSites(src: string, W: Set<string>): string[] {
     const co = close + chain[0].length - 1
     const chainEnd = matchAt(src, co)
     const arg = src.slice(co + 1, chainEnd - 1)
-    // `.catch(fnRef)` is out of scope for the same reason `loadErrorState`'s form E is: every live
+    // `.catch(fnRef)` is out of scope for the same reason `loadErrorCensus`'s form E is: every live
     // instance in this tree is a CAPTURE (`.catch(reportActionFailure('…'))`), i.e. the fix.
     const pm = arg.match(/^\s*(?:\(\s*(\w*)\s*\)|(\w+))\s*=>/)
     if (!pm) continue

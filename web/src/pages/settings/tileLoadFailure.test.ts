@@ -29,7 +29,7 @@ import { join } from 'node:path'
 //                         Body ink, no glyph, no retry, fifteen wordings.
 //
 // The tree-wide count that makes a NEW swallow anywhere in `web/src` fail CI lives in
-// `ui/loadErrorState.test.tsx` §B (a per-file budget that may only fall). This file is the hub's
+// `ui/loadErrorCensus.test.ts` §B (a per-file budget that may only fall). This file is the hub's
 // half: the RENDER side, which a count of fetchers cannot see.
 
 const SRC = join(process.cwd(), 'src')

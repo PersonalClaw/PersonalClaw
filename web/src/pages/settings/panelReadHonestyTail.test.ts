@@ -33,7 +33,7 @@ import { join } from 'node:path'
 // 🔴 BUT `notificationRules` WAS ON THE WRONG SIDE OF IT, AND THE PIN THAT SAID SO INVERTED INTO A
 // DEMAND THAT THE DEFECT COME BACK (#3394, 2026-09-24). This file used to REQUIRE
 // `api.notificationRules().catch(() => null)` — "the rules matrix decorates" — so the commit that
-// removed the swallow reded here. That is the hazard `ui/loadErrorState.test.tsx` states in its own
+// removed the swallow reded here. That is the hazard `ui/loadErrorCensus.test.ts` states in its own
 // vacuity block: *"a pin on a site someone FIXES inverts into a demand that the defect come back."*
 // The re-reading that moved it is one line of counting. `rules` does not gate one decoration; it gates
 // TWO things — `<NotificationRulesMatrix>`, which `NotificationsPanel.tsx` itself describes four lines

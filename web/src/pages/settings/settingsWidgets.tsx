@@ -133,7 +133,7 @@ const useDurability = () => useQuery('settings:durability-card', async () => {
 // `#/settings/archive` now branches on the load error — but this tile shares its key, so while this
 // caller swallowed, the hub primed `cache:settings:archives` with `[]` and the panel read a success.
 // A cold-cache probe missed it entirely (navigating straight to the panel never runs this hook); the
-// key-consumer rail in `ui/loadErrorState.test.tsx` is what caught it.
+// key-consumer rail in `ui/loadErrorCensus.test.ts` is what caught it.
 // Consequence, stated: on failure this tile now stays in its `loading` shimmer instead of claiming
 // "0 archived sessions". Every hub tile turns a failure into a permanent shimmer — one idiom, ~30
 // tiles, logged as its own family rather than fixed inside this change.

@@ -36,7 +36,7 @@ describe('agents group headers count the filtered list they sit above (#667)', (
 
   it('a Discovered header counts its filtered items, never the raw group', () => {
     const s = src()
-    // Counted only when the runtime's agents are known (see agentsLoadError.test.tsx), and then
+    // Counted only when the runtime's agents are known (see pages/loadErrorSurfaces.test.tsx), and then
     // from the same filtered `items` the rows render.
     expect(s).toContain('count={known ? items.length : undefined}')
     expect(s).not.toMatch(/count=\{[^}]*g\.agents\.length/)
