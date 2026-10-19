@@ -169,8 +169,10 @@ describe('a user-initiated write that fails tells the user', () => {
     // in the assistant's voice, permanently in the transcript. A failure is unrequested bad news,
     // not a reply; only the success preview/result is. The catch now routes through
     // reportActionFailure, whose message is the backend's sentence with no exception-class prefix.
-    const chat = strip(F('pages/ChatPage.tsx'))
+    // `/rewind` is a slash command, so it lives with the chat's composer.
+    const chat = strip(F('pages/chat/composer/useChatComposer.ts'))
     const fn = chat.slice(chat.indexOf('async function rewindToTurn('), chat.indexOf('async function transcribe('))
+    expect(fn.length, 'the rewind handler must be found').toBeGreaterThan(0)
     expect(fn, 'the failure names its subject through the shared reporter')
       .toMatch(/reportActionFailure\(`rewind to turn/)
     expect(fn, 'the transcript no longer carries the failure').not.toContain('Rewind failed')

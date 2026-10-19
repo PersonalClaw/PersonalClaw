@@ -334,6 +334,8 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     for (const rel of [
       'pages/settings/SearchPanel.tsx',
       'pages/ChatPage.tsx',
+      // The composer's knowledge and artifact pickers, which moved out of ChatPage.
+      'pages/chat/composer/ContextPickers.tsx',
       'pages/agents/AgentForm.tsx',
       'pages/loops/LoopPlanReview.tsx',
     ]) {
@@ -351,7 +353,7 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     // asserted at its own site so a later edit cannot quietly drop it.
     const named: [string, RegExp][] = [
       ['pages/settings/SearchPanel.tsx', /role="group" aria-label=\{`\$\{meta\.label\} provider`\}/],
-      ['pages/ChatPage.tsx', /role="group" aria-label="Knowledge to attach"/],
+      ['pages/chat/composer/ContextPickers.tsx', /role="group" aria-label="Knowledge to attach"/],
       ['pages/ChatPage.tsx', /role="group" aria-label="Filter by tag"/],
       ['pages/agents/AgentForm.tsx', /role="group" aria-label=\{label\}/],
       ['pages/loops/LoopPlanReview.tsx', /role="group" aria-label=\{label\}/],

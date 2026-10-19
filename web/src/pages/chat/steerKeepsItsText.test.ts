@@ -34,14 +34,14 @@ import { join } from 'node:path'
 // and a re-typed one is left alone. Both halves are asserted below.
 //
 // 🪤 WHY THIS IS A SOURCE-STRUCTURE RAIL AND NOT A DOM TEST. Reaching this branch needs `isStreaming`
-// true inside `ChatSession`, which is driven by a live WS stream; nothing in the tree currently
+// true inside the chat's composer controller (`chat/composer/useChatComposer.ts`, which sends for `ChatSession`), which is driven by a live WS stream; nothing in the tree currently
 // exercises `isStreaming` or `steered` (grepped: zero test files reference either), so there is no
 // harness to reuse and building one would mean faking the stream for one ordering property. The
 // sibling defect made the same call: `loops/loopActionReported.test.ts`'s "a failed nudge KEEPS the
 // message and the panel open" is an index-ordering assertion over the source, and this mirrors it.
 
 const CHAT = readFileSync(
-  join(process.cwd(), 'src/pages/ChatPage.tsx'),
+  join(process.cwd(), 'src/pages/chat/composer/useChatComposer.ts'),
   'utf8',
 )
 
@@ -115,7 +115,7 @@ describe('a failed mid-stream steer keeps the text the user typed', () => {
   it('the reporter is imported, so the catch is a real call and not a stray identifier', () => {
     // A `.catch(reportActionFailure(...))` on an undefined name would throw INSIDE the failure path —
     // turning a silent loss into a crash. tsc would catch it; this states the dependency locally.
-    expect(strip(CHAT)).toMatch(/import \{[^}]*\breportActionFailure\b[^}]*\} from '\.\.\/app\/reportingWrite'/)
+    expect(strip(CHAT)).toMatch(/import \{[^}]*\breportActionFailure\b[^}]*\} from '\.\.\/\.\.\/\.\.\/app\/reportingWrite'/)
   })
 })
 

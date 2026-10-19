@@ -102,9 +102,10 @@ describe('every reader of api.artifacts() can tell failure from empty', () => {
 
   it('finds all four readers — the scan is not vacuous', () => {
     const rels = readers().map((r) => r.rel).sort()
+    // The chat's reader is its composer's artifact picker (`chat/composer/ContextPickers.tsx`).
     expect(rels).toEqual([
-      'pages/ChatPage.tsx',
       'pages/artifacts/ArtifactsSection.tsx',
+      'pages/chat/composer/ContextPickers.tsx',
       'pages/dashboard/widgets/PinnedArtifacts.tsx',
       'pages/files/FilesSection.tsx',
     ])

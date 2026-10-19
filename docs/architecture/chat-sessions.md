@@ -1240,6 +1240,18 @@ change to one region touches that region's files:
   the audio a reading streams back as `voice_chunk` frames, which the stream
   hands it. The transcript's Speak buttons, the composer's hands-free mode and
   its sends use it.
+- **The composer** — `web/src/pages/chat/composer/`. `useChatComposer.ts` holds
+  the draft and the selection (agent, model, approval mode, task mode, reasoning
+  effort, memory mode, natural voice) and writes each pick to the session,
+  saying so when the session refuses one. It sends: a new chat's first send
+  creates the session and hands its run across the remount, a send during a
+  turn steers it or waits in the queue, a slash command it runs itself, and a
+  widget action sends its label as the turn. It also attaches files, pastes,
+  knowledge, artifacts and screen captures, optimizes a prompt, transcribes
+  hands-free speech, applies a session template and stops a turn.
+  `ChatComposer.tsx` draws the notice line, the queue, the routing chip and
+  the composer, with `ContextPickers`, `KnowledgeChips`, `PasteCards`,
+  `QueueStack` and `AutoNudgeMenuItem` beside it.
 
 ## Prompt entities
 

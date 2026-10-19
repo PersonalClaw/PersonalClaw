@@ -4,50 +4,36 @@ import { failureSentence, reportActionFailure, reportingWrite } from '../app/rep
 import { unavailableWhen, BUSY_REASON } from '../ui/unavailable'
 
 import { fvs, withWeight } from '../design/fontWeight'
-import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronDown, PanelRight, Clipboard, X, Pin, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, PlayCircle, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Target, Code2 as CodeIcon, ArrowLeft, ArrowRight, ArrowUp, GripVertical, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, ListTree, Send } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, PanelRight, Pin, Pencil, Sparkles, Link2, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, Filter, Loader2, Target, Code2 as CodeIcon, ArrowLeft, ArrowRight, ArrowUp, GripVertical, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, NotebookPen, FolderCog, Archive, ArchiveRestore, Download, Share2, ListTree, Send } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
 import { TopBar } from '../ui/TopBar'
 import { SidePanel } from '../ui/SidePanel'
 import { Button } from '../ui/Button'
-import { Checkbox, useSyncedDraft } from '../ui/forms'
+import { Checkbox } from '../ui/forms'
 import { Segmented } from '../ui/Segmented'
-import { Meter } from '../ui/Meter'
 import { ContextMenu, type ContextMenuItem } from '../ui/motion'
-import { ProjectPicker } from '../ui/ProjectPicker'
 import { HeaderActions, HeaderControl, HeaderSegmented, HeaderModePill } from '../ui/HeaderActions'
 import { ClawMark } from '../ui/ClawMark'
-import { ComposerStage } from '../ui/ComposerStage'
 import { CollapseColumnButton, CollapsedBoardColumn, boardGridTemplate, useBoardCollapse } from '../ui/BoardCollapse'
-import { PromptPalette } from './chat/PromptPalette'
-import { SessionSkillsReview } from './chat/SessionSkillsReview'
-import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
-import { ComposerNoticeLine, useComposerNotice } from '../ui/composer/ComposerNotice'
-import { deliverableToOpenSession } from './chat/sessionDelivery'
+import { type RoutingSuggestion } from './chat/RoutingChip'
 import { workingDirectoryPrompt, workingDirectoryToast } from './chat/workingDirectory'
-import { MEMORY_MODES, MEMORY_MODE_NOTICE } from './chat/memoryModeCopy'
 import { sessionRowMeta } from './chat/sessionRowMeta'
-import { AppPermissionNotice, StartedByApp } from './chat/StartedByApp'
+import { StartedByApp } from './chat/StartedByApp'
 import { FromChannel } from './chat/FromChannel'
 import { chatContextChips } from './chat/ChatContextLine'
-import { OrganizeChip } from './chat/OrganizeChip'
 import { chatFindPath, searchCoverage, searchSourceLabel } from './chat/searchDeepLink'
-import { useScreenShare } from '../ui/composer/useScreenShare'
 import { DotGlow } from '../ui/DotGlow'
 import { EmptyState, ListSkeleton, LoadError, Skeleton, LoadingStatus } from '../ui/ListScaffold'
 import { WindowedList } from '../ui/WindowedList'
 import { FieldError } from '../ui/forms'
 import { Spark } from '../ui/Spark'
-import { idleRunState } from '../lib/workPhase'
-import { ChatPlanGate } from '../ui/chat/ChatPlanGate'
 import { Markdown } from '../ui/Markdown'
-import { useWidgetActionBridge, takePendingWidgetAction } from '../ui/widget/useWidgetActionBridge'
 import { InlineError } from '../ui/InlineError'
 import { PartialNotice } from '../ui/PartialNotice'
 import { NeedsModelNote } from './chat/NoModelSetupState'
-import { BundledFloorNotice } from './chat/BundledFloorNotice'
 import { onToolResultFull } from './chat/toolResultBridge'
 import { withoutFence } from '../lib/untrustedFence'
 import { RoomView } from './chat/RoomView'
@@ -56,26 +42,18 @@ import { ChatFilePanel } from './chat/ChatFilePanel'
 import { sameSessionTarget, type CommentTarget } from '../ui/content/commentTarget'
 import { ChatActivityPanel } from './chat/ChatActivityPanel'
 import { parseOptions, parseSwitchToAgent } from './chat/parseAssistant'
-import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, pruneBlocks, asSent, takeIn } from './chat/pasteBlocks'
-import type { TurnPaste } from './chat/PasteChip'
-import { sessionTemplatePatch } from './chat/sessionTemplate'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type HistMsg, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity, lastServedModel } from './chat/chatTypes'
-import { isImagePath } from './chat/imageAttachments'
-import { AttachmentChips } from './chat/AttachmentChips'
-import { buildOptimizerContext } from './chat/optimizerContext'
-import { optimizeFailure, optimizeOutcome } from '../ui/composer/optimizeOutcome'
+import { deriveActivity } from './chat/chatTypes'
 import { useIdentity, firstNameOf } from '../app/identity'
-import { usePlatform } from '../app/usePlatform'
-import { SnipOverlay } from '../ui/SnipOverlay'
-import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../ui/composer/displayCapture'
 import { notify } from '../app/appSdk'
 import { spring, stagger, listItemEnter, expr } from '../design/motion'
-import { api, hasApiCode, isSwitchedOff, transcriptionFailure, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type ChannelRuntime, type SessionSearchAnswer } from '../lib/api'
+import { api, isSwitchedOff, type ApprovalMode, type TaskMode, type ChatSessionSummary, type ChatHistoryMsg, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type ChannelRuntime, type SessionSearchAnswer } from '../lib/api'
 import { refreshKinds, useChatSocket, type WsMessage } from '../lib/useChatSocket'
-import { useChatVoice, repliesToSpeak } from './chat/useChatVoice'
-import { useChatStream, detailKey, writeCachedDetail, type ChatDetail, type QueuedMessage } from './chat/useChatStream'
+import { useChatVoice } from './chat/useChatVoice'
+import { useChatComposer } from './chat/composer/useChatComposer'
+import { ChatComposer } from './chat/composer/ChatComposer'
+import { useChatStream, detailKey } from './chat/useChatStream'
 import { useTranscript } from './chat/transcript/useTranscript'
 import { Transcript } from './chat/transcript/Transcript'
 import { MessagesSkeleton } from './chat/transcript/MessagesSkeleton'
@@ -83,11 +61,8 @@ import { SessionMapReturnLatest, scrollToLatest } from './chat/SessionMapReturnL
 import { SessionMapDrawer } from './chat/SessionMapDrawer'
 import { useQuery, invalidateKeys } from '../lib/data'
 import { downloadFrom } from '../lib/download'
-import { rewindPreviewText } from '../lib/rewindPreview'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
 import { sessionTitle } from '../lib/sessionTitle'
-import { useComposerData } from '../lib/useComposerData'
-import type { ComposerControls, ComposerValue } from '../ui/composer/types'
 import { Popover, MenuRow } from '../ui/Popover'
 import { useQueryFlag, useQueryParam, type RouteProps } from '../app/useQueryState'
 import { copyText } from '../app/clipboard'
@@ -452,33 +427,7 @@ function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: (
   )
 }
 
-const CHAT_CONTROLS: ComposerControls = {
-  agent: true, model: true, approval: false, reasoning: true,
-  attach: true, mic: true, optimize: true, slash: true,
-}
 
-// Authoritative "/help" output — the commands the dashboard handles directly.
-// These run as instant GUI actions; other "/…" text is sent to the agent.
-const SLASH_HELP = [
-  '## Slash commands',
-  '',
-  'These run instantly in the dashboard — they don’t go to the model:',
-  '',
-  '- `/help` — show this list',
-  '- `/optimize <prompt>` — optimize the prompt, then send the optimized version',
-  '- `/clear` — start a fresh chat',
-  '- `/prompts` — open the saved-prompt palette (`/prompts <name>` invokes one directly)',
-  '- `/model` — switch the model for this chat',
-  '- `/agent` — switch the agent for this chat',
-  '- `/effort` — set the reasoning effort for this chat',
-  '- `/project` — scope this new chat to a project (before it starts)',
-  '- `/tools` — open the Tools page',
-  '- `/undo [N]` — roll back the last N conversation turns (default 1; side effects are not reverted)',
-  '- `/rewind-to-turn N` — put back the files the agent edited after turn N, with its own file tools or as an agent CLI that asked first (preview first; add `--confirm` to apply). A command\'s changes, and an agent CLI\'s edits made without asking, have no backup: the preview lists the files they changed in the chat\'s folder, and those stay. The conversation is not rewound.',
-  '- `/compact` — compact the conversation to free up context',
-  '',
-  'Type `/` in the message box any time to see and filter the full list.',
-].join('\n')
 
 /** Chat routing — the nav target (#/chat) lands on the HISTORY list by default;
  *  #/chat/new is a fresh NEW chat (reachable via "New chat" on the history page
@@ -557,22 +506,7 @@ function RoomsRedirect({ navigate }: { navigate: (p: string, opts?: { replace?: 
 }
 
 function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialProjectId = '', seed = '', agent: initialAgent = '', routing: pendingRouting, setRouting: setRoutingSuggestion, liveRun, setLiveRun }: { sessionId: string | null; navigate: (p: string, opts?: { replace?: boolean }) => void; query: Record<string, string>; setQuery: RouteProps['setQuery']; projectId?: string; seed?: string; agent?: string; routing: RoutingSuggestion | null; setRouting: (s: RoutingSuggestion | null) => void; liveRun: string; setLiveRun: (s: string) => void }) {
-  const data = useComposerData()
   const { name } = useIdentity()
-  // The project this chat scopes under. Seeded from the launch URL (?project=<id> from a
-  // project page's Chat button), but ALSO user-pickable on a bare new chat via the
-  // composer's project chooser (the vision's "optional project chooser"). Frozen once the
-  // session starts (project_id is fixed at create, like memory mode).
-  const [projectId, setProjectId] = useSyncedDraft(initialProjectId)
-  // Name of the project this chat is bound to — shown as a header chip so the user knows
-  // the chat is scoped to that project's workspace.
-  const [projectName, setProjectName] = useState('')
-  useEffect(() => {
-    if (!projectId) { setProjectName(''); return }
-    let alive = true
-    api.project(projectId).then((p) => { if (alive) setProjectName(p?.name || '') }).catch(() => {})
-    return () => { alive = false }
-  }, [projectId])
   // The open chat as the gateway tells it — its transcript, its live turn and everything its reads
   // and frames carry — and the machinery that keeps it true (`chat/useChatStream`).
   const stream = useChatStream({
@@ -582,152 +516,40 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // plays it.
     onVoiceChunk: (audio, request) => { if (request === readingRef.current?.request) enqueueAudio(audio) },
     onReplyFinished: (sid, opts) => replyFinished(sid, opts),
-    onOpened: (d) => {
-      // Seed ↑/↓ prompt-history from the conversation's existing user turns, so
-      // recall works immediately on a revisited chat (not only after sending a
-      // new message this render). Oldest→newest, deduped against repeats.
-      setPromptHistory(hydrateTurns(d.messages || []).reduce<RecalledPrompt[]>((acc, t) => {
-        if (t.role !== 'user') return acc
-        const txt = turnText(t).trim()
-        if (txt) withPrompt(acc, { text: txt, pastes: t.pastes ?? [] })
-        return acc
-      }, []).slice(-50))
-      // Restore BOTH composer axes to the session's actual posture. Unlike
-      // agent/model (which must resolve against the discovered-agent catalog
-      // below), task_mode + approval are plain enums the backend hands back
-      // directly — set them now so a reopened/reloaded chat shows the real mode
-      // instead of silently reverting the segmented controls to their defaults.
-      setSelection((s) => ({
-        ...s,
-        taskMode: (d.task_mode || 'agent') as TaskMode,
-        approval: (d.approval || 'normal') as ApprovalMode,
-      }))
-      // Restore the session's memory mode too, so mode-gated affordances (e.g. Fork,
-      // which the backend refuses on a non-persistent session) reflect the real
-      // posture of a reopened chat instead of the 'persistent' default.
-      setMemoryMode((d.memory_mode || 'persistent') as MemoryMode)
-      // Natural voice — restore the composer pill from the RESOLVED state the
-      // backend sent, so a reopened chat shows what actually takes effect (including
-      // an agent-supplied default) rather than reverting to "agent default, off".
-      setNaturalVoice({
-        choice: ((d.natural_voice || '') as '' | 'on' | 'off'),
-        effective: !!d.natural_voice_effective,
-        source: d.natural_voice_source || '',
-        agentDefault: !!d.natural_voice_agent_default,
-      })
-    },
+    onOpened: (d) => adoptDetail(d),
   })
   const {
-    sessionRef, turns, setTurns, patchLastAssistant, dropTextRun,
-    streaming, streamingRef, markStreaming, sayTurnEnded, turnSeqRef, stoppedTurnRef,
-    takesSteers, takesSteersRef, sessionSkillsEpoch, wsConnected,
-    loadingHistory, missing, setMissing, loadFailure, setLoadAttempt,
-    queued, setQueued, steered, setSteered, subagents, setSubagents,
+    sessionRef, turns, wsConnected,
+    loadingHistory, missing, loadFailure, setLoadAttempt,
+    subagents, setSubagents,
     sideMsgs, setSideMsgs, sideBusy, setSideBusy, sideOpenedRef,
-    followups, setFollowups, followupsNeed, setFollowupsNeed, checkWorkOffer, setCheckWorkOffer,
-    contextPct, contextWindow, autoChain, setAutoChain, workingDir, setWorkingDir,
-    sessionBindingRef, bindingToldRef, bindingNonce,
+    setAutoChain, workingDir, setWorkingDir,
     title, setTitle, titleNeed, setTitleNeed, sessionCost,
     branchedFrom, startedBy, investigateOrigin,
   } = stream
-  const [input, setInput] = useState(seed)
-  const [composerFocused, setComposerFocused] = useState(false)
-  const [promptPaletteOpen, setPromptPaletteOpen] = useState(false)
-  // Bumped to open the model / agent / effort / project pickers for the "/model",
-  // "/agent", "/effort" and "/project" GUI-affordance slash commands (see handleSlashCommand).
-  const [openModelSignal, setOpenModelSignal] = useState(0)
-  const [openAgentSignal, setOpenAgentSignal] = useState(0)
-  const [openReasoningSignal, setOpenReasoningSignal] = useState(0)
-  const [openProjectSignal, setOpenProjectSignal] = useState(0)
-  const composerRef = useRef<HTMLDivElement>(null)
+  const started = turns.length > 0
+  // The composer: the draft and what it carries, the selection, Stop, and `send`, which every region
+  // sends through (`chat/composer/useChatComposer`).
+  const composer = useChatComposer({
+    sessionId, navigate, seed, initialProjectId, initialAgent, pendingRouting, setRoutingSuggestion, setLiveRun, started, stream,
+    followNewTurn: () => followNewTurn(), oweSpokenReply: (sid) => oweSpokenReply(sid),
+  })
+  const { adoptDetail, applySelection, applyTemplate, composerFocused, composerRef, focusComposerSoon, input, memoryMode, notice, projectId, quoteToComposer, screenShare, selection, send, setInput, setSelection, setToast } = composer
+  // Name of the project this chat is bound to — shown as a header chip so the user knows
+  // the chat is scoped to that project's workspace.
+  const [projectName, setProjectName] = useState('')
+  useEffect(() => {
+    if (!projectId) { setProjectName(''); return }
+    let alive = true
+    api.project(projectId).then((p) => { if (alive) setProjectName(p?.name || '') }).catch(() => {})
+    return () => { alive = false }
+  }, [projectId])
   // activity panel (Stage 5) — Index/Files/Links, chat-only, toggled from header.
   // URL-backed (?activity=1, push → Back closes it; refresh restores it).
   const [activityOpen, setActivityOpen] = useQueryFlag(query, setQuery, 'activity')
   // New-chat page: a right-docked chat-history panel (the shared SidePanel), toggled
   // from the header. URL-bound (?history=1) so Back closes it + refresh restores it.
   const [historyOpen, setHistoryOpen] = useQueryFlag(query, setQuery, 'history')
-  // Agent routing suggestion: a non-blocking chip proposing a
-  // better-fit specialist for this default-agent chat. Cleared on send / agent switch;
-  // arrives EITHER on the routing_suggestion WS push (an already-open session) or on
-  // the send response (a session this send just created — its push cannot reach the
-  // socket the create-remount closed). The pending payload is held by ChatPage, above
-  // that remount; here it is DERIVED, so a suggestion the server named for another
-  // session cannot render against this one no matter which transport carried it.
-  const routingSuggestion = deliverableToOpenSession(pendingRouting?.session, sessionId)
-    ? pendingRouting
-    : null
-  // Opening a DIFFERENT session retires a pending suggestion — the moment it was
-  // proposed for has passed. Same resolution, so this cannot disagree with the render
-  // gate above; it just stops a stale chip resurfacing when the user navigates back.
-  useEffect(() => {
-    if (pendingRouting && !deliverableToOpenSession(pendingRouting.session, sessionId)) setRoutingSuggestion(null)
-  }, [sessionId])
-  // composer extras: @-mentioned file paths (sent as meta.files) + large-paste
-  // blocks (collapsed to cards + inline [Paste #N] markers, expanded on send).
-  const [mentionedFiles, setMentionedFiles] = useState<string[]>([])
-  // @-mentioned knowledge library items (id+name) → threaded into send meta.knowledge;
-  // the backend inlines each item's content for the turn.
-  const [mentionedKnowledge, setMentionedKnowledge] = useState<{ id: string; name: string }[]>([])
-  const [knowledgePickerOpen, setKnowledgePickerOpen] = useState(false)  // "Add knowledge to prompt" picker
-  // @-mentioned artifacts (slug+name) → threaded into send meta.artifacts; the backend
-  // inlines each one's CURRENT version for the turn (referencing an artifact means
-  // "what it is now", not a pinned snapshot) and records a `referenced` event.
-  const [mentionedArtifacts, setMentionedArtifacts] = useState<{ slug: string; name: string }[]>([])
-  const [artifactPickerOpen, setArtifactPickerOpen] = useState(false)
-  const [pasteBlocks, setPasteBlocks] = useState<PasteBlock[]>([])
-  // uploaded-attachment workspace paths (threaded into send meta.files) +
-  // composer extras: prompt history (↑/↓), context-usage %, optimize-in-flight,
-  // memory mode for the next NEW session, queued-while-streaming message.
-  const [attachedPaths, setAttachedPaths] = useState<string[]>([])
-  // Which provider the "Capture screen area" entry uses — macOS keeps the native
-  // `screencapture -i` snip, everywhere else grabs a frame in the browser and crops it
-  // in-app. One decision point (chooseCaptureProvider), two providers.
-  const platform = usePlatform()
-  const displayCapture = displayCaptureSupported()
-  const captureProvider = chooseCaptureProvider(platform, displayCapture)
-  // A captured frame awaiting a crop. Non-null = SnipOverlay is up; the capture is
-  // ALREADY stopped by then, so nothing is watching the screen while the user crops.
-  const [snip, setSnip] = useState<{ url: string; width: number; height: number; source: HTMLCanvasElement } | null>(null)
-  // Live upload progress: one row per file still uploading, from every attach in flight (a second
-  // paste does not replace the first's rows). Each row names the attach it came from (`batch`), so
-  // an attach that finishes takes down its own rows and no one else's.
-  // `finishing`: every byte of that file is in and the gateway is completing it, so it can no
-  // longer be cancelled (`lib/chunkedUpload`) and its row stops offering to.
-  const [uploads, setUploads] = useState<{ batch: number; name: string; pct: number; finishing?: boolean }[]>([])
-  // Each in-flight attach's AbortController, by batch, so a row's Cancel stops the upload it shows.
-  const uploadAborts = useRef(new Map<number, AbortController>())
-  const uploadBatch = useRef(0)
-  // 🔴 A MESSAGE IS NOT SENT WHILE A FILE IT CARRIES IS STILL UPLOADING. The file has no path until
-  // its upload answers, so a message sent before then went without it — and on a new chat that send
-  // creates the chat and remounts this component, so the upload that finished afterwards landed in
-  // an instance that was gone: the file was stored and attached to nothing, with nothing said. While
-  // any row is up, Send is off and says this, and `send` refuses with it.
-  const uploadCancellable = uploads.some((u) => !u.finishing)
-  const uploadHold = uploads.length === 0 ? ''
-    : uploads.length === 1 ? `Wait for ${uploads[0].name} to finish uploading${uploadCancellable ? ', or cancel it' : ''}.`
-    : `Wait for ${uploads.length} files to finish uploading${uploadCancellable ? ', or cancel them' : ''}.`
-  // Her earlier messages for ↑/↓ recall, each with the blocks she pasted into it, which come back
-  // to the composer with it (`recallPrompt`).
-  const [promptHistory, setPromptHistory] = useState<RecalledPrompt[]>([])
-  const historyTexts = useMemo(() => promptHistory.map((h) => h.text), [promptHistory])
-  const [optimizing, setOptimizing] = useState(false)
-  // the draft as it was just before an optimize-prompt rewrite, so the user can
-  // revert if they don't like the optimized version (otherwise it's lost).
-  const [preOptimize, setPreOptimize] = useState<string | null>(null)
-  // The line above the composer that says what failed (it stays until dismissed, or until the
-  // next send) or what just happened (it clears on its own): `ui/composer/ComposerNotice`.
-  const notice = useComposerNotice()
-  // Screen context. The HOST owns the display stream because it
-  // also owns the header chip that must stay lit for the stream's whole life — a
-  // composer-local stream could not keep a header indicator honest. Errors ride the
-  // composer's notice line rather than a second mechanism.
-  const screenShare = useScreenShare(sessionId ?? '', notice.showError)
-  const [toast, setToast] = useState<string | null>(null)  // transient confirmation (brief/workspace-dir)
-  // Upload rejection (oversize / upload failure) — a message the user must ACT on
-  // (pick a smaller file), so it's dismissible-but-persistent, on a line of its own so a
-  // later notice cannot replace it.
-  const [attachError, setAttachError] = useState<string | null>(null)
-  const [memoryMode, setMemoryMode] = useState<MemoryMode>('persistent')
   // "Show full result": the full raw of a projected tool
   // result, fetched on demand from the per-session store + shown in a modal. The
   // OPEN state is the URL (?result=<rawRef>, push); the fetched body + the tool
@@ -736,19 +558,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const resultToolRef = useRef<string>('')
   const [resultBody, setResultBody] = useState<{ content: string; length: number } | null>(null)
 
-  // In-flight session-creation promise. ensureSession checks a ref then awaits an
-  // async create; two sends fired back-to-back on a brand-new chat (send #1, then
-  // send #2 before create resolves) would BOTH see sessionRef=null and create two
-  // sessions — send #2's turn lands in an orphaned session and is silently lost.
-  // Memoizing the promise makes concurrent callers await the SAME creation.
-  const ensureInFlightRef = useRef<Promise<string> | null>(null)
-  const [selection, setSelection] = useState<ComposerValue>({ agent: initialAgent, model: 'Auto', approval: 'normal', taskMode: 'agent', reasoning: '' })
-  // Natural voice: the per-conversation scope. `choice` is what this
-  // conversation states; `effective`/`source` are the backend's resolution against
-  // the bound agent's definition — never recomputed here. `source: ''` means "no
-  // conversation yet" (a brand-new chat), where the pill shows the choice instead.
-  const [naturalVoice, setNaturalVoice] = useState<{ choice: '' | 'on' | 'off'; effective: boolean; source: string; agentDefault: boolean }>(
-    { choice: '', effective: false, source: '', agentDefault: false })
   // The docked open-file peek panel. URL-backed (?file=<path>, push → Back closes;
   // refresh/deep-link reopens the same file beside the transcript).
   const [openFileRaw, setOpenFileRaw] = useQueryParam(query, setQuery, 'file', '')
@@ -764,7 +573,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // page busts both with `invalidateKeys('settings:channels', true)`. A failed read offers no channel.
   const { data: channelList, error: channelListError } = useQuery('settings:channels-owners', () => api.channels(), { persist: true })
   const handoffChannels = channelListError ? [] : (channelList ?? []).filter((c) => c.owner)
-  const started = turns.length > 0
   // The transcript's view and its turns' actions (`chat/transcript/useTranscript`).
   const transcript = useTranscript({
     sessionId, query, setQuery, navigate, stream, started, notice, memoryMode, setSelection,
@@ -772,77 +580,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   })
   const { followNewTurn, scrolledUp, endRef, isMobile, mapOpen, setMapOpen, sessionEntries, pendingMapJump, runPendingMapJump } = transcript
 
-  // Restore the composer selection from the resumed session's binding, once both
-  // the binding (from detail) and the discovered-agent catalog have loaded. ACP
-  // sessions store provider + provider_agent (+ effort) → map back to the
-  // discovered agent's DISPLAY name; native sessions use agent/model directly.
-  useEffect(() => {
-    const b = sessionBindingRef.current
-    if (!b) return
-    const told = bindingToldRef.current
-    bindingToldRef.current = false
-    // reasoning_effort is a per-turn session SETTING (no longer an effort-agent),
-    // so restore it for BOTH native and ACP sessions.
-    const reasoning = (b.reasoning_effort || '') as ReasoningEffort
-    if (b.acp_provider) {
-      const list = data.discovered?.[b.acp_provider] ?? []
-      const match = list.find((a) => a.provider_agent === b.acp_provider_agent)
-      if (match) setSelection((s) => ({ ...s, agent: match.name, model: b.model || 'Auto', reasoning }))
-    } else if (told || b.agent || b.model || reasoning) {
-      setSelection((s) => ({ ...s, agent: b.agent, model: b.model || 'Auto', reasoning }))
-    }
-  }, [bindingNonce, data.discovered])
 
-  // Global "/" shortcut → focus the composer (GitHub/Slack-style), unless the
-  // user is already typing in a field or a menu/modal owns the key.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
-      const t = e.target as HTMLElement | null
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
-      // The composer is a CodeMirror editor (.cm-content), not a <textarea>.
-      const cm = composerRef.current?.querySelector<HTMLElement>('.cm-content')
-      if (cm) { e.preventDefault(); cm.focus() }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
 
-  // Widget action bridge: an interactive `<widget>` button posts widget-action, the
-  // frame validates + republishes it, and this conversation sends it as the next
-  // turn. Claiming the bridge here is what keeps a chat-born action in THIS session
-  // rather than falling through to the shell's launcher.
-  // `meta.label` is the genui dual payload's `humanFriendlyMessage`: the bubble
-  // shows THAT, the model receives `text`. Absent for a raw-HTML widget, whose turn
-  // text is its own visible text.
-  useWidgetActionBridge((text, meta) => { void send(text, { uiLabel: meta.label }) })
 
-  // A widget action raised from a NON-chat host (artifact-library preview, dashboard
-  // tile band) staged its `[UI]` text and navigated here through `ne:launch-chat`.
-  // Drain it once and send — the action's whole point is that it lands as a turn.
-  useEffect(() => {
-    const pending = takePendingWidgetAction()
-    if (pending) void send(pending.text, { uiLabel: pending.label })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // The paste cards above the composer are the blocks whose `[Paste #N]` marker is still in the
-  // draft — DERIVED from the draft on render, never synced back into state.
-  //
-  // 🔴 This used to be an effect that re-set `pasteBlocks` on every `input` change, and it was the
-  // chat half of the composer's update loop (React #185). Its updater returned `prev` for an empty
-  // list, but a same-value set still SCHEDULES a render — the keystroke has just updated this
-  // component, so React cannot drop the update eagerly — and after a keystroke that render lands
-  // inside the keystroke's own synchronous commit. Typing fast, every commit ended with one pending
-  // and React counted them as nested updates until it threw (see `ui/composer/MarkdownInput`).
-  //
-  // Deriving also keeps a block whose marker comes BACK: "revert to original" restores the draft an
-  // optimize rewrote, and pruning state on the rewrite had already thrown the pasted content away,
-  // so the restored marker pointed at nothing and was sent as literal text. `send` and
-  // `onLargePaste` read the full list on purpose — `send` expands and keeps only the markers present
-  // in what it sends, and numbering over every block means a new paste can never reuse the number
-  // of one whose marker is only hidden.
-  const livePasteBlocks = useMemo(() => (pasteBlocks.length ? pruneBlocks(input, pasteBlocks) : pasteBlocks), [input, pasteBlocks])
 
   // "Show full result": a tool card asked to reveal the
   // full raw of a projected result → the modal is URL-backed (?result=<rawRef>,
@@ -877,569 +617,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     return () => { alive = false }
   }, [resultRef])
 
-  async function ensureSession(seedMessages?: HistMsg[]): Promise<string> {
-    if (sessionRef.current) return sessionRef.current
-    // Concurrent callers (rapid back-to-back sends on a brand-new chat) share the
-    // SAME creation instead of each minting a session — see ensureInFlightRef.
-    if (ensureInFlightRef.current) return ensureInFlightRef.current
-    const p = (async () => {
-      const acp = acpFor(selection.agent)
-      const created = await api.createChatSession({
-        // only pass agent/model for NATIVE agents at create; ACP binds below
-        agent: acp ? undefined : (selection.agent || undefined),
-        model: acp ? undefined : (selection.model && selection.model !== 'Auto' ? selection.model : undefined),
-        // memory mode is a create-time property of the session (not per-message).
-        memory_mode: memoryMode !== 'persistent' ? memoryMode : undefined,
-        // Bind the chat to a project when launched from one — the backend scopes the
-        // session to the project's workspace + feeds its loop history/context.
-        project_id: projectId || undefined,
-      })
-      sessionRef.current = created.key
-      // The navigate below changes the URL seg from `new` → the session key, which
-      // REMOUNTS ChatSession (different React key) — dropping the optimistic user
-      // turn we just added. Seed the instant-paint cache with the just-sent user
-      // message(s) FIRST, so the remounted instance hydrates them synchronously
-      // (seededDetail → loadingHistory=false): the user's message shows on the first
-      // frame with NO skeleton over it, and only the pending agent reply loads.
-      if (seedMessages?.length) {
-        writeCachedDetail(created.key, { key: created.key, title: '', messages: seedMessages, run_state: idleRunState(created.key), memory_mode: memoryMode } as unknown as ChatDetail)
-      }
-      // Hand the live run ACROSS the remount, before causing it. This instance is about
-      // to be destroyed and its `streaming` state with it; the replacement reads the
-      // handoff at mount so the composer never advertises idle over a run the user just
-      // started (#3444). Recorded here rather than after the send's round trip, because
-      // the replacement mounts before that resolves — which is the whole window.
-      setLiveRun(created.key)
-      // Replace (not push) so the freshly-created session id backfills the URL
-      // without adding a history entry — and via the router, not a raw
-      // history.replaceState bypass.
-      navigate(`chat/${created.key}`, { replace: true })
-      // Same contract at session START: the composer already shows these picks, so a swallowed failure
-      // means the brand-new session runs under settings the user can see but does not have.
-      if (acp) await persistSelection('this agent', api.setSessionAcpAgent(created.key, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: selection.model && selection.model !== 'Auto' ? selection.model : undefined }))
-      if (selection.approval !== 'normal') await persistSelection('this approval mode', api.setApprovalMode(selection.approval, created.key))
-      if (selection.taskMode !== 'agent') await persistSelection('this task mode', api.setTaskMode(selection.taskMode, created.key))
-      // Persist a pre-start reasoning-effort pick (applySelection couldn't, since the
-      // session didn't exist yet).
-      if (selection.reasoning) await persistSelection('this reasoning effort', api.setReasoningEffort(created.key, selection.reasoning))
-      // Natural voice: a pre-start pick lands here for the same reason — without
-      // it the pill would read "Plain" while turn 1 ran without the instruction, which
-      // is the exact "reports itself on while doing nothing" shape.
-      if (naturalVoice.choice) await persistSelection('this natural-voice setting', api.setSessionNaturalVoice(created.key, naturalVoice.choice))
-      return created.key
-    })()
-    ensureInFlightRef.current = p
-    try {
-      return await p
-    } finally {
-      ensureInFlightRef.current = null
-    }
-  }
-
-  // ── Slash commands (Hybrid model) ──────────────────────────────────────
-  // A curated set of commands map to an INSTANT GUI action and never reach the
-  // model (that's the honest behavior — the model would only improvise them).
-  // `/compact` and any other command fall through to the backend, which either
-  // handles them server-side (e.g. compaction) or dispatches to the native
-  // harness. Returns true when handled client-side so send() stops.
-  function handleSlashCommand(t: string): boolean {
-    if (!t.startsWith('/')) return false
-    const [cmd, ...rest] = t.split(/\s+/)
-    const arg = rest.join(' ').trim()
-    switch (cmd) {
-      case '/clear':
-        setInput(''); navigate('chat/new'); return true
-      case '/prompts':
-        // "/prompts <name>" still flows to the backend (it invokes the named
-        // prompt); bare "/prompts" opens the palette here.
-        if (arg) return false
-        setInput(''); setPromptPaletteOpen(true); return true
-      case '/model':
-        setInput(''); setOpenModelSignal((n) => n + 1); return true
-      case '/agent':
-        setInput(''); setOpenAgentSignal((n) => n + 1); return true
-      case '/effort':
-        setInput(''); setOpenReasoningSignal((n) => n + 1); return true
-      case '/tools':
-        setInput(''); navigate('tools'); return true
-      case '/project':
-        // Project binding is a create-time choice — only actionable before the
-        // chat starts. Once started it's frozen (the header shows the binding).
-        setInput('')
-        if (!started) setOpenProjectSignal((n) => n + 1)
-        return true
-      case '/help':
-        setInput('')
-        setTurns((prev) => [...prev, userTurn(t), assistantTurn(SLASH_HELP)])
-        return true
-      default:
-        return false
-    }
-  }
-
-  async function send(
-    text = input,
-    opts?: { original?: string; inputOrigin?: string; uiLabel?: string },
-  ) {
-    const t = text.trim()
-    if (!t) return
-    // Sending dismisses any follow-up chips from the prior turn and
-    // clears a pending routing suggestion — the moment passed.
-    if (followups.length) setFollowups([])
-    if (followupsNeed) setFollowupsNeed('')
-    if (checkWorkOffer) setCheckWorkOffer(null)
-    if (routingSuggestion) setRoutingSuggestion(null)
-    // …and takes down the composer's notice: an error stays until it is dismissed or the
-    // user sends again, and sending is the user moving on.
-    notice.clear()
-    // Use the synchronous streamingRef (not the `streaming` state) for the queue-vs-
-    // fresh-turn decision: two sends in one tick both see the stale state, but the
-    // ref flips the instant the first turn commits — so the second correctly queues.
-    const isStreaming = streamingRef.current
-    // /optimize <prompt> — one-shot: optimize the given prompt in the background,
-    // then send the optimized version as the turn (bubble shows original + optimized).
-    // Bare "/optimize" with no prompt just clears (nothing to optimize).
-    if (!isStreaming && !opts?.original) {
-      const m = t.match(/^\/optimize(?:\s+([\s\S]+))?$/i)
-      if (m) {
-        const prompt = (m[1] ?? '').trim()
-        setInput('')
-        if (prompt) void optimizeAndSend(prompt)
-        return
-      }
-      // /undo [N] — roll back the last N conversation turns (default 1). Async (hits the
-      // backend + re-hydrates), so handled here alongside /optimize rather than in the
-      // sync GUI-command switch. No-op on an unstarted session.
-      const u = t.match(/^\/undo(?:\s+(\d+))?$/i)
-      if (u) {
-        setInput('')
-        const n = Math.max(1, parseInt(u[1] ?? '1', 10) || 1)
-        void undoTurns(n)
-        return
-      }
-      // /rewind-to-turn N [--confirm] — restore FILES to their state at the end of turn N.
-      // Two steps on purpose: bare form previews (reads only), --confirm writes. A
-      // destructive filesystem action must be readable before it happens.
-      const rw = t.match(/^\/rewind-to-turn\s+(\d+)(\s+--confirm)?$/i)
-      if (rw) {
-        setInput('')
-        void rewindToTurn(parseInt(rw[1], 10), Boolean(rw[2]))
-        return
-      }
-    }
-    // GUI-affordance slash commands run instantly and never hit the model.
-    if (!isStreaming && handleSlashCommand(t)) return
-    // Optimize provenance: if this send carries an explicit `original` (from
-    // /optimize), use it; otherwise the Sparkles preview path leaves the optimized
-    // text in the input with `preOptimize` holding what the user first typed.
-    const original = opts?.original ?? (preOptimize !== null && preOptimize.trim() !== t ? preOptimize.trim() : undefined)
-    // Her message as it leaves the page, whichever way it goes from here (a steer, a queued send,
-    // a send): `llmText` holds each block she pasted in place of its marker, which is what the
-    // agent reads and her row keeps, and `turnPastes` are the blocks, which her row keeps beside it
-    // so her bubble shows each as its chip (`asSent`). Her bubble keeps the markers she wrote.
-    const { text: llmText, pastes: turnPastes } = asSent(t, pasteBlocks)
-    // Mid-run send → ask for what the composer's mid-stream button said: STEER (inject into
-    // the answer being written) on a turn that takes one, QUEUE on a turn that does not. The
-    // label follows the gateway's word for the running turn (`takesSteers`), so the request
-    // does too: a button that says Steer and sends `followup` — or says Steer over a turn
-    // that cannot take one — is a lie either way.
-    //
-    // The server decides and says which it did: `{steered:true}` when the running
-    // turn has a live drain path, `{queued:true}` when it does not (an ACP-backed
-    // turn, or a turn that just ended). Either of those two OUTCOMES drops nothing —
-    // a queued message still echoes `queue_push`, so the strip above the composer
-    // shows it with its cancel affordance. We render the outcome rather than
-    // assuming one.
-    //
-    // 🔴 BUT THERE IS A THIRD OUTCOME, AND IT USED TO DESTROY THE USER'S TEXT. The
-    // sentence above says "either way nothing is dropped", and that was true of the
-    // two SUCCESS shapes and false on REJECTION — which the `.catch(() => {})` hid.
-    // `setInput('')` ran BEFORE the request, so a failed steer (gateway restart, a
-    // 500, a dropped connection) emptied the composer, never pushed a `steered`
-    // chip, and showed no error. The text was then nowhere: not on screen, not in
-    // `queued`, not on the server. Nothing to copy and nothing to retry, while the
-    // model kept streaming the answer the user was trying to correct.
-    //
-    // 🪤 THE DRAFT IS CLEARED ON SUCCESS, AND ONLY IF THE USER HAS NOT TYPED SINCE.
-    // Moving `setInput('')` into the success path unconditionally would swap one
-    // data-loss bug for another: the request is in flight for a round trip, and a
-    // user who starts their next message during it would have it wiped. The
-    // functional setter compares against exactly what was sent, so an untouched
-    // composer clears and a re-typed one is left alone.
-    //
-    // `reportActionFailure` is this file's own convention for a user-initiated write
-    // (11 other uses), and it is what `DesignCockpitPage.sendNudge` does for the
-    // same shape — a rule `loops/loopActionReported.test.ts` states in prose as
-    // "the nudge KEEPS its text on failure".
-    //
-    // 🔴 AND THERE IS A FOURTH OUTCOME — THE SERVER RAN IT AS A FRESH TURN. The two
-    // success shapes above are the only ones this branch used to render, and the server
-    // gates on ITS OWN `session.running`, not on our `queue_mode`: when the turn is
-    // already over it ignores the steer, persists the message and dispatches a NORMAL
-    // turn, answering `{ok, session}` with neither `steered` nor `queued`. On that path
-    // the backend also suppresses its own user echo, on the standing contract that the
-    // FE adds the bubble optimistically — which this branch does not. So a message sent
-    // on a stale belief that a turn was running was accepted, persisted and RUNNING,
-    // with nothing on screen anywhere: the composer cleared and the text was gone
-    // (measured: `queue: []`, a persisted `user` row, no bubble, no reply). The server
-    // needs no change — it already refuses to queue into a session that is not running.
-    // The client has to believe what it answered.
-    //
-    // 🔑 This is the floor UNDER the streaming-claim fixes, not a duplicate of them.
-    // The snapshot replay (a terminal frame that lands during a read replays AFTER it) stops
-    // one stale claim being made and `resolveStalledStream` heals a claim that outlived its
-    // turn — but both are corrections to a belief, and any
-    // remaining way for `streamingRef` to be stale re-opens this branch. Nothing here
-    // should lose a message even when the belief IS wrong.
-    if (isStreaming) {
-      // Stamped for the same reason the normal send path stamps one: the server stores
-      // the ts we send, and Edit & resend locates a message by it.
-      const steerTs = new Date().toISOString()
-      const meta = turnPastes.length ? { client_ts: steerTs, pastes: turnPastes } : { client_ts: steerTs }
-      ensureSession()
-        .then((s) => api.sendChat(llmText, s, meta, takesSteersRef.current ? 'steer' : 'followup').then((r) => [s, r] as const))
-        .then(([s, r]) => {
-          setInput((cur) => (cur === t ? '' : cur))
-          if (r?.steered) { setSteered((prev) => [...prev, { text: t, ts: steerTs }]); return }
-          // Queued or dispatched fresh, it gets a reply of its own; a steer does not. Owed in the
-          // session it was sent to: a queued answer names none, and this chat may have closed.
-          oweSpokenReply(r?.session || s)
-          if (r?.queued) return  // the paired queue_push frame renders the strip card
-          // Dispatched as a fresh turn. Render exactly what the normal send path would:
-          // the user's bubble, then arm streaming so its reply has somewhere to land.
-          followNewTurn()
-          setTurns((prev) => [...prev, userTurn(t, steerTs, turnPastes.length ? turnPastes : undefined)])
-          markStreaming(true)
-          dropTextRun()
-        })
-        .catch(reportActionFailure('steer this turn'))
-      return
-    }
-    // Held while a file it carries uploads (`uploadHold`) — whichever way this send came: the
-    // composer, a follow-up chip, the prompt palette, a spoken submit. Refused where the user is
-    // looking, and the text is kept: a caller that emptied the draft to send it gets it back
-    // there, unless the user has typed something else since. A steer (above) carries no files.
-    if (uploadHold) {
-      if (!opts?.uiLabel) setInput((cur) => (cur.trim() ? cur : t))
-      notice.showError(uploadHold, 'upload')
-      return
-    }
-    // meta.files = @-mentioned workspace files + uploaded attachments.
-    const files = [...mentionedFiles, ...attachedPaths]
-    // Stamp a client ts and pass it to the backend so it stores the SAME ts on the
-    // user message. The server otherwise skips broadcasting the user echo ("FE adds
-    // optimistically"), leaving a live turn's ts undefined until a reload — which
-    // broke Edit & resend (it locates the message by ts → "index or ts required").
-    const clientTs = new Date().toISOString()
-    // When optimized: bubble shows `original` as primary + `t` (optimized) collapsed.
-    // When this turn came from a genui widget action, `uiLabel` is the dual
-    // payload's `humanFriendlyMessage` and it is ALL the bubble shows — the machine
-    // payload is the turn's content (what the model reads), never its rendered text.
-    // Deliberately NOT passed as `optimized`: that disclosure would put the JSON back
-    // on screen under a chip that says "Optimized", which is both ugly and untrue.
-    const uiLabel = opts?.uiLabel?.trim() || undefined
-    // Sending is asking for the outcome: follow the new turn wherever the view was.
-    followNewTurn()
-    setTurns((prev) => [...prev, userTurn(uiLabel ?? original ?? t, clientTs, turnPastes.length ? turnPastes : undefined, files, original ? t : undefined)])
-    // A widget action is not something the user TYPED, so it never joins ↑-history —
-    // replaying a machine payload as a prompt is not an affordance anyone wants.
-    if (!uiLabel) setPromptHistory((prev) => { const h = original ?? t; return withPrompt([...prev], { text: h, pastes: pruneBlocks(h, pasteBlocks).map(({ seq, lines, content }) => ({ seq, lines, content })) }).slice(-50) })
-    const knowledgeIds = mentionedKnowledge.map((k) => k.id)
-    const artifactSlugs = mentionedArtifacts.map((a) => a.slug)
-    // dropTextRun: a fresh send must open a NEW coalesced text run. A follow-up in an
-    // existing chat streams in right after the prior turn — the backend does NOT always emit
-    // a chat_done/chat_segment boundary between turns (esp. YOLO/queued dispatch), so without
-    // this the new turn's chunks would append onto the PRIOR turn's still-live coalescer run
-    // → turn N+1's bubble absorbed turn N's whole answer. Safe on the very first turn
-    // too (clearing an empty core is a no-op). DISCARD rather than seal: the user turn is
-    // added locally just above, so a landed tail would be written into the new turn instead
-    // of the finished one.
-    setInput(''); setPreOptimize(null); markStreaming(true); dropTextRun()
-    setPasteBlocks([]); setMentionedFiles([]); setAttachedPaths([]); setMentionedKnowledge([]); setMentionedArtifacts([])
-    try {
-      const meta: Record<string, unknown> = { client_ts: clientTs }
-      if (files.length) meta.files = files
-      if (knowledgeIds.length) meta.knowledge = knowledgeIds
-      if (artifactSlugs.length) meta.artifacts = artifactSlugs
-      // persist paste blocks so chips survive reload — hydrateTurns re-collapses
-      // the expanded content back to [Paste #N] markers using these.
-      if (turnPastes.length) meta.pastes = turnPastes
-      // record the user's original prompt so the optimized-turn bubble can show
-      // both after reload (content sent to the model is the optimized text).
-      if (original) meta.original = original
-      // Persist the human-friendly label so a RELOAD still shows the label rather
-      // than the machine payload. Without this the transcript is honest live and shows
-      // raw JSON after F5 — the defect surviving one refresh.
-      if (uiLabel) meta.ui_label = uiLabel
-      // On a brand-new chat, seed the instant-paint cache with THIS user message so
-      // the post-create remount paints it immediately (no skeleton over the user's
-      // own words) — mirrors the persisted history shape hydrateTurns expects.
-      const seed: HistMsg[] = [{ role: 'user', content: llmText, ts: clientTs, meta: meta as HistMsg['meta'] }]
-      const sid = await ensureSession(seed)
-      // Frame-on-send: capture ONE frame at the instant the question is asked,
-      // so the model sees the screen the user was looking at when they asked — not a
-      // continuous stream, and not a frame from whenever sharing happened to start.
-      // Awaited before sendChat so the slot is staged when the runner drains it.
-      if (screenShare.sharing) await screenShare.captureAndStage(sid)
-      oweSpokenReply(sid)
-      const sent = await api.sendChat(llmText, sid, meta, undefined, opts?.inputOrigin)
-      // Agent routing (569): the server emits its suggestion among the FIRST frames of the
-      // send, which on a chat created BY this send is before the remounted ChatSession's
-      // socket has finished reconnecting — so the WS copy reaches nobody and the chip
-      // never appeared on the one message where routing matters most. The response
-      // carries the same payload and cannot be raced (it exists only because the request
-      // did). Stored, not shown: the payload names its own session and the render gate
-      // resolves it, so a suggestion is surfaced for the session the server named or not
-      // at all. `setRoutingSuggestion` belongs to ChatPage, which survives the remount.
-      if (sent?.routing_suggestion?.agent) setRoutingSuggestion(sent.routing_suggestion)
-    }
-    catch (e) {
-      markStreaming(false, 'error')
-      // The chat is gone (a dead link whose read lost the race, or deleted in another tab).
-      // The server did NOT save this message, so it goes back into the draft — which the
-      // not-found state carries into a new chat — rather than sitting in the transcript as
-      // a sent bubble above a one-line refusal.
-      if (hasApiCode(e, 'session_not_found')) { setInput(llmText); setMissing(true); return }
-      // A failure is not something the assistant said, so it is the turn's error strip with the
-      // platform's sentence, not a warning-sign line of prose carrying the raw error.
-      patchLastAssistant((segs) => [...segs, { kind: 'error', text: failureSentence('send this message', e) }])
-    }
-  }
-
-  // Pin the frame currently being shared. The bytes come from the client
-  // because the server kept none — the drain destroyed the staged copy the moment the
-  // turn used it. On success the pinned file joins the turn like any other
-  // attachment, so from here on it is an ordinary upload with nothing screen-specific
-  // about it.
-  async function pinScreenFrame() {
-    const sid = sessionRef.current
-    const frame = screenShare.lastFrame()
-    if (!sid) return
-    if (!frame) {
-      notice.showError('Send a message while sharing first — there is no frame to pin yet.')
-      return
-    }
-    try {
-      const r = await api.pinScreenFrame(sid, frame)
-      if (r?.path) setAttachedPaths((prev) => [...prev, r.path])
-    } catch (e) {
-      // Surface the server's own reason (incognito, switch off) rather than inventing one.
-      notice.showError((e as Error)?.message || 'Could not pin the frame.')
-    }
-  }
-
-  // Plan mode — the composer affordance. One explicit user action opens the
-  // chat's `planning/session.py` walkthrough and puts the session in the `plan` task
-  // mode, which is what makes the backend's tool gate refuse mutations. There is no
-  // heuristic anywhere: a chat only ever gets a plan gate from this click. When a turn
-  // is in flight the server PARKS it (the transcript is kept) and resumes on approval,
-  // so the mid-conversation case needs nothing extra here.
-  async function activatePlanMode() {
-    const sid = sessionRef.current
-    if (!sid) return
-    try {
-      const r = await api.chatPlanActivate(sid)
-      setSelection((sel) => ({ ...sel, taskMode: 'plan' }))
-      if (r.parked) {
-        notice.showInfo('This run is parked — approve the plan below to resume it.')
-      }
-    } catch (e) {
-      notice.showError((e as Error)?.message || 'Could not start plan mode.')
-    }
-  }
-
-  // Optimize the current draft via the prompt optimizer. The context is role-labeled
-  // and newest-last (see chat/optimizerContext.ts) — that shape is what lets the
-  // optimizer resolve "that file from earlier" instead of guessing at it.
-  async function optimize() {
-    const t = input.trim()
-    if (!t || optimizing) return
-    setOptimizing(true)
-    try {
-      const ctx = buildOptimizerContext(turns)
-      // #277: every answer now says something. The `if` here used to have no else and the
-      // catch was a bare comment, so `changed:false` (a ~15s wait, byte-identical text) and
-      // an unreachable optimizer both rendered as nothing at all. See `optimizeOutcome`.
-      const out = optimizeOutcome(await api.optimizePrompt(t, ctx))
-      if (out.kind === 'rewritten') { setPreOptimize(input); setInput(out.optimized) }
-      else notify(out.message, out.level)
-    } catch (e) { const f = optimizeFailure(e); notify(f.message, f.level) }
-    finally { setOptimizing(false) }
-  }
-  // /optimize one-shot: optimize `raw` in the background, then send the optimized
-  // text (recording `raw` as the original so the bubble shows both). If the
-  // optimizer returns unchanged or errors, just send the original as-is.
-  async function optimizeAndSend(raw: string) {
-    setOptimizing(true)
-    let optimized = ''
-    try {
-      const ctx = buildOptimizerContext(turns)
-      // Same classifier as the button, so `changed` is read in exactly ONE place (#277) — but
-      // deliberately NO toast on this path: `/optimize` SENDS either way, so the turn appearing
-      // in the transcript is already the answer to "what did my click do". A toast here would
-      // announce a non-event beside a visible one. The extra `!== raw` guard stays: an optimizer
-      // that returns the input with `changed:true` must not be recorded as an "original".
-      const out = optimizeOutcome(await api.optimizePrompt(raw, ctx))
-      if (out.kind === 'rewritten' && out.optimized.trim() !== raw) optimized = out.optimized.trim()
-    } catch { /* fall through — send the original unchanged */ }
-    finally { setOptimizing(false) }
-    if (optimized) await send(optimized, { original: raw })
-    else await send(raw)
-  }
-  // Put the caret in the composer once the text just set into it has rendered: a revert, a
-  // follow-up pick, a paste marker or a palette insert each leaves focus where the user is not.
-  function focusComposerSoon() {
-    requestAnimationFrame(() => composerRef.current?.querySelector<HTMLElement>('.cm-content')?.focus())
-  }
-  // restore the pre-optimize draft (the optimize rewrite is otherwise lossy).
-  function revertOptimize() {
-    if (preOptimize === null) return
-    setInput(preOptimize)
-    setPreOptimize(null)
-    // Clearing preOptimize unmounts this button, so without this focus lands on <body>
-    // and the next keystroke goes nowhere — you reverted in order to keep typing.
-    focusComposerSoon()
-  }
-  // /undo [N] — roll back N conversation turns via the backend, then re-hydrate the
-  // transcript from the truncated server state (so the UI matches disk) + append an
-  // honest notice that side effects were NOT reverted.
-  async function undoTurns(n: number) {
-    const s = sessionRef.current
-    if (!s) return  // nothing started yet
-    try {
-      const r = await api.undoChat(s, n)
-      const d = await api.chatSessionDetail(s)
-      const rehydrated = hydrateTurns(d.messages || [], false)
-      setTurns([...rehydrated, assistantTurn(r.notice)])
-    } catch { /* leave the transcript as-is on failure */ }
-  }
-  // /rewind-to-turn N — the FILESYSTEM counterpart of /undo.
-  // `confirm=false` renders the preview as an assistant notice and stops; `confirm=true`
-  // applies. Nothing on disk changes on the preview pass.
-  async function rewindToTurn(turn: number, confirm: boolean) {
-    const s = sessionRef.current
-    if (!s) return
-    try {
-      if (!confirm) {
-        const p = await api.rewindPreview(s, turn)
-        setTurns((prev) => [...prev, assistantTurn(rewindPreviewText(p, turn))])
-        return
-      }
-      const r = await api.rewindToTurn(s, turn)
-      const lines = [
-        r.notice,
-        ...r.restored.map((p) => `- restored \`${p}\``),
-        ...r.deleted.map((p) => `- deleted \`${p}\``),
-        ...r.errors.map((e) => `- FAILED: ${e}`),
-      ]
-      setTurns((prev) => [...prev, assistantTurn(lines.join('\n'))])
-    } catch (e) {
-      // A failure is unrequested bad news, not something the assistant said: appending it as an
-      // assistant turn put `String(e)` — "ApiError: <raw message>" — into the transcript in the
-      // assistant's voice. The success notices above stay as assistant turns on purpose
-      // (the preview/result IS the reply); only the failure routes to the error funnel, whose
-      // message is already the backend's sentence with no exception-class prefix.
-      reportActionFailure(`rewind to turn ${turn}`)(e)
-    }
-  }
-  async function transcribe(blob: Blob, opts?: { duplex?: boolean }): Promise<string> {
-    const r = await api.transcribeAudio(blob, { duplex: opts?.duplex, session: sessionRef.current || '' })
-    // Surface failures: otherwise a denied/unconfigured STT just drops the
-    // recording silently after the spinner — the user has no idea why no text
-    // appeared. The reason stays until it is dismissed or the next send.
-    const failed = transcriptionFailure(r)
-    if (failed) {
-      notice.showError(failed, 'voice-input')
-      return ''
-    }
-    // The echo filter dropped this capture. Say so — silence
-    // here is indistinguishable from a deaf microphone.
-    if (r.filtered === 'echo') {
-      notice.showInfo('Ignored the assistant’s own voice coming back through the microphone.')
-      return ''
-    }
-    // Dictation worked, so a microphone or transcription failure no longer holds; a notice
-    // something else raised is not dictation's to take down.
-    notice.clear('voice-input')
-    return r.text ?? ''
-  }
-
-  // ── composer extras (mentions + paste) ──
-  function onMentionFile(file: { path: string; name: string }) {
-    setMentionedFiles((prev) => (prev.includes(file.path) ? prev : [...prev, file.path]))
-  }
-  function onMentionKnowledge(item: { id: string; name: string }) {
-    setMentionedKnowledge((prev) => (prev.some((k) => k.id === item.id) ? prev : [...prev, item]))
-  }
-  // large paste → a removable card + an inline [📋 Paste #N] marker. The composer
-  // is a CodeMirror editor (not a <textarea>); appending the marker via the
-  // controlled value re-syncs the editor doc and lands the cursor at the end, so
-  // we append the marker and refocus the editor for continued typing.
-  function onLargePaste(text: string): boolean {
-    if (!shouldCollapsePaste(text)) return false
-    const seq = nextSeq(pasteBlocks)
-    const block: PasteBlock = { id: makePasteId(seq), seq, lines: text.split('\n').length, content: text }
-    const marker = markerFor(seq)
-    setPasteBlocks((prev) => [...prev, block])
-    setInput((prev) => prev + marker)
-    focusComposerSoon()
-    return true
-  }
-  function removePaste(seq: number) {
-    setPasteBlocks((prev) => prev.filter((b) => b.seq !== seq))
-    setInput((prev) => prev.replace(markerFor(seq), '').replace(/  +/g, ' '))
-  }
-  // A message she sent comes back to the composer (↑/↓, or Edit on a queued one) with the blocks
-  // she pasted into it, as their cards, numbered so none shares a marker with a block the composer
-  // holds (`takeIn`). Sending it again then sends what she pasted, not its marker. Returns the
-  // message's text as the composer now holds it.
-  function takeBack(text: string, pastes: readonly TurnPaste[]): string {
-    const back = takeIn(text, pastes, pasteBlocks)
-    if (back.blocks.length) setPasteBlocks((prev) => [...prev, ...back.blocks])
-    return back.text
-  }
-  const recallPrompt = (index: number) => takeBack(promptHistory[index].text, promptHistory[index].pastes)
-
-  async function stop() {
-    stoppedTurnRef.current = true
-    const s = sessionRef.current
-    // A reply you stopped is not read out, and neither is the rest of a queue it ends.
-    if (s) repliesToSpeak.delete(s)
-    // The composer settles at once so the button answers the press. The ENDING is said only when
-    // the gateway confirms this press stopped the turn, and only if that turn is still the one on
-    // screen: a stop that failed, or found the turn already over, is not a stopped turn, and the
-    // turn's own terminal frame says how it did end.
-    const turn = turnSeqRef.current
-    markStreaming(false)
-    if (!s) return
-    const answer = await api.stopChat(s).catch(reportActionFailure('stop this turn'))
-    if (answer?.stopped && turnSeqRef.current === turn) sayTurnEnded('stopped')
-  }
 
   // Read-aloud: Speak, "Speak replies aloud" and the audio a reading streams (`chat/useChatVoice`).
   const { voiceCfg, speakingTurn, speak, replyFinished, oweSpokenReply, enqueueAudio, readingRef } = useChatVoice({ sessionRef, turns, notice })
 
-  // Insert a rendered prompt (from the prompt palette) into the composer at the end,
-  // then focus so the user can keep editing before sending.
-  function insertPrompt(text: string) {
-    if (!text) return
-    setInput((prev) => (prev ? `${prev}\n${text}` : text))
-    focusComposerSoon()
-  }
-
-  // select-to-quote: insert the highlighted passage into the composer as an
-  // attributed blockquote. `attribution` ("You" / the agent name) prefixes the
-  // block so the quoted passage carries who said it.
-  function quoteToComposer(text: string, attribution?: string) {
-    const q = text.trim()
-    if (!q) return
-    const lines = q.split('\n').map((l) => `> ${l}`)
-    const block = attribution ? `> **${attribution} said:**\n${lines.join('\n')}` : lines.join('\n')
-    setInput((prev) => (prev ? `${prev}\n\n${block}\n\n` : `${block}\n\n`))
-    // The composer is a CodeMirror editor (.cm-content), not a <textarea> — focus
-    // it so the user can keep typing after quoting a selection.
-    composerRef.current?.querySelector<HTMLElement>('.cm-content')?.focus()
-  }
 
   // activity panel: the Files / Links tabs, derived from the transcript. No navigation —
   // the Session Map's rail and drawer are the session's only jump surface.
@@ -1482,90 +663,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     }
   }
 
-  // resolve a selected agent NAME to its ACP discovery info (provider id +
-  // provider_agent), or null if it's a native agent.
-  function acpFor(agentName: string): { providerId: string; agent: DiscoveredAgent } | null {
-    for (const [providerId, list] of Object.entries(data.discovered ?? {})) {
-      const agent = list.find((dd) => dd.name === agentName)
-      if (agent) return { providerId, agent }
-    }
-    return null
-  }
-
-  // 🔑 ONE REPORTER FOR EVERY SELECTION WRITE. `applySelection` flips the composer's local state FIRST
-  // and then fires the persistence calls — the optimistic shape `saveFailureReported` names, where a
-  // swallowed rejection "is a lie, because the control is left showing a value the server refused". Here
-  // that lie is worse than a settings toggle: the composer can show an agent, model or APPROVAL MODE the
-  // session is not actually using, so the user's next message runs under settings they did not pick.
-  //
-  // These are deliberately fire-and-forget (the composer must not block on a round-trip), so the remedy
-  // is the family's: TELL the user. Reverting `setSelection` was considered and rejected — the rail's own
-  // fix for this shape is to report, not to fight the input the user is still editing.
-  //
-  // It is one helper rather than eleven catch blocks because eleven is how one gets missed.
-  const persistSelection = <T,>(what: string, p: Promise<T>): Promise<T | void> =>
-    p.catch((e) => { notify(`Couldn't apply ${what} to this session: ${String((e as Error)?.message || e)}`, 'error') })
-
-  /** Natural voice: set the per-conversation scope, then adopt the backend's
-   *  RE-RESOLVED answer rather than assuming the click won. The resolution order lives
-   *  once, server-side (`natural_voice.NATURAL_VOICE_PRECEDENCE`), so the pill can only
-   *  stay honest by displaying what came back — a locally-computed label would be a
-   *  second copy of that order, free to drift from the one the turn uses.
-   *
-   *  Before the session exists there is nothing to PATCH, so the choice is held locally
-   *  with `source: ''` (the pill then shows the choice, not an effect) and persisted by
-   *  `ensureSession` at create — the same shape as a pre-start reasoning-effort pick. */
-  async function selectNaturalVoice(choice: '' | 'on' | 'off') {
-    const s = sessionRef.current
-    if (!s) { setNaturalVoice((v) => ({ ...v, choice, source: '' })); return }
-    const r = await persistSelection('this natural-voice setting', api.setSessionNaturalVoice(s, choice))
-    if (r) setNaturalVoice({
-      choice: (r.natural_voice || '') as '' | 'on' | 'off',
-      effective: !!r.natural_voice_effective,
-      source: r.natural_voice_source || '',
-      agentDefault: !!r.natural_voice_agent_default,
-    })
-  }
-
-  function applySelection(patch: Partial<ComposerValue>) {
-    const nextSel = { ...selection, ...patch }
-    setSelection(nextSel)
-    const s = sessionRef.current
-    if (!s) return
-    const acp = acpFor(nextSel.agent)
-    if (patch.agent) {
-      // ACP agents bind via /acp-agent (provider + provider_agent + model);
-      // native agents via /agent.
-      if (acp) persistSelection('this agent', api.setSessionAcpAgent(s, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: nextSel.model && nextSel.model !== 'Auto' ? nextSel.model : undefined }))
-      else persistSelection('this agent', api.setSessionAgent(s, patch.agent))
-    }
-    if (patch.model && !patch.agent) {
-      // model-only change: ACP model goes through /acp-agent too (re-bind w/ model)
-      if (acp) persistSelection('this model', api.setSessionAcpAgent(s, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: patch.model === 'Auto' ? undefined : patch.model }))
-      else persistSelection('this model', api.setSessionModel(s, patch.model === 'Auto' ? '' : patch.model))
-    }
-    // Approval mode first among these three deliberately: it is the one whose silent divergence has a
-    // safety cost, not just a cosmetic one.
-    if (patch.approval) persistSelection('this approval mode', api.setApprovalMode(patch.approval as ApprovalMode, s))
-    if (patch.taskMode) persistSelection('this task mode', api.setTaskMode(patch.taskMode as TaskMode, s))
-    if (patch.reasoning !== undefined) persistSelection('this reasoning effort', api.setReasoningEffort(s, patch.reasoning as ReasoningEffort))
-  }
-
-  /** Apply a saved starter to the composer.
-   *
-   *  Only fields the template actually carries are applied: a template saved with no
-   *  model must not silently reset the user's current pick to "Auto". `applySelection`
-   *  handles the no-session case (it just sets local state), so this works on the
-   *  new-chat screen before any session exists. */
-  function applyTemplate(t: SessionTemplate) {
-    // Selection patch = only the fields the starter carries (`sessionTemplatePatch`), so a
-    // starter saved with no model never resets the current pick to Auto. The prompt is applied
-    // separately because it feeds the composer INPUT (and enables Send), not the selection.
-    const patch = sessionTemplatePatch(t)
-    if (Object.keys(patch).length) applySelection(patch)
-    if (t.first_prompt) setInput(t.first_prompt)
-    notify(`Started from "${t.name}".`, 'info')
-  }
 
   /** Save the current chat's setup as a reusable starter. Captures the SETUP only —
    *  never the transcript — so sharing or reusing a starter can't leak a conversation. */
@@ -1691,344 +788,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     window.setTimeout(() => setToast(null), shownFor)
   }
 
-  async function attach(files: File[]) {
-    setAttachError(null)
-    // The rows go up before the size check, which reads the gateway's limits: sending is held
-    // from the moment a file is attached, not from the moment its bytes start to move.
-    const batch = ++uploadBatch.current
-    const ctrl = new AbortController()
-    uploadAborts.current.set(batch, ctrl)
-    const rows = (fs: File[]) => fs.map((f) => ({ batch, name: f.name, pct: 0 }))
-    setUploads((prev) => [...prev, ...rows(files)])
-    const done = () => {
-      uploadAborts.current.delete(batch)
-      setUploads((prev) => prev.filter((u) => u.batch !== batch))
-      if (uploadAborts.current.size === 0) notice.clear('upload')
-    }
-    // Client-side per-filetype pre-check → reject oversize BEFORE uploading a byte,
-    // with the same category message the server would give (better UX than a late 413).
-    const { precheck } = await import('../lib/chunkedUpload')
-    const ok: File[] = []
-    const rejected: string[] = []
-    for (const f of files) {
-      const err = await precheck(f)
-      if (err) rejected.push(err)
-      else ok.push(f)
-    }
-    if (rejected.length) setAttachError(rejected.join(' · '))
-    if (!ok.length) { done(); return }
-    setUploads((prev) => [...prev.filter((u) => u.batch !== batch), ...rows(ok)])
-    const r = await api.uploadFiles(ok, (idx, p) => {
-      setUploads((prev) => { let i = -1; return prev.map((u) => (u.batch === batch && ++i === idx ? { ...u, pct: p.pct, finishing: !!p.finishing } : u)) })
-    }, ctrl.signal).catch(async (e) => {
-      // A user cancel is not an error — just clear silently; other failures surface.
-      // (abort is named inconsistently across engines — isAbortError normalises it.)
-      const { isAbortError } = await import('../lib/chunkedUpload')
-      if (!isAbortError(e)) setAttachError((e as Error).message)
-      return { paths: [] as string[] }
-    })
-    // In the same render as the chips below, so the hold never lifts before the file is attached.
-    done()
-    const paths = (r as { paths?: string[] }).paths ?? []
-    // Thread uploaded paths into the next send's meta.files + show them as
-    // removable chips alongside @-mentioned files.
-    if (paths.length) setAttachedPaths((prev) => [...prev, ...paths.filter((p) => !prev.includes(p))])
-  }
 
-  // macOS: interactive region capture on the GATEWAY host (`screencapture -i`) →
-  // attach the resulting PNG to the next send. The screenshot lands in a server dir the
-  // send path already reads, so we thread its path straight into attachedPaths (same
-  // pipeline as an upload result). Returns '' when it handled the request (attached, or
-  // the user cancelled), else the reason it could not run.
-  async function captureNative(): Promise<string> {
-    try {
-      const r = await api.screenshot()
-      if (r.error) return r.error
-      if (r.path) setAttachedPaths((prev) => (prev.includes(r.path) ? prev : [...prev, r.path]))
-      // r.path === '' means the user cancelled the capture — no-op, no error.
-      return ''
-    } catch (e) { return (e as Error).message || 'Screen capture failed' }
-  }
-
-  // Everywhere else: one frame out of the browser's display capture (tracks stopped
-  // immediately), then crop it in-app. The PNG goes through the ORDINARY upload path,
-  // so it gets the same policy check, uploads dir, extraction-at-upload and chip as a
-  // dragged-in file — a snip is an attachment, not a special case.
-  async function captureInBrowser() {
-    const r = await grabOneFrame()
-    if ('error' in r) {
-      // A dismissed picker is a decision, not a failure — say nothing.
-      if (r.error === 'cancelled') return
-      setAttachError(r.error === 'unsupported'
-        ? 'This browser cannot capture the screen.'
-        : 'The screen capture did not produce a frame.')
-      return
-    }
-    setSnip({ url: r.frame.toDataURL('image/png'), width: r.frame.width, height: r.frame.height, source: r.frame })
-  }
-
-  async function captureScreenArea() {
-    setAttachError(null)
-    if (captureProvider === 'native') {
-      const err = await captureNative()
-      if (!err) return
-      // The native snip could not run on this host (no display server, binary refused).
-      // Re-run the SAME decision with the native path marked failed rather than writing
-      // a second fallback policy here; only dead-end with the error if nothing is left.
-      if (chooseCaptureProvider(platform, displayCapture, true) !== 'browser') { setAttachError(err); return }
-    }
-    await captureInBrowser()
-  }
-
-  async function attachSnip(rect: SnipRect) {
-    const src = snip
-    setSnip(null)
-    if (!src) return
-    const file = await cropToPngFile(src.source, rect)
-    if (!file) { setAttachError('The cropped capture could not be encoded.'); return }
-    await attach([file])
-  }
-
-  const stage = (
-    // `data-tour="chat"` — the product tour's chat stop points at the composer stage.
-    // On the chat route this wrapper is the composer.
-    <div data-tour="chat" className="w-full" style={{ maxWidth: 'var(--content-width)' }}>
-      {/* Memory-mode notice: incognito/temporary sessions look identical to a normal one
-          otherwise, so say what this mode does before the user types. The words are
-          `memoryModeCopy`'s, which holds each clause to what the backend does; a privacy
-          promise that over-states itself is worse than a narrower true one. */}
-      {memoryMode !== 'persistent' && (
-        <div className="mb-2 flex items-center gap-1.5 text-[0.75rem] text-on-surface-low">
-          {memoryMode === 'incognito' ? <EyeOff size={13} className="shrink-0" /> : <Clock size={13} className="shrink-0" />}
-          <span>{MEMORY_MODE_NOTICE[memoryMode]}</span>
-        </div>
-      )}
-      {/* An app's conversation: what you send runs under the APP's grant, not your approval
-          switches — said before you type, like the memory notice above. */}
-      {startedBy && <AppPermissionNotice name={startedBy.name} />}
-      {/* The composer's notice: what failed (voice input, screen sharing, a switched answer, a
-          branch…), which stays until dismissed or the next send, or what just happened. */}
-      <ComposerNoticeLine notice={notice.notice} onDismiss={notice.clear} />
-      {toast && (
-        <div className="mb-2 flex items-center gap-1.5 text-[0.75rem] text-on-surface-var">
-          <Check size={13} className="shrink-0 text-ok" /><span>{toast}</span>
-        </div>
-      )}
-      {/* Upload rejection (oversize / failure) — persistent + dismissible, since the
-          user must act on it (choose a smaller file), on its own line beside the notice. */}
-      {attachError && (
-        <div role="alert" className="mb-2 flex items-start gap-1.5 rounded-md px-2.5 py-1.5 text-[0.75rem]"
-          style={{ background: 'color-mix(in srgb, var(--color-danger) 12%, transparent)', color: 'var(--color-danger)' }}>
-          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{attachError}</span>
-          <IconButton icon={X} label="Dismiss" onClick={() => setAttachError(null)} size={20} iconSize={12}
-            className="shrink-0 opacity-70 hover:opacity-100" />
-        </div>
-      )}
-      {/* Upload progress: a row per file still uploading, small and large alike. While any
-          is up, sending is held (`uploadHold`). */}
-      {uploads.length > 0 && (
-        <div className="mb-2 flex flex-col gap-1 rounded-lg bg-surface-container/60 px-3 py-2">
-          {uploads.map((u, i) => (
-            <div key={`${u.batch}:${i}`} className="flex items-center gap-2.5 text-[0.75rem] text-on-surface-var">
-              <Loader2 size={13} className="shrink-0 animate-spin text-primary" />
-              <span className="max-w-[40%] shrink-0 truncate" title={u.name}>{u.name}</span>
-              {/* The bar takes the row's slack (prominent), pct + cancel stay compact —
-                  so it reads as one aligned progress control, not scattered bits. The
-                  hand-rolled track this replaced had no role at all, so with several
-                  uploads queued a screen reader heard a spinner and a filename and
-                  nothing about how far along any of them was. */}
-              <Meter size="thin" className="min-w-0 flex-1" label={`Uploading ${u.name}`} pct={u.pct} />
-              <span className="shrink-0 tabular-nums text-on-surface-low">{u.pct}%</span>
-              {!u.finishing && <IconButton icon={X} label="Cancel upload" onClick={() => uploadAborts.current.get(u.batch)?.abort()} size={20} iconSize={13}
-                tone="danger" className="shrink-0" />}
-            </div>
-          ))}
-        </div>
-      )}
-      <AttachmentChips paths={[...mentionedFiles, ...attachedPaths]} images={attachedPaths.filter(isImagePath)}
-        session={sessionId ?? ''} agent={selection.agent} model={selection.model === 'Auto' ? '' : selection.model}
-        runtime={acpFor(selection.agent)?.providerId ?? ''}
-        onRemove={(p) => { setMentionedFiles((prev) => prev.filter((x) => x !== p)); setAttachedPaths((prev) => prev.filter((x) => x !== p)) }}
-        onOpen={setOpenFile} />
-      <KnowledgeChips items={mentionedKnowledge}
-        onRemove={(id) => setMentionedKnowledge((prev) => prev.filter((k) => k.id !== id))} />
-      <PasteCards blocks={livePasteBlocks} onRemove={removePaste} />
-      {/* revert-optimize: the optimize rewrite replaces the draft in place, so
-          offer a one-click undo back to what the user originally typed. */}
-      {preOptimize !== null && (
-        <Button variant="secondary" size="xs" onClick={revertOptimize}
-          className="mb-2 gap-1.5 px-2.5 text-[0.75rem] text-on-surface-var">
-          <Repeat size={12} className="shrink-0" /> Optimized — revert to original
-        </Button>
-      )}
-      {/* Steered messages on their way into the answer being written: the turn takes each
-          at its next step, and it then moves into the transcript as her bubble. Unlike a
-          queued item there is nothing to cancel or reorder. Rendered so a steer is visible
-          before then: the backend broadcasts a "Steering: …" activity_event, which this page
-          drops (`kind === 'steer'`) for this list. */}
-      {steered.length > 0 && (
-        <div className="mb-2 flex flex-col gap-1" aria-live="polite">
-          {steered.map((s) => (
-            <div key={s.ts}
-              className="flex items-start gap-1.5 text-[0.75rem] text-on-surface-var">
-              <CornerDownLeft size={12} className="mt-0.5 shrink-0" aria-hidden />
-              <span className="min-w-0 flex-1 truncate">
-                Steering into this answer: {s.text}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-      {/* Queued messages (typed mid-stream) — the backend sends them one-by-one as
-          each turn finishes; each can be cancelled while still pending. */}
-      <QueueStack items={queued} canInterrupt={streaming}
-        onCancel={(id) => { setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(reportActionFailure('cancel that queued message')) }}
-        onEdit={(q) => {
-          // Honest "edit": there's no queue-edit endpoint, so cancel the pending item
-          // and drop its text back in the composer for the user to revise + resend
-          // (avoids a fake in-place edit that would silently re-queue at the back). It comes back
-          // with what she pasted into it, and after the draft she is writing, if any: the
-          // message leaves the queue, so nothing of it may be lost on the way to the composer.
-          setQueued((prev) => prev.filter((x) => x.id !== q.id)); const s = sessionRef.current; if (s) api.cancelQueued(s, q.id).catch(reportActionFailure('cancel that queued message'))
-          const back = takeBack(q.content, q.pastes ?? [])
-          setInput((cur) => (cur.trim() ? `${cur.trimEnd()}\n\n${back}` : back))
-        }}
-        onInterrupt={(id) => {
-          // Interrupt-now: soft-stop the running turn and run THIS queued message
-          // next (the backend promotes it + the finally-block drain picks it up).
-          // The queue_promoted WS echo reorders the strip on every client.
-          const s = sessionRef.current; if (s) api.interruptChat(s, id).catch(reportActionFailure('interrupt this turn'))
-        }} />
-      <div className="relative">
-        {/* Saved-prompt palette + auto-nudge now live INSIDE the composer's "+"
-            menu (onOpenPrompts + plusMenuExtra) — no more chips overlapping the
-            composer's top edge. The palette modal still renders here. */}
-        {promptPaletteOpen && (
-          <PromptPalette
-            onInsert={insertPrompt}
-            onSend={(t) => { const full = input.trim() ? `${input}\n${t}` : t; setInput(''); void send(full) }}
-            onClose={() => setPromptPaletteOpen(false)} />
-        )}
-        {artifactPickerOpen && (
-          <ArtifactContextPicker
-            attached={mentionedArtifacts}
-            onPick={(a) => setMentionedArtifacts((prev) => (prev.some((x) => x.slug === a.slug) ? prev : [...prev, a]))}
-            onRemove={(slug) => setMentionedArtifacts((prev) => prev.filter((a) => a.slug !== slug))}
-            onClose={() => setArtifactPickerOpen(false)} />
-        )}
-        {/* Crop step for a browser-captured frame. The capture is already stopped by
-            the time this renders, so cancelling leaves nothing behind — neither an
-            attachment nor a live track. */}
-        {snip && (
-          <SnipOverlay frame={snip.url} width={snip.width} height={snip.height}
-            onCancel={() => setSnip(null)} onConfirm={(rect) => { void attachSnip(rect) }} />
-        )}
-        {knowledgePickerOpen && (
-          <KnowledgeContextPicker
-            attached={mentionedKnowledge}
-            onPick={(item) => onMentionKnowledge(item)}
-            onRemove={(id) => setMentionedKnowledge((prev) => prev.filter((k) => k.id !== id))}
-            onClose={() => setKnowledgePickerOpen(false)} />
-        )}
-        {started && sessionRef.current && (
-          <div className="mb-1 flex justify-center">
-            <SessionSkillsReview sessionKey={sessionRef.current} agent={selection.agent || undefined} refreshKey={sessionSkillsEpoch} />
-          </div>
-        )}
-        <AnimatePresence>
-          {routingSuggestion && (
-            <div className="mb-1 flex justify-center">
-              <RoutingChip suggestion={routingSuggestion} defaultAgent={selection.agent || ''}
-                onRoute={() => { setSelection((s) => ({ ...s, agent: routingSuggestion.agent })); setRoutingSuggestion(null) }}
-                onDismiss={() => setRoutingSuggestion(null)} />
-            </div>
-          )}
-        </AnimatePresence>
-        {/* Suggested organization. Keyed on the message count so it re-asks once a
-            turn lands and the auto-titler has given the chat a title to reason from — an
-            untitled brand-new chat has no signal. Proposal only; nothing applies until
-            "File it" is clicked. */}
-        {started && sessionRef.current && (
-          <div className="mb-1 flex justify-center">
-            <OrganizeChip sessionKey={sessionRef.current} refreshKey={turns.length} />
-          </div>
-        )}
-        {/* Plan review gate. Mounted whenever there's a session and renders
-            nothing until the "Plan this first" affordance has opened a walkthrough —
-            keyed on the turn count so the draft the plan-mode turn just produced shows
-            up without a reload. Approve/cancel hand back the restored task mode, so the
-            composer's pill can't drift from the posture the backend gate enforces. */}
-        {sessionRef.current && (
-          <ChatPlanGate session={sessionRef.current} refreshKey={turns.length}
-            onTaskMode={(m) => setSelection((sel) => ({ ...sel, taskMode: m }))} />
-        )}
-        {/* The honest label on the bundled zero-config floor model, immediately above
-            the composer so it is read where the answers arrive. Mounted unconditionally and
-            renders nothing unless chat really is resolving to a floor provider — which is
-            false on every home that has bound anything. */}
-        <BundledFloorNotice />
-        <ComposerStage ref={composerRef} value={input} onChange={(v) => { setInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
-          streaming={streaming} onStop={stop} controls={CHAT_CONTROLS} data={data}
-          selection={selection} onSelect={applySelection} onAttach={attach} onFocusChange={setComposerFocused}
-          naturalVoice={{ ...naturalVoice, onSelect: (c) => void selectNaturalVoice(c) }}
-          onOpenPrompts={() => setPromptPaletteOpen(true)}
-          plusMenuExtra={(close) => (
-            <>
-              <MenuRow icon={<BookText size={16} />} label="Add knowledge" hint="Search the library → attach to the prompt" onClick={() => { close(); setKnowledgePickerOpen(true) }} />
-              <MenuRow icon={<Boxes size={16} />} label="Reference an artifact" hint="Ground the reply in an artifact's current version" onClick={() => { close(); setArtifactPickerOpen(true) }} />
-              {/* Feature-detected out entirely where neither provider exists (iOS
-                  Safari has no getDisplayMedia and no gateway binary to shell out to) —
-                  a control that can only fail is worse than no control. */}
-              {captureProvider !== 'none' && <MenuRow icon={<Camera size={16} />} label="Capture screen area" hint="Snip a region → attach" onClick={() => { close(); void captureScreenArea() }} />}
-              {/* Pin the shared frame — the ONE deliberate promotion from
-                  ephemeral to file. Offered only while sharing, because the frame it
-                  pins is the one the browser still holds: nothing older can be pinned,
-                  since retaining past frames client-side is exactly the retention this
-                  feature exists not to do. Suppressed in a temporary/incognito chat by
-                  the server (writes are suppressed there), which is why the failure
-                  path surfaces the server's reason rather than a guess. */}
-              {screenShare.sharing && sessionRef.current && (
-                <MenuRow icon={<Pin size={16} />} label="Pin shared frame" hint="Save the current screen frame as an ordinary attachment"
-                  onClick={() => { close(); void pinScreenFrame() }} />
-              )}
-              {/* Plan mode — an explicit, manual entry. Nothing decides FOR the
-                  user that a message needs planning: a quick task just sends. Offered on
-                  a started chat because the plan is drafted by the next turn in it. */}
-              {started && sessionRef.current && (
-                <MenuRow icon={<ListChecks size={16} />} label="Plan this first"
-                  hint="Draft a plan for review — nothing runs until you approve it"
-                  onClick={() => { close(); void activatePlanMode() }} />
-              )}
-              {started && sessionRef.current && <AutoNudgeMenuItem session={sessionRef.current!} onOpen={close} />}
-            </>
-          )}
-          onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} onLargePaste={onLargePaste}
-          openModelSignal={openModelSignal} openAgentSignal={openAgentSignal} openReasoningSignal={openReasoningSignal}
-          onOptimize={optimize} optimizing={optimizing} history={historyTexts} onRecall={recallPrompt}
-          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue canSteer={takesSteers} sendHeldReason={uploadHold} contextPct={contextPct} contextWindow={contextWindow} servedModel={lastServedModel(turns)} autoChain={autoChain}
-          handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
-          onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })}
-          screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }} />
-      </div>
-      {/* CREATE-TIME session setup — project binding + memory mode. Both are frozen
-          once the chat starts, so they are NOT composer controls (the composer's
-          controls stay live for the whole chat); they live just below the new-chat
-          composer and disappear once started. Keyed off !sessionId (a genuinely NEW
-          chat) rather than !started, so they don't flash while an existing session's
-          history is still loading (turns empty → started false, but sessionId set).
-          Project scoping opens via /project. */}
-      {!sessionId && (
-        <div className="mt-2.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
-          <ProjectPicker value={projectId} onChange={setProjectId}
-            emptyLabel="No project" emptyHint="" openSignal={openProjectSignal} />
-          <Segmented ariaLabel="Memory mode" size="sm" value={memoryMode}
-            options={MEMORY_MODES.map((m) => ({ key: m.id, label: m.label, title: `${m.label} — ${m.hint}` }))}
-            onChange={(v) => setMemoryMode(v as MemoryMode)} />
-        </div>
-      )}
-    </div>
-  )
+  const stage = <ChatComposer composer={composer} stream={stream} sessionId={sessionId} started={started} onOpenFile={setOpenFile}
+    voiceCfg={voiceCfg} speakingTurn={speakingTurn} />
 
   // The header's context line: what this conversation IS, under its title (`ChatContextLine`).
   const contextChips = started ? chatContextChips({
@@ -2344,316 +1106,12 @@ function AnimatePresenceFilePanel({ path, onClose, commentTarget }: { path: stri
   )
 }
 
-/** "Add knowledge to prompt" — a search picker over the library that shows each
- *  result's token cost against a budget, so the user can attach relevant context
- *  without blowing the window. Selecting toggles the item into mentionedKnowledge
- *  (the same pipeline as an @-mention); the backend inlines it at send. */
-/** Pick artifacts to ground the next turn in. Unlike the knowledge picker there is no
- *  token budget meter: an artifact is one whole document the user names deliberately,
- *  not a set of search fragments competing for a context allowance. The list is the
- *  library itself, filtered client-side — an artifact library is small enough that a
- *  server round-trip per keystroke would be the slower option. */
-function ArtifactContextPicker({ attached, onPick, onRemove, onClose }: {
-  attached: { slug: string; name: string }[]
-  onPick: (a: { slug: string; name: string }) => void
-  onRemove: (slug: string) => void
-  onClose: () => void
-}) {
-  const [q, setQ] = useState('')
-  // The swallow made a failed read indistinguishable from an empty library, and this picker's
-  // empty state TEACHES ("Ask in chat for a widget…") — so a 500 told a user with artifacts to go
-  // make their first one. Same shape as #1162's chat history, one surface down.
-  const { data, loading, error: artifactsError } = useQuery('artifacts:chat-picker', () => api.artifacts())
-  const all = data ?? []
-  const attachedSlugs = new Set(attached.map((a) => a.slug))
-  const n = q.trim().toLowerCase()
-  const shown = (n ? all.filter((a) => `${a.name} ${a.slug} ${a.kind}`.toLowerCase().includes(n)) : all).slice(0, 40)
-  return (
-    <Modal title="Reference an artifact" icon={<Boxes size={18} className="text-primary" />} onClose={onClose}>
-      <div className="flex flex-col gap-m" style={{ minWidth: 420 }}>
-        <SearchField value={q} onChange={setQ} autoFocus placeholder="Search your artifacts…"
-          ariaLabel="Search your artifacts"
-          trailingSlot={loading ? <Loader2 size={15} className="animate-spin text-on-surface-low" /> : undefined} />
-        {/* `shown` is capped at 40, and the count follows the CAP rather than the match total —
-            the announcement describes what is on screen, which is the only number a user can act
-            on. (That the cap itself is silent is a separate, visible-copy question.) */}
-        <ResultAnnouncement count={shown.length} noun="artifacts" active={!!n} />
-        {attached.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {attached.map((a) => (
-              <Button key={a.slug} variant="ghost" size="xs" onClick={() => onRemove(a.slug)}
-                title="Remove from this prompt">
-                <Boxes size={11} /> {a.name} <X size={11} />
-              </Button>
-            ))}
-          </div>
-        )}
-        {data === undefined && artifactsError ? (
-          // The error branch comes FIRST: `data === undefined` is true for loading, failure AND an
-          // empty library, so a failure test placed after them is unreachable. `FieldError`
-          // announces (role=alert), which a teaching empty state deliberately does not.
-          <FieldError>Couldn't load your artifacts — {(artifactsError as Error)?.message || 'the server did not respond'}</FieldError>
-        ) : all.length === 0 && !loading ? (
-          <p className="text-on-surface-low text-[0.8125rem]">
-            No artifacts yet. Ask in chat for a widget or a document and it lands here.
-          </p>
-        ) : (
-          <div className="flex max-h-80 flex-col gap-1 overflow-y-auto">
-            {shown.map((a) => {
-              const on = attachedSlugs.has(a.slug)
-              return (
-                <MenuRow key={a.slug} icon={<Boxes size={14} />} label={a.name}
-                  hint={`${a.kind} · v${a.version} · ${a.slug}`} selected={on}
-                  onClick={() => (on ? onRemove(a.slug) : onPick({ slug: a.slug, name: a.name }))} />
-              )
-            })}
-            {n && shown.length === 0 && (
-              <p className="px-2 py-2 text-on-surface-low text-[0.8125rem]">No artifact matches that.</p>
-            )}
-          </div>
-        )}
-      </div>
-    </Modal>
-  )
-}
 
-function KnowledgeContextPicker({ attached, onPick, onRemove, onClose }: {
-  attached: { id: string; name: string }[]
-  onPick: (item: { id: string; name: string }) => void
-  onRemove: (id: string) => void
-  onClose: () => void
-}) {
-  const [q, setQ] = useState('')
-  const [res, setRes] = useState<import('../lib/api').KnowledgeContextResult | null>(null)
-  const [loading, setLoading] = useState(false)
-  const MAX = 4000
-  const attachedIds = new Set(attached.map((a) => a.id))
-  // A query's synchronous consequences happen in the handler that changes it, batched into the
-  // keystroke's own render; the effect below only runs the debounced search. `setLoading(true)`
-  // used to sit in that effect, where it scheduled a render from inside every keystroke's commit —
-  // typed fast, ~50 keys threw React's #185 (the mechanism: `ui/composer/MarkdownInput`). Clearing
-  // here also clears `loading`, which the effect never did: emptying the box while a search was
-  // pending left the spinner turning where "Type to search" belongs.
-  const search = (v: string) => {
-    setQ(v)
-    if (v.trim()) setLoading(true)
-    else { setRes(null); setLoading(false) }
-  }
-  useEffect(() => {
-    const query = q.trim()
-    if (!query) return
-    let alive = true
-    const t = window.setTimeout(() => {
-      api.knowledgeSearchForContext(query, MAX).then((r) => { if (alive) setRes(r) }).catch(() => { if (alive) setRes(null) }).finally(() => { if (alive) setLoading(false) })
-    }, 250)
-    return () => { alive = false; clearTimeout(t) }
-  }, [q])
-  // Running budget = sum of tokens of currently-attached results the search surfaced.
-  const attachedTokens = (res?.results ?? []).filter((r) => attachedIds.has(r.id)).reduce((n, r) => n + r.tokens, 0)
-  const pct = Math.min(100, Math.round((attachedTokens / MAX) * 100))
-  return (
-    <Modal title="Add knowledge to prompt" icon={<BookText size={18} className="text-primary" />} onClose={onClose}>
-      <div className="flex flex-col gap-m" style={{ minWidth: 420 }}>
-        <SearchField value={q} onChange={search} autoFocus placeholder="Search your knowledge library…"
-          ariaLabel="Search your knowledge library"
-          trailingSlot={loading ? <Loader2 size={15} className="animate-spin text-on-surface-low" /> : undefined} />
-        {/* Remote, and debounced 250ms: `active` waits for `loading` to clear so the count is the
-            one for the query the user has actually finished typing, and for `res` to exist so an
-            unrun search is not reported as "no matches". */}
-        <ResultAnnouncement count={res?.results.length ?? 0} noun="knowledge items"
-          active={!!q.trim() && !loading && res !== null} />
-        {attached.length > 0 && (
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between text-[0.75rem] text-on-surface-low">
-              <span>{attached.length} attached{attachedTokens ? ` · ~${attachedTokens} tokens` : ''}</span>
-              {attachedTokens > 0 && <span className="tabular-nums">{pct}% of {MAX}</span>}
-            </div>
-            {attachedTokens > 0 && (
-              <Meter size="thin" label="Prompt budget used by attached knowledge" pct={pct}
-                tone={pct > 90 ? 'var(--color-warn)' : 'var(--color-primary)'} />
-            )}
-          </div>
-        )}
-        {/* 🔴 Attached-or-not was announced by COLOUR alone — a tinted row, a coral outline and a
-            check glyph, none of which reaches the accessibility tree. `aria-pressed` is the state;
-            the group carries the dimension so a row announces what it is being attached TO. No tab
-            stop is needed on the scroller because every row in it is a button. */}
-        <div role="group" aria-label="Knowledge to attach" className="max-h-[46vh] overflow-y-auto flex flex-col gap-1.5">
-          {loading && !res ? <div className="grid place-items-center py-6 text-on-surface-low"><Loader2 size={16} className="animate-spin" /></div>
-            : !q.trim() ? <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">Type to search notes, gists, bookmarks, docs…</p>
-            : (res?.results.length ?? 0) === 0 ? <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">No matches for “{q}”.</p>
-            : res!.results.map((r) => {
-              const on = attachedIds.has(r.id)
-              return (
-                <button key={r.id} type="button" aria-pressed={on}
-                  onClick={() => on ? onRemove(r.id) : onPick({ id: r.id, name: r.title })}
-                  className="flex items-start gap-2 rounded-lg px-3 py-2 text-left transition-colors"
-                  style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)', outline: '1px solid color-mix(in srgb, var(--color-primary) 40%, transparent)' } : { background: 'var(--color-surface-container)' }}>
-                  <span className="mt-0.5 shrink-0 grid size-4 place-items-center rounded border" style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)', color: 'var(--color-on-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>{on && <Check size={11} />}</span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="min-w-0 truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>{r.title}</span>
-                      <span className="ml-auto shrink-0 tabular-nums text-on-surface-low text-[0.75rem]">~{r.tokens} tok</span>
-                    </div>
-                    {r.summary && <div className="mt-0.5 line-clamp-2 text-on-surface-low text-[0.75rem]">{r.summary}</div>}
-                  </div>
-                </button>
-              )
-            })}
-        </div>
-        <div className="flex justify-end"><Button size="sm" onClick={onClose}>Done</Button></div>
-      </div>
-    </Modal>
-  )
-}
 
-/** Removable chips for @-mentioned knowledge-library items, shown ABOVE the
- *  composer. Each pairs with an inline `@name` token in the prompt; the item's
- *  content is inlined by the backend at send. ✕ removes the reference. */
-function KnowledgeChips({ items, onRemove }: { items: { id: string; name: string }[]; onRemove: (id: string) => void }) {
-  if (!items.length) return null
-  return (
-    <div className="mb-2 flex flex-wrap gap-2">
-      {items.map((k) => (
-        <div key={k.id} className="flex items-center gap-1.5 rounded-lg border border-primary/40 px-2.5 py-1.5 text-[0.8125rem]"
-          style={{ background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)' }}>
-          <BookText size={13} className="shrink-0 text-primary" />
-          <span className="min-w-0 truncate text-on-surface" title={k.name}>{k.name}</span>
-          <IconButton icon={X} label="Remove knowledge reference" onClick={() => onRemove(k.id)} size={20} iconSize={13}
-            tone="danger" className="shrink-0" />
-        </div>
-      ))}
-    </div>
-  )
-}
 
-/** One of her earlier messages for ↑/↓ recall: its text as she wrote it, and the blocks she
- *  pasted into it, which come back to the composer with it. */
-interface RecalledPrompt { text: string; pastes: TurnPaste[] }
 
-/** *list* with *entry* last: a message sent again as it was is one entry, not two. */
-function withPrompt(list: RecalledPrompt[], entry: RecalledPrompt): RecalledPrompt[] {
-  const last = list[list.length - 1]
-  if (!last || last.text !== entry.text || JSON.stringify(last.pastes) !== JSON.stringify(entry.pastes)) list.push(entry)
-  return list
-}
 
-/** The mid-stream message queue, shown directly above the composer. Each item is
- *  a message the user sent while a turn was streaming; the backend dispatches them
- *  FIFO as turns finish. A pending item can be cancelled (removes it server-side).
- *  Numbered so the send order is obvious. */
-/** QueueStack: the queued-message deck rendered as PHYSICAL stacked cards
- *  (top = next to run), overlapping with a translateY/scale/opacity depth falloff
- *  (the Toaster/Sonner idiom), depth offsets scaled by `expr()`. Only the TOP card
- *  shows its full text + actions; deeper cards peek behind it, and expanding on hover
- *  fans them out. Reduced-motion / refined expressiveness collapses to a flat list.
- *
- *  Actions are honest to what the backend supports (cancel-only — there is no
- *  reorder/edit endpoint, so we DON'T fake persistent reorder): Cancel removes the
- *  item; Edit cancels it AND drops its text back into the composer to resend (no
- *  false "in-place edit" that would silently move it to the back of the FIFO). */
-function QueueStack({ items, onCancel, onEdit, onInterrupt, canInterrupt = false }: {
-  items: QueuedMessage[]
-  onCancel: (id: string) => void
-  onEdit: (q: QueuedMessage) => void
-  onInterrupt?: (id: string) => void
-  canInterrupt?: boolean  // a turn is running → "Interrupt now" can promote + soft-stop
-}) {
-  const reduce = useReducedMotion()
-  const [expanded, setExpanded] = useState(false)
-  if (!items.length) return null
-  // Flat list when reduced-motion OR a small queue (a single card needs no deck).
-  const stacked = !reduce && items.length > 1 && !expanded
-  // Depth falloff for the collapsed deck: each card behind the top peeks down a few
-  // px + shrinks + fades, scaled by expressiveness (refined → a tighter, calmer deck).
-  const peekY = expr(7, 0.4)      // px each deeper card drops
-  const peekScale = expr(0.04, 0.5)
-  const maxPeek = 3               // cards visibly peeking behind the top
 
-  const header = (
-    <button type="button" onClick={() => items.length > 1 && setExpanded((e) => !e)}
-      className={`flex items-center gap-1.5 px-1 text-[0.75rem] uppercase tracking-wide text-on-surface-low ${items.length > 1 ? 'hover:text-on-surface-var' : 'cursor-default'}`}>
-      <Clock size={11} className="shrink-0" /> {items.length} queued · sent one at a time as each turn finishes
-      {items.length > 1 && <ChevronDown size={11} className={`shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />}
-    </button>
-  )
-
-  const card = (q: QueuedMessage, i: number, depth: number) => (
-    <motion.div key={q.id} layout
-      initial={reduce ? false : { opacity: 0, y: 8 }}
-      animate={stacked
-        ? { opacity: depth === 0 ? 1 : Math.max(0, 1 - depth * 0.28), y: -depth * peekY, scale: 1 - depth * peekScale }
-        : { opacity: 1, y: 0, scale: 1 }}
-      exit={reduce ? undefined : { opacity: 0, y: 8, transition: spring.spatialFast }}
-      transition={spring.spatialDefault}
-      style={stacked ? { position: depth === 0 ? 'relative' : 'absolute', insetInline: 0, top: 0, zIndex: maxPeek - depth } : undefined}
-      className="group/q flex items-center gap-2 rounded-lg border border-outline-variant/50 bg-surface-high/60 px-2.5 py-1.5 text-[0.8125rem]">
-      <span className="shrink-0 tabular-nums text-on-surface-low">{i + 1}</span>
-      <span className="min-w-0 flex-1 truncate text-on-surface" title={q.content}>{q.content}</span>
-      {/* Actions only on the top card in stacked mode (deeper cards are non-interactive peeks). */}
-      {(!stacked || depth === 0) && (
-        <span className="flex shrink-0 items-center gap-0.5">
-          {canInterrupt && onInterrupt && (
-            <IconButton icon={PlayCircle} label="Interrupt now — stop the current turn and run this next" onClick={() => onInterrupt(q.id)} size={20} iconSize={13}
-              className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100 focus-within:opacity-100" />
-          )}
-          <IconButton icon={Pencil} label="Edit queued message" onClick={() => onEdit(q)} size={20} iconSize={12}
-            className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100 focus-within:opacity-100" />
-          <IconButton icon={X} label="Cancel queued message" onClick={() => onCancel(q.id)} size={20} iconSize={13}
-            tone="danger" />
-        </span>
-      )}
-    </motion.div>
-  )
-
-  return (
-    <div className="mb-2 flex flex-col gap-1.5">
-      {header}
-      {stacked ? (
-        // Collapsed deck: the top card in flow, up to `maxPeek` cards absolutely
-        // stacked behind it. A wrapper reserves height for the peek offset.
-        <div className="relative" style={{ paddingTop: Math.min(items.length - 1, maxPeek) * peekY }}>
-          {items.slice(0, maxPeek + 1).map((q, i) => card(q, i, i)).reverse()}
-        </div>
-      ) : (
-        <AnimatePresence initial={false}>
-          <div className="flex flex-col gap-1.5">{items.map((q, i) => card(q, i, 0))}</div>
-        </AnimatePresence>
-      )}
-    </div>
-  )
-}
-
-/** Removable attachment cards for large pastes, shown ABOVE the composer. Each
- *  pairs with an inline `[Paste #N]` marker in the prompt (so the position is
- *  visible); ✕ removes both. Click to preview the pasted content. */
-function PasteCards({ blocks, onRemove }: { blocks: PasteBlock[]; onRemove: (seq: number) => void }) {
-  const [preview, setPreview] = useState<PasteBlock | null>(null)
-  if (!blocks.length) return null
-  return (
-    <>
-      <div className="mb-2 flex flex-wrap gap-2">
-        {blocks.map((b) => (
-          <div key={b.id} className="group flex items-center gap-2 rounded-lg border border-outline-variant/50 bg-surface-container px-2.5 py-1.5">
-            <Clipboard size={13} className="shrink-0 text-primary" />
-            <button type="button" onClick={() => setPreview(b)} className="text-left text-on-surface text-[0.8125rem] hover:underline">
-              Paste #{b.seq} <span className="text-on-surface-low">· {b.lines} line{b.lines === 1 ? '' : 's'}</span>
-            </button>
-            <IconButton icon={X} label={`Remove paste #${b.seq}`} onClick={() => onRemove(b.seq)} size={20} iconSize={13}
-              tone="danger" className="shrink-0" />
-          </div>
-        ))}
-      </div>
-      <AnimatePresence>
-        {preview && (
-          <Modal title={`Paste #${preview.seq} · ${preview.lines} lines`} icon={<Clipboard size={18} className="text-primary" />} onClose={() => setPreview(null)}>
-            <pre className="overflow-auto whitespace-pre-wrap rounded-md bg-surface-low px-m py-s font-mono text-on-surface-var text-[0.8125rem] leading-relaxed">{preview.content}</pre>
-          </Modal>
-        )}
-      </AnimatePresence>
-    </>
-  )
-}
 
 /** The route names a chat that does not exist — a dead deep link, or a chat deleted while it
  *  was open. Said plainly, with the two ways forward, instead of an empty chat whose composer
@@ -3665,86 +2123,3 @@ function TagBoard({ sessions, tags, card, onMove }: {
   )
 }
 
-/** Auto-nudge entry for the composer "+" menu — a MenuRow that reflects the
- *  on/off state and opens the config in a Modal. Arms / edits / stops a reactive
- *  same-session loop (when a turn finishes and the user is idle for idle_secs,
- *  the service re-injects `message` into THIS session; survives reload/restart).
- *  On by default; PERSONALCLAW_AUTONUDGE=0 disables it (then the modal says so).
- *  `onOpen` closes the parent "+" menu when the row is chosen. */
-function AutoNudgeMenuItem({ session, onOpen }: { session: string; onOpen: () => void }) {
-  const [open, setOpen] = useState(false)
-  const [enabled, setEnabled] = useState(true)
-  const [loop, setLoop] = useState<NudgeLoop | null>(null)
-  const [msg, setMsg] = useState('')
-  const [idle, setIdle] = useState(60)
-  const [maxCycles, setMaxCycles] = useState(0)
-  const [busy, setBusy] = useState(false)
-
-  // 🔴 THE CATCH USED TO `setEnabled(false)`, and the `!enabled` branch below names a specific
-  // environment variable as the cause — so an unreachable `/api/autonudge` told the user
-  // "Disabled on this server (PERSONALCLAW_AUTONUDGE=0)" about a server that might have it on.
-  // A confident wrong answer about a setting is worse than a silent one; the rejection is recorded
-  // and rendered as itself.
-  const [cfgErr, setCfgErr] = useState<unknown>(null)
-  const load = useCallback(() => {
-    api.autonudgeGet(session).then((r) => {
-      setCfgErr(null)
-      setEnabled(r.enabled)
-      setLoop(r.loop)
-      if (r.loop) { setMsg(r.loop.message); setIdle(r.loop.idle_secs); setMaxCycles(r.loop.max_cycles) }
-    }).catch((e) => setCfgErr(e))
-  }, [session])
-  useEffect(load, [load])
-
-  async function arm() {
-    if (!msg.trim() || busy) return
-    setBusy(true)
-    try {
-      if (loop) await api.autonudgeUpdate(loop.id, { message: msg.trim(), idle_secs: idle, max_cycles: maxCycles })
-      else await api.autonudgeStart({ session_name: session, message: msg.trim(), idle_secs: idle, max_cycles: maxCycles })
-      load(); setOpen(false)
-    } finally { setBusy(false) }
-  }
-  async function stop() {
-    if (!loop || busy) return
-    setBusy(true)
-    try { await api.autonudgeDelete(loop.id); setLoop(null) } finally { setBusy(false) }
-  }
-
-  return (
-    <>
-      <MenuRow icon={<Repeat size={16} />} label="Auto-nudge" hint={loop?.active ? 'On — keeps this chat working when idle' : 'Keep this chat working when idle'}
-        onClick={() => { onOpen(); load(); setOpen(true) }} />
-      {open && (
-        <Modal title="Auto-nudge" icon={<Repeat size={18} className="text-primary" />} onClose={() => setOpen(false)}>
-          <div className="flex flex-col gap-2">
-            {cfgErr ? (
-              // Tested BEFORE `!enabled`: `enabled` is unchanged by a failed read, so an error
-              // branch after it would be unreachable for whichever value it happens to hold.
-              <FieldError>Couldn't load your auto-nudge setting — {(cfgErr as Error)?.message || 'the server did not respond'}. Reopen this panel to try again.</FieldError>
-            ) : !enabled ? (
-              <p className="text-[0.8125rem] text-on-surface-low">Disabled on this server (<code className="font-mono">PERSONALCLAW_AUTONUDGE=0</code>).</p>
-            ) : (<>
-              <p className="text-[0.8125rem] text-on-surface-low">When a turn finishes and you're idle, this message is re-injected into this chat to keep it working on its own.</p>
-              <textarea value={msg} onChange={(e) => setMsg(e.target.value)} rows={3} autoFocus
-                placeholder="e.g. Continue toward the goal; if done, write a summary and stop."
-                className="w-full rounded-md bg-surface-high px-2 py-1.5 text-on-surface text-[0.8125rem] outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary" />
-              <div className="flex items-center gap-3 text-[0.8125rem] text-on-surface-var">
-                <label className="flex items-center gap-1">Idle
-                  <input type="number" min={15} value={idle} onChange={(e) => setIdle(Number(e.target.value))} className="w-16 rounded bg-surface-high px-1.5 py-0.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />s</label>
-                <label className="flex items-center gap-1">Max cycles
-                  <input type="number" min={0} value={maxCycles} onChange={(e) => setMaxCycles(Number(e.target.value))} className="w-14 rounded bg-surface-high px-1.5 py-0.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" /></label>
-              </div>
-              {loop && <p className="text-[0.75rem] text-on-surface-low">Active · {loop.cycle_count} cycle{loop.cycle_count === 1 ? '' : 's'} fired{loop.max_cycles ? ` / ${loop.max_cycles}` : ''}.</p>}
-              <div className="flex justify-end gap-2 mt-1">
-                {loop && <Button variant="ghost" size="sm" onClick={stop} disabled={busy} disabledReason={BUSY_REASON}><X size={14} /> Stop</Button>}
-                <Button size="sm" onClick={arm} disabled={busy || !msg.trim()}
-                  disabledReason={!msg.trim() ? 'Write the message first' : BUSY_REASON}><Check size={14} /> {loop ? 'Update' : 'Arm'}</Button>
-              </div>
-            </>)}
-          </div>
-        </Modal>
-      )}
-    </>
-  )
-}

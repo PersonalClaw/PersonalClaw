@@ -532,7 +532,10 @@ describe('the hand-laid bars reach the same idiom', () => {
     // server-side, so it swaps WHICH list is fetched rather than narrowing this one.
     const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     const src = strip(readSource(join(SRC, 'pages/ChatPage.tsx')))
-    expect((src.match(/<ResultAnnouncement\b/g) ?? []).length, 'chat list + two pickers').toBe(3)
+    // The two pickers moved with the chat's composer region (`chat/composer/ContextPickers.tsx`).
+    const pickers = strip(readSource(join(SRC, 'pages/chat/composer/ContextPickers.tsx')))
+    expect((src.match(/<ResultAnnouncement\b/g) ?? []).length, 'the chat list').toBe(1)
+    expect((pickers.match(/<ResultAnnouncement\b/g) ?? []).length, 'the two pickers').toBe(2)
     expect(src, 'the chat list counts its own filtered array').toMatch(
       /count=\{filtered\.length\} noun="chats"\s*\n?\s*active=\{!!n \|\| origin !== 'manual'\}/,
     )
@@ -544,9 +547,9 @@ describe('the hand-laid bars reach the same idiom', () => {
     expect(chatsTag, 'and not compare against a default this surface does not use')
       .not.toMatch(/origin !== 'all'/)
     expect(chatsTag, 'the archived toggle is not a narrowing of this list').not.toMatch(/showArchived/)
-    expect(src, 'the artifact picker counts what the cap actually renders')
+    expect(pickers, 'the artifact picker counts what the cap actually renders')
       .toMatch(/count=\{shown\.length\} noun="artifacts" active=\{!!n\}/)
-    expect(src, 'the knowledge picker waits for its debounced fetch').toMatch(
+    expect(pickers, 'the knowledge picker waits for its debounced fetch').toMatch(
       /count=\{res\?\.results\.length \?\? 0\} noun="knowledge items"\s*\n?\s*active=\{!!q\.trim\(\) && !loading && res !== null\}/,
     )
   })

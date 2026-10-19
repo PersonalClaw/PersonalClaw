@@ -607,7 +607,10 @@ class TestClientOnlyMechanicsAreCorrectlySilent:
         assert "CoalescerCore" in src
 
     def test_quote_reply_writes_into_the_composer_not_over_the_wire(self):
-        page = (_WEB / "pages" / "ChatPage.tsx").read_text(encoding="utf-8")
+        # The composer's controller owns the draft a quote is written into.
+        page = (_WEB / "pages" / "chat" / "composer" / "useChatComposer.ts").read_text(
+            encoding="utf-8"
+        )
         assert "function quoteToComposer" in page or "const quoteToComposer" in page
         # The quote path's only effect is local composer state — the SEND that follows is
         # an ordinary turn, already covered by the turn's own logging.
@@ -670,7 +673,9 @@ class TestTheAuditIsComplete:
         that renders it — a renamed affordance leaves the guide pointing at nothing."""
         guide = (_ROOT / "docs" / "guides" / "chat-surface.md").read_text(encoding="utf-8")
         actions = (_WEB / "pages" / "chat" / "MessageActions.tsx").read_text(encoding="utf-8")
-        page = (_WEB / "pages" / "ChatPage.tsx").read_text(encoding="utf-8")
+        page = (_WEB / "pages" / "chat" / "composer" / "ChatComposer.tsx").read_text(
+            encoding="utf-8"
+        )
         assert 'label="Branch from here"' in actions and "**Branch from here**" in guide
         assert 'label="Plan this first"' in page and "**Plan this first**" in guide
 

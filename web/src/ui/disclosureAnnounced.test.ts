@@ -209,7 +209,8 @@ describe('the accordions the boolean-flip census could not see', () => {
     // it today silently stops asserting when a child is added. Two independent facts about the SAME flag
     // name is the check that cannot rot.
     const gated: [string, string][] = [
-      ['ChatPage.tsx', 'open'],
+      // The tool-call group's accordion, which moved with the chat's transcript region.
+      ['chat/transcript/AssistantSegments.tsx', 'open'],
       ['prompts/SyntaxReference.tsx', 'open'],
       ['schedule/ScheduleDetail.tsx', 'expanded'],
     ]

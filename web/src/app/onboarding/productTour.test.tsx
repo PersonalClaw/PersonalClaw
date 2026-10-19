@@ -306,7 +306,7 @@ describe('it walks all five stops, over the real surfaces', () => {
     const SRC = join(process.cwd(), 'src')
     const HOSTS: Record<string, string> = {
       rail: 'ui/NavRail.tsx',
-      chat: 'pages/ChatPage.tsx',
+      chat: 'pages/chat/composer/ChatComposer.tsx',
       inbox: 'pages/inbox/InboxPage.tsx',
       approvals: 'pages/dashboard/DashboardPage.tsx',
       settings: 'pages/settings/SettingsHome.tsx',

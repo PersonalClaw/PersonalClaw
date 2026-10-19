@@ -72,20 +72,21 @@ const INVENTORY: { file: string; anchor: string; ring: RegExp; what: string }[] 
     ring: ELEMENT_RING,
     what: 'rename-this-chat input',
   },
+  // The auto-continue settings moved with the chat's composer region.
   {
-    file: 'pages/ChatPage.tsx',
+    file: 'pages/chat/composer/AutoNudgeMenuItem.tsx',
     anchor: 'w-full rounded-md bg-surface-high px-2 py-1.5',
     ring: ELEMENT_RING,
     what: 'auto-continue message textarea',
   },
   {
-    file: 'pages/ChatPage.tsx',
+    file: 'pages/chat/composer/AutoNudgeMenuItem.tsx',
     anchor: 'w-16 rounded bg-surface-high',
     ring: ELEMENT_RING,
     what: 'auto-continue idle-seconds number input',
   },
   {
-    file: 'pages/ChatPage.tsx',
+    file: 'pages/chat/composer/AutoNudgeMenuItem.tsx',
     anchor: 'w-14 rounded bg-surface-high',
     ring: ELEMENT_RING,
     what: 'auto-continue max-cycles number input',
