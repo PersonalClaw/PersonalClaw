@@ -943,6 +943,51 @@ it can't read: missing, empty, not JSON lines, another schema or a newer version
 1 MiB or a whole over 256 MiB, or no report of one side (a push whose tree was already tested
 runs no `test-macos`). It reads only the file it is given, and no workflow runs it yet.
 
+## The selection map
+
+`tools/ci/selection_map.py` (`python -m tools.ci selection-map --data <coverage database>
+--commit <sha> --out <file>`) is the first piece of selecting tests by coverage (#3946). It reads
+a database that a suite run under `--cov=personalclaw --cov-context=test` wrote, and writes which
+test files ran each source file. Nothing selects from it yet.
+
+- **`map`:** each measured source file, repository-relative (`--root` makes an absolute one
+  relative), to the sorted test files whose setup, call or teardown ran any line of it.
+  pytest-cov names each test's context `<test id>|setup`, `|run` or `|teardown`; a test id
+  whose case holds a `|` is read whole.
+- **`hubs`:** the source files that more than 40% of the map's test files reach. A change to
+  one runs the whole suite, since selection buys nothing for it.
+- **`outside_tests`:** the source files whose lines ran only outside any test's context: at
+  import, before the first test began, or in a child interpreter. No test file maps to them, so
+  the selector is to cover them by the import closure of what a test launches, never by the map.
+- **`commit`**, `built_at` and `test_files`, the number of test files the contexts name.
+- **Read as data.** The database is opened read-only with `sqlite3`, in coverage's schema 7,
+  which a test holds to the installed coverage's, so `tools/ci` stays standard library only.
+  Only which file each context touched is read, from the line table and the branch table both.
+  A file that is not a coverage database, another schema, and a database with no test context
+  (a run without `--cov-context=test`) exit 2 and write nothing.
+
+`[tool.coverage.run]` in `pyproject.toml` records what the map needs, in every coverage run,
+breadth's coverage leg included:
+
+- `branch = false`: lines, not branches, so the leg's percentage is line coverage;
+- `relative_files = true`: paths relative to the checkout, so shards run on different runners
+  combine into one map;
+- `parallel = true`, and `patch = ["subprocess"]`: every child interpreter a test starts is
+  measured too, since pytest-cov 7 no longer patches subprocesses itself. Coverage passes its
+  configuration to the child in `COVERAGE_PROCESS_CONFIG`, the child writes its data file beside
+  the run's, and pytest-cov combines it at the end. A child's lines carry no test's context, and
+  a child started with an environment of its own that drops that variable is not measured.
+
+`make selection-map` runs the suite under coverage with per-test contexts, with its data in
+`selection-map/` under the git common dir (`git rev-parse --git-common-dir`), and writes
+`selection-map/selection-map.json` there, the one place every worktree of the clone shares.
+`SELECTION_MAP_ARGS` is pytest's (by default `-n auto --dist worksteal tests`) and
+`SELECTION_MAP_COV` what to measure. The map is written from a red run too, and the exit is then
+the suite's.
+
+Not yet: the nightly map build in breadth's coverage leg, `tools/ci/select.py` reading the map,
+shadow mode, and the recall study.
+
 ## Local runs
 
 `python -m tools.ci run-job <id> [--shard i/N]` runs one catalogue job here, and

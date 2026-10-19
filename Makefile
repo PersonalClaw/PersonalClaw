@@ -33,7 +33,7 @@ WEB_DIR         := web
 DESKTOP_DIR     := desktop
 PYI_BUNDLE_DIR  := dist/personalclaw-backend
 
-.PHONY: help format lock lint test check gate test-e2e test-visual build clean harness-validate gates \
+.PHONY: help format lock lint test selection-map check gate test-e2e test-visual build clean harness-validate gates \
         asset-licenses asset-licenses-built \
         mutation-check bundled-model sdk-snapshot apps-contract \
         serve serve-lan serve-fresh serve-web \
@@ -95,6 +95,23 @@ lint:
 # evidence of your own diff — see #684 before assuming it is.
 test:
 	$(PYTHON) -m pytest -n auto --dist worksteal
+
+## selection-map: run the suite under coverage with per-test contexts and write the selection map
+## (tools/ci/selection_map.py) to selection-map/selection-map.json in the git common dir, which
+## every worktree of the clone shares. Exit: the suite's, once the map is written
+# The map is written from a red run too, and the exit then says the suite was red. The database
+# and the children's data files stay beside it, out of the checkout. SELECTION_MAP_ARGS is
+# pytest's (the workers and what to run), SELECTION_MAP_COV what to measure.
+SELECTION_MAP_ARGS ?= -n auto --dist worksteal tests
+SELECTION_MAP_COV ?= personalclaw
+selection-map:
+	@dir="$$(git rev-parse --path-format=absolute --git-common-dir)/selection-map" && \
+	mkdir -p "$$dir" && rm -f "$$dir"/.coverage "$$dir"/.coverage.* && \
+	COVERAGE_FILE="$$dir/.coverage" $(PYTHON) -m pytest --cov=$(SELECTION_MAP_COV) \
+		--cov-context=test --cov-report= $(SELECTION_MAP_ARGS); status=$$?; \
+	$(PYTHON) -m tools.ci selection-map --data "$$dir/.coverage" \
+		--commit "$$(git rev-parse HEAD)" --root "$$(pwd)" --out "$$dir/selection-map.json" \
+		&& exit $$status
 
 ## check: run the change tier's catalogue jobs here, as CI runs them (tools/ci/catalogue.toml), on
 ## the working tree as it stands, before a commit: no record, and the exit is the steps' result

@@ -570,9 +570,16 @@ markers = [
     "security: proves a security or fail-closed boundary; never rerun, quarantined or selected out. tests/security_census.py names the modules that must carry it.",
 ]
 
+# The per-test selection map (tools/ci/selection_map.py, #3946) reads which test ran each line, so
+# lines are recorded, not branches; paths are recorded relative to the checkout, so shards run on
+# different runners combine into one map; and every child interpreter a test starts is measured
+# too, since pytest-cov 7 no longer patches subprocesses itself. A child's lines carry no test's
+# context, so the map lists the files only children reached apart from the rest.
 [tool.coverage.run]
-branch = true
+branch = false
 parallel = true
+relative_files = true
+patch = ["subprocess"]
 
 [tool.coverage.paths]
 source = [
