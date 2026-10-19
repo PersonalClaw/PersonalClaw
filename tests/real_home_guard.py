@@ -70,6 +70,7 @@ tree it guards cannot be told apart from one that never fires.
 from __future__ import annotations
 
 import os
+import pwd
 import re
 import shlex
 import sys
@@ -81,11 +82,60 @@ from pathlib import Path
 
 import pytest
 
-#: The developer's REAL home, resolved once at import — before any test can repoint
-#: ``Path.home`` or ``$HOME``. This module must stay an eager import of ``conftest.py`` for
-#: exactly that reason (``tests/pycache_guard.py`` names it as one of the three files that
-#: run before the bytecode rail exists).
-REAL_HOME = Path.home() / ".personalclaw"
+
+def passwd_home() -> Path:
+    """The home this account's entry in the user database names, whatever ``$HOME`` says.
+
+    A run can start with a ``$HOME`` that isn't the developer's: a job ``tools/ci/run.py`` starts
+    has a scratch one. A guard that took its home from ``$HOME`` would guard that scratch folder
+    and let the real ``~/.personalclaw`` through, so the guards take it from here. An account
+    with no entry, or whose entry names no absolute path, stops the run rather than guess: a
+    relative home would be guarded under whatever folder the run started in."""
+    try:
+        named = pwd.getpwuid(os.getuid()).pw_dir
+    except KeyError:
+        raise RuntimeError(
+            f"the tests can't find the real home: user id {os.getuid()} has no entry in the "
+            "user database, and $HOME can't stand in for it (tests/real_home_guard.py)"
+        ) from None
+    if not os.path.isabs(named):
+        raise RuntimeError(
+            f"the tests can't find the real home: the user database names {named!r} as user id "
+            f"{os.getuid()}'s home, which isn't an absolute path, and $HOME can't stand in for it "
+            "(tests/real_home_guard.py)"
+        )
+    return Path(named)
+
+
+def _same_folder(home: Path, entry: Path) -> bool:
+    """Whether *home* and *entry* name one folder. Their resolved spellings can differ when they
+    do (another letter case on a file system that ignores it, a firmlink, a bind mount), so the
+    file system is asked too; a folder not made yet is judged by its resolved spelling alone."""
+    if os.path.realpath(home) == os.path.realpath(entry):
+        return True
+    try:
+        return os.path.samefile(home, entry)
+    except OSError:
+        return False
+
+
+def _guarded_home() -> Path:
+    """The real home (:func:`passwd_home`), spelled as ``$HOME`` spells it when ``$HOME`` names
+    that same folder, by whatever path. The guard matches paths as they are written, and a home
+    is written the way ``$HOME`` spells it, so where ``$HOME`` is the real home by a link, or in
+    another letter case, the guard watches what it watched when it took its home from
+    ``$HOME``."""
+    entry = passwd_home()
+    home = Path.home()
+    return home if _same_folder(home, entry) else entry
+
+
+#: The developer's REAL home, resolved once at import from the user database, never from
+#: ``$HOME``, so neither a test that repoints ``Path.home`` or ``$HOME`` nor a run started with
+#: a scratch ``$HOME`` can move it. This module must stay an eager import of ``conftest.py``
+#: (``tests/pycache_guard.py`` names it as one of the three files that run before the bytecode
+#: rail exists).
+REAL_HOME = _guarded_home() / ".personalclaw"
 
 #: Where the session verdict is persisted, relative to the pytest rootdir: the same
 #: ``reports/`` directory ``--junitxml`` writes into, so CI ships it with an existing

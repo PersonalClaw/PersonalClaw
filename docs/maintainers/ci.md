@@ -825,11 +825,12 @@ runs no `test-macos`). It reads only the file it is given, and no workflow runs 
   from the base touches, plus every security job and every job an `after` of a chosen one names.
   A changed path that no job's inputs cover runs the whole tier. `run-job` always runs the job
   it is given.
-- **Exit codes:** 0 every planned job ran here and passed; 1 a job ran and failed, or git asked
-  for a credential; 2 a job could not run here, was interrupted or left no record, or the input
-  could not be read: an unknown job or tier, a tier with no job (`weekly` and `release` have
-  none yet), an option given twice, or a job env naming a variable the runner owns, which the
-  loader refuses too.
+- **Exit codes:** 0 every planned job ran here and passed; 1 a job ran and failed, git asked
+  for a credential, or a job made the real home's `.personalclaw`; 2 a job could not run here,
+  was interrupted or left no record, or the input could not be read: an unknown job or tier, a
+  tier with no job (`weekly` and `release` have none yet), an option given twice, or a job env
+  naming a variable the runner owns, which the loader refuses too. An account whose entry in the
+  user database names no absolute home runs no job here either, and exits 2 before any step.
 - **Not yet:** nothing reuses a recorded pass, so `run` runs every job; and nothing reads these
   records on GitHub.
 
@@ -855,18 +856,30 @@ Each step runs through `tools/ci/run.py`, which runs one command from an empty e
   command line answers after it. A job that sets git's command-line configuration of its own
   replaces the tripwire: inside a pytest job the suite's conftest does that, and there the suite's
   git guard covers git instead.
-- **Exit codes.** 0 is OK. 1 is red: a non-zero exit, a timeout, or a credential git asked for,
-  which stays red even when the run is interrupted. 2 is partial: a SIGINT or SIGTERM the runner
-  gets from before the job starts until its group is gone, and the run is never 0. The runner
-  takes those signals on the main thread only, so it refuses to start a job on any other.
+- **Exit codes.** 0 is OK. 1 is red: a non-zero exit, a timeout, a credential git asked for, or a
+  real home's `.personalclaw` the job made; the last two stay red even when the run is
+  interrupted. 2 is partial: a SIGINT or SIGTERM the runner gets from before the job starts until
+  its group is gone, and the run is never 0. The runner takes those signals on the main thread
+  only, so it refuses to start a job on any other.
 - **Stopping a job.** A timeout or a signal sends SIGTERM to the job's whole process group, then
   SIGKILL once every process of the group has exited or 5 seconds have passed, whichever is
   first. A signal the runner gets meanwhile, other than the one that began the stop, cuts the 5
   seconds short. When a job ends on its own, whatever is left of its group gets SIGKILL, so no
   process of the group outlives the run.
-- **Not guarded yet:** a job that names the real home by path, the container or worktree a job
-  runs in, and scheduling. A local result never stands in for GitHub's, and no workflow reads what
-  it writes.
+- **The real home.** The runner and the suite's real-home and git guards take the real home from
+  the account's entry in the user database, never from `$HOME`, so a job's scratch `HOME` can't
+  retarget them: a test inside a job that writes the real `~/.personalclaw` by its path is still
+  refused. Where `$HOME` names that same folder by another path (a link, another letter case, a
+  firmlink), the guards keep `$HOME`'s spelling, and watch what they watched when they took it
+  from `$HOME`. A run also fails when the real home's `.personalclaw` was absent as the job
+  started and is there as it ends. The runner only asks whether that folder exists; it never
+  reads, lists or changes the real home, which may be a live PersonalClaw's. An account with no
+  entry in the user database, or whose entry names no absolute path, starts no job.
+- **Not guarded yet:** what a job does under a real home's `.personalclaw` that was already there,
+  or one it made and removed again; the rest of the real home, the model caches the suite's
+  model-root guard forbids among them, since that guard still takes its home from `$HOME`; the
+  container or worktree a job runs in; and scheduling. A local result never stands in for
+  GitHub's, and no workflow reads what it writes.
 
 ## Verdict reuse
 

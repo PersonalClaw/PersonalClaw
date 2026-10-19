@@ -86,7 +86,7 @@ glossed: ``conftest.py``, this module, and ``real_home_guard.py`` are imported
 before the prefix can exist, so their bytecode does land in ``tests/__pycache__``
 (measured: those three ``.pyc`` files and nothing else). Something has to run
 first and cannot protect itself. ``real_home_guard`` in particular must stay an
-eager import — it resolves ``Path.home()`` at import time on purpose, before a test
+eager import — it resolves the real home at import time on purpose, before a test
 can patch it. Everything else is covered: after a full run there is no
 ``__pycache__`` anywhere under ``src/personalclaw`` and none for any
 ``tests/test_*.py``.

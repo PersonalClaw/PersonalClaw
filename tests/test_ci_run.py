@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import pwd
 import shlex
 import signal
 import subprocess
@@ -31,6 +32,30 @@ REPO = Path(__file__).resolve().parents[1]
 PATH = os.environ["PATH"]
 SECRET = "a-planted-password-phrase-for-the-tripwire"
 TOKEN = "a planted caller token phrase"
+
+
+def _planted_real_home(monkeypatch, home: Path | str) -> None:
+    """Make the user database name *home* as this account's home, for the test's duration."""
+    real = pwd.getpwuid
+
+    def planted(uid: int):
+        fields = list(real(uid))
+        fields[5] = str(home)
+        return pwd.struct_passwd(fields)
+
+    monkeypatch.setattr(pwd, "getpwuid", planted)
+
+
+#: The home the user database names in every test here unless the test plants another: a folder
+#: under the test's own, never made, so the runner's real-home check (j) never looks at the real
+#: one. RUNNER's child plants the same.
+_PLANTED_REAL_HOME = "the-real-home"
+
+
+@pytest.fixture(autouse=True)
+def _the_user_database_names_a_planted_home(tmp_path, monkeypatch):
+    _planted_real_home(monkeypatch, tmp_path / _PLANTED_REAL_HOME)
+
 
 #: Prints what a job sees of its home, its temporary folder and its environment.
 PROBE = (
@@ -441,14 +466,19 @@ signal.pause()
 #: arguments: the repository, the run's folder, the job's argv and run_job's keywords as JSON,
 #: then, optionally, when the runner signals itself and with which signal: ``started`` as Popen
 #: returns the job, ``ended`` as the runner kills what is left of the group of a job that ended.
+#: Its user database names ``the-real-home`` under the run's folder (:data:`_PLANTED_REAL_HOME`).
 RUNNER = """\
-import json, os, signal, subprocess, sys, time
+import json, os, pwd, signal, subprocess, sys, time
 from pathlib import Path
 
 sys.path.insert(0, sys.argv[1])
 from tools.ci import run
 
 base, argv, kw = Path(sys.argv[2]), json.loads(sys.argv[3]), json.loads(sys.argv[4])
+_entry = pwd.getpwuid
+pwd.getpwuid = lambda uid: pwd.struct_passwd(
+    [*_entry(uid)[:5], str(base / "the-real-home"), *_entry(uid)[6:]]
+)
 when, signum = (sys.argv[5], int(sys.argv[6])) if len(sys.argv) > 6 else (None, 0)
 if when == "started":
     class Started(subprocess.Popen):
@@ -839,3 +869,166 @@ def test_a_folder_an_earlier_job_left_is_refused(tmp_path, left_behind):
         (earlier / left_behind).write_text("[user]\n\tname = an-earlier-job\n")
     with pytest.raises(FileExistsError):
         run.Scratch.create(earlier)
+
+
+# (j) the real home is the user database's, and a job that makes its .personalclaw fails the run
+
+
+def _made_by_path(target: Path, how: str) -> list[str]:
+    """A job that makes *target* by its absolute path, as *how* says."""
+    make = {
+        "a folder": f"os.makedirs({str(target)!r})",
+        "a file": f"open({str(target)!r}, 'w').close()",
+        "a dangling link": f"os.symlink({str(target.parent / 'nowhere')!r}, {str(target)!r})",
+    }[how]
+    return [sys.executable, "-c", f"import os; {make}"]
+
+
+def test_the_real_home_is_the_user_databases_not_the_HOME_variable(tmp_path, monkeypatch):
+    planted = tmp_path / "real-home"
+    _planted_real_home(monkeypatch, planted)
+    monkeypatch.setenv("HOME", str(tmp_path / "another-home"))
+    assert run.real_home() == planted
+
+
+@pytest.mark.parametrize("how", ["a folder", "a file", "a dangling link"])
+def test_a_job_that_makes_the_real_homes_personalclaw_fails_the_run(tmp_path, monkeypatch, how):
+    planted = tmp_path / "real-home"
+    planted.mkdir()
+    (planted / "keep.txt").write_text("the owner's own file")
+    _planted_real_home(monkeypatch, planted)
+    # The runner's own HOME is another folder: a runner that took it from there watches that one.
+    monkeypatch.setenv("HOME", str(tmp_path / "runner-home"))
+    made = planted / ".personalclaw"
+
+    result = _run(tmp_path, _made_by_path(made, how))
+
+    assert result.code == run.RED, result
+    assert result.violations == (
+        f"the job made the real home's {made}, which was absent as it started",
+    )
+    # The runner only looks: what the job made stays as it made it, and nothing else changed.
+    assert sorted(p.name for p in planted.iterdir()) == [".personalclaw", "keep.txt"]
+    assert (planted / "keep.txt").read_text() == "the owner's own file"
+    assert made.is_symlink() == (how == "a dangling link")
+    if how == "a folder":
+        assert list(made.iterdir()) == []
+
+
+def test_a_job_that_makes_a_personalclaw_in_its_own_home_passes(tmp_path, monkeypatch):
+    planted = tmp_path / "real-home"
+    planted.mkdir()
+    _planted_real_home(monkeypatch, planted)
+    scratch = _scratch(tmp_path)
+    job = [sys.executable, "-c", "import os; os.makedirs(os.path.expanduser('~/.personalclaw'))"]
+
+    result = _run(tmp_path, job, scratch=scratch)
+
+    assert result == run.Result(code=run.OK, returncode=0, violations=())
+    assert (scratch.home / ".personalclaw").is_dir()
+    assert list(planted.iterdir()) == []
+
+
+@pytest.mark.parametrize("what", ["a folder", "a dangling link"])
+def test_a_real_homes_personalclaw_that_was_there_before_the_job_passes(
+    tmp_path, monkeypatch, what
+):
+    planted = tmp_path / "real-home"
+    planted.mkdir()
+    if what == "a folder":
+        (planted / ".personalclaw").mkdir()
+    else:
+        (planted / ".personalclaw").symlink_to(planted / "nowhere")
+    _planted_real_home(monkeypatch, planted)
+    result = _run(tmp_path, [sys.executable, "-c", "pass"])
+    assert result == run.Result(code=run.OK, returncode=0, violations=())
+
+
+@pytest.mark.parametrize(
+    ("ending", "first"),
+    [("exits 1", "the job exited 1"), ("times out", "the job timed out after 3s")],
+)
+def test_a_job_that_made_the_real_homes_personalclaw_and_failed_is_named_for_both(
+    tmp_path, monkeypatch, ending, first
+):
+    planted = tmp_path / "real-home"
+    planted.mkdir()
+    _planted_real_home(monkeypatch, planted)
+    made = planted / ".personalclaw"
+    then = {"exits 1": "sys.exit(1)", "times out": "signal.pause()"}[ending]
+    job = [sys.executable, "-c", f"import os, signal, sys; os.makedirs({str(made)!r}); {then}"]
+
+    result = _run(tmp_path, job, timeout=3.0, grace=0.5)
+
+    assert result.code == run.RED, result
+    assert result.violations == (
+        first,
+        f"the job made the real home's {made}, which was absent as it started",
+    )
+
+
+@pytest.mark.parametrize(
+    "entry", [None, "", "relative/home"], ids=["no entry", "an empty home", "a relative home"]
+)
+def test_a_runner_whose_user_database_entry_names_no_home_starts_no_job(
+    tmp_path, monkeypatch, entry
+):
+    def no_entry(uid: int):
+        raise KeyError(f"getpwuid(): uid not found: {uid}")
+
+    if entry is None:
+        monkeypatch.setattr(pwd, "getpwuid", no_entry)
+    else:
+        _planted_real_home(monkeypatch, entry)
+    # A runner that fell back to $HOME would find one, and run the job; one that took a relative
+    # home as it stands would watch a folder under wherever it was started.
+    monkeypatch.setenv("HOME", str(tmp_path / "runner-home"))
+    monkeypatch.chdir(tmp_path)
+    marker = tmp_path / "the-job-ran"
+    why = "no entry in the user database" if entry is None else f"names {entry!r} as user id"
+    with pytest.raises(RuntimeError, match=rf"{why}.*runs no job"):
+        _run(tmp_path, [sys.executable, "-c", f"open({str(marker)!r}, 'w').close()"])
+    assert not marker.exists()
+
+
+def test_an_interrupted_run_whose_job_made_the_real_homes_personalclaw_is_red(tmp_path):
+    planted = tmp_path / _PLANTED_REAL_HOME  # the home RUNNER's user database names
+    planted.mkdir()
+    made = planted / ".personalclaw"
+    kw = {"timeout": 60.0}
+    job = _made_by_path(made, "a folder")
+    with _runner(tmp_path, job, kw, when="ended", signum=signal.SIGINT) as (runner, out, _):
+        assert runner.wait(timeout=60) == run.RED, "an isolation breach outranks an interrupt"
+        assert _result(out)[2] == [
+            "interrupted by SIGINT",
+            f"the job made the real home's {made}, which was absent as it started",
+        ]
+
+
+#: A job that makes the folder its first argument names, says it is ready, and blocks.
+MAKES_THEN_BLOCKED = (
+    "import os, signal, sys\n"
+    "os.makedirs(sys.argv[1])\n"
+    "print('ready', os.getpid(), flush=True)\n"
+    "signal.pause()\n"
+)
+
+
+def test_a_run_interrupted_while_its_job_runs_after_making_the_real_homes_personalclaw_is_red(
+    tmp_path,
+):
+    planted = tmp_path / _PLANTED_REAL_HOME  # the home RUNNER's user database names
+    planted.mkdir()
+    made = planted / ".personalclaw"
+    kw = {"timeout": 120.0, "grace": 0.5}
+    job = [sys.executable, "-c", MAKES_THEN_BLOCKED, str(made)]
+    with _runner(tmp_path, job, kw) as (runner, out, groups):
+        group = int(_line(out, "ready")[1])
+        groups.append(group)
+        runner.send_signal(signal.SIGINT)
+        assert runner.wait(timeout=60) == run.RED, "an isolation breach outranks an interrupt"
+        assert _result(out)[2] == [
+            "interrupted by SIGINT",
+            f"the job made the real home's {made}, which was absent as it started",
+        ]
+        assert _gone(group)

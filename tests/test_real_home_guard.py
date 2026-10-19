@@ -10,6 +10,7 @@ thread calls go through the real hook, the real charging and the real reports.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -412,7 +413,23 @@ def test_a_home_an_environment_names_is_answered_as_asked(tmp_path) -> None:
 
 # ── End to end: a real pytest session, a fake $HOME ──────────────────────────────────────
 
+#: The inner session's conftest. The user database is stubbed, before the guard is imported, to
+#: name the session's planted real home (``PC_PLANTED_REAL_HOME``), so the guard reads it as it
+#: reads the real one: the guard takes the real home from there, never from ``$HOME``.
 _INNER_CONFTEST = """
+import os, pwd
+
+_real = pwd.getpwuid
+
+
+def _planted(uid):
+    fields = list(_real(uid))
+    fields[5] = os.environ["PC_PLANTED_REAL_HOME"]
+    return pwd.struct_passwd(fields)
+
+
+pwd.getpwuid = _planted
+
 import real_home_guard
 
 real_home_guard.GUARD.install()
@@ -426,8 +443,8 @@ def pytest_configure(config):
 def _inner_session(
     tmp_path: Path, tests: str, *, made: bool = True
 ) -> tuple[subprocess.CompletedProcess, Path, Path]:
-    """Run ``tests`` in a child pytest whose ``$HOME`` is a directory under ``tmp_path``, with its
-    ``.personalclaw`` already there unless *made* is false."""
+    """Run ``tests`` in a child pytest whose ``$HOME`` and planted real home are a directory under
+    ``tmp_path``, with its ``.personalclaw`` already there unless *made* is false."""
     home = tmp_path / "home"
     home.mkdir()
     if made:
@@ -438,6 +455,7 @@ def _inner_session(
     (work / "test_inner.py").write_text(textwrap.dedent(tests))
     env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "PERSONALCLAW_"))}
     env["HOME"] = str(home)
+    env["PC_PLANTED_REAL_HOME"] = str(home)
     env["PYTHONPATH"] = os.pathsep.join([str(_TESTS_DIR), env.get("PYTHONPATH", "")]).rstrip(
         os.pathsep
     )
@@ -629,3 +647,313 @@ def test_an_unwritable_rootdir_yields_none_rather_than_raising(tmp_path) -> None
         assert real_home_guard.write_report(rootdir, "real-home guard FAILED: ...") is None
     finally:
         rootdir.chmod(0o700)
+
+
+# ── The real home is the user database's, never $HOME ────────────────────────────────────
+
+
+def _planted_passwd(monkeypatch, home: Path | str) -> None:
+    """Make the user database name *home* as this account's home, for the test's duration."""
+    import pwd
+
+    real = pwd.getpwuid
+
+    def planted(uid: int):
+        fields = list(real(uid))
+        fields[5] = str(home)
+        return pwd.struct_passwd(fields)
+
+    monkeypatch.setattr(pwd, "getpwuid", planted)
+
+
+def test_the_real_home_is_the_user_databases_entry_whatever_HOME_says(tmp_path, monkeypatch):
+    planted = tmp_path / "real-home"
+    _planted_passwd(monkeypatch, planted)
+    monkeypatch.setenv("HOME", str(tmp_path / "scratch-home"))
+    assert real_home_guard.passwd_home() == planted
+
+
+#: Loads the guard in a child whose user database names ``PC_PLANTED_REAL_HOME`` (or has no entry
+#: when ``PC_NO_ENTRY`` is set), and prints what it guards beside what a guard built as it was
+#: before this took the home from the user database (``Path.home() / ".personalclaw"``) guards,
+#: and which of the paths ``PC_ASK_OWNS`` lists the guard owns.
+_LOAD_WITH_A_PLANTED_ENTRY = """\
+import json, os, pwd, sys
+from pathlib import Path
+
+_real = pwd.getpwuid
+
+
+def _planted(uid):
+    if os.environ.get("PC_NO_ENTRY"):
+        raise KeyError(f"getpwuid(): uid not found: {uid}")
+    fields = list(_real(uid))
+    fields[5] = os.environ["PC_PLANTED_REAL_HOME"]
+    return pwd.struct_passwd(fields)
+
+
+pwd.getpwuid = _planted
+sys.path.insert(0, sys.argv[1])
+import real_home_guard
+
+
+def folders(guard):
+    return [str(guard.root), sorted(guard._prefixes), sorted(guard._needles), guard._home]
+
+
+before = Path.home() / ".personalclaw"
+asked = json.loads(os.environ.get("PC_ASK_OWNS", "[]"))
+print(json.dumps({
+    "now": [str(real_home_guard.REAL_HOME), folders(real_home_guard.GUARD)],
+    "before": [str(before), folders(real_home_guard.Guard(before))],
+    "owns": [real_home_guard.GUARD.owns(path) for path in asked],
+}))
+"""
+
+
+def _loaded_with(
+    tmp_path: Path, home: str, planted: str | None, *, owns: tuple[str, ...] = ()
+) -> subprocess.CompletedProcess:
+    """Load the guard in a child whose ``$HOME`` is *home* and whose user database names
+    *planted*, or has no entry when *planted* is ``None``."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "PERSONALCLAW_"))}
+    env.update(HOME=home, PC_ASK_OWNS=json.dumps(list(owns)))
+    if planted is None:
+        env["PC_NO_ENTRY"] = "1"
+    else:
+        env["PC_PLANTED_REAL_HOME"] = planted
+    return subprocess.run(
+        [sys.executable, "-c", _LOAD_WITH_A_PLANTED_ENTRY, str(_TESTS_DIR)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+#: The ways a ``$HOME`` can name the folder the user database names as the real home.
+_SPELLINGS = [
+    "as the user database does",
+    "with a slash",
+    "by a link",
+    "by a link, and the user database by another",
+    "in another letter case",
+    "by a link, to a home not made yet",
+]
+
+
+def _the_real_home_spelled(tmp_path: Path, spelling: str) -> tuple[str, str]:
+    """A ``$HOME`` and a user database entry under *tmp_path* that name the same folder, the
+    ``$HOME`` spelled as *spelling* says. Skips a spelling this file system can't give."""
+    real = tmp_path / "real-home"
+    if spelling == "by a link, to a home not made yet":
+        (tmp_path / "homes").mkdir()
+        (tmp_path / "homes-link").symlink_to(tmp_path / "homes")
+        return str(tmp_path / "homes-link" / "real-home"), str(tmp_path / "homes" / "real-home")
+    real.mkdir()
+    if spelling == "as the user database does":
+        return str(real), str(real)
+    if spelling == "with a slash":
+        return str(real) + os.sep, str(real)
+    if spelling == "by a link":
+        (tmp_path / "home-link").symlink_to(real)
+        return str(tmp_path / "home-link"), str(real)
+    if spelling == "by a link, and the user database by another":
+        (tmp_path / "home-link").symlink_to(real)
+        (tmp_path / "entry-link").symlink_to(real)
+        return str(tmp_path / "home-link"), str(tmp_path / "entry-link")
+    assert spelling == "in another letter case", spelling
+    other = tmp_path / "REAL-HOME"
+    if not (other.exists() and os.path.samefile(other, real)):
+        pytest.skip("this file system tells letter case apart, so no other case names the home")
+    return str(other), str(real)
+
+
+@pytest.mark.parametrize("spelling", _SPELLINGS)
+def test_where_HOME_is_the_real_home_the_guard_watches_what_it_did_before(tmp_path, spelling):
+    """Unchanged where it already worked: a run whose ``$HOME`` names the real home, however it
+    spells it, guards byte for byte the folders it guarded when it took them from ``$HOME``."""
+    home, entry = _the_real_home_spelled(tmp_path, spelling)
+    ran = _loaded_with(tmp_path, home, entry)
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    said = json.loads(ran.stdout)
+    assert said["now"] == said["before"]
+
+
+@pytest.mark.parametrize("where", ["beside the real home", "under the real home"])
+def test_where_HOME_is_a_scratch_folder_the_guard_watches_the_user_databases_home(tmp_path, where):
+    """``under the real home`` is the runner's own layout: a job's scratch home is under the
+    checkout's ``.local/run-job``, and a checkout is often under the real home."""
+    planted = tmp_path / "real-home"
+    planted.mkdir()
+    scratch_home = {
+        "beside the real home": tmp_path / "scratch-home",
+        "under the real home": planted.joinpath(
+            "repo", ".local", "run-job", "r1", "jobs", "j", "home"
+        ),
+    }[where]
+    scratch_home.mkdir(parents=True)
+    leak = planted / ".personalclaw" / "config.json"
+    own = scratch_home / ".personalclaw" / "config.json"
+    ran = _loaded_with(tmp_path, str(scratch_home), str(planted), owns=(str(leak), str(own)))
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    said = json.loads(ran.stdout)
+    real_home, (root, prefixes, _needles, home) = said["now"]
+    assert real_home == root == str(planted / ".personalclaw")
+    assert home == str(planted)
+    assert not any(str(scratch_home) in prefix for prefix in prefixes)
+    # A write to the real home by its absolute path is the guard's; one to the job's own is not.
+    assert said["owns"] == [str(leak), None]
+
+
+#: What an account's entry can hold that names no home: none at all, an empty home, a relative one.
+_NO_HOME = [None, "", "relative/home"]
+_NO_HOME_IDS = ["no entry", "an empty home", "a relative home"]
+
+
+@pytest.mark.parametrize("entry", _NO_HOME, ids=_NO_HOME_IDS)
+def test_a_run_whose_user_database_names_no_home_stops_as_the_guard_loads(tmp_path, entry):
+    """No silent fallback to ``$HOME``, nor to the folder the run started in: the guard can't be
+    loaded at all."""
+    scratch_home = tmp_path / "scratch-home"
+    scratch_home.mkdir()
+    ran = _loaded_with(tmp_path, str(scratch_home), entry)
+    assert ran.returncode != 0, ran.stdout
+    assert "and $HOME can't stand in for it (tests/real_home_guard.py)" in ran.stderr
+    assert ran.stdout == ""
+
+
+@pytest.mark.parametrize("entry", _NO_HOME, ids=_NO_HOME_IDS)
+def test_an_account_whose_user_database_entry_names_no_home_stops_the_run(
+    tmp_path, monkeypatch, entry
+) -> None:
+    import pwd
+
+    def no_entry(uid: int):
+        raise KeyError(f"getpwuid(): uid not found: {uid}")
+
+    if entry is None:
+        monkeypatch.setattr(pwd, "getpwuid", no_entry)
+    else:
+        _planted_passwd(monkeypatch, entry)
+    # A guard that fell back to $HOME would find one, and one that took a relative home as it
+    # stands would guard a folder under wherever the run started.
+    monkeypatch.setenv("HOME", str(tmp_path / "scratch-home"))
+    monkeypatch.chdir(tmp_path)
+    why = "no entry in the user database" if entry is None else f"names {entry!r} as user id"
+    with pytest.raises(RuntimeError, match=rf"{why}.*\$HOME can't stand in for it"):
+        real_home_guard.passwd_home()
+
+
+#: Loads the suite's own conftest, as pytest does, in a child whose ``$HOME`` is a scratch folder
+#: and whose user database names ``PC_PLANTED_REAL_HOME``, and prints the home the run started
+#: with and whether a test chose a home: one that chose none, one that chose one by ``$HOME``,
+#: and one that chose one by ``$PERSONALCLAW_HOME``.
+_LOAD_THE_SUITES_CONFTEST = """\
+import json, os, pwd, sys
+
+_real = pwd.getpwuid
+
+
+def _planted(uid):
+    fields = list(_real(uid))
+    fields[5] = os.environ["PC_PLANTED_REAL_HOME"]
+    return pwd.struct_passwd(fields)
+
+
+pwd.getpwuid = _planted
+sys.path.insert(0, sys.argv[1])
+import conftest
+
+try:
+    started = os.environ["HOME"]
+    said = {
+        "the home the run started with": str(conftest._STARTING_HOME),
+        "chose none": conftest._caller_chose_a_home(),
+    }
+    os.environ["HOME"] = sys.argv[2]
+    said["chose one by $HOME"] = conftest._caller_chose_a_home()
+    os.environ["HOME"] = started
+    os.environ["PERSONALCLAW_HOME"] = sys.argv[3]
+    said["chose one by $PERSONALCLAW_HOME"] = conftest._caller_chose_a_home()
+    print(json.dumps(said))
+finally:
+    conftest.git_helper_guard.close()
+"""
+
+
+def test_a_run_started_with_a_scratch_HOME_tells_a_test_that_chose_a_home_from_one_that_did_not(
+    tmp_path,
+):
+    """conftest's ``_caller_chose_a_home`` judges ``$HOME`` against the home the run started with,
+    not the guard's: in a run started with a scratch ``$HOME`` and a user database naming another
+    home, as a pytest job ``tools/ci/run.py`` starts is, a home no test chose is still redirected,
+    and one a test chose by ``$HOME`` or ``$PERSONALCLAW_HOME`` passes through."""
+    planted = tmp_path / "real-home"
+    planted.mkdir()
+    scratch_home = tmp_path / "scratch-home"
+    scratch_home.mkdir()
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "PERSONALCLAW_"))}
+    env.update(HOME=str(scratch_home), PC_PLANTED_REAL_HOME=str(planted))
+    ran = subprocess.run(
+        [sys.executable, "-B", "-c", _LOAD_THE_SUITES_CONFTEST, str(_TESTS_DIR)]
+        + [str(tmp_path / "a-home-of-its-own"), str(tmp_path / "a-personalclaw-home-of-its-own")],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert ran.returncode == 0, ran.stdout + ran.stderr[-3000:]
+    assert json.loads(ran.stdout.splitlines()[-1]) == {
+        "the home the run started with": str(scratch_home),
+        "chose none": False,
+        "chose one by $HOME": True,
+        "chose one by $PERSONALCLAW_HOME": True,
+    }
+
+
+def test_end_to_end_a_scratch_HOME_does_not_retarget_the_guard(tmp_path) -> None:
+    """A run whose ``$HOME`` is a scratch folder still guards the real home, and a test that
+    writes there through its absolute path is refused, and fails by name."""
+    real = tmp_path / "real-home"
+    (real / ".personalclaw").mkdir(parents=True)
+    scratch_home = tmp_path / "scratch-home"
+    scratch_home.mkdir()
+    work = tmp_path / "session"
+    work.mkdir()
+    (work / "conftest.py").write_text(_INNER_CONFTEST)
+    (work / "test_inner.py").write_text(textwrap.dedent(f"""
+            from pathlib import Path
+
+            REAL = Path({str(real / ".personalclaw")!r})
+
+            def test_writes_the_real_home_by_its_path():
+                (REAL / "leak.txt").write_text("x")
+
+            def test_writes_its_own_home():
+                (Path.home() / "fine.txt").write_text("x")
+            """))
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "PERSONALCLAW_"))}
+    env["HOME"] = str(scratch_home)
+    env["PC_PLANTED_REAL_HOME"] = str(real)
+    env["PYTHONPATH"] = os.pathsep.join([str(_TESTS_DIR), env.get("PYTHONPATH", "")]).rstrip(
+        os.pathsep
+    )
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "--color=no", "-p", "no:cacheprovider", str(work)],
+        cwd=work,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    out = proc.stdout
+    assert proc.returncode == 1, out[-3000:]
+    assert "FAILED test_inner.py::test_writes_the_real_home_by_its_path" in out, out[-3000:]
+    assert "1 failed, 1 passed" in out, out[-3000:]
+    assert f"refused open under the real home {real / '.personalclaw' / 'leak.txt'}" in out
+    # REFUSED, not merely reported: the planted real home is as it was.
+    assert list((real / ".personalclaw").iterdir()) == []
+    assert (scratch_home / "fine.txt").read_text() == "x"

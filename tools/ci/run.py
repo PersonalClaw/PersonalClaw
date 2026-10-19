@@ -17,7 +17,14 @@ The tripwire guards the environment and the files, not the job's own git command
 sets git's command-line configuration of its own replaces it. Inside a pytest job the suite's
 conftest does that; there the suite's git guard covers git instead.
 
-Not guarded here: what a job does to the real home by naming it by path, the container or
+The real home is the one this account's entry in the user database names, never ``$HOME``
+(:func:`real_home`). A job that names it by path is caught by what it leaves: when the real home's
+``.personalclaw`` was absent as the job started and is there as it ends, the run fails. The
+runner only asks whether that folder exists: it never reads, lists or changes anything under the
+real home, which may be a live PersonalClaw's.
+
+Not guarded here: what a job does under a real home's ``.personalclaw`` that was already there,
+one it made and removed again before it ended, anything else in the real home, the container or
 worktree a job runs in, and scheduling. A local result never stands in for GitHub's, and no
 workflow reads what this writes.
 
@@ -31,6 +38,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import pwd
 import shlex
 import signal
 import subprocess
@@ -61,6 +69,8 @@ _REFUSED = frozenset({"PERSONALCLAW_HOME"})
 #: The variables :func:`job_env` sets, besides git's configuration ones.
 _RUNNER_SETS = frozenset({"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "GIT_TERMINAL_PROMPT"})
 
+#: The folder a job must not make in the real home: PersonalClaw's own.
+_PERSONALCLAW_DIR = ".personalclaw"
 
 #: The longest value the tripwire records of a request's field.
 _FIELD = 200
@@ -270,6 +280,26 @@ def _tripwire_violations(scratch: Scratch) -> list[str]:
     return found
 
 
+def real_home() -> Path:
+    """The home this account's entry in the user database names. A job's ``HOME`` is a scratch
+    folder, and the runner's own may be anything, so neither can say where the real home is.
+    Raises :class:`RuntimeError` for an account with no entry, or whose entry names no absolute
+    path (a relative one would be looked for under the runner's own folder), rather than guess."""
+    try:
+        named = pwd.getpwuid(os.getuid()).pw_dir
+    except KeyError:
+        raise RuntimeError(
+            f"user id {os.getuid()} has no entry in the user database, so the runner can't "
+            "tell where the real home is, and runs no job"
+        ) from None
+    if not os.path.isabs(named):
+        raise RuntimeError(
+            f"the user database names {named!r} as user id {os.getuid()}'s home, which isn't "
+            "an absolute path, so the runner can't tell where the real home is, and runs no job"
+        )
+    return Path(named)
+
+
 def _finite(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
@@ -288,10 +318,11 @@ def run_job(
     """Run *argv* in *cwd* with :func:`job_env`, in a process group of its own, and say how it
     ended.
 
-    A credential git asked for makes the run :data:`RED`, whatever else happened. Otherwise a
-    SIGINT or SIGTERM the runner gets from before the job starts until its group is gone makes
-    the run :data:`PARTIAL`, never :data:`OK`. Failing both, a timeout or a non-zero exit makes
-    it RED.
+    A credential git asked for, or a real home's ``.personalclaw`` that was absent as the job
+    started and is there as it ended, makes the run :data:`RED`, whatever else happened.
+    Otherwise a SIGINT or SIGTERM the runner gets from before the job starts until its group is
+    gone makes the run :data:`PARTIAL`, never :data:`OK`. Failing both, a timeout or a non-zero
+    exit makes it RED.
 
     A timeout or a signal stops the group (:func:`_stop`), and once the job's own process has
     ended, whatever is left of its group gets SIGKILL: whatever the ending, no process of the
@@ -302,8 +333,9 @@ def run_job(
     the caller's, and the group is stopped all the same.
 
     Only the main thread can take SIGINT and SIGTERM, so on any other thread this raises
-    :class:`RuntimeError` and starts nothing. *timeout* must be a finite number of seconds above
-    0, and *grace* a finite number of seconds, 0 or more."""
+    :class:`RuntimeError` and starts nothing, as it does when :func:`real_home` can't be told.
+    *timeout* must be a finite number of seconds above 0, and *grace* a finite number of seconds,
+    0 or more."""
     if threading.current_thread() is not threading.main_thread():
         raise RuntimeError("run_job runs a job only on the main thread, which takes its signals")
     if not _finite(timeout) or timeout <= 0:
@@ -311,6 +343,8 @@ def run_job(
     if not _finite(grace) or grace < 0:
         raise ValueError(f"a job's grace must be a finite number of seconds, 0 or more: {grace!r}")
     full_env = job_env(scratch, path=path, env=env)
+    watched = real_home() / _PERSONALCLAW_DIR
+    was_there = os.path.lexists(watched)
     noted = _Noted()
     handlers: dict[int, object] = {}
     timed_out = False
@@ -347,6 +381,8 @@ def run_job(
     elif not timed_out and proc.returncode != 0:
         violations.append(f"the job exited {proc.returncode}")
     tripped = _tripwire_violations(scratch)
+    if not was_there and os.path.lexists(watched):
+        tripped.append(f"the job made the real home's {watched}, which was absent as it started")
     violations.extend(tripped)
     if tripped:
         code = RED
