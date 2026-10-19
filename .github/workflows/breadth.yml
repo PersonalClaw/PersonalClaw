@@ -167,22 +167,14 @@ jobs:
           enable-cache: true
           prune-cache: true
       # setup-uv only names the interpreter (UV_PYTHON); `uv python find` never downloads one.
-      # Every step below that runs `uv python find` needs it present, carried shard or not, so
+      # Every step below that runs `uv python find` needs it present, so
       # a scratch venv is made on it first: that downloads the managed interpreter setup-uv
       # names, as `uv sync` would, and nothing else.
       - name: the uv-managed Python this shard runs on
         run: uv venv "$RUNNER_TEMP/shard-python"
-      # Read only on main: off main nothing is reused, and decide reads no map.
-      - name: the earlier record's results
-        if: ${{ github.ref == 'refs/heads/main' }}
-        continue-on-error: true
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: breadth-previous
-          path: ${{ runner.temp }}/previous
       # This shard's test files, from the plan freshness made once for the run: the leg is the
       # job's id and N its matrix size, as the plan names them. Their digest is one of the
-      # shard's inputs, so a result is carried only onto the very files it measured.
+      # shard's inputs, so the record names the very files it measured.
       - name: the shard plan this run made
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -192,7 +184,7 @@ jobs:
         id: shard
         run: >-
           "$(uv python find "$PY")" -m tools.ci shards list --plan "$RUNNER_TEMP/shard-plan/plan.json"
-          --leg "${{ github.job }}" --shard "${{ matrix.shard }}/${{ strategy.job-total }}"
+          --leg ubuntu --shard ${{ matrix.shard }}/4
           --out "$RUNNER_TEMP/shard.txt"
       - name: this shard's inputs, as its runner reports them
         env:
@@ -205,24 +197,9 @@ jobs:
             --uv "$(uv --version | awk '{print $2}')" \
             --node "$(node --version 2>/dev/null || echo none)" \
             --external "shard_files=${SHARD_FILES:?no shard list}"
-      # Run, or carry the earlier result when every recorded input matches exactly. A
-      # decision that crashes writes no `run=false` and, being continue-on-error, leaves the
-      # job's status as it was, so the shard runs. No earlier results at all (freshness or
-      # this shard's download failed) is not a crash: the decision says run.
-      - name: run, or carry the earlier result
-        id: decide
-        continue-on-error: true
-        run: >-
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "ubuntu-24.04-3.13/${{ matrix.shard }}"
-          --inputs "$RUNNER_TEMP/inputs.json"
-          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF"
-          --attempt "$GITHUB_RUN_ATTEMPT"
-          --out "$RUNNER_TEMP/entry/ubuntu-24.04-3.13__${{ matrix.shard }}.json"
       - name: Install (locked)
-        if: ${{ steps.decide.outputs.run != 'false' }}
         run: uv sync --locked --extra dev
       - name: Install tmux (durable sessions — real-daemon test leg)
-        if: ${{ steps.decide.outputs.run != 'false' }}
         run: |
           if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
           case "$RUNNER_OS" in
@@ -234,7 +211,6 @@ jobs:
           tmux -V
       - name: pytest (shard ${{ matrix.shard }})
         id: pytest
-        if: ${{ steps.decide.outputs.run != 'false' }}
         continue-on-error: true
         run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-ubuntu.xml
       - name: Upload JUnit results (ubuntu-24.04-3.13 · shard ${{ matrix.shard }})
@@ -246,7 +222,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - name: record what this shard ran
-        if: ${{ always() && steps.decide.outputs.run != 'false' }}
+        if: always()
         env:
           OUTCOME: ${{ steps.pytest.outcome }}
         run: |
@@ -259,7 +235,7 @@ jobs:
           path: ${{ runner.temp }}/entry/
           if-no-files-found: error
           retention-days: 7
-      # Red when the entry is red, ran or carried: a carried red is still red (#3904).
+      # Red when the entry is red.
       - name: the shard's result
         if: always()
         run: |
@@ -297,22 +273,14 @@ jobs:
           enable-cache: true
           prune-cache: true
       # setup-uv only names the interpreter (UV_PYTHON); `uv python find` never downloads one.
-      # Every step below that runs `uv python find` needs it present, carried shard or not, so
+      # Every step below that runs `uv python find` needs it present, so
       # a scratch venv is made on it first: that downloads the managed interpreter setup-uv
       # names, as `uv sync` would, and nothing else.
       - name: the uv-managed Python this shard runs on
         run: uv venv "$RUNNER_TEMP/shard-python"
-      # Read only on main: off main nothing is reused, and decide reads no map.
-      - name: the earlier record's results
-        if: ${{ github.ref == 'refs/heads/main' }}
-        continue-on-error: true
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: breadth-previous
-          path: ${{ runner.temp }}/previous
       # This shard's test files, from the plan freshness made once for the run: the leg is the
       # job's id and N its matrix size, as the plan names them. Their digest is one of the
-      # shard's inputs, so a result is carried only onto the very files it measured.
+      # shard's inputs, so the record names the very files it measured.
       - name: the shard plan this run made
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -322,7 +290,7 @@ jobs:
         id: shard
         run: >-
           "$(uv python find "$PY")" -m tools.ci shards list --plan "$RUNNER_TEMP/shard-plan/plan.json"
-          --leg "${{ github.job }}" --shard "${{ matrix.shard }}/${{ strategy.job-total }}"
+          --leg macos --shard ${{ matrix.shard }}/6
           --out "$RUNNER_TEMP/shard.txt"
       - name: this shard's inputs, as its runner reports them
         env:
@@ -335,24 +303,9 @@ jobs:
             --uv "$(uv --version | awk '{print $2}')" \
             --node "$(node --version 2>/dev/null || echo none)" \
             --external "shard_files=${SHARD_FILES:?no shard list}"
-      # Run, or carry the earlier result when every recorded input matches exactly. A
-      # decision that crashes writes no `run=false` and, being continue-on-error, leaves the
-      # job's status as it was, so the shard runs. No earlier results at all (freshness or
-      # this shard's download failed) is not a crash: the decision says run.
-      - name: run, or carry the earlier result
-        id: decide
-        continue-on-error: true
-        run: >-
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "macos-26-3.12/${{ matrix.shard }}"
-          --inputs "$RUNNER_TEMP/inputs.json"
-          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF"
-          --attempt "$GITHUB_RUN_ATTEMPT"
-          --out "$RUNNER_TEMP/entry/macos-26-3.12__${{ matrix.shard }}.json"
       - name: Install (locked)
-        if: ${{ steps.decide.outputs.run != 'false' }}
         run: uv sync --locked --extra dev
       - name: Install tmux (durable sessions — real-daemon test leg)
-        if: ${{ steps.decide.outputs.run != 'false' }}
         run: |
           if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
           case "$RUNNER_OS" in
@@ -364,7 +317,6 @@ jobs:
           tmux -V
       - name: pytest (shard ${{ matrix.shard }})
         id: pytest
-        if: ${{ steps.decide.outputs.run != 'false' }}
         continue-on-error: true
         run: uv run pytest -n 2 --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-macos.xml
       - name: Upload JUnit results (macos-26-3.12 · shard ${{ matrix.shard }})
@@ -376,7 +328,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - name: record what this shard ran
-        if: ${{ always() && steps.decide.outputs.run != 'false' }}
+        if: always()
         env:
           OUTCOME: ${{ steps.pytest.outcome }}
         run: |
@@ -389,7 +341,7 @@ jobs:
           path: ${{ runner.temp }}/entry/
           if-no-files-found: error
           retention-days: 7
-      # Red when the entry is red, ran or carried: a carried red is still red (#3904).
+      # Red when the entry is red.
       - name: the shard's result
         if: always()
         run: |
@@ -617,22 +569,14 @@ jobs:
           enable-cache: true
           prune-cache: true
       # setup-uv only names the interpreter (UV_PYTHON); `uv python find` never downloads one.
-      # Every step below that runs `uv python find` needs it present, carried shard or not, so
+      # Every step below that runs `uv python find` needs it present, so
       # a scratch venv is made on it first: that downloads the managed interpreter setup-uv
       # names, as `uv sync` would, and nothing else.
       - name: the uv-managed Python this shard runs on
         run: uv venv "$RUNNER_TEMP/shard-python"
-      # Read only on main: off main nothing is reused, and decide reads no map.
-      - name: the earlier record's results
-        if: ${{ github.ref == 'refs/heads/main' }}
-        continue-on-error: true
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: breadth-previous
-          path: ${{ runner.temp }}/previous
       # This shard's test files, from the plan freshness made once for the run: the leg is the
       # job's id and N its matrix size, as the plan names them. Their digest is one of the
-      # shard's inputs, so a result is carried only onto the very files it measured.
+      # shard's inputs, so the record names the very files it measured.
       - name: the shard plan this run made
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -642,7 +586,7 @@ jobs:
         id: shard
         run: >-
           "$(uv python find "$PY")" -m tools.ci shards list --plan "$RUNNER_TEMP/shard-plan/plan.json"
-          --leg "${{ github.job }}" --shard "${{ matrix.shard }}/${{ strategy.job-total }}"
+          --leg arm --shard ${{ matrix.shard }}/4
           --out "$RUNNER_TEMP/shard.txt"
       - name: this shard's inputs, as its runner reports them
         env:
@@ -655,24 +599,9 @@ jobs:
             --uv "$(uv --version | awk '{print $2}')" \
             --node "$(node --version 2>/dev/null || echo none)" \
             --external "shard_files=${SHARD_FILES:?no shard list}"
-      # Run, or carry the earlier result when every recorded input matches exactly. A
-      # decision that crashes writes no `run=false` and, being continue-on-error, leaves the
-      # job's status as it was, so the shard runs. No earlier results at all (freshness or
-      # this shard's download failed) is not a crash: the decision says run.
-      - name: run, or carry the earlier result
-        id: decide
-        continue-on-error: true
-        run: >-
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "ubuntu-24.04-arm-3.13/${{ matrix.shard }}"
-          --inputs "$RUNNER_TEMP/inputs.json"
-          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF"
-          --attempt "$GITHUB_RUN_ATTEMPT"
-          --out "$RUNNER_TEMP/entry/ubuntu-24.04-arm-3.13__${{ matrix.shard }}.json"
       - name: Install (locked)
-        if: ${{ steps.decide.outputs.run != 'false' }}
         run: uv sync --locked --extra dev
       - name: Install tmux (durable sessions — real-daemon test leg)
-        if: ${{ steps.decide.outputs.run != 'false' }}
         run: |
           if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
           case "$RUNNER_OS" in
@@ -684,7 +613,6 @@ jobs:
           tmux -V
       - name: pytest (shard ${{ matrix.shard }})
         id: pytest
-        if: ${{ steps.decide.outputs.run != 'false' }}
         continue-on-error: true
         run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-arm.xml
       - name: Upload JUnit results (ubuntu-24.04-arm-3.13 · shard ${{ matrix.shard }})
@@ -696,7 +624,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - name: record what this shard ran
-        if: ${{ always() && steps.decide.outputs.run != 'false' }}
+        if: always()
         env:
           OUTCOME: ${{ steps.pytest.outcome }}
         run: |
@@ -709,7 +637,7 @@ jobs:
           path: ${{ runner.temp }}/entry/
           if-no-files-found: error
           retention-days: 7
-      # Red when the entry is red, ran or carried: a carried red is still red (#3904).
+      # Red when the entry is red.
       - name: the shard's result
         if: always()
         run: |
@@ -747,22 +675,14 @@ jobs:
           enable-cache: true
           prune-cache: true
       # setup-uv only names the interpreter (UV_PYTHON); `uv python find` never downloads one.
-      # Every step below that runs `uv python find` needs it present, carried shard or not, so
+      # Every step below that runs `uv python find` needs it present, so
       # a scratch venv is made on it first: that downloads the managed interpreter setup-uv
       # names, as `uv sync` would, and nothing else.
       - name: the uv-managed Python this shard runs on
         run: uv venv "$RUNNER_TEMP/shard-python"
-      # Read only on main: off main nothing is reused, and decide reads no map.
-      - name: the earlier record's results
-        if: ${{ github.ref == 'refs/heads/main' }}
-        continue-on-error: true
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: breadth-previous
-          path: ${{ runner.temp }}/previous
       # This shard's test files, from the plan freshness made once for the run: the leg is the
       # job's id and N its matrix size, as the plan names them. Their digest is one of the
-      # shard's inputs, so a result is carried only onto the very files it measured.
+      # shard's inputs, so the record names the very files it measured.
       - name: the shard plan this run made
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -772,7 +692,7 @@ jobs:
         id: shard
         run: >-
           "$(uv python find "$PY")" -m tools.ci shards list --plan "$RUNNER_TEMP/shard-plan/plan.json"
-          --leg "${{ github.job }}" --shard "${{ matrix.shard }}/${{ strategy.job-total }}"
+          --leg coverage-shard --shard ${{ matrix.shard }}/6
           --out "$RUNNER_TEMP/shard.txt"
       - name: this shard's inputs, as its runner reports them
         env:
@@ -785,25 +705,10 @@ jobs:
             --uv "$(uv --version | awk '{print $2}')" \
             --node "$(node --version 2>/dev/null || echo none)" \
             --external "shard_files=${SHARD_FILES:?no shard list}"
-      # Run, or carry the earlier result when every recorded input matches exactly. A
-      # decision that crashes writes no `run=false` and, being continue-on-error, leaves the
-      # job's status as it was, so the shard runs. No earlier results at all (freshness or
-      # this shard's download failed) is not a crash: the decision says run.
-      - name: run, or carry the earlier result
-        id: decide
-        continue-on-error: true
-        run: >-
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "coverage/${{ matrix.shard }}"
-          --inputs "$RUNNER_TEMP/inputs.json"
-          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF"
-          --attempt "$GITHUB_RUN_ATTEMPT"
-          --out "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
       - name: Install (locked)
-        if: ${{ steps.decide.outputs.run != 'false' }}
         run: uv sync --locked --extra dev
       - name: pytest (shard ${{ matrix.shard }})
         id: pytest
-        if: ${{ steps.decide.outputs.run != 'false' }}
         continue-on-error: true
         run: uv run pytest -n auto --dist worksteal --cov=personalclaw tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-coverage-shard.xml
       - name: Upload JUnit results (coverage · shard ${{ matrix.shard }})
@@ -816,7 +721,6 @@ jobs:
           retention-days: 7
       # A dotfile, so it is uploaded only when asked for by name.
       - name: Upload coverage data (shard ${{ matrix.shard }})
-        if: ${{ steps.decide.outputs.run != 'false' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-data-shard${{ matrix.shard }}
@@ -825,7 +729,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: record what this shard ran
-        if: ${{ always() && steps.decide.outputs.run != 'false' }}
+        if: always()
         env:
           OUTCOME: ${{ steps.pytest.outcome }}
         run: |
@@ -838,7 +742,7 @@ jobs:
           path: ${{ runner.temp }}/entry/
           if-no-files-found: error
           retention-days: 7
-      # Red when the entry is red, ran or carried: a carried red is still red (#3904).
+      # Red when the entry is red.
       - name: the shard's result
         if: always()
         run: |
@@ -885,43 +789,16 @@ jobs:
           prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
-      # A pattern that matches nothing (every shard carried) is not an error; a failed download
-      # is, and goes red.
+      # A failed download goes red: every shard runs, so every shard leaves its data.
       - name: Download the coverage data of every shard
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: coverage-data-shard*
           path: coverage-data/
           merge-multiple: true
-      - name: Download the coverage shards' entries
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: breadth-leg-coverage-*
-          path: ${{ runner.temp }}/coverage-entries
-          merge-multiple: true
+      # tools/ci/coverage_combine.sh: all six shards' data or no report.
       - name: Combine the shards into coverage XML
-        run: |
-          set -eu
-          mkdir -p coverage-data
-          # All six or no report: a shard's data missing would publish a smaller number as the
-          # suite's, with nothing to say part of it was never counted.
-          found=$(find coverage-data -name '.coverage.shard*' -type f | wc -l)
-          # How many shards carried their earlier result, from the shards' own entries; -1 when
-          # they are not all there to read.
-          carried=$(python3 -c 'import json,pathlib,sys; es=[json.loads(p.read_text()) for p in pathlib.Path(sys.argv[1]).glob("coverage__*.json")]; print(sum(bool(e.get("reused_from")) for e in es) if len(es) == 6 else -1)' "$RUNNER_TEMP/coverage-entries")
-          # Some or all shards carried on identical inputs, and every shard that ran left its
-          # data: no new whole-suite number, and the records they name keep theirs.
-          if [ "$carried" -gt 0 ] && [ $((found + carried)) -eq 6 ]; then
-            echo "$carried of 6 coverage shards carried their earlier result; no new report"
-            exit 0
-          fi
-          if [ "$found" -ne 6 ]; then
-            echo "::error title=coverage data incomplete::found the data of $found of 6 shards ($carried carried)."
-            exit 1
-          fi
-          uv run coverage combine coverage-data
-          uv run coverage xml -o coverage.xml
-          echo "coverage of the whole suite: $(uv run coverage report --format=total)%"
+        run: sh tools/ci/coverage_combine.sh
       - name: Upload coverage artifacts
         if: ${{ hashFiles('coverage.xml') != '' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1062,7 +939,7 @@ jobs:
         id: shard
         run: >-
           "$(uv python find "$PY")" -m tools.ci shards list --plan "$RUNNER_TEMP/shard-plan/plan.json"
-          --leg "${{ github.job }}" --shard "${{ matrix.shard }}/${{ strategy.job-total }}"
+          --leg canary --shard ${{ matrix.shard }}/4
           --out "$RUNNER_TEMP/shard.txt"
       - name: this shard's inputs, as its runner reports them
         env:

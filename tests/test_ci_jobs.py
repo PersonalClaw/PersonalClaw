@@ -488,6 +488,55 @@ def test_a_placeholder_with_no_value_is_refused_before_the_step_runs(repo, tmp_p
     assert not marker.exists()
 
 
+def _fake_uv(tmp_path: Path, answer: str, code: int = 0) -> str:
+    """A PATH whose ``uv`` answers ``uv python find <version>`` with ``answer`` (and logs the
+    version asked for), ahead of the real PATH."""
+    folder = tmp_path / "fake-uv"
+    folder.mkdir()
+    uv = folder / "uv"
+    uv.write_text(
+        "#!/bin/sh\n"
+        f'[ "$1 $2" = "python find" ] || exit 9\n'
+        f'printf "%s\\n" "$3" >> "{folder}/asked"\n'
+        f"printf '%s\\n' '{answer}'\n"
+        f"exit {code}\n"
+    )
+    uv.chmod(0o755)
+    return f"{folder}:{os.environ.get('PATH', os.defpath)}"
+
+
+def test_the_python_placeholder_is_what_uv_finds_for_the_jobs_python(repo, tmp_path):
+    """``{python}`` stands for the workflow's ``"$(uv python find "$PY")"``: here it is what
+    ``uv python find`` answers for the entry's own Python."""
+    out = tmp_path / "said"
+    step = Step((PY, "-c", f"import sys; open({str(out)!r}, 'w').write(sys.argv[1])", "{python}"))
+    host = _host(repo, path=_fake_uv(tmp_path, "/opt/uv/cpython-3.12.15/bin/python3.12"))
+    outcome = _run(repo, _job("finds", steps=(step,), python="3.12.15"), tmp_path, host=host)
+    assert outcome.code == run.OK, outcome.reasons
+    assert out.read_text() == "/opt/uv/cpython-3.12.15/bin/python3.12"
+    assert (tmp_path / "fake-uv" / "asked").read_text().split() == ["3.12.15"]
+
+
+@pytest.mark.parametrize(
+    ("python", "answer", "code", "why"),
+    [
+        (None, "/x/python", 0, "names no Python, so {python} has no value"),
+        ("3.12.15", "", 2, "uv found no Python 3.12.15 here"),
+        ("3.12.15", "", 0, "uv found no Python 3.12.15 here"),
+    ],
+    ids=["no python", "uv finds none", "uv answers nothing"],
+)
+def test_a_python_placeholder_with_no_interpreter_is_refused_before_the_step_runs(
+    repo, tmp_path, python, answer, code, why
+):
+    marker = tmp_path / "ran"
+    step = Step((PY, "-c", f"open({str(marker)!r}, 'w')", "{python}"))
+    host = _host(repo, path=_fake_uv(tmp_path, answer, code))
+    with pytest.raises(jobs.Unreadable, match=re.escape(why)):
+        _run(repo, _job("finds", steps=(step,), python=python), tmp_path, host=host)
+    assert not marker.exists()
+
+
 def test_the_jobs_time_is_shared_by_its_steps(repo, tmp_path):
     job = _job("slow", "import time; time.sleep(1.5)", "import time; time.sleep(1.5)")
     outcome = _run(repo, job, tmp_path, deadline_s=2, grace=0.2)

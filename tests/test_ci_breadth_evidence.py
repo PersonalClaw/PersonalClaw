@@ -90,6 +90,32 @@ def test_a_leg_that_may_not_be_reused_always_runs() -> None:
         assert not be.reusable(leg_id, _leg(), INPUTS), leg_id
 
 
+#: breadth.yml's suite legs: each runs the suite, so the security-marked modules.
+SUITE_LEGS = ("ubuntu-24.04-3.13", "macos-26-3.12", "ubuntu-24.04-arm-3.13", "coverage")
+
+
+@pytest.mark.parametrize("leg_id", SUITE_LEGS)
+def test_a_suite_leg_never_carries_a_result_whatever_matches(leg_id: str) -> None:
+    """A security result is never carried from an earlier night: the suite runs the security-
+    marked modules, so each suite leg runs every night, red or green, on identical inputs."""
+    assert leg_id in be.NON_REUSABLE and leg_id in be.SHARDS
+    for result in (be.GREEN, be.RED):
+        found = {f"{leg_id}/1": {"entry": _leg(result), "run_id": 1, "digest": "a" * 64}}
+        assert be.decide(f"{leg_id}/1", INPUTS, found) is None, (leg_id, result)
+
+
+#: The legs that may carry an earlier result: the rails on macOS, and the whole-suite
+#: collection, which only collects and so runs no security-marked test.
+CARRYING_LEGS = frozenset({"rails-macos-26-3.12", "collection-parses"})
+
+
+def test_the_rails_on_macos_and_the_collection_are_the_legs_that_carry() -> None:
+    assert set(be.SHARDS) - be.NON_REUSABLE == CARRYING_LEGS
+    for leg_id in sorted(CARRYING_LEGS):
+        found = {f"{leg_id}/1": {"entry": _leg(), "run_id": 1, "digest": "a" * 64}}
+        assert be.decide(f"{leg_id}/1", INPUTS, found) is not None, leg_id
+
+
 def test_a_red_on_identical_inputs_is_carried_forward_red_and_names_its_record() -> None:
     red = _leg(be.RED)
     assert be.reusable("macos-3.12", red, INPUTS)
@@ -210,16 +236,18 @@ def _stored(record: dict) -> tuple[str, bytes]:
 
 
 def test_the_earlier_results_follow_a_carried_leg_to_the_run_that_executed_it() -> None:
-    ran = _record(**{"ubuntu-24.04-3.13/1": _leg(be.RED)})
+    ran = _record(**{"rails-macos-26-3.12/1": _leg(be.RED)})
     name, data = _stored(ran)
     first_digest = name[len(be.PREFIX) :]
-    carried_record = _record(**{"ubuntu-24.04-3.13/1": be.carried(_leg(be.RED), 10, first_digest)})
+    carried_record = _record(
+        **{"rails-macos-26-3.12/1": be.carried(_leg(be.RED), 10, first_digest)}
+    )
     later_name, later_data = _stored(carried_record)
     found, said = be.previous(_Source({10: {name: data}, 11: {later_name: later_data}}))
-    assert found["ubuntu-24.04-3.13/1"]["run_id"] == 10, "the origin, not the run that carried it"
-    assert found["ubuntu-24.04-3.13/1"]["digest"] == first_digest
+    assert found["rails-macos-26-3.12/1"]["run_id"] == 10, "the origin, not the run that carried it"
+    assert found["rails-macos-26-3.12/1"]["digest"] == first_digest
     assert "run 11" in said
-    entry = be.decide("ubuntu-24.04-3.13/1", INPUTS, found)
+    entry = be.decide("rails-macos-26-3.12/1", INPUTS, found)
     assert entry is not None and entry["result"] == be.RED
     assert entry["reused_from"] == {"run_id": 10, "digest": first_digest}
 
@@ -502,10 +530,20 @@ def test_an_unreadable_issue_records_its_greens_red_but_no_later_run_carries_the
     assert red["result"] == be.RED and not red.get("unsettled"), "a measured red stays a red"
     assert done["macos-26-3.12"] == "open", "a measured red opens its issue"
     assert done["ubuntu-24.04-3.13"] == "none"
+    # Carrying, on the one leg that may carry: an unsettled green runs again, a measured red is
+    # carried red.
+    assert record["legs"]["rails-macos-26-3.12/1"]["unsettled"] is True
     name, data = _stored(record)
     found, _ = be.previous(_Source({1: {name: data}}))
-    assert be.decide("macos-26-3.12/1", INPUTS, found) is None, "an unsettled green runs again"
-    carried = be.decide("macos-26-3.12/2", INPUTS, found)
+    assert (
+        be.decide("rails-macos-26-3.12/1", INPUTS, found) is None
+    ), "an unsettled green runs again"
+    red_night = _all_green(**{"rails-macos-26-3.12/1": _leg(be.RED)})
+    record, _ = _night(tmp_path, monkeypatch, gh, red_night, 2, issues=False)
+    assert not record["legs"]["rails-macos-26-3.12/1"].get("unsettled")
+    name, data = _stored(record)
+    found, _ = be.previous(_Source({2: {name: data}}))
+    carried = be.decide("rails-macos-26-3.12/1", INPUTS, found)
     assert carried is not None and carried["result"] == be.RED
 
 
@@ -553,7 +591,8 @@ def test_find_asks_only_for_the_bots_issues_and_refuses_a_page_it_cannot_trust(
 # ── the issues step, which runs on main ─────────────────────────────────────────────────────────
 
 
-_KEY = "ubuntu-24.04-3.13/2"
+#: The key the carry rows use: the rails on macOS, the one leg that may carry an earlier result.
+_KEY = "rails-macos-26-3.12/1"
 
 
 def test_a_failed_issue_does_not_stop_the_legs_after_it_and_fails_the_step(

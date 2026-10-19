@@ -23,7 +23,7 @@ import re
 import shlex
 import shutil
 import tomllib
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1887,23 +1887,46 @@ def breadth_order_violations(tree: Tree) -> list[str]:
 
 
 def _security_leg(job: dict[str, Any]) -> bool:
-    runs = _runs(job)
-    return "tests/security" in runs or re.search(r"-m\s+['\"]?security", runs) is not None
+    """A leg that runs security-marked tests, by any one command of its steps: ``tests/security``,
+    ``-m security``, or the suite itself (a pytest over ``tests`` alone, as every suite shard
+    runs), which holds them. A pytest that only collects (``catalogue.collect_only``) runs no
+    test, so it is none of these; every other command is read as it was."""
+    for step in job.get("steps") or []:
+        for words in _commands(str(step.get("run", ""))):
+            if catalogue.collect_only(words):
+                continue
+            text = " ".join(words)
+            if "tests/security" in text or re.search(r"-m\s+['\"]?security", text):
+                return True
+            if _runs_the_suite(words) and "tests" in _pytest_args(words):
+                return True
+    return False
+
+
+def _record_legs(job_id: str, job: dict[str, Any]) -> frozenset[str]:
+    """The record keys' legs a breadth job writes (``entry/<leg>__``), or its id when it writes
+    none."""
+    keys = {m for s in job.get("steps") or [] for m in _ENTRY.findall(str(s.get("run", "")))}
+    return frozenset(keys or {job_id})
 
 
 def non_reusable_violations(tree: Tree) -> list[str]:
-    """The legs the record never reuses are exactly ``NON_REUSABLE``, and none of them asks to
-    carry an earlier result."""
+    """The legs the record never reuses are exactly ``NON_REUSABLE``, none of them asks to carry
+    an earlier result, and every leg that runs security-marked tests is one of them (#3909: a
+    security result is never carried, so the suite runs every night)."""
     jobs = _breadth_jobs(tree)
+    written = {leg for job_id, job in jobs.items() for leg in _record_legs(job_id, job)}
     bad = [
-        f"NON_REUSABLE names {job_id}, which breadth.yml does not have"
-        for job_id in sorted(breadth_evidence.NON_REUSABLE - set(jobs))
+        f"NON_REUSABLE names {leg}, which no breadth.yml job writes"
+        for leg in sorted(breadth_evidence.NON_REUSABLE - written)
     ]
     for job_id, job in jobs.items():
+        legs = _record_legs(job_id, job)
+        never = legs & breadth_evidence.NON_REUSABLE
         decides = "breadth_evidence.py decide" in _runs(job)
-        if job_id in breadth_evidence.NON_REUSABLE and decides:
+        if never and decides:
             bad.append(f"breadth.yml:{job_id} is never reused, yet it carries an earlier result")
-        if _security_leg(job) and job_id not in breadth_evidence.NON_REUSABLE:
+        if _security_leg(job) and legs - breadth_evidence.NON_REUSABLE:
             bad.append(f"breadth.yml:{job_id} runs security tests but is not in NON_REUSABLE")
     return bad
 
@@ -2127,7 +2150,7 @@ def freshness_ref_violations(tree: Tree) -> list[str]:
                 _action(step) == "actions/download-artifact"
                 and (step.get("with") or {}).get("name") == "breadth-previous"
             )
-            if downloads_map and job_id in breadth_evidence.NON_REUSABLE:
+            if downloads_map and _record_legs(job_id, job) <= breadth_evidence.NON_REUSABLE:
                 bad.append(f"breadth.yml:{job_id} downloads freshness's map, which it never reads")
             elif downloads_map and step.get("if") != "${{ github.ref == 'refs/heads/main' }}":
                 bad.append(f"breadth.yml:{job_id} downloads the map off main, where none is read")
@@ -2262,9 +2285,6 @@ _PLAN_FILE = '--plan "$RUNNER_TEMP/shard-plan/plan.json"'
 #: The job that plans each workflow's suite shards once for the run.
 _PLANNERS = {"ci.yml": "shard-plan", "breadth.yml": "freshness"}
 _PLAN_LEG = re.compile(r"--leg\s+([\w-]+):([\w.-]+):([\w.-]+):(\d+)")
-_BREADTH_LISTING = (
-    '--leg "${{ github.job }}" --shard "${{ matrix.shard }}/${{ strategy.job-total }}"'
-)
 
 
 def suite_shard_violations(tree: Tree) -> list[str]:
@@ -2314,7 +2334,7 @@ def suite_shard_violations(tree: Tree) -> list[str]:
                 for s in steps[:first]
             ):
                 bad.append(f"{where} does not download the run's shard plan before pytest")
-            own = (f"--leg {job_id} --shard ${{{{ matrix.shard }}}}/{n} ", _BREADTH_LISTING + " ")
+            own = (f"--leg {job_id} --shard ${{{{ matrix.shard }}}}/{n} ",)
             if not any(
                 f"tools.ci shards list {_PLAN_FILE}" in t
                 and '--out "$RUNNER_TEMP/shard.txt"' in t
@@ -3814,7 +3834,65 @@ ROWS: tuple[Row, ...] = (
                 "jobs:\n  marked:\n    needs: [freshness]\n    runs-on: ubuntu-24.04\n"
                 "    steps:\n      - run: uv run pytest -m security\n  freshness:\n",
             ),
-            _plant("a never-reused leg renamed away", _BREADTH, "  audit:\n", "  audit-deps:\n"),
+            _plants(
+                "a never-reused leg's record key renamed away",
+                _BREADTH,
+                (
+                    ("entry/audit__1.json", "entry/audit-deps__1.json"),
+                    ("entry/audit__1.json", "entry/audit-deps__1.json"),
+                ),
+                expect="NON_REUSABLE names audit, which no breadth.yml job writes",
+            ),
+            _plant(
+                "a suite leg, a security entry, that carries an earlier result",
+                _BREADTH,
+                "      - name: Install (locked)\n        run: uv sync --locked --extra dev\n"
+                "      - name: Install tmux (durable sessions — real-daemon test leg)\n",
+                "      - name: carry\n"
+                "        run: python3 tools/ci/breadth_evidence.py decide"
+                ' --key "ubuntu-24.04-3.13/1"\n'
+                "      - name: Install (locked)\n        run: uv sync --locked --extra dev\n"
+                "      - name: Install tmux (durable sessions — real-daemon test leg)\n",
+                expect="breadth.yml:ubuntu is never reused, yet it carries an earlier result",
+            ),
+            _plant(
+                "a new suite leg that may carry",
+                _BREADTH,
+                "jobs:\n  freshness:\n",
+                "jobs:\n  suite-extra:\n    needs: [freshness]\n    runs-on: ubuntu-24.04\n"
+                "    steps:\n      - run: uv run pytest -n auto tests\n  freshness:\n",
+                expect="breadth.yml:suite-extra runs security tests but is not in NON_REUSABLE",
+            ),
+            _plant(
+                "a collect-only leg outside the set, which runs no test, passes",
+                _BREADTH,
+                "jobs:\n  freshness:\n",
+                "jobs:\n  collect-extra:\n    needs: [freshness]\n    runs-on: ubuntu-24.04\n"
+                "    steps:\n      - run: uv run pytest --collect-only -qq tests\n  freshness:\n",
+                fails=False,
+            ),
+            _plant(
+                "the same leg without --collect-only",
+                _BREADTH,
+                "jobs:\n  freshness:\n",
+                "jobs:\n  collect-extra:\n    needs: [freshness]\n    runs-on: ubuntu-24.04\n"
+                "    steps:\n      - run: uv run pytest -qq tests\n  freshness:\n",
+                expect="breadth.yml:collect-extra runs security tests but is not in NON_REUSABLE",
+            ),
+            _plant(
+                "the same leg with its --co hidden in an echo",
+                _BREADTH,
+                "jobs:\n  freshness:\n",
+                "jobs:\n  collect-extra:\n    needs: [freshness]\n    runs-on: ubuntu-24.04\n"
+                "    steps:\n      - run: echo pytest --co && uv run pytest -qq tests\n"
+                "  freshness:\n",
+                expect="breadth.yml:collect-extra runs security tests but is not in NON_REUSABLE",
+            ),
+            Control(
+                "rails-macos, ordinary and tree-reused, still carries",
+                _nothing,
+                fails=False,
+            ),
         ),
     ),
     _toolchain_row(
@@ -3955,8 +4033,8 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "a decision under another leg's key",
                 _BREADTH,
-                'decide --key "ubuntu-24.04-3.13/${{ matrix.shard }}"',
-                'decide --key "macos-26-3.12/${{ matrix.shard }}"',
+                'decide --key "rails-macos-26-3.12/1"',
+                'decide --key "macos-26-3.12/1"',
             ),
             _plant(
                 "an unreadable installer only warns",
@@ -5750,13 +5828,29 @@ class _Mapped:
     reuse: str = "never"
 
 
+#: A breadth.yml job is named ``breadth.yml:<id>`` in this table; a bare name is ci.yml's.
+_IN_BREADTH = "breadth.yml:"
+
 _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "static": _Mapped(("lint", "harness"), ("change", "merge")),
     "rails": _Mapped(("rails",), ("change", "merge"), reuse="tree"),
     "rails-checks": _Mapped(("rails-checks",), ("change", "merge"), reuse="tree"),
     "python-suite": _Mapped(("test-shard",), ("merge",), security="security"),
     "python-suite-macos": _Mapped(("test-macos",), ("merge",), security="security"),
-    "security": _Mapped(("security-corpus",), ("breadth",), security="security"),
+    "security": _Mapped(
+        ("security-corpus", "breadth.yml:security-corpus"), ("breadth",), security="security"
+    ),
+    "suite-ubuntu": _Mapped(("breadth.yml:ubuntu",), ("breadth",), security="security"),
+    "suite-macos": _Mapped(("breadth.yml:macos",), ("breadth",), security="security"),
+    "suite-arm": _Mapped(("breadth.yml:arm",), ("breadth",), security="security"),
+    "suite-canary": _Mapped(("breadth.yml:canary",), ("breadth",), security="security"),
+    "coverage-shard": _Mapped(("breadth.yml:coverage-shard",), ("breadth",), security="security"),
+    "coverage": _Mapped(("breadth.yml:coverage",), ("breadth",)),
+    "rails-macos": _Mapped(("breadth.yml:rails-macos",), ("breadth",), reuse="tree"),
+    "audit-nightly": _Mapped(("breadth.yml:audit",), ("breadth",), live=True),
+    # Collects the whole suite and runs no test (catalogue.collect_only), so it is no security
+    # evidence: ordinary, and it may carry an earlier result.
+    "collection-parses": _Mapped(("breadth.yml:collection-parses",), ("breadth",), reuse="tree"),
     "client": _Mapped(("client",), ("change", "merge")),
     "web-unit": _Mapped(("web",), ("change", "merge"), reuse="tree"),
     "web-build": _Mapped(("web",), ("merge",), reuse="tree"),
@@ -5768,7 +5862,46 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
 }
 
 #: ci.yml's jobs that decide what runs or gather what ran, and validate nothing themselves.
-_ORCHESTRATION = frozenset({"tree-check", "changes", "shard-plan", "test", "test-macos-gate"})
+_ORCHESTRATION = frozenset(
+    {
+        "tree-check",
+        "changes",
+        "shard-plan",
+        "test",
+        "test-macos-gate",
+        # breadth.yml's: the earlier record and the shard plan, and the run's report.
+        "breadth.yml:freshness",
+        "breadth.yml:report",
+    }
+)
+
+#: breadth.yml jobs not yet an entry's, each with the change that maps it. Only shrinks.
+_NOT_YET_MAPPED: dict[str, str] = {
+    "breadth.yml:install-smoke": "its smokes move into scripts the supply-chain check and the"
+    " installer rail read, in a change of their own",
+}
+
+
+def _where(key: str) -> str:
+    """A job key of this table as a reader names it: ``ci.yml job X`` or ``breadth.yml job X``."""
+    if key.startswith(_IN_BREADTH):
+        return f"breadth.yml job {key[len(_IN_BREADTH):]}"
+    return f"ci.yml job {key}"
+
+
+def _owners(keys: Sequence[str]) -> str:
+    """The workflows the keys are in, as a possessive: ``ci.yml's``, ``breadth.yml's``, or both."""
+    found = sorted({"breadth.yml" if k.startswith(_IN_BREADTH) else "ci.yml" for k in keys})
+    return " and ".join(f"{w}'s" for w in reversed(found)) if len(found) > 1 else f"{found[0]}'s"
+
+
+def _norm(value: str) -> str:
+    """A workflow value with each runner spelling of a placeholder read as the placeholder."""
+    for name, spellings in catalogue.PLACEHOLDERS.items():
+        for spelling in spellings:
+            value = value.replace(spelling, f"{{{name}}}")
+    return value
+
 
 _CI = ".github/workflows/ci.yml"
 
@@ -5860,6 +5993,107 @@ _NOT_COMMANDS: dict[str, str] = {
         printf '%s' "$PR_NUMBER" > /tmp/lint-feedback/pr.txt
         wc -c /tmp/lint-feedback/violations.md /tmp/lint-feedback/pr.txt
     """,  # noqa: E501
+    "breadth's: the uv-managed interpreter {python} finds, made present before it is found": r"""
+uv venv "$RUNNER_TEMP/shard-python"
+""",  # noqa: E501
+    "breadth's: the tmux install, by runner": r"""
+if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
+case "$RUNNER_OS" in
+  Linux) sudo apt-get update -qq &&
+         sudo apt-get install -y --no-install-recommends tmux ;;
+  macOS) brew install tmux ;;
+  *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
+esac
+tmux -V
+
+""",  # noqa: E501
+    "breadth's: a leg's inputs, as its runner reports them": r"""
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+  --tree "$(git rev-parse 'HEAD^{tree}')" \
+  --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+  --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+  --uv "$(uv --version | awk '{print $2}')" \
+  --node "$(node --version 2>/dev/null || echo none)" \
+  --external "shard_files=${SHARD_FILES:?no shard list}"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+  --tree "$(git rev-parse 'HEAD^{tree}')" \
+  --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+  --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+  --uv "$(uv --version | awk '{print $2}')" \
+  --node "$(node --version 2>/dev/null || echo none)"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+  --tree "$(git rev-parse 'HEAD^{tree}')" \
+  --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+  --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+  --uv "$(uv --version | awk '{print $2}')" \
+  --node "$(node --version 2>/dev/null || echo none)" \
+  --external "night=${NIGHT:?freshness named no night}"
+
+""",  # noqa: E501
+    "breadth's: the legs that may carry an earlier result decide whether they run": r"""
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "rails-macos-26-3.12/1" --inputs "$RUNNER_TEMP/inputs.json" --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/rails-macos-26-3.12__1.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "collection-parses/1" --inputs "$RUNNER_TEMP/inputs.json" --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/collection-parses__1.json"
+""",  # noqa: E501
+    "breadth's: what a leg ran, written to the run's record": r"""
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/ubuntu-24.04-3.13__${{ matrix.shard }}.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/macos-26-3.12__${{ matrix.shard }}.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/ubuntu-24.04-arm-3.13__${{ matrix.shard }}.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/canary__${{ matrix.shard }}.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/rails-macos-26-3.12__1.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/security-corpus__1.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/audit__1.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/collection-parses__1.json"
+
+""",  # noqa: E501
+    "breadth's: a leg's result, read back from the entry it wrote": r"""
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/ubuntu-24.04-3.13__${{ matrix.shard }}.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/macos-26-3.12__${{ matrix.shard }}.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/ubuntu-24.04-arm-3.13__${{ matrix.shard }}.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/canary__${{ matrix.shard }}.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/rails-macos-26-3.12__1.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/security-corpus__1.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/audit__1.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/collection-parses__1.json"
+
+""",  # noqa: E501
+    "breadth's: the coverage shards' result, gated before the combine": r"""
+result='${{ needs.coverage-shard.result }}'
+# Reachable only when a shard was cancelled while the run lived on: part of the
+# suite was measured by nothing, so it is red (matrix's doctrine).
+if [ "$result" = "cancelled" ]; then
+  echo "::error title=coverage shards unproven::a coverage shard was cancelled while" \
+       "this run was still live, so part of the suite was measured by nothing. Re-run."
+  exit 1
+fi
+if [ "$result" != "success" ]; then
+  echo "::error title=coverage shards failed::the coverage shards' result was" \
+       "'$result' (expected 'success'). Open the red 'coverage-shard (...)' leg(s) above."
+  exit 1
+fi
+echo "all coverage shards passed"
+
+""",  # noqa: E501
 }
 
 
@@ -5922,7 +6156,7 @@ def _job_lines(ci_job: str, job: dict[str, Any], bad: list[str]) -> list[_Line]:
         seen: set[tuple[str, ...]] = set()
         for text, words in _run_lines(str(step["run"])):
             if words is None:
-                bad.append(f"ci.yml job {ci_job} runs {text!r} ({name!r}), which no argv can be")
+                bad.append(f"{_where(ci_job)} runs {text!r} ({name!r}), which no argv can be")
                 continue
             if tuple(words) in _NOT_COMMAND_LINES:
                 continue
@@ -5958,7 +6192,7 @@ def _runs_marked(job: catalogue.Job, marked: frozenset[str]) -> list[str]:
     named = {
         arg.rstrip("/")
         for step in job.command
-        if "pytest" in step.argv
+        if "pytest" in step.argv and not catalogue.collect_only(step.argv)
         for arg in step.argv[step.argv.index("pytest") + 1 :]
     }
     return sorted(m for m in marked if any(m == p or m.startswith(p + "/") for p in named))
@@ -6030,33 +6264,48 @@ def _same_job(
     ci_jobs = _CATALOGUE_JOBS[job.id].ci_jobs
     cap = max(int(jobs[c].get("timeout-minutes") or 0) for c in ci_jobs)
     if job.timeout_min != cap:
-        bad.append(f"{job.id}: timeout_min is {job.timeout_min}, and ci.yml's cap is {cap}")
+        bad.append(
+            f"{job.id}: timeout_min is {job.timeout_min}, and {_owners(ci_jobs)} cap is {cap}"
+        )
     runners = sorted({str(jobs[c].get("runs-on")) for c in ci_jobs})
     if runners != [job.platform]:
         bad.append(
-            f"{job.id}: platform is {job.platform}, and ci.yml runs it on {', '.join(runners)}"
+            f"{job.id}: platform is {job.platform}, and {_owners(ci_jobs)[:-2]} runs it on"
+            f" {', '.join(runners)}"
         )
     # The Python is the one setup-uv set before the entry's first step on each of its jobs.
     pythons: set[str] = set()
     for c in ci_jobs:
         first = min((line.step for line in mine if line.job == c), default=None)
-        pythons |= {
-            str((s.get("with") or {}).get("python-version"))
-            for index, s in local_actions.expand(jobs[c].get("steps") or [], actions or {})
-            if _action(s) == "astral-sh/setup-uv" and (first is None or index < first)
-        }
+        for index, s in local_actions.expand(jobs[c].get("steps") or [], actions or {}):
+            if _action(s) != "astral-sh/setup-uv" or (first is not None and index >= first):
+                continue
+            value = str((s.get("with") or {}).get("python-version"))
+            if value == "${{ matrix.python }}":
+                pythons |= set(_matrix_values(jobs[c], "python"))
+            else:
+                pythons.add(value)
     if pythons and job.python not in pythons:
         bad.append(
-            f"{job.id}: python is {job.python or 'unset'}, and ci.yml's setup-uv sets"
+            f"{job.id}: python is {job.python or 'unset'}, and {_owners(ci_jobs)} setup-uv sets"
             f" {', '.join(sorted(pythons))} before its steps"
         )
     elif not pythons and job.python not in (None, "image"):
-        bad.append(f"{job.id}: python is {job.python}, and ci.yml sets none before its steps")
+        bad.append(
+            f"{job.id}: python is {job.python}, and {_owners(ci_jobs)[:-2]} sets none before its"
+            " steps"
+        )
     env: dict[str, str] = {}
     for c in ci_jobs:
-        env.update({str(k): str(v) for k, v in (jobs[c].get("env") or {}).items()})
+        env.update(
+            {
+                str(k): _norm(str(v))
+                for k, v in (jobs[c].get("env") or {}).items()
+                if str(k) not in catalogue.PLACEHOLDER_ENV
+            }
+        )
     if dict(job.env) != env:
-        bad.append(f"{job.id}: env is {dict(job.env)}, and ci.yml's is {env}")
+        bad.append(f"{job.id}: env is {dict(job.env)}, and {_owners(ci_jobs)} is {env}")
     written = [path for step in job.command for path in _junit_paths(step.argv)]
     if list(job.junit) != written:
         bad.append(
@@ -6065,7 +6314,7 @@ def _same_job(
         )
     shards = max(len(_matrix_values(jobs[c], "shard")) or 1 for c in ci_jobs)
     if job.shards != shards:
-        bad.append(f"{job.id}: shards is {job.shards}, and ci.yml runs {shards}")
+        bad.append(f"{job.id}: shards is {job.shards}, and {_owners(ci_jobs)[:-2]} runs {shards}")
 
 
 def _posture(job: catalogue.Job, marked: frozenset[str], bad: list[str]) -> None:
@@ -6100,13 +6349,19 @@ def _catalogue_check(root: Path) -> list[str]:
         return [f"{catalogue.CATALOGUE} is missing"]
     except catalogue.CatalogueError as exc:
         return exc.problems
-    workflow = yaml.safe_load((root / _CI).read_text(encoding="utf-8")) or {}
-    jobs: dict[str, Any] = workflow.get("jobs") or {}
+    jobs: dict[str, Any] = {}
+    for rel, prefix in ((_CI, ""), (_BREADTH, _IN_BREADTH)):
+        workflow = yaml.safe_load((root / rel).read_text(encoding="utf-8")) or {}
+        jobs.update({prefix + str(k): v for k, v in (workflow.get("jobs") or {}).items()})
     actions = local_actions.actions_at(root)
     bad: list[str] = []
     mapped = {c for entry in _CATALOGUE_JOBS.values() for c in entry.ci_jobs}
-    for ci_job in sorted(set(jobs) - mapped - _ORCHESTRATION):
-        bad.append(f"ci.yml job {ci_job} is no catalogue entry's, and not orchestration")
+    for ci_job in sorted(set(jobs) - mapped - _ORCHESTRATION - set(_NOT_YET_MAPPED)):
+        bad.append(f"{_where(ci_job)} is no catalogue entry's, and not orchestration")
+    for ci_job in sorted(set(_NOT_YET_MAPPED) & mapped):
+        bad.append(f"{_where(ci_job)} is an entry's: take it off the not-yet-mapped list")
+    for ci_job in sorted(set(_NOT_YET_MAPPED) - set(jobs)):
+        bad.append(f"the not-yet-mapped list names {_where(ci_job)}, which does not exist")
     lines = {c: _job_lines(c, jobs[c], bad) for c in sorted(mapped & set(jobs))}
     ran = {
         tuple(words)
@@ -6119,7 +6374,7 @@ def _catalogue_check(root: Path) -> list[str]:
     for words in sorted(_NOT_COMMAND_LINES - ran):
         bad.append(
             f"this row lists {shlex.join(words)} as a line that validates nothing, and no mapped"
-            " ci.yml job runs it"
+            " workflow job runs it"
         )
     claims: dict[_Line, list[str]] = {line: [] for c in lines for line in lines[c]}
     marked = _marked(root)
@@ -6130,10 +6385,15 @@ def _catalogue_check(root: Path) -> list[str]:
             continue
         missing = [c for c in entry.ci_jobs if c not in jobs]
         for ci_job in missing:
-            bad.append(f"{job.id}: maps to ci.yml job {ci_job}, which ci.yml does not have")
+            where = "breadth.yml" if ci_job.startswith(_IN_BREADTH) else "ci.yml"
+            bad.append(f"{job.id}: maps to {_where(ci_job)}, which {where} does not have")
         if missing:
             continue
-        _claim(job, [line for c in entry.ci_jobs for line in lines[c]], claims, bad)
+        # An entry that runs in both workflows holds each one's run: lines on its own.
+        for in_breadth in (False, True):
+            own = [c for c in entry.ci_jobs if c.startswith(_IN_BREADTH) is in_breadth]
+            if own:
+                _claim(job, [line for c in own for line in lines[c]], claims, bad)
         _installs(job, [jobs[c] for c in entry.ci_jobs], bad)
         mine = [line for line, holders in claims.items() if job.id in holders]
         _same_job(job, jobs, mine, bad, actions)
@@ -6141,12 +6401,12 @@ def _catalogue_check(root: Path) -> list[str]:
     for line, holders in claims.items():
         if not holders:
             bad.append(
-                f"ci.yml job {line.job} runs {line.text()} ({line.name!r}),"
+                f"{_where(line.job)} runs {line.text()} ({line.name!r}),"
                 " and no entry's command holds it"
             )
         elif len(holders) > 1:
             bad.append(
-                f"ci.yml job {line.job} runs {line.text()} once, and it is a step of"
+                f"{_where(line.job)} runs {line.text()} once, and it is a step of"
                 f" {', '.join(holders)}"
             )
     return bad
@@ -6155,7 +6415,7 @@ def _catalogue_check(root: Path) -> list[str]:
 def _catalogue_scaffold(root: Path) -> None:
     """The tree's own ci.yml and catalogue, which agree, and a marked stand-in for each module
     the tree marks security, so the census finds what the entries' steps run."""
-    for rel in (_CI, catalogue.CATALOGUE, _SETUP_ACTION):
+    for rel in (_CI, _BREADTH, catalogue.CATALOGUE, _SETUP_ACTION):
         _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
     for rel in _tree_marked():
         _write(root, rel, _MARKED)
@@ -6170,11 +6430,71 @@ def _without_merge_list(root: Path) -> None:
     _write(root, catalogue.CATALOGUE, text[:start] + text[end:])
 
 
+def _plant_files(
+    name: str, edits: tuple[tuple[str, str, str], ...], fails: bool = True, expect: str = ""
+) -> Control:
+    """A violation planted by one edit in each of several files, ``(rel, old, new)``, each of
+    which must find its text: for a change the catalogue and its workflow make together."""
+
+    def plant(root: Path) -> None:
+        for rel, old, new in edits:
+            text = (root / rel).read_text(encoding="utf-8")
+            assert old in text, f"the plant {name!r} found no {old!r} in {rel}"
+            _write(root, rel, text.replace(old, new, 1))
+
+    return Control(name, plant, fails, expect)
+
+
+#: collection-parses's one pytest step, as breadth.yml and the catalogue spell it.
+_COLLECT_STEP = (
+    (_BREADTH, "run: uv run pytest --collect-only -qq"),
+    (catalogue.CATALOGUE, '"pytest", "--collect-only", "-qq",'),
+)
+
+
+def _collect_step(yml: str, toml: str) -> tuple[tuple[str, str, str], ...]:
+    """collection-parses's pytest step with its ``--collect-only`` replaced in both files."""
+    (b, b_old), (c, c_old) = _COLLECT_STEP
+    return (
+        (b, b_old, b_old.replace(" --collect-only", yml)),
+        (c, c_old, c_old.replace(' "--collect-only",', toml)),
+    )
+
+
+_RUNS_MARKED = "collection-parses: security is ordinary, but its steps run security-marked modules"
+
 EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
     name="every catalogue command is the workflow's",
     check=_catalogue_check,
     scaffold=_catalogue_scaffold,
     controls=(
+        _plant_files(
+            "collection-parses spelling it --co, which runs no test, passes",
+            _collect_step(" --co", ' "--co",'),
+            fails=False,
+        ),
+        _plant_files(
+            "collection-parses without --collect-only",
+            _collect_step("", ""),
+            expect=_RUNS_MARKED,
+        ),
+        _plant_files(
+            "collection-parses with its --co hidden in an echo",
+            (
+                (
+                    _BREADTH,
+                    "run: uv run pytest --collect-only -qq",
+                    "run: echo --co && uv run pytest -qq",
+                ),
+                (catalogue.CATALOGUE, ' "--collect-only", "-qq",', ' "-qq",'),
+            ),
+            expect=_RUNS_MARKED,
+        ),
+        _plant_files(
+            "collection-parses with its --co only the value of -k",
+            _collect_step(" -k --co", ' "-k", "--co",'),
+            expect=_RUNS_MARKED,
+        ),
         _plant(
             "the setup action sets a Python of its own",
             _SETUP_ACTION,
@@ -6253,7 +6573,7 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             catalogue.CATALOGUE,
             'python = "3.12.15"\ntimeout_min = 25\n',
             'python = "3.12.15"\ntimeout_min = 30\n',
-            expect="security: timeout_min is 30, and ci.yml's cap is 25",
+            expect="security: timeout_min is 30, and ci.yml's and breadth.yml's cap is 25",
         ),
         _plant(
             "the suite on one platform marked ordinary",
@@ -6560,6 +6880,62 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             "run: |\n          uv run pytest -n 4 --dist worksteal -q tests/rails \\\n"
             "            --shard-list",
             fails=False,
+        ),
+        # breadth.yml's half (#3909): every breadth job is an entry's, or orchestration.
+        _plant(
+            "a breadth job no entry holds",
+            _BREADTH,
+            "jobs:\n  freshness:\n",
+            "jobs:\n  nightly-extra:\n    runs-on: ubuntu-24.04\n    steps:\n"
+            "      - run: uv run python scripts/nightly_extra.py\n  freshness:\n",
+            expect="breadth.yml job nightly-extra is no catalogue entry's, and not orchestration",
+        ),
+        _plant(
+            "a breadth command one token off its entry's",
+            _BREADTH,
+            '-q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-ubuntu.xml',
+            '-qq tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-ubuntu.xml',
+            expect="suite-ubuntu: command step 2",
+        ),
+        _plant(
+            "a breadth step no entry holds",
+            _BREADTH,
+            "        run: uv run pytest -n 2 --dist worksteal -q tests/rails"
+            " --junitxml=reports/junit-rails-macos.xml\n",
+            "        run: uv run pytest -n 2 --dist worksteal -q tests/rails"
+            " --junitxml=reports/junit-rails-macos.xml\n"
+            "      - name: a new check\n        run: uv run python scripts/new_check.py\n",
+            expect="breadth.yml job rails-macos runs uv run python scripts/new_check.py",
+        ),
+        _plant(
+            "a breadth entry's cap that is not its job's",
+            catalogue.CATALOGUE,
+            'reuse = "tree"\ntimeout_min = 30\n',
+            'reuse = "tree"\ntimeout_min = 25\n',
+            expect="rails-macos: timeout_min is 25, and breadth.yml's cap is 30",
+        ),
+        _plant(
+            "a breadth entry whose shard count is not its matrix's",
+            catalogue.CATALOGUE,
+            "workers = 2\nshards = 6\n",
+            "workers = 2\nshards = 4\n",
+            expect="suite-macos: shards is 4, and breadth.yml runs 6",
+        ),
+        _plant(
+            "a not-yet-mapped job renamed away",
+            _BREADTH,
+            "  install-smoke:\n",
+            "  install-smoke-moved:\n",
+            expect="the not-yet-mapped list names breadth.yml job install-smoke",
+        ),
+        Control(
+            "a closed breadth line no mapped job runs any more",
+            _every(
+                _BREADTH,
+                '        run: uv venv "$RUNNER_TEMP/shard-python"\n',
+                '        run: uv venv "$RUNNER_TEMP/a-python"\n',
+            ),
+            expect="this row lists uv venv '{runner_temp}/shard-python' as a line that validates",
         ),
     ),
 )

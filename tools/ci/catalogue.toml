@@ -227,6 +227,189 @@ command = [
   { argv = ["uv", "run", "pytest", "--junitxml=reports/junit-security-corpus.xml", "tests/security", "tests/test_supply_chain_scanner.py", "tests/test_supply_chain_gates.py"] },
 ]
 
+# breadth.yml's legs (#3909). Each suite leg runs the suite, so the security-marked modules: it
+# is security posture, never reused, and breadth runs it every night, carrying nothing.
+[[job]]
+id = "suite-ubuntu"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = ["shard-history"]
+toolchain = ["uv-sync", "tmux"]
+cache = ["uv"]
+security = "security"
+platform = "ubuntu-24.04"
+python = "3.13.16"
+timeout_min = 45
+workers = "auto"
+shards = 4
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-ubuntu.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "ubuntu", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-ubuntu.xml"] },
+]
+
+[[job]]
+id = "suite-macos"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = ["shard-history"]
+toolchain = ["uv-sync", "tmux"]
+cache = ["uv"]
+security = "security"
+platform = "macos-26"
+python = "3.12.15"
+timeout_min = 45
+workers = 2
+shards = 6
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-macos.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "macos", "--shard", "{shard}/6", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-macos.xml"] },
+]
+
+[[job]]
+id = "suite-arm"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = ["shard-history"]
+toolchain = ["uv-sync", "tmux"]
+cache = ["uv"]
+security = "security"
+platform = "ubuntu-24.04-arm"
+python = "3.13.16"
+timeout_min = 45
+workers = "auto"
+shards = 4
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-arm.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "arm", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-arm.xml"] },
+]
+
+[[job]]
+id = "suite-canary"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = ["shard-history"]
+toolchain = ["uv-sync", "tmux"]
+cache = ["uv"]
+security = "security"
+platform = "ubuntu-26.04"
+python = "3.12.15"
+timeout_min = 45
+workers = "auto"
+shards = 4
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-canary.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "canary", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-canary.xml"] },
+]
+
+[[job]]
+id = "coverage-shard"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = ["shard-history"]
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "security"
+platform = "ubuntu-24.04"
+python = "3.12.15"
+timeout_min = 60
+workers = "auto"
+shards = 6
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1", COVERAGE_FILE = ".coverage.shard{shard}" }
+junit = ["reports/junit-coverage-shard.xml"]
+command = [
+  { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "coverage-shard", "--shard", "{shard}/6", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "--cov=personalclaw", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-coverage-shard.xml"] },
+]
+
+# The coverage shards' data combined into one report: all six shards' data or none.
+[[job]]
+id = "coverage"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+python = "3.12.15"
+timeout_min = 15
+after = ["coverage-shard"]
+command = [
+  { argv = ["sh", "tools/ci/coverage_combine.sh"] },
+]
+
+# The rails on macOS. No rail is security-marked, so this leg alone may carry an earlier result
+# on identical inputs.
+[[job]]
+id = "rails-macos"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+platform = "macos-26"
+python = "3.12.15"
+reuse = "tree"
+timeout_min = 30
+workers = 2
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-rails-macos.xml"]
+command = [
+  { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q", "tests/rails", "--junitxml=reports/junit-rails-macos.xml"] },
+]
+
+# The dependency audit every night on main, where a new advisory lands without a commit. The
+# same command as `audit`, under breadth's cap.
+# One whole-suite collection in one process with the parse guard loaded (#3927): red on a parse
+# of the source tree while pytest collects. It collects and runs no test (--collect-only), so it
+# is no security evidence, and it may carry an earlier result on identical inputs.
+[[job]]
+id = "collection-parses"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+python = "3.13.16"
+reuse = "tree"
+timeout_min = 20
+workers = 0
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1" }
+junit = ["reports/junit-collection-parses.xml"]
+command = [
+  { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "-p", "collection_parse_guard", "tests", "--junitxml=reports/junit-collection-parses.xml"], env = { PYTHONPATH = "tests" } },
+]
+
+[[job]]
+id = "audit-nightly"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = ["advisory-feed", "package-index"]
+toolchain = ["uv", "node"]
+cache = ["uv"]
+security = "ordinary"
+live = true
+python = "3.12.15"
+timeout_min = 20
+needs_node = true
+install_exemptions = [
+  { install = "uv pip install --python {runner_temp}/audit-venv/bin/python pip-audit==2.10.1", reason = "the auditor runs in a venv of its own, apart from the graphs it audits; its version is pinned" },
+]
+command = [
+  { argv = ["uv", "venv", "{runner_temp}/audit-venv"] },
+  { argv = ["uv", "pip", "install", "--python", "{runner_temp}/audit-venv/bin/python", "pip-audit==2.10.1"] },
+  { argv = ["{runner_temp}/audit-venv/bin/python", "-m", "tools.ci", "audit", "run", "--pip-audit", "{runner_temp}/audit-venv/bin/python", "--work", "{runner_temp}/audit"] },
+]
+
 [[job]]
 id = "client"
 tiers = ["change", "merge"]

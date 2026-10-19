@@ -506,11 +506,14 @@ def test_the_coverage_job_still_measures_and_keeps_only_its_report() -> None:
             'tests --shard-list "$RUNNER_TEMP/shard.txt"' in run
         ), f"each shard must measure its own share of the suite, all {len(shards)} of them: {run}"
     listing = [run for run in runs(shard) if "tools.ci shards list" in run]
-    assert listing and "${{ matrix.shard }}/${{ strategy.job-total }}" in listing[0], listing
+    want = f"--leg coverage-shard --shard ${{{{ matrix.shard }}}}/{len(shards)}"
+    assert listing and want in " ".join(listing[0].split()), listing
     assert coverage.get("needs") == ["coverage-shard"]
-    combine = [run for run in runs(coverage) if "coverage combine" in run and "coverage xml" in run]
-    assert combine, "no step combines the shards' data into coverage.xml"
-    assert f'"$found" -ne {len(shards)}' in combine[0], "the report waits for every shard's data"
+    script = "tools/ci/coverage_combine.sh"
+    assert f"sh {script}" in runs(coverage), "no step runs the script that combines the shards"
+    combine = (Path(__file__).resolve().parents[2] / script).read_text(encoding="utf-8")
+    assert "coverage combine" in combine and "coverage xml" in combine, combine
+    assert f'"$found" -ne {len(shards)}' in combine, "the report waits for every shard's data"
     upload = _step(coverage, name="Upload coverage artifacts").get("with")
     assert isinstance(upload, dict)
     assert upload.get("path") == "coverage.xml"
