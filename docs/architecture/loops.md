@@ -725,10 +725,19 @@ redirecting a run-backed loop (`run_id`) to its run page, `#/workflows/runs/<id>
   un-queues or steers that task alone. `tasks/StageTasks.tsx` and
   `tasks/TaskDetailView.tsx` draw them, with `tasks/TaskRow.tsx`,
   `tasks/FindingCard.tsx` and the task states in `tasks/taskState.ts`.
+- **The footer** — `footer/useProjectFooter.ts` keeps the project-level steer
+  box (one send at a time, the latest steer shown until the run confirms it, a
+  failed one said and its text kept), takes the cursor when the toast's Respond
+  asks for it, knows whether the worker itself is asking, and resumes a loop a
+  spend cap paused. `footer/ProjectFooter.tsx` draws the run's approvals, a merge
+  or a conflict waiting on you, a paused loop, the worker's question, a failed
+  gate or a stall, and the steer box, with `footer/OutcomeBanner.tsx` for a
+  finished run.
 
 What more than one region reads lives in `cockpitShared.ts` (the statuses a
 steer still reaches and the ones that end a run, a stage's key, a worker path
-resolved against the workspace) and `FilesTouched.tsx` (the file chips).
+resolved against the workspace), `FilesTouched.tsx` (the file chips) and
+`cockpitCommands.ts` (a build or test command whose program is not on PATH).
 
 ## Related docs
 

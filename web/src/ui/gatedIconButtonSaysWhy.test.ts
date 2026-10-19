@@ -59,7 +59,8 @@ describe('a gated icon button whose gate the user can fix says so', () => {
     // other half), so the pin follows the split rather than the pre-split compound expression.
     // The task-scoped one moved with the task detail into its own module.
     ['pages/code/cockpit/tasks/TaskDetailView.tsx', /disabled=\{!text\.trim\(\)\} disabledReason=[\s\S]*?loading=\{busy\}/],
-    ['pages/code/CodeCockpitPage.tsx', /disabled=\{!text\.trim\(\)\} disabledReason=[\s\S]*?loading=\{sending\}/],
+    // The project-level one moved with the cockpit's footer into its own module.
+    ['pages/code/cockpit/footer/ProjectFooter.tsx', /disabled=\{!text\.trim\(\)\} disabledReason=[\s\S]*?loading=\{sending\}/],
     ['ui/FindBar.tsx', /label="Previous match"/],
     ['ui/FindBar.tsx', /label="Next match"/],
   ]
@@ -73,8 +74,8 @@ describe('a gated icon button whose gate the user can fix says so', () => {
   }
 
   it('the cockpit reason is conditional, so it never fires mid-send', () => {
-    // The project's steer box on the page, and the task's in the task detail it moved into.
-    const src = ['pages/code/CodeCockpitPage.tsx', 'pages/code/cockpit/tasks/TaskDetailView.tsx'].map((rel) => readSource(join(SRC, rel))).join('\n')
+    // The project's steer box in the cockpit's footer, and the task's in the task detail.
+    const src = ['pages/code/cockpit/footer/ProjectFooter.tsx', 'pages/code/cockpit/tasks/TaskDetailView.tsx'].map((rel) => readSource(join(SRC, rel))).join('\n')
     const conditional = [...src.matchAll(/disabledReason=\{!text\.trim\(\) \? 'Type a steer first' : undefined\}/g)]
     expect(conditional.length, 'both steer composers gate the reason on the fixable branch only').toBe(2)
   })
