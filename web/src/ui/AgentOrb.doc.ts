@@ -15,7 +15,7 @@ const doc: UiDoc = {
   bestPractices: [
     { guidance: true, description: "Put the phase's words beside it (the gateway's line, or phaseLabel(phase)) in a polite live region: the orb is an image named once, and the line says what changes." },
     { guidance: true, description: 'Show one orb per turn, at the head of its reply; let it settle when the turn ends.' },
-    { guidance: false, description: 'Do not show an orb with nothing running, or in a sidebar row: a working thread’s row has a static pip.' },
+    { guidance: false, description: 'Do not animate an orb with nothing running: an empty chat’s 64 px mark is the idle phase’s still frame. Never put one in a sidebar row: a working thread’s row has a static pip.' },
     { guidance: false, description: 'Do not derive the phase from status text, a timer or a flag of the page’s own.' },
   ],
   anatomy: [

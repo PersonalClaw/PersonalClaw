@@ -15,6 +15,7 @@ import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { useMode, DEFAULT_PREFERENCE, type Preference } from '../../app/theme'
 import { PersonalityPicker } from './PersonalityPicker'
+import { AgentOrbStates } from './AgentOrbStates'
 import { usePersonality } from '../../app/personality'
 import { DEFAULT_PERSONALITY } from '../../design/personalities'
 import { COLOR_GROUPS, BACKDROP_GROUPS, TYPOGRAPHY_GROUPS, LAYOUT_GROUPS, type Scheme } from '../../design/schemes'
@@ -162,6 +163,9 @@ export function DesignPanel() {
         <Eyebrow as="h2" className="mb-s">Preview</Eyebrow>
         <Preview />
       </section>
+
+      {/* ── the agent orb in this scheme, every state, on request ── */}
+      <AgentOrbStates />
 
       {/* ── 2. TYPOGRAPHY (zoom / font size / typeface) ── */}
       <ControlSection title="Typography & scale" icon={Type} subtitle="Whole-UI zoom, text size, and the interface typeface." groups={TYPOGRAPHY_GROUPS} />

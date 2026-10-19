@@ -52,7 +52,7 @@ The exact words and their lengths per surface are #3899's.
 | `input` | waiting on the owner's answer | waiting | a still frame with a "?" badge in the info tone | the phase's line: the question |
 | `done` | finished | quiet | a still mark in the rest colour, faded within 300 ms | the turn's ending line, such as "Done in 12 seconds" |
 | `error` | failed | blocked | a still mark in the rest colour with a "×" badge in the danger tone | the turn's ending line, such as "Stopped: the reason" |
-| `idle` | nothing queued or running | quiet | no orb | none |
+| `idle` | nothing queued or running | quiet | no orb at the head of a reply; in an empty chat, the 64 px still mark in the rest colour | none |
 
 The status text is the gateway's line for the phase (`work_phase`'s `line`). When the line is
 empty it is the phase's own word from the phase contract (`web/src/lib/workPhase.ts`), never a stock
@@ -84,13 +84,21 @@ differ by glyph as well as tone, so no two waiting or failed states are told apa
   Before the reply's first word it stands where the reply will be, under the owner's message, and
   it is one element throughout, so the reply's slot appearing under it restarts neither its timing
   nor its drawing.
+- **The history peek, 20 px:** the chat history's peek panel heads the peeked chat's running reply
+  with the same head as the chat, from that chat's run state and its `work_phase` frames, so it says
+  what a turn started anywhere is doing, and a message sent from the peek is waiting to start until
+  the gateway says more.
 - **The send button:** while a turn runs, it is the Stop control, morphed from the send arrow with
   a thin sweep. It stays the Stop control.
-- **64 px, rarely:** only in empty states, voice mode and the buddy's expanded view.
+- **64 px, rarely:** only in empty states, voice mode and the buddy's expanded view. The empty chat
+  opens on it, still and in the rest colour (`idle`), where the brand mark used to morph: nothing
+  runs in a new chat, so nothing on it moves.
+- **Settings › Design, both sizes:** every phase at 20 and 64 px under its family, in the owner's own
+  scheme, closed until asked for, since the active family moves. The visual suite photographs it.
 
 Removed with the orb: the guessed phase, the rotating phrases and the glow of
-`web/src/ui/chat/StreamingIndicator.tsx`, the mini chat panel's opacity pulse, and the composer halo
-as a working signal. Claw Arcade keeps its halo as decoration (`web/DESIGN.md` §7).
+`web/src/ui/chat/StreamingIndicator.tsx`, the history peek's opacity pulse, the empty chat's
+morphing brand mark, and the composer halo as a working signal. Claw Arcade keeps its halo as decoration (`web/DESIGN.md` §7).
 
 ## Acceptance
 
@@ -104,4 +112,6 @@ as a working signal. Claw Arcade keeps its halo as decoration (`web/DESIGN.md` �
 - Every phase is checked under reduced motion and high contrast, and with the orb hidden its text
   still names the phase for a screen reader.
 - `npm run e2e:a11y --workspace=web` stays green.
-- Snapshots of every state at 20 px and 64 px, light and dark, and under reduced motion.
+- Snapshots of every state at 20 px and 64 px, light and dark, and under reduced motion: Settings ›
+  Design's states, photographed by `web/e2e/visual.spec.ts` with the page's clock paused, so a
+  moving state is the same frame every run.

@@ -4,7 +4,7 @@ The **safety rail** for the dashboard's look and accessibility: every change mus
 
 ## What it covers
 
-- **`visual.spec.ts`** — a full-page screenshot of every nav route (18) and query-param sub-view (2) × both themes (light/dark) = 40 baselines. Baselines live in `e2e/__screenshots__/` (committed), suffixed by platform (`-darwin`, `-linux`) so mac-dev and linux-CI goldens never collide.
+- **`visual.spec.ts`** — a full-page screenshot of every nav route (18) and query-param sub-view (2) × both themes (light/dark) = 40 baselines, plus the agent orb's states (Settings › Design, every phase at 20 and 64 px) in both themes, with motion and under reduced motion = 4 more, each taken with the page's clock paused so a moving orb is the same frame every run. Baselines live in `e2e/__screenshots__/` (committed), suffixed by platform (`-darwin`, `-linux`) so mac-dev and linux-CI goldens never collide.
 - **`a11y.spec.ts`** — axe-core (`wcag2a/2aa/21a/21aa` tags) over the same 32 route×theme combos. **Fails only on serious/critical** violations (PRODUCT.md targets AA, not AAA); moderate/minor are attached to the report for triage but don't block.
 - **`routes.ts`** — the single source of truth for the route list (mirror of `src/app/App.tsx` NAV). Add a route here and it's snapshotted + axe-scanned automatically.
 - **`helpers.ts`** — `seedTheme` (seeds `localStorage['mode']` + `prefers-color-scheme` before boot), `gotoRoute` (waits for fonts + settle), `expectRouteScreenshot`.
