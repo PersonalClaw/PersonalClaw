@@ -178,7 +178,7 @@ each entry to the `ci.yml` jobs it maps to, in both directions:
 - Each entry's tiers, `security`, `live` and `reuse` are the ones the row's table gives it, so
   changing one takes an edit in both places.
 - Every `ci.yml` job is an entry's or orchestration (`tree-check`, `changes`, `shard-plan`,
-  `test`).
+  `test`, `test-macos-gate`).
 
 The map from entry to job lives in that row.
 
@@ -291,6 +291,11 @@ it cannot read: there is no `-h`, because a help page would exit 0 having judged
 option given twice is refused rather than the last one winning. It appends its reasons, or why
 it could not read its input, to the step summary.
 
+On a push to `main` only, `decide_main_push` takes one more input: the planned jobs
+`tools/ci/superseded.py` proved were replaced by a newer push (see "A burst of merges" below).
+Such a cancelled job reads `superseded` instead of `cancelled`, and is still red. `decide`, the
+reading of every candidate, takes no such input.
+
 Nothing calls it yet. The results stage of each candidate workflow and the default branch's
 controller will, so a candidate and its judge read the same results the same way.
 `tests/test_ci_verdict.py` holds every red to a row, every refusal to a row naming its reason,
@@ -327,11 +332,59 @@ judged by the copy it replaces, and the merge that adds the check runs the whole
 `docker-single-container.yml` asks the same question about its own runs before it builds.
 
 Runs on `main` are grouped by commit and never cancelled, so no merge goes unchecked because
-a later one replaced it. `ci.yml` runs on a push to `main` only: off `main` its one run is the
+a later one replaced it. The suite's shards are the one exception (see "A burst of merges"
+below): a commit whose shard was replaced is never read as checked. It reads superseded when
+the API proves it, and unproven otherwise, red either way.
+`ci.yml` runs on a push to `main` only: off `main` its one run is the
 pull request's, and a newer push to the pull request's branch cancels the older run. A branch
 with no pull request gets no `ci.yml` run, and GitHub starts no `pull_request` run while a pull
 request has a merge conflict, so such a branch gets none until the conflict is resolved. It
 cannot merge in that state either.
+
+### A burst of merges
+
+The suite is the exception. On `main`, `test-shard` and `test-macos` each join one group per
+shard that every push's first attempt shares, with `cancel-in-progress: false`. A running shard
+is never cancelled. While it runs, the next shard to join waits, and a later request's waiting
+shard replaces the one before it. So a burst of merges usually runs the suite on its newest
+commit, not once per commit. `tree-check`, the always-run jobs and every other job keep the
+per-commit group.
+
+The group replaces by order of joining, not by commit. An older push whose `tree-check` or
+`shard-plan` runs slower can queue its shard after the newest commit's and evict it. Then the
+newest commit's shard is the one cancelled. No later descendant replaced it, so its gate reads
+`unproven` and fails closed, and that commit stays untested until someone re-runs it. A re-run
+keys on its own commit, so it cannot be evicted again.
+
+A commit whose shard was replaced is not verified on its own, and its gate (`test` for
+`test-shard`, `test-macos-gate` for `test-macos`) stays red, with the reason
+`superseded by <newer commit>` when the API proves it and `unproven` otherwise. A skipped check
+would read as passing wherever a check is required, so the gate fails. The badge follows the
+newest run. No release gate reads CI results yet: until #3911 lands, the
+[release runbook](release-runbook.md#tagging) tags only a commit whose own main-push run was
+green, and #3911 must enforce that.
+
+The gate names that red only when the previous `main` commit's copy of
+`tools/ci/superseded.py`, fetched as `tree-check`'s copy is but run under `python3 -I` (unlike
+`tree-check`'s), proves it from the API:
+
+- the run is a push to `main`;
+- the shard was cancelled before any step ran;
+- its check run carries GitHub's replacement annotation, naming exactly that shard's own group;
+- a later push run of `ci.yml` on `main`, for a commit that descends from this one, has a job of
+  the same name that was not skipped. The earliest such run is the one named;
+- every cancelled shard of the run was replaced by one and the same commit.
+
+Any other cancellation, or an answer the check cannot read, is `unproven`, and red as before.
+On a pull request the word never exists. `verdict.decide_main_push` names it only on a push to
+`main`; every candidate's reading, `verdict.decide`, takes no proof, so a pull request's
+cancelled job is always `cancelled`. A superseded commit is never green.
+
+The row `main-push-runs-and-is-never-cancelled` holds this: each suite job's group names its
+job and shard, is shared by every first-attempt push to `main`, keys a re-run on its own commit,
+and never cancels; no other job has a group of its own; and each gate (`test` and
+`test-macos-gate`) runs the previous commit's check for its own job's group, names both reds and
+never exits 0 on a superseded shard.
 
 ### Commit provenance
 
@@ -554,7 +607,9 @@ of the same commit was red is the release gate's question (#3911), not this work
 
 - `ci.yml` runs on every push to `main` and on no other push (no `**` or other branch, no
   `branches-ignore`, no bare `push:`, no tag, no negated branch, no path filter) and never
-  cancels a `main` run, at the workflow or the job level;
+  cancels a `main` run, at the workflow or the job level. The suite's shards are the one
+  exception: a running shard is never cancelled, but a newer push's waiting shard replaces an
+  older one's, which the gates name as superseded (see "A burst of merges");
 - `test-macos` runs `test-shard`'s split on macOS under exactly the condition that runs it on
   pull requests into `main` and on an untested push: the same pytest words but the worker count
   and the report path, its own shard of its own leg's plan, the same job env and defaults, the same

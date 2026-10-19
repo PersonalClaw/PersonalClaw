@@ -1296,7 +1296,87 @@ def _waits_on_tree_check(where: str, job: dict[str, Any]) -> list[str]:
     return bad
 
 
-def _main_never_cancels(where: str, workflow: dict[str, Any]) -> list[str]:
+#: ``ci.yml``'s suite jobs. On a push to main they share one group per job and shard, with
+#: cancel-in-progress false, so a newer push's waiting shard replaces an older one that has not
+#: started and a burst of merges runs the suite on its newest commit (#3915). A re-run (a later
+#: ``run_attempt``) keys on its own commit, so it can neither replace nor be replaced.
+_SUITE_GROUPED = ("test-shard", "test-macos")
+#: Each suite job's gate: the job that fails on a red or cancelled shard and names the red.
+_GATES = {"test": "test-shard", "test-macos-gate": "test-macos"}
+#: The suite groups as ``ci.yml`` writes them: on main's first attempt, one group per job and
+#: shard shared by every push (``ci-suite-main-main-<job>-<n>``); on a re-run on main, the commit's
+#: own; on a pull request, per head repository and branch, as the workflow's own group is.
+_SUITE_KEY = (
+    "ci-suite-${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' && github.ref_name"
+    " || github.ref == 'refs/heads/main' && github.sha"
+    " || github.event.pull_request.head.repo.full_name || github.repository }}"
+    "-${{ github.head_ref || github.ref_name }}"
+)
+_SHARD_GROUP = f"      group: {_SUITE_KEY}-test-shard-${{{{ matrix.shard }}}}\n"
+_MACOS_GROUP = (
+    f"    concurrency:\n      group: {_SUITE_KEY}-test-macos-${{{{ matrix.shard }}}}\n"
+    "      cancel-in-progress: false\n"
+)
+
+
+def _main_push_at(sha: str, attempt: str = "1") -> dict[str, Any]:
+    context = _main_push_context()
+    context["github"]["sha"] = sha
+    context["github"]["run_attempt"] = attempt
+    return context
+
+
+def _main_prefix(group: str) -> str:
+    """A suite group on main's first attempt, less its shard index: what the gate reads."""
+    return _evaluate(re.sub(r"\$\{\{\s*matrix\.shard\s*\}\}", "", group), _main_push_at("1" * 40))
+
+
+def _suite_group_violations(where: str, job_id: str, job: dict[str, Any]) -> list[str]:
+    """A suite job's own group: shared by every main push, one per shard, never cancelling."""
+    concurrency = job.get("concurrency")
+    if not isinstance(concurrency, dict) or "group" not in concurrency:
+        return [
+            f"{where}:{job_id} has no concurrency group of its own, so every push to main "
+            "queues its whole suite (#3915)"
+        ]
+    group = str(concurrency["group"])
+    bad: list[str] = []
+    if concurrency.get("cancel-in-progress") is not False:
+        bad.append(f"{where}:{job_id}'s group can cancel a running shard: set it to false")
+    if not re.search(r"\$\{\{\s*matrix\.shard\s*\}\}", group):
+        bad.append(
+            f"{where}:{job_id}'s group does not name its shard, so its shards replace each other"
+        )
+    try:
+        one = _evaluate(group, _main_push_at("1" * 40))
+        two = _evaluate(group, _main_push_at("2" * 40))
+    except ValueError as exc:
+        return [*bad, f"{where}:{job_id}: {exc}"]
+    if one != two:
+        bad.append(
+            f"{where}:{job_id}'s group on main is per commit ({one!r} and {two!r}), so a newer "
+            "push never replaces a waiting shard"
+        )
+    elif job_id not in one:
+        bad.append(f"{where}:{job_id}'s group on main ({one!r}) does not name the job")
+    # A re-run keeps its run id and raises run_attempt. In the shared group an older commit's
+    # re-run would replace the tip's waiting shard, so a re-run on main keys on its own commit.
+    try:
+        rerun_one = _evaluate(group, _main_push_at("1" * 40, attempt="2"))
+        rerun_two = _evaluate(group, _main_push_at("2" * 40, attempt="2"))
+    except ValueError as exc:
+        return [*bad, f"{where}:{job_id}: {exc}"]
+    if rerun_one in (one, two) or rerun_one == rerun_two:
+        bad.append(
+            f"{where}:{job_id}'s group for a re-run on main ({rerun_one!r}) is the shared one or "
+            "another commit's, so a re-run of an older commit can replace the tip's waiting shard"
+        )
+    return bad
+
+
+def _main_never_cancels(
+    where: str, workflow: dict[str, Any], suite: tuple[str, ...] = ()
+) -> list[str]:
     concurrency = workflow.get("concurrency") or {}
     group = str(concurrency.get("group", ""))
     cancel = concurrency.get("cancel-in-progress", False)
@@ -1307,16 +1387,210 @@ def _main_never_cancels(where: str, workflow: dict[str, Any]) -> list[str]:
     if cancel is True or (isinstance(cancel, str) and off_main not in cancel):
         bad.append(f"{where}: a run on main can be cancelled")
     # Groups are shared across the repository, and a new pending entry replaces the old one,
-    # so a job's own group could cancel or replace a main run's job whatever the workflow's is.
-    for job_id, job in (workflow.get("jobs") or {}).items():
-        if isinstance(job, dict) and "concurrency" in job:
+    # so a job's own group can replace a main run's job whatever the workflow's is. Only the
+    # suite jobs may have one, and they must (decision 9).
+    jobs = {k: v for k, v in (workflow.get("jobs") or {}).items() if isinstance(v, dict)}
+    for job_id, job in jobs.items():
+        if job_id in suite:
+            bad.extend(_suite_group_violations(where, job_id, job))
+        elif "concurrency" in job:
             bad.append(f"{where}:{job_id} has its own concurrency group, which can cancel it")
+    if suite:
+        bad.extend(_gate_names_superseded_violations(where, jobs))
+    return bad
+
+
+def _gate_names_superseded_violations(where: str, jobs: dict[str, dict[str, Any]]) -> list[str]:
+    """Each suite job's gate fails on every shard that did not pass, names a superseded shard
+    only from the previous main commit's copy of the check for its own job's group, and never
+    exits 0 on a cancelled shard. Held by RUNNING the gate's script on planted answers."""
+    bad: list[str] = []
+    for gate_id, shard_id in _GATES.items():
+        gate, shards = jobs.get(gate_id), jobs.get(shard_id)
+        if gate is None or shards is None:
+            bad.append(f"{where} has no `{gate_id}` gate over `{shard_id}`")
+            continue
+        bad.extend(_gate_violations(f"{where}:{gate_id}", gate, shard_id, shards))
+    return bad
+
+
+#: The gate step's env, as each gate must bind it.
+_GATE_ENV = {
+    "GH_TOKEN": "${{ github.token }}",
+    "BEFORE": "${{ github.event.before }}",
+}
+
+
+def _gate_violations(
+    where: str, gate: dict[str, Any], shard_id: str, shards: dict[str, Any]
+) -> list[str]:
+    bad: list[str] = []
+    needs = set(_needs(gate))
+    if not {"tree-check", shard_id} <= needs:
+        bad.append(f"{where} does not wait on tree-check and {shard_id}")
+    # The gate runs exactly when its shards were planned, so it can never be skipped while they
+    # ran, and no clause on their result can skip it on a cancelled shard.
+    if str(gate.get("if", "")) != str(shards.get("if", "")):
+        bad.append(
+            f"{where}'s `if:` ({gate.get('if')!r}) is not {shard_id}'s ({shards.get('if')!r})"
+        )
+    steps = [s for s in gate.get("steps") or [] if "RESULT" in (s.get("env") or {})]
+    if len(steps) != 1:
+        return [*bad, f"{where} has no one step that reads its shards' RESULT"]
+    step = steps[0]
+    env = {str(k): str(v) for k, v in (step.get("env") or {}).items()}
+    concurrency = shards.get("concurrency")
+    group = str(concurrency.get("group", "")) if isinstance(concurrency, dict) else ""
+    try:
+        prefix = _main_prefix(group)
+    except ValueError:
+        return bad  # reported by the group check
+    want = {
+        **_GATE_ENV,
+        "RESULT": f"${{{{ needs.{shard_id}.result }}}}",
+        "SHARD_JOB": shard_id,
+        "GROUP_PREFIX": prefix,
+    }
+    for name, value in want.items():
+        if env.get(name) != value:
+            bad.append(f"{where} binds {name} to {env.get(name)!r}, not {value!r}")
+    run = str(step.get("run", ""))
+    if "${{" in run:
+        bad.append(f"{where} pastes an expression into its script; it must come through env")
+    if bad:
+        return bad
+    bad.extend(_gate_behaviour(where, run, env))
+    return bad
+
+
+_SHA_B = "b" * 40
+_BEFORE = "d" * 40
+#: (name, the run's event and ref, the shards' result, the answer the check writes or None for
+#: no answer file, whether `gh` fails, the exit code, the `::error title=`, text the error names)
+_GATE_CASES: tuple[tuple[str, str, str, str, str | None, bool, int, str, str], ...] = (
+    ("green", "push", "refs/heads/main", "success", None, False, 0, "", "passed"),
+    ("a failed shard", "push", "refs/heads/main", "failure", None, False, 1, "failed", ""),
+    ("superseded", "push", "refs/heads/main", "cancelled", f"superseded={_SHA_B}", False, 1,
+     "superseded", f"superseded by {_SHA_B}"),
+    ("superseded, a SHA-256 id", "push", "refs/heads/main", "cancelled", "superseded=" + "b" * 64,
+     False, 1, "superseded", "superseded by " + "b" * 64),
+    ("no commit named", "push", "refs/heads/main", "cancelled", "superseded=", False, 1,
+     "unproven", ""),
+    ("not hex", "push", "refs/heads/main", "cancelled", "superseded=not-a-commit", False, 1,
+     "unproven", ""),
+    ("forty characters, not hex", "push", "refs/heads/main", "cancelled", "superseded=" + "z" * 40,
+     False, 1, "unproven", ""),
+    ("hex but 39 characters", "push", "refs/heads/main", "cancelled", "superseded=" + "b" * 39,
+     False, 1, "unproven", ""),
+    ("hex but 41 characters", "push", "refs/heads/main", "cancelled", "superseded=" + "b" * 41,
+     False, 1, "unproven", ""),
+    ("hex but 65 characters", "push", "refs/heads/main", "cancelled", "superseded=" + "b" * 65,
+     False, 1, "unproven", ""),
+    ("two lines", "push", "refs/heads/main", "cancelled", f"superseded={_SHA_B}\nsuperseded=x",
+     False, 1, "unproven", ""),
+    ("no answer file", "push", "refs/heads/main", "cancelled", None, False, 1, "unproven", ""),
+    ("the check cannot be fetched", "push", "refs/heads/main", "cancelled",
+     f"superseded={_SHA_B}", True, 1, "unproven", ""),
+    ("a pull request", "pull_request", "refs/pull/41/merge", "cancelled",
+     f"superseded={_SHA_B}", False, 1, "unproven", ""),
+    ("a tag named main", "push", "refs/tags/main", "cancelled", f"superseded={_SHA_B}", False, 1,
+     "unproven", ""),
+)  # fmt: skip
+
+_GH_STUB = """#!/bin/sh
+printf 'gh %s\\n' "$*" >> "$STUB_LOG"
+[ -n "${STUB_GH_FAIL:-}" ] && exit 1
+echo "# the fetched check"
+"""
+_PY_STUB = """#!/bin/sh
+printf 'python3 %s\\n' "$*" >> "$STUB_LOG"
+if [ -z "${STUB_NO_ANSWER:-}" ]; then printf '%s\\n' "$STUB_ANSWER" >> "$GITHUB_OUTPUT"; fi
+exit 0
+"""
+
+
+def _gate_behaviour(where: str, run: str, env: dict[str, str]) -> list[str]:
+    """Run the gate's script under ``bash -e`` (GitHub's default shell) with ``gh`` and
+    ``python3`` stubbed, once per planted answer, and hold its exit code and its error."""
+    import os
+    import subprocess
+    import tempfile
+
+    bad: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        for name, body in (("gh", _GH_STUB), ("python3", _PY_STUB)):
+            (bin_dir / name).write_text(body, encoding="utf-8")
+            (bin_dir / name).chmod(0o755)
+        script = root / "gate.sh"
+        script.write_text(run, encoding="utf-8")
+        for name, event, ref, result, answer, gh_fails, code, title, names in _GATE_CASES:
+            temp = root / f"temp-{len(bad)}-{abs(hash(name))}"
+            temp.mkdir()
+            log = temp / "calls.log"
+            log.write_text("", encoding="utf-8")
+            case_env = {
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+                "RUNNER_TEMP": str(temp),
+                "GITHUB_REPOSITORY": "PersonalClaw/PersonalClaw",
+                "GITHUB_EVENT_NAME": event,
+                "GITHUB_REF": ref,
+                "GH_TOKEN": "token",
+                "BEFORE": _BEFORE,
+                "RESULT": result,
+                "SHARD_JOB": env["SHARD_JOB"],
+                "GROUP_PREFIX": env["GROUP_PREFIX"],
+                "STUB_LOG": str(log),
+                "STUB_ANSWER": answer or "",
+            }
+            if answer is None:
+                case_env["STUB_NO_ANSWER"] = "1"
+            if gh_fails:
+                case_env["STUB_GH_FAIL"] = "1"
+            done = subprocess.run(
+                ["bash", "-e", str(script)],
+                env=case_env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            out = done.stdout + done.stderr
+            calls = log.read_text(encoding="utf-8")
+            if done.returncode != code:
+                bad.append(f"{where} exits {done.returncode} on {name}, not {code}: {out!r}")
+                continue
+            if code == 0:
+                if "::error" in out:
+                    bad.append(f"{where} reports an error on {name}: {out!r}")
+                continue
+            if f"::error title=test shards {title}::" not in out:
+                bad.append(f"{where} does not name {name} '{title}': {out!r}")
+            if names and names not in out:
+                bad.append(f"{where} does not say {names!r} on {name}: {out!r}")
+            main_push = (event, ref) == ("push", "refs/heads/main") and result == "cancelled"
+            if not main_push and calls:
+                bad.append(f"{where} reads the API on {name}, where nothing can be superseded")
+            if main_push and not gh_fails:
+                fetch = f"contents/tools/ci/superseded.py?ref={_BEFORE}"
+                if fetch not in calls:
+                    bad.append(
+                        f"{where} does not fetch the previous main commit's check: {calls!r}"
+                    )
+                want = (
+                    f"python3 -I {temp}/superseded.py --workflow ci.yml --job "
+                    f"{env['SHARD_JOB']} --group-prefix {env['GROUP_PREFIX']}"
+                )
+                if want not in calls:
+                    bad.append(f"{where} does not run the fetched check as {want!r}: {calls!r}")
     return bad
 
 
 def main_push_runs_violations(tree: Tree) -> list[str]:
     """``ci.yml`` runs on every push to main and on no other push, and no main run is ever
-    cancelled or replaced.
+    cancelled. The suite's shards are the one exception: a newer push's waiting shard replaces
+    an older one's in their shared group, and the gates name that red as superseded.
 
     A pull request's run is its candidate's check. A push run on the same feature branch only
     duplicated it: the shared group cancelled one of the two, and a later push run could cancel
@@ -1350,7 +1624,7 @@ def main_push_runs_violations(tree: Tree) -> list[str]:
         # Beside a branch filter, a tags-ignore starts a run on every tag it does not match.
         if {"tags", "tags-ignore"} & set(push):
             bad.append("ci.yml runs on a tag push, which is release.yml's")
-    return bad + _main_never_cancels("ci.yml", workflow)
+    return bad + _main_never_cancels("ci.yml", workflow, _SUITE_GROUPED)
 
 
 def _suite_words(command: str) -> list[str]:
@@ -2742,11 +3016,239 @@ ROWS: tuple[Row, ...] = (
                 expect="leaves main",
             ),
             _plant(
-                "a job-level concurrency group",
+                "a job-level concurrency group outside the suite",
                 _CI,
-                "  test-macos:\n",
-                "  test-macos:\n    concurrency:\n      group: macos-${{ matrix.shard }}\n"
-                "      cancel-in-progress: true\n",
+                "  web:\n",
+                "  web:\n    concurrency:\n      group: web-${{ github.sha }}\n"
+                "      cancel-in-progress: false\n",
+                expect="ci.yml:web has its own concurrency group",
+            ),
+            _plant(
+                "test-macos with no group of its own",
+                _CI,
+                _MACOS_GROUP,
+                "",
+                expect="ci.yml:test-macos has no concurrency group of its own",
+            ),
+            _plant(
+                "a suite group that cancels a running shard",
+                _CI,
+                _SHARD_GROUP + "      cancel-in-progress: false\n",
+                _SHARD_GROUP + "      cancel-in-progress: true\n",
+                expect="can cancel a running shard",
+            ),
+            _plant(
+                "a suite group with no cancel-in-progress (an expression is not false)",
+                _CI,
+                _SHARD_GROUP + "      cancel-in-progress: false\n",
+                _SHARD_GROUP + "      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n",
+                expect="can cancel a running shard",
+            ),
+            _plant(
+                "a suite group per commit on main",
+                _CI,
+                "-test-shard-${{ matrix.shard }}\n",
+                "-test-shard-${{ matrix.shard }}-${{ github.sha }}\n",
+                expect="is per commit",
+            ),
+            _plant(
+                "a suite group that does not name its shard",
+                _CI,
+                "-test-shard-${{ matrix.shard }}\n",
+                "-test-shard\n",
+                expect="does not name its shard",
+            ),
+            _plant(
+                "test-shard and test-macos in one group",
+                _CI,
+                "-test-macos-${{ matrix.shard }}\n",
+                "-test-shard-${{ matrix.shard }}\n",
+                expect="ci.yml:test-macos's group on main",
+            ),
+            _plant(
+                "a re-run on main joins the shared group",
+                _CI,
+                "github.ref == 'refs/heads/main' && github.run_attempt == '1' && github.ref_name",
+                "github.ref == 'refs/heads/main' && github.ref_name",
+                expect="a re-run on main",
+            ),
+            # The gates, by behaviour: each plant is one edit of the `test` gate's script or
+            # env, and the row runs the script on planted answers and reads its exit code.
+            _plant(
+                "the gate exits 0 on a superseded shard",
+                _CI,
+                "that commit's run is the one to read.\"\n",
+                "that commit's run is the one to read.\"\n              exit 0\n",
+                expect="ci.yml:test exits 0 on superseded, not 1",
+            ),
+            _plant(
+                "the gate exits 0 when the check names no commit",
+                _CI,
+                '            exit 1\n          fi\n          if [ "$result" != "success" ]',
+                '            exit 0\n          fi\n          if [ "$result" != "success" ]',
+                expect="ci.yml:test exits 0 on no commit named, not 1",
+            ),
+            _plant(
+                "the gate fetches the merge's own copy of the check",
+                _CI,
+                "contents/tools/ci/superseded.py?ref=${BEFORE}",
+                "contents/tools/ci/superseded.py?ref=${GITHUB_SHA}",
+                expect="does not fetch the previous main commit's check",
+            ),
+            _plant(
+                "the gate binds BEFORE to the pushed commit",
+                _CI,
+                "          BEFORE: ${{ github.event.before }}\n"
+                "          RESULT: ${{ needs.test-shard",
+                "          BEFORE: ${{ github.sha }}\n          RESULT: ${{ needs.test-shard",
+                expect="ci.yml:test binds BEFORE",
+            ),
+            _plant(
+                "the gate runs the fetched check without -I",
+                _CI,
+                'python3 -I "$check"',
+                'python3 "$check"',
+                expect="does not run the fetched check",
+            ),
+            _plant(
+                "the gate reads the API off a push to main",
+                _CI,
+                'if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; '
+                'then\n              check="$RUNNER_TEMP/superseded.py"',
+                'if true; then\n              check="$RUNNER_TEMP/superseded.py"',
+                expect="reads the API on a pull request",
+            ),
+            _plant(
+                "the gate takes a commit that is not hex",
+                _CI,
+                '            case "$newer" in\n              *[!0-9a-f]*) newer="" ;;\n'
+                "            esac\n",
+                "",
+                expect="ci.yml:test does not name forty characters, not hex 'unproven'",
+            ),
+            _plant(
+                "the gate takes hex of any length",
+                _CI,
+                '            case "${#newer}" in\n              40|64) ;;\n'
+                '              *) newer="" ;;\n            esac\n',
+                "",
+                expect="hex but 39 characters",
+            ),
+            _plant(
+                "the gate reads another job's group",
+                _CI,
+                "GROUP_PREFIX: ci-suite-main-main-test-shard-\n",
+                "GROUP_PREFIX: ci-suite-main-main-test-macos-\n",
+                expect="ci.yml:test binds GROUP_PREFIX",
+            ),
+            _plant(
+                "the gate skips a cancelled shard",
+                _CI,
+                "    needs: [tree-check, test-shard]\n"
+                "    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}\n",
+                "    needs: [tree-check, test-shard]\n"
+                "    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true'"
+                " && needs.test-shard.result != 'cancelled' }}\n",
+                expect="ci.yml:test's `if:`",
+            ),
+            _plant(
+                "the gate pastes its shards' result into the script",
+                _CI,
+                'result="$RESULT"',
+                "result='${{ needs.test-shard.result }}'",
+                expect="pastes an expression",
+            ),
+            _plant(
+                "the gate names no superseded red",
+                _CI,
+                "::error title=test shards superseded::",
+                "::error title=test shards unproven::",
+                expect="does not name superseded 'superseded'",
+            ),
+            _plant(
+                "the macOS gate reads test-shard's group",
+                _CI,
+                "GROUP_PREFIX: ci-suite-main-main-test-macos-\n",
+                "GROUP_PREFIX: ci-suite-main-main-test-shard-\n",
+                expect="ci.yml:test-macos-gate binds GROUP_PREFIX",
+            ),
+            _plant(
+                "no gate over test-macos",
+                _CI,
+                "  test-macos-gate:\n",
+                "  test-macos-check:\n",
+                expect="has no `test-macos-gate` gate",
+            ),
+            # One plant per clause of the gate checker, each its own anchor.
+            _plant(
+                "the gate reads another job's result",
+                _CI,
+                "          RESULT: ${{ needs.test-shard.result }}\n"
+                "          SHARD_JOB: test-shard\n",
+                "          RESULT: ${{ needs.tree-check.result }}\n"
+                "          SHARD_JOB: test-shard\n",
+                expect="ci.yml:test binds RESULT",
+            ),
+            _plant(
+                "the macOS gate reads tree-check's result",
+                _CI,
+                "RESULT: ${{ needs.test-macos.result }}",
+                "RESULT: ${{ needs.tree-check.result }}",
+                expect="ci.yml:test-macos-gate binds RESULT",
+            ),
+            _plant(
+                "the gate does not wait on its shards",
+                _CI,
+                "    needs: [tree-check, test-shard]\n    if: ${{ !cancelled()",
+                "    needs: [tree-check, shard-plan]\n    if: ${{ !cancelled()",
+                expect="ci.yml:test does not wait on tree-check and test-shard",
+            ),
+            _plant(
+                "the gate names another shard job",
+                _CI,
+                "          SHARD_JOB: test-shard\n",
+                "          SHARD_JOB: test-macos\n",
+                expect="ci.yml:test binds SHARD_JOB",
+            ),
+            _plant(
+                "the gate has no token",
+                _CI,
+                "          GH_TOKEN: ${{ github.token }}\n"
+                "          BEFORE: ${{ github.event.before }}\n"
+                "          RESULT: ${{ needs.test-shard",
+                "          BEFORE: ${{ github.event.before }}\n"
+                "          RESULT: ${{ needs.test-shard",
+                expect="ci.yml:test binds GH_TOKEN",
+            ),
+            _plant(
+                "the gate does not name the newer commit",
+                _CI,
+                "superseded by ${newer}. It stays red",
+                "superseded by a newer commit. It stays red",
+                expect="ci.yml:test does not say 'superseded by " + _SHA_B,
+            ),
+            _plant(
+                "every commit's re-run on main shares one group",
+                _CI,
+                "&& github.ref_name || github.ref == 'refs/heads/main' && github.sha ||",
+                "&& github.ref_name || github.ref == 'refs/heads/main' && github.repository ||",
+                expect="ci.yml:test-shard's group for a re-run on main",
+            ),
+            _plant(
+                "a second step reads the shards' result",
+                _CI,
+                '          echo "every ${SHARD_JOB} shard passed"\n',
+                '          echo "every ${SHARD_JOB} shard passed"\n'
+                "      - name: a second reader\n        env:\n          RESULT: success\n"
+                "        run: echo\n",
+                expect="ci.yml:test has no one step that reads its shards' RESULT",
+            ),
+            _plant(
+                "the gate reports an error when green",
+                _CI,
+                '          echo "every ${SHARD_JOB} shard passed"\n',
+                '          echo "::error title=x::every ${SHARD_JOB} shard passed"\n',
+                expect="ci.yml:test reports an error on green",
             ),
             Control("the per-commit group on main passes", _nothing, fails=False),
         ),
@@ -4763,7 +5265,7 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
 }
 
 #: ci.yml's jobs that decide what runs or gather what ran, and validate nothing themselves.
-_ORCHESTRATION = frozenset({"tree-check", "changes", "shard-plan", "test"})
+_ORCHESTRATION = frozenset({"tree-check", "changes", "shard-plan", "test", "test-macos-gate"})
 
 _CI = ".github/workflows/ci.yml"
 
