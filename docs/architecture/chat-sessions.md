@@ -1277,6 +1277,15 @@ change to one region touches that region's files:
   the bar: the way back, the title, the context line, the task and permission
   pills, and the openers of the Session Map, the Activity rail and the new
   chat's history panel.
+- **The new chat's hero** — `web/src/pages/chat/hero/ChatHero.tsx`. The mark and
+  a greeting around the composer, and the owner's starters and suggestions
+  under it; picking one fills the composer. A route naming a chat that does not
+  exist opens `web/src/pages/chat/MissingChat.tsx` instead, which carries a
+  typed draft into a new chat.
+
+What `ChatPage.tsx` keeps is the routing (`ChatPage`, `RoomsRedirect`) and
+`ChatSession`'s composition: it calls the controllers in order, hands each the
+others' pieces it needs, and lays the regions out.
 
 ## Prompt entities
 
