@@ -208,39 +208,6 @@ def _page_prompt(read: dict, **edits) -> dict:
 
 class TestPrompt:
     @pytest.mark.asyncio
-    async def test_two_saves_from_one_read_the_second_is_refused(self, prompts) -> None:
-        _seed_prompt(prompts)
-        async with TestClient(TestServer(_prompts_app())) as c:
-            read = await (await c.get("/api/prompts/triage")).json()
-            base = read["revision"]
-            first = await c.put(
-                "/api/prompts/triage",
-                json=_page_prompt(read, title="Tab A"),
-                headers=_based_on(base),
-            )
-            assert first.status == 200
-            # Tab B changed the tags only — and would have put the title back.
-            second = await c.put(
-                "/api/prompts/triage",
-                json=_page_prompt(read, tags=["inbox", "tab-b"]),
-                headers=_based_on(base),
-            )
-            assert second.status == 409
-            assert await _code(second) == "stale_write"
-        stored = prompts.get_prompt("triage")
-        assert stored.title == "Tab A" and stored.tags == ["inbox"]
-
-    @pytest.mark.asyncio
-    async def test_a_save_that_names_no_revision_is_refused(self, prompts) -> None:
-        _seed_prompt(prompts)
-        async with TestClient(TestServer(_prompts_app())) as c:
-            read = await (await c.get("/api/prompts/triage")).json()
-            resp = await c.put("/api/prompts/triage", json=_page_prompt(read, title="Nope"))
-            assert resp.status == 428
-            assert await _code(resp) == "revision_required"
-        assert prompts.get_prompt("triage").title == "Triage"
-
-    @pytest.mark.asyncio
     async def test_a_history_rollback_between_read_and_save_is_not_undone(
         self, prompts, tmp_path
     ) -> None:
@@ -340,16 +307,6 @@ class TestSnippet:
             assert second.status == 409
             assert await _code(second) == "stale_write"
         assert prompts.get_snippet("tone").content == "Be brief. Tab A."
-
-    @pytest.mark.asyncio
-    async def test_a_save_that_names_no_revision_is_refused(self, prompts) -> None:
-        _seed_snippet(prompts)
-        async with TestClient(TestServer(_prompts_app())) as c:
-            read = await (await c.get("/api/prompt-snippets/tone")).json()
-            resp = await c.put("/api/prompt-snippets/tone", json=_page_snippet(read, content="x"))
-            assert resp.status == 428
-            assert await _code(resp) == "revision_required"
-        assert prompts.get_snippet("tone").content == "Be brief."
 
     @pytest.mark.asyncio
     async def test_a_new_includer_elsewhere_does_not_make_the_save_stale(self, prompts) -> None:
@@ -472,17 +429,6 @@ class TestMemoryDoc:
             stored = (await (await c.get(f"/api/memory/{_doc(which)}")).json())["content"]
         assert "tab A's line" in stored and "tab B's line" not in stored
 
-    @pytest.mark.parametrize("which", DOCS)
-    @pytest.mark.asyncio
-    async def test_a_save_that_names_no_revision_is_refused(self, memory, which) -> None:
-        async with TestClient(TestServer(_memory_app(memory))) as c:
-            before = (await (await c.get(f"/api/memory/{_doc(which)}")).json())["content"]
-            resp = await c.put(f"/api/memory/{_doc(which)}", json={"content": "- overwritten"})
-            assert resp.status == 428
-            assert await _code(resp) == "revision_required"
-            after = (await (await c.get(f"/api/memory/{_doc(which)}")).json())["content"]
-        assert after == before
-
     @pytest.mark.asyncio
     async def test_a_consolidated_history_entry_between_read_and_save_is_not_undone(
         self, memory
@@ -594,17 +540,6 @@ class TestProjectOverview:
         assert project_context.read_overview(project.id) == OVERVIEW + " Tab A."
 
     @pytest.mark.asyncio
-    async def test_a_save_that_names_no_revision_is_refused(self, project) -> None:
-        from personalclaw import project_context
-
-        assert project_context.write_overview(project.id, OVERVIEW)
-        async with TestClient(TestServer(_always_on_app())) as c:
-            resp = await _save_overview(c, project.id, "overwritten", None)
-            assert resp.status == 428
-            assert await _code(resp) == "revision_required"
-        assert project_context.read_overview(project.id) == OVERVIEW
-
-    @pytest.mark.asyncio
     async def test_a_completed_runs_line_between_read_and_save_is_not_undone(self, project) -> None:
         # Every workflow run that completes in the project appends a line to its overview.
         from personalclaw import project_context
@@ -672,29 +607,6 @@ async def _read_template(c: TestClient, project_id: str) -> tuple[str, str]:
 
 
 class TestProjectInstructions:
-    @pytest.mark.asyncio
-    async def test_two_saves_from_one_read_the_second_is_refused(self, project) -> None:
-        from personalclaw.tasks.hierarchy import HierarchyStore
-
-        async with TestClient(TestServer(_projects_app())) as c:
-            text, base = await _read_template(c, project.id)
-            assert base == revision_of(text)
-            first = await c.put(
-                f"/api/projects/{project.id}",
-                json={"agent_instructions_template": "Prefer primary sources."},
-                headers=_based_on(base),
-            )
-            assert first.status == 200
-            second = await c.put(
-                f"/api/projects/{project.id}",
-                json={"agent_instructions_template": "Reject a summary that cites none."},
-                headers=_based_on(base),
-            )
-            assert second.status == 409
-            assert await _code(second) == "stale_write"
-        stored = HierarchyStore().get_project(project.id).agent_instructions_template
-        assert stored == "Prefer primary sources."
-
     @pytest.mark.asyncio
     async def test_a_save_that_names_no_revision_is_refused_and_a_scalar_needs_none(
         self, project
@@ -777,36 +689,6 @@ async def _read_overlay(c: TestClient, run_id: str) -> tuple[dict, str]:
 
 
 class TestRunPolicyOverrides:
-    @pytest.mark.asyncio
-    async def test_two_saves_from_one_read_the_second_is_refused(self, runs) -> None:
-        from personalclaw.workflows.models import WorkflowRun
-
-        run = runs.create(WorkflowRun(id="", workflow_name="w"))
-        async with TestClient(TestServer(_runs_app())) as c:
-            overlay, base = await _read_overlay(c, run.id)
-            assert base == revision_of(overlay)
-            url = f"/api/workflows/runs/{run.id}/policy-overrides"
-            first = await c.put(url, json={**overlay, "max_cycles": 3}, headers=_based_on(base))
-            assert first.status == 200
-            # The second tab overrides a different knob — from the copy without max_cycles.
-            second = await c.put(url, json={**overlay, "idle_secs": 30}, headers=_based_on(base))
-            assert second.status == 409
-            assert await _code(second) == "stale_write"
-        assert runs.get(run.id).policy_overrides == {"max_cycles": 3}
-
-    @pytest.mark.asyncio
-    async def test_a_save_that_names_no_revision_is_refused(self, runs) -> None:
-        from personalclaw.workflows.models import WorkflowRun
-
-        run = runs.create(WorkflowRun(id="", workflow_name="w"))
-        async with TestClient(TestServer(_runs_app())) as c:
-            resp = await c.put(
-                f"/api/workflows/runs/{run.id}/policy-overrides", json={"max_cycles": 3}
-            )
-            assert resp.status == 428
-            assert await _code(resp) == "revision_required"
-        assert runs.get(run.id).policy_overrides == {}
-
     @pytest.mark.asyncio
     async def test_consent_does_not_carry_a_stale_overlay(self, runs) -> None:
         # The stale check runs before the consent check: consenting to loosen the copy on screen

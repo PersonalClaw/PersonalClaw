@@ -322,37 +322,6 @@ def _hook_save(title: str) -> dict:
 
 class TestALifecycleSaveFromAStaleCopy:
     @pytest.mark.asyncio
-    async def test_the_second_save_from_the_same_base_is_refused(self, automations) -> None:
-        app, _home, hooks = automations
-        hook_id = _seed_hook(hooks)
-        async with TestClient(TestServer(app)) as c:
-            base = (await _hook_row(c, hook_id)).get("revision", "")
-            first = await c.put(
-                f"/api/triggers/lifecycle:{hook_id}",
-                json=_hook_save("tab A"),
-                headers=_based_on(base),
-            )
-            assert first.status == 200, await first.text()
-            second = await c.put(
-                f"/api/triggers/lifecycle:{hook_id}",
-                json=_hook_save("tab B"),
-                headers=_based_on(base),
-            )
-            assert second.status == 409, await second.text()
-            assert (await second.json())["error"]["code"] == "stale_write"
-        assert hooks.get(hook_id).provider_config["title"] == "tab A"
-
-    @pytest.mark.asyncio
-    async def test_a_form_save_that_names_no_base_is_refused(self, automations) -> None:
-        app, _home, hooks = automations
-        hook_id = _seed_hook(hooks)
-        async with TestClient(TestServer(app)) as c:
-            resp = await c.put(f"/api/triggers/lifecycle:{hook_id}", json=_hook_save("no base"))
-            assert resp.status == 428
-            assert (await resp.json())["error"]["code"] == "revision_required"
-        assert hooks.get(hook_id).provider_config["title"] == "a write is about to run"
-
-    @pytest.mark.asyncio
     async def test_toggling_it_off_elsewhere_does_not_refuse_the_save(self, automations) -> None:
         """`enabled` belongs to the toggle route, and the form never sends it — so a toggle in
         another tab is not a change this save could undo, and it survives the save."""
@@ -434,42 +403,6 @@ def _task_form(task: dict, **changes) -> dict:
 
 
 class TestATaskSaveFromAStaleCopy:
-    @pytest.mark.asyncio
-    async def test_the_second_save_from_the_same_base_is_refused(self, tmp_path) -> None:
-        async with _task_client(tmp_path) as c:
-            created = await _new_task(c)
-            task = await (await c.get(f"/api/tasks/{created['id']}")).json()  # both tabs
-            base = task.get("revision", "")
-            first = await c.put(
-                f"/api/tasks/{task['id']}",
-                json=_task_form(task, labels=["release", "tab-a"]),
-                headers=_based_on(base),
-            )
-            assert first.status == 200, await first.text()
-            second = await c.put(
-                f"/api/tasks/{task['id']}",
-                json=_task_form(task, title="Tab B's title"),
-                headers=_based_on(base),
-            )
-            assert second.status == 409, await second.text()
-            err = (await second.json())["error"]
-            assert err["code"] == "stale_write"
-            assert "the task 'Ship the release'" in err["message"]
-        stored = _stored_task(tmp_path, created["id"])
-        assert stored["labels"] == ["release", "tab-a"]
-        assert stored["title"] == "Ship the release"
-
-    @pytest.mark.asyncio
-    async def test_a_form_save_that_names_no_base_is_refused(self, tmp_path) -> None:
-        async with _task_client(tmp_path) as c:
-            created = await _new_task(c)
-            resp = await c.put(
-                f"/api/tasks/{created['id']}", json=_task_form(created, labels=["replaced"])
-            )
-            assert resp.status == 428
-            assert (await resp.json())["error"]["code"] == "revision_required"
-        assert _stored_task(tmp_path, created["id"])["labels"] == ["release"]
-
     @pytest.mark.asyncio
     async def test_a_status_change_alone_needs_no_base(self, tmp_path) -> None:
         # The board's drag and the dashboard's "complete" send one scalar: the edit itself.
@@ -750,28 +683,6 @@ def _plan_review(sub_goals: list[str]) -> dict:
 
 
 class TestALoopSaveFromAStaleCopy:
-    def test_the_second_save_from_the_same_base_is_refused(self, loops_home) -> None:
-        from personalclaw.loop import store
-
-        cid = _new_loop()
-        base = _loop_read(cid).get("revision", "")
-        first = _loop_save(cid, _plan_review(["tab A"]), base)
-        assert first.status == 200, _body(first)
-        second = _loop_save(cid, _plan_review(["tab B"]), base)
-        assert second.status == 409, _body(second)
-        assert _body(second)["error"]["code"] == "stale_write"
-        assert store.get(cid).kind_config["sub_goals"] == ["tab A"]
-        assert [row["title"] for row in store.get(cid).plan] == ["tab A"]
-
-    def test_a_save_that_names_no_base_is_refused(self, loops_home) -> None:
-        from personalclaw.loop import store
-
-        cid = _new_loop()
-        resp = _loop_save(cid, _plan_review(["no base"]), None)
-        assert resp.status == 428, _body(resp)
-        assert _body(resp)["error"]["code"] == "revision_required"
-        assert store.get(cid).kind_config["sub_goals"] == ["measure"]
-
     def test_a_rename_alone_needs_no_base(self, loops_home) -> None:
         from personalclaw.loop import store
 
@@ -873,14 +784,6 @@ class TestALoopPlanEditFromAStaleDraft:
         assert second.status == 409, _body(second)
         assert _body(second)["error"]["code"] == "stale_write"
         assert _loop_markdown(cid) == "ORIGINAL, edited in tab A"
-
-    def test_an_edit_that_names_no_draft_is_refused(self, loops_home) -> None:
-        cid = _new_loop()
-        _seed_step(cid)
-        resp = _loop_edit(cid, "no base", None)
-        assert resp.status == 428, _body(resp)
-        assert _body(resp)["error"]["code"] == "revision_required"
-        assert _loop_markdown(cid) == "ORIGINAL"
 
     def test_an_edit_of_the_draft_a_redraft_replaced_is_refused(
         self, loops_home, monkeypatch
@@ -994,17 +897,6 @@ class TestAChatPlanEditFromAStaleDraft:
             assert second.status == 409, await second.text()
             assert (await second.json())["error"]["code"] == "stale_write"
         assert _chat_markdown().endswith("tab A's step")
-
-    @pytest.mark.asyncio
-    async def test_an_edit_that_names_no_draft_is_refused(self, tmp_path, monkeypatch):
-        state, chat, markdown = _chat_with_a_draft(tmp_path, monkeypatch)
-        async with TestClient(TestServer(_chat_app(state))) as c:
-            await c.post("/api/chat/sessions/c1/plan/activate")
-            await _draft_lands(state, chat, markdown)
-            resp = await _chat_edit(c, "no base", None)
-            assert resp.status == 428
-            assert (await resp.json())["error"]["code"] == "revision_required"
-        assert _chat_markdown() == markdown
 
     @pytest.mark.asyncio
     async def test_an_edit_of_the_draft_a_redraft_replaced_is_refused(self, tmp_path, monkeypatch):

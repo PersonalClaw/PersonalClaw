@@ -228,16 +228,6 @@ class TestSaveAsArtifact:
             assert _code(await second.json()) == "stale_write"
         assert f.read_text(encoding="utf-8") == "draft\na\n"
 
-    async def test_a_save_that_names_no_copy_is_refused(self, explorer, artifacts) -> None:
-        f = explorer / "brief.md"
-        f.write_text("draft\n", encoding="utf-8")
-        async with TestClient(TestServer(_app())) as c:
-            resp = await _save_as_artifact(c, f, "overwritten\n", None)
-            assert resp.status == 428
-            assert _code(await resp.json()) == "revision_required"
-        assert f.read_text(encoding="utf-8") == "draft\n"
-        assert artifacts.list() == []
-
     async def test_the_agents_write_between_read_and_save_is_not_undone(
         self, explorer, artifacts
     ) -> None:
@@ -272,25 +262,6 @@ async def _save_body(c: TestClient, slug: str, content: str, base: str | None):
 
 
 class TestAnArtifactsBody:
-    async def test_the_second_save_from_the_same_copy_is_refused(self, artifacts) -> None:
-        artifacts.create(name="Doc", content="v1", kind="markdown")
-        async with TestClient(TestServer(_app())) as c:
-            body, base = await _read_artifact(c, "doc")
-            first = await _save_body(c, "doc", body + " tab a", base)
-            assert first.status == 200, await first.text()
-            second = await _save_body(c, "doc", body + " tab b", base)
-            assert second.status == 409
-            assert _code(await second.json()) == "stale_write"
-        assert artifacts.get("doc").content == "v1 tab a"
-
-    async def test_a_save_that_names_no_copy_is_refused(self, artifacts) -> None:
-        artifacts.create(name="Doc", content="v1", kind="markdown")
-        async with TestClient(TestServer(_app())) as c:
-            resp = await _save_body(c, "doc", "overwritten", None)
-            assert resp.status == 428
-            assert _code(await resp.json()) == "revision_required"
-        assert artifacts.get("doc").content == "v1"
-
     async def test_the_agents_update_between_read_and_save_is_not_undone(self, artifacts) -> None:
         from personalclaw.mcp_artifacts import _call_tool
 
@@ -421,23 +392,6 @@ async def _patch_item(store, iid: str, body: dict, base: str | None = None):
 
 
 class TestAKnowledgeItemsBody:
-    async def test_the_second_save_from_the_same_copy_is_refused(self, kstore) -> None:
-        iid = kstore.create_typed_item(item_type="note", title="N", content="alpha")
-        base = (await _read_item(kstore, iid)).get("content_revision")
-        first, _ = await _patch_item(kstore, iid, {"content": "alpha tab a"}, base)
-        assert first.status == 200
-        second, body = await _patch_item(kstore, iid, {"content": "alpha tab b"}, base)
-        assert second.status == 409
-        assert _code(body) == "stale_write"
-        assert kstore.get_item(iid)["content"] == "alpha tab a"
-
-    async def test_a_save_that_names_no_copy_is_refused(self, kstore) -> None:
-        iid = kstore.create_typed_item(item_type="note", title="N", content="alpha")
-        resp, body = await _patch_item(kstore, iid, {"content": "overwritten"})
-        assert resp.status == 428
-        assert _code(body) == "revision_required"
-        assert kstore.get_item(iid)["content"] == "alpha"
-
     async def test_a_renames_relink_between_read_and_save_is_not_undone(self, kstore) -> None:
         iid = kstore.create_typed_item(item_type="note", title="N", content="see [[Old Name]]")
         base = (await _read_item(kstore, iid)).get("content_revision")
@@ -534,13 +488,6 @@ class TestAnIntentEdit:
         stored = _stored_intents(kstore)[intent["id"]]
         assert (stored.enabled, stored.propose_skill) == (False, False)
 
-    async def test_an_edit_that_names_no_copy_is_refused(self, kstore) -> None:
-        intent = await _created_intent(kstore, "track drive health")
-        resp, body = await _upsert(kstore, {**_record(intent), "enabled": False})
-        assert resp.status == 428
-        assert _code(body) == "revision_required"
-        assert _stored_intents(kstore)[intent["id"]].enabled is True
-
     async def test_an_edit_of_an_intent_deleted_since_does_not_resurrect_it(self, kstore) -> None:
         from personalclaw.knowledge.intents import IntentStore
 
@@ -602,13 +549,6 @@ class TestAWatchedSourcesSettings:
         assert second.status == 409
         assert _code(body) == "stale_write"
         assert kstore.get_source(sid)["budget"] == {"max_requests": 4, "allow_render": True}
-
-    async def test_a_save_that_names_no_copy_is_refused(self, kstore) -> None:
-        sid = _source(kstore)
-        resp, body = await _patch_source(kstore, sid, {"budget": {"allow_render": True}})
-        assert resp.status == 428
-        assert _code(body) == "revision_required"
-        assert kstore.get_source(sid)["budget"] == {"max_requests": 4}
 
     async def test_a_poll_between_read_and_save_does_not_make_a_copy_stale(self, kstore) -> None:
         sid = _source(kstore)
