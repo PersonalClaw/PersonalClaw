@@ -113,7 +113,7 @@ function unexplained(): Site[] {
   return out.sort((a, b) => a.key.localeCompare(b.key) || a.line - b.line)
 }
 
-/** The remainder, each with why it is not a defect. Eleven sites, ten keys.
+/** The remainder, each with why it is not a defect. Twelve sites, eleven keys.
  *
  *  Keyed by the control's own `disabled=` expression (see `siteKey`), with `n` where one file has more
  *  than one site sharing an expression. The count is part of the exemption: a THIRD `disabled={readOnly}`
@@ -147,6 +147,8 @@ const CLASSIFIED: Record<string, { n?: number; why: string }> = {
   'pages/settings/InboxSettingsPanel.tsx  disabled={engagementOn === null}': { why: 'loading (engagementOn === null)' },
   // The reason is the button's own visible text — "(removed — insight kept)" — not an attribute.
   'pages/knowledge/KnowledgeListPage.tsx  disabled={!o.item_id}': { why: "the reason is the button's own label text" },
+  // The same: an installed skill's button reads "Installed", and there is nothing left to do.
+  'pages/loops/LoopPlanReview.tsx  disabled={done}': { why: "the reason is the button's own label text — it reads \"Installed\"" },
   // Section-level explanation: the panel renders "Managed by project — read-only" with a lock icon, so
   // the surface states it once rather than repeating it on every checkbox.
   'pages/tasks/TaskDetail.tsx  disabled={readOnly}': { n: 2, why: 'read-only task; the panel states it once with a lock' },
@@ -233,6 +235,8 @@ describe('the disabled-reason census', () => {
 
     expect(code('pages/knowledge/KnowledgeListPage.tsx'),
       'and its label really does explain the state').toMatch(/\(removed — insight kept\)/)
+    expect(code('pages/loops/LoopPlanReview.tsx'),
+      'and the Install label really does say it is done').toMatch(/done \? <><Check size=\{13\} \/> Installed<\/>/)
 
     expect(code('pages/tasks/TaskDetail.tsx'),
       'the cursor says "not a button", not "blocked"').toMatch(/disabled:cursor-default/)

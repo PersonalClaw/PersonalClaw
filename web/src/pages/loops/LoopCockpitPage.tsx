@@ -676,6 +676,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
       {skillsUsed.length > 0 && <MetaPill icon={<Sparkles size={11} />} text={skillsUsedLabel(skillsUsed)} title={skillsUsedTitle(skillsUsed)} />}
       <span className="flex-1" />
       {/* scope: containing project (clickable) + bound workspace */}
+      {/* Raw: the project button is the clickable twin of this row's h-5 truncating MetaPill; ui/MetaChip is h-6 and untruncated. */}
       {projId && projName && (onOpenProject
         ? <button type="button" onClick={() => onOpenProject(projId)} title={`Project: ${projName} — open`}
             data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-2 h-5 max-w-[14rem] hover:brightness-110"
@@ -713,10 +714,12 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
             <IconButton icon={ArrowLeft} label="Back to loops" size={40} onClick={onBack} />
             <div className="min-w-0 flex flex-col">
               {editingTitle ? (
+                // Raw: TextInput takes no onBlur, and the rename commits on blur.
                 <input autoFocus aria-label="Rename this loop" value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
                   onBlur={commitRename} onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') abortRename() }}
                   data-type="body-m" className="min-w-[16rem] h-7 rounded-md bg-surface-high px-2 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
               ) : (
+                // Raw: the title is its own rename control, and no primitive draws bare title-m text.
                 <button type="button" onClick={startRename} title="Rename loop"
                   data-type="title-m" className="truncate text-on-surface leading-tight text-left hover:text-on-surface-var" style={fvs(600)}>
                   {c.name || c.goal}
@@ -773,6 +776,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
               sub-goals. Run metadata now lives in the status bar above, so this row is
               purely the prompt. */}
           <div className="rounded-lg bg-surface-container/60 px-l py-m">
+            {/* Raw: a full-row disclosure, which no primitive draws. */}
             <button type="button" onClick={() => setPromptOpen(!promptOpen)} aria-expanded={promptOpen} className="flex items-center gap-s text-left w-full min-w-0">
               <ChevronRight size={14} className={`shrink-0 text-on-surface-low transition-transform ${promptOpen ? 'rotate-90' : ''}`} />
               <Eyebrow as="span" className="shrink-0">Prompt</Eyebrow>
@@ -887,6 +891,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
             {nudgeOpen && (
               <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
                 <div className="rounded-lg bg-surface-container p-m">
+                  {/* Raw: a bare text surface inside the composer card; TextArea draws its own fill, padding and radius. */}
                   <textarea autoFocus value={nudgeText} onChange={(e) => { setNudgeText(e.target.value); if (nudgeError) setNudgeError(false) }}
                     onKeyDown={(e) => {
                       // ⌘/Ctrl+Enter sends (matches every other composer); Esc cancels.
@@ -1153,6 +1158,7 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, outputsError, on
               {tabs.map((t) => {
                 const on = current?.id === t.id
                 const Icon = t.kind === 'tasks' ? ListChecks : t.kind === 'deliverable' ? Spark : FileText
+                // Raw: a tab in a tablist that swaps a pane; no tab primitive exists (Segmented is a radiogroup).
                 return (
                   <button key={t.id} type="button" onClick={() => setActiveId(t.id)} role="tab" aria-selected={on}
                     tabIndex={on ? 0 : -1}
@@ -1224,6 +1230,7 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, outputsError, on
               // deep-links to that task on the Tasks page (read its detail, edit,
               // see deps) — parity with the artifact tab's "Open" affordance.
               return onOpenTask ? (
+                // Raw: a full-row clickable list item, which no primitive draws.
                 <button key={t.id} type="button" onClick={() => onOpenTask(t.id)}
                   data-type="body-s" className="group flex w-full items-center gap-s rounded-md px-2 py-1 -mx-2 text-left hover:bg-surface-high transition-colors"
                   title="Open task">
@@ -1333,9 +1340,9 @@ function LiveSubsteps({ activity }: { activity: { kind: string; label: string; d
   const [open, setOpen] = useState(false)
   return (
     <div className="mt-1.5 pl-7">
-      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} data-type="caption" className="flex items-center gap-1.5 text-on-surface-low hover:text-on-surface">
+      <QuietButton onClick={() => setOpen((v) => !v)} ariaExpanded={open}>
         <Search size={12} /> {activity.length} steps <ChevronRight size={12} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
-      </button>
+      </QuietButton>
       {open && (
         <ul className="mt-1 flex flex-col gap-1">
           {activity.slice(-12).map((e, i) => (
@@ -1355,6 +1362,7 @@ function RailRow({ icon, label, hint, onClick }: {
   icon: React.ReactNode; label: string; hint?: string; onClick: () => void
 }) {
   return (
+    // Raw: a full-row clickable list item, which no primitive draws.
     <button type="button" onClick={onClick}
       className="group w-full text-left rounded-lg px-m py-2.5 flex items-center gap-s hover:bg-surface-high transition-colors">
       <span className="shrink-0 text-primary">{icon}</span>
@@ -1386,6 +1394,7 @@ function PhaseGroup({ phase, index, active, minCycles, cycles, renderCycle, live
   const orderedCycles = [...cycles].reverse()
   return (
     <div className={`rounded-lg ${active ? 'ring-1 ring-primary' : ''}`} style={{ background: 'color-mix(in srgb, var(--color-surface-container) 55%, transparent)' }}>
+      {/* Raw: a full-row disclosure header, which no primitive draws. */}
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full flex items-center gap-s px-m py-2 text-left">
         <ChevronRight size={13} className={`shrink-0 text-on-surface-low transition-transform ${open ? 'rotate-90' : ''}`} />
         <span data-type="caption" className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill bg-surface-high text-on-surface-low tabular-nums">{index + 1}</span>

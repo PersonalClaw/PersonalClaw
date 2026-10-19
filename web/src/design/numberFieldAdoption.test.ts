@@ -31,9 +31,9 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //    `chat/PromptPalette.tsx`, `prompts/PromptDetail.tsx`) accept `''` as a legitimate empty
 //    value and live inside generic JSON-schema renderers. `NumberField` REVERTS an empty entry
 //    by design, so it cannot express "no value".
-//  · DRAFT-form inputs on non-settings surfaces (`ChatPage`, `schedule/ScheduleForm`,
-//    `code/CodePlanReview`, `loops/LoopPlanReview`) carry their own inline `Math.max` clamping
-//    and different chrome. Converging them is a wider migration, logged as a candidate.
+//  · DRAFT-form inputs on non-settings surfaces (`ChatPage`, `schedule/ScheduleForm`) carry their
+//    own inline `Math.max` clamping and different chrome. Converging them is a wider migration,
+//    logged as a candidate; `code/CodePlanReview` and `loops/LoopPlanReview` already moved.
 //
 // The rail therefore keys on the CHROME the two copies shared — the settings-stepper look —
 // rather than on `type="number"` alone. A rail that flagged every numeric input would cry wolf

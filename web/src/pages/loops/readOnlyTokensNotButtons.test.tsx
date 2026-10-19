@@ -86,18 +86,26 @@ describe('the Suggest-more gate keeps its tab stop', () => {
     expect(src).toMatch(/const tooShort = goal\.trim\(\)\.length < 20/)
   })
 
+  // The control is a `Button` now. `loading` sets the native attribute (an in-flight suggest must not
+  // be re-clickable), and the length gate goes through `disabled` + `disabledReason`, which Button turns
+  // into `aria-disabled` with the reason on `title` and the click refused.
+  const button = readFileSync(join(process.cwd(), 'src/ui/Button.tsx'), 'utf8')
+
   it('keeps the native attribute for busy and only that', () => {
-    expect(src).toMatch(/disabled=\{busy\}/)
-    expect(src).toMatch(/aria-disabled=\{tooShort \|\| undefined\}/)
+    expect(src).toMatch(/<Button variant="ghost-accent" size="xs" onClick=\{suggest\} loading=\{busy\}\s+disabled=\{tooShort\}/)
+    expect(button, 'loading stays natively disabled').toMatch(/const softOff = off && !!disabledReason && !loading/)
+    expect(button).toMatch(/aria-disabled=\{softOff \|\| undefined\}/)
   })
 
   it('says why, and suppresses the click it can no longer refuse natively', () => {
-    expect(src).toMatch(/title=\{tooShort \? 'Describe the goal in a bit more detail first' : undefined\}/)
-    expect(src).toMatch(/onClick=\{tooShort \? undefined : suggest\}/)
+    expect(src).toMatch(/disabled=\{tooShort\} disabledReason="Describe the goal in a bit more detail first"/)
+    expect(button).toMatch(/title=\{softOff \? \[title, disabledReason\]\.filter\(Boolean\)\.join\(' — '\) : title\}/)
+    expect(button).toMatch(/onClick=\{softOff \? \(e\) => e\.preventDefault\(\) : onClick\}/)
   })
 
   it('carries the dimming on BOTH selectors, or the soft-off state looks enabled', () => {
     // `disabled:opacity-40` cannot match an element that is no longer natively disabled.
-    expect(src).toMatch(/disabled:opacity-40 aria-disabled:opacity-40/)
+    expect(button).toMatch(/disabled:opacity-40 disabled:pointer-events-none/)
+    expect(button).toMatch(/aria-disabled:opacity-40/)
   })
 })

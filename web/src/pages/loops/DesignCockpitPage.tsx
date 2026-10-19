@@ -9,6 +9,9 @@ import {
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
+import { QuietButton } from '../../ui/QuietButton'
+import { Segmented } from '../../ui/Segmented'
+import { TextInput } from '../../ui/forms'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { unavailableWhen } from '../../ui/unavailable'
@@ -352,10 +355,11 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
 
       {nudgeOpen && (
         <div className="shrink-0 px-2xl py-2 flex items-center gap-2 border-b border-outline-variant/30">
-          <input autoFocus value={nudgeText} onChange={(e) => setNudgeText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') sendNudge() }}
-            placeholder="Nudge the design loop — e.g. 'make the brand color warmer'"
-            data-type="body-s" className="flex-1 h-9 rounded-md bg-surface-high px-3 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          <div className="flex-1">
+            <TextInput size="md" surface="high" autoFocus value={nudgeText} onChange={setNudgeText}
+              onKeyDown={(e) => { if (e.key === 'Enter') sendNudge() }}
+              placeholder="Nudge the design loop — e.g. 'make the brand color warmer'" />
+          </div>
           <Button variant="primary" onClick={sendNudge}>Send</Button>
         </div>
       )}
@@ -377,6 +381,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
           </span>
         )}
         {(loop.project_id || loop.tasks_project_id) && projName && (
+          // Raw: an h-5 truncating accent pill sized to this status row; ui/MetaChip is h-6 and untruncated.
           <button type="button" onClick={() => onOpenProject?.((loop.project_id || loop.tasks_project_id)!)} title={`Project: ${projName} — open`}
             data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-2 h-5 hover:brightness-110"
             style={accentChip}>
@@ -385,11 +390,9 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
         )}
         {/* What its planner and workers run on — before launch, the picker. */}
         <LoopRunsOn loop={loop} onChange={canAct('start') ? moveRuntime : undefined} />
-        <div data-type="caption" className="ml-auto inline-flex items-center rounded-md bg-surface-container p-0.5">
-          {(['light', 'dark'] as Scheme[]).map((s) => (
-            <button key={s} type="button" onClick={() => setScheme(s)}
-              className={`px-2.5 h-5 rounded capitalize transition-colors ${scheme === s ? 'bg-surface-high text-on-surface' : 'text-on-surface-low'}`}>{s}</button>
-          ))}
+        <div className="ml-auto">
+          <Segmented size="sm" ariaLabel="Scheme" value={scheme} onChange={(v) => setScheme(v as Scheme)}
+            options={[{ key: 'light', label: 'Light' }, { key: 'dark', label: 'Dark' }]} />
         </div>
       </div>
 
@@ -398,6 +401,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
 
       <div className="shrink-0 px-2xl pt-2 flex items-center gap-1 border-b border-outline-variant/30">
         {([['tokens', 'Tokens', Palette], ['canvas', 'Canvas', Box], ['palette', 'Palette', Upload], ['contrast', 'Contrast', Contrast], ['exports', 'Exports', Download]] as [Tab, string, any][]).map(([t, label, Icon]) => (
+          // Raw: an underline page-tab strip over the view it swaps; Segmented draws a pill radiogroup.
           <button key={t} type="button" onClick={() => setTab(t)}
             data-type="body-s" className={`inline-flex items-center gap-1.5 px-3 h-9 border-b-2 -mb-px transition-colors ${tab === t ? 'border-primary text-on-surface' : 'border-transparent text-on-surface-low hover:text-on-surface'}`}>
             <Icon size={14} />{label}
@@ -562,7 +566,7 @@ export function TokensView({ tokens, tokensErr, scheme, overrideCount, onRefresh
       <div className="flex items-center gap-2">
         <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">{readOnly ? `PersonalClaw default design system · ${scheme}` : `Resolved design system · ${scheme}`}</span>
         {!readOnly && (overrideCount ?? 0) > 0 && <span data-type="caption" className="rounded-pill px-2 h-5 inline-flex items-center" style={accentChip}>{overrideCount} override group{(overrideCount ?? 0) > 1 ? 's' : ''}</span>}
-        {!readOnly && onRefresh && <button type="button" onClick={onRefresh} data-type="caption" className="ml-auto inline-flex items-center gap-1 text-on-surface-low hover:text-on-surface"><RefreshCw size={12} /> Refresh</button>}
+        {!readOnly && onRefresh && <QuietButton onClick={onRefresh} className="ml-auto"><RefreshCw size={12} /> Refresh</QuietButton>}
       </div>
 
       <Section icon={Palette} title="Semantic roles">
@@ -640,6 +644,7 @@ export function TokensView({ tokens, tokensErr, scheme, overrideCount, onRefresh
                   <span data-type="caption" className="text-on-surface-low font-mono">{k} · {String(v)}</span>
                 </div>
               ) : (
+                // Raw: a radius swatch tile; TileButton draws a bordered card, not a bare swatch.
                 <button key={k} type="button" {...unavailableWhen(!!locked, locked ?? '', { title: `Override radius.${k} (now ${v})` })}
                   onClick={async () => { const nv = await promptInput({ title: `Override radius.${k}`, label: `radius.${k} — new value (e.g. 0.5rem, 12px). Empty to reset to default.`, initial: String(v), required: false }); if (nv !== null) onOverride?.(`radius.${k}`, nv) }}
                   className="flex flex-col items-center gap-1 group aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
@@ -671,6 +676,7 @@ export function TokensView({ tokens, tokensErr, scheme, overrideCount, onRefresh
                   <span data-type="body-m" className="truncate text-on-surface" style={{ fontFamily: String(v) }}>The quick brown fox</span>
                 </div>
               ) : (
+                // Raw: a full-row specimen that is its own override control, which no primitive draws.
                 <button key={k} type="button" {...unavailableWhen(!!locked, locked ?? '', { title: `Override typography.family.${k}` })}
                   onClick={async () => { const nv = await promptInput({ title: `Override typography.family.${k}`, label: `typography.family.${k} — new font stack (e.g. "Roboto, sans-serif"). Empty to reset.`, initial: String(v), required: false }); if (nv !== null) onOverride?.(`typography.family.${k}`, nv) }}
                   className="flex items-baseline gap-3 text-left group aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
@@ -993,6 +999,7 @@ function PaletteView({ onApply, readOnly, locked }: { onApply: (scale: PaletteSc
         </p>
       )}
       <div>
+        {/* Raw: a hidden file picker driven through a ref, which no form primitive takes. */}
         <input ref={fileRef} type="file" accept="image/*" className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
         <Button variant="secondary" onClick={() => fileRef.current?.click()}><Upload size={14} className="mr-1.5" />Upload screenshot</Button>

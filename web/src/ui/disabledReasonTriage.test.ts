@@ -94,6 +94,7 @@ function buttonTags(src: string): Array<{ tag: string; line: number }> {
  *  with its reason — a silent filter would let a real one hide behind the same shape. */
 const EXEMPT: Record<string, string> = {
   'pages/loops/DesignCockpitPage.tsx': 'the gate is a pass-through `disabled` prop; the reason belongs to the caller',
+  'pages/loops/LoopPlanReview.tsx': '`done` — the skill is installed and the label reads "Installed"; nothing is left to unblock',
   'pages/settings/DurabilityPanel.tsx': 'the gate is a pass-through `disabled` prop; the reason belongs to the caller',
   'pages/settings/ProjectionRulesPanel.tsx': 'the gate is a pass-through `disabled` prop; the reason belongs to the caller',
   'pages/schedule/ScheduleDetail.tsx': '`ranFlash` is a transient post-run flash — in-flight, not blocked',

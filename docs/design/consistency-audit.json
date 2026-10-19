@@ -1,7 +1,7 @@
 {
   "totals": {
     "driftHits": 16,
-    "filesScanned": 823,
+    "filesScanned": 831,
     "filesWithDrift": 10
   },
   "byCategory": {
@@ -18,54 +18,24 @@
       "detail": "13 raw-button, 4 raw-input"
     },
     {
-      "file": "pages/loops/LoopPlanReview.tsx",
-      "score": 24,
-      "detail": "8 raw-button, 8 raw-input"
-    },
-    {
-      "file": "pages/code/CodePlanReview.tsx",
-      "score": 23,
-      "detail": "7 raw-button, 9 raw-input"
-    },
-    {
-      "file": "pages/ChatPage.tsx",
-      "score": 22,
-      "detail": "8 raw-button, 6 raw-input"
-    },
-    {
-      "file": "pages/projects/ProjectsSection.tsx",
-      "score": 22,
-      "detail": "9 raw-button, 4 raw-input"
-    },
-    {
       "file": "app/onboarding/EssentialsStep.tsx",
       "score": 20,
       "detail": "4 color"
     },
     {
-      "file": "pages/settings/MemoryPanel.tsx",
-      "score": 20,
-      "detail": "7 raw-button, 6 raw-input"
+      "file": "pages/ChatPage.tsx",
+      "score": 19,
+      "detail": "7 raw-button, 5 raw-input"
+    },
+    {
+      "file": "pages/projects/ProjectsSection.tsx",
+      "score": 19,
+      "detail": "9 raw-button, 1 raw-input"
     },
     {
       "file": "pages/loops/LoopCockpitPage.tsx",
-      "score": 18,
-      "detail": "8 raw-button, 2 raw-input"
-    },
-    {
-      "file": "pages/knowledge/KnowledgeDetail.tsx",
-      "score": 17,
-      "detail": "6 raw-button, 5 raw-input"
-    },
-    {
-      "file": "pages/knowledge/KnowledgeListPage.tsx",
-      "score": 17,
-      "detail": "7 raw-button, 3 raw-input"
-    },
-    {
-      "file": "pages/loops/DesignCockpitPage.tsx",
-      "score": 14,
-      "detail": "6 raw-button, 2 raw-input"
+      "score": 16,
+      "detail": "7 raw-button, 2 raw-input"
     },
     {
       "file": "pages/dashboard/DashboardPage.tsx",
@@ -73,24 +43,9 @@
       "detail": "2 color, 1 raw-button"
     },
     {
-      "file": "pages/knowledge/AudioRecorder.tsx",
+      "file": "pages/settings/MemoryPanel.tsx",
       "score": 12,
-      "detail": "6 raw-button"
-    },
-    {
-      "file": "pages/settings/SecurityPanel.tsx",
-      "score": 11,
-      "detail": "4 raw-button, 3 raw-input"
-    },
-    {
-      "file": "pages/settings/VoicePanel.tsx",
-      "score": 11,
-      "detail": "4 raw-button, 3 raw-input"
-    },
-    {
-      "file": "pages/tasks/TaskDetail.tsx",
-      "score": 11,
-      "detail": "5 raw-button, 1 raw-input"
+      "detail": "5 raw-button, 2 raw-input"
     },
     {
       "file": "pages/settings/SourcesPanel.tsx",
@@ -98,14 +53,14 @@
       "detail": "2 color"
     },
     {
-      "file": "pages/code/WorkspacePicker.tsx",
+      "file": "pages/files/FilesSection.tsx",
       "score": 10,
       "detail": "4 raw-button, 2 raw-input"
     },
     {
-      "file": "pages/files/FilesSection.tsx",
+      "file": "pages/knowledge/KnowledgeListPage.tsx",
       "score": 10,
-      "detail": "4 raw-button, 2 raw-input"
+      "detail": "5 raw-button"
     },
     {
       "file": "pages/settings/DesignPanel.tsx",
@@ -138,12 +93,22 @@
       "detail": "2 raw-button, 5 raw-input"
     },
     {
+      "file": "pages/loops/DesignCockpitPage.tsx",
+      "score": 9,
+      "detail": "4 raw-button, 1 raw-input"
+    },
+    {
       "file": "pages/settings/ProjectionRulesPanel.tsx",
       "score": 9,
       "detail": "2 raw-button, 5 raw-input"
     },
     {
       "file": "pages/chat/PromptPalette.tsx",
+      "score": 8,
+      "detail": "2 raw-button, 4 raw-input"
+    },
+    {
+      "file": "pages/code/CodePlanReview.tsx",
       "score": 8,
       "detail": "2 raw-button, 4 raw-input"
     },
@@ -156,6 +121,11 @@
       "file": "pages/schedule/ScheduleForm.tsx",
       "score": 8,
       "detail": "2 raw-button, 4 raw-input"
+    },
+    {
+      "file": "pages/tasks/TaskDetail.tsx",
+      "score": 8,
+      "detail": "4 raw-button"
     },
     {
       "file": "pages/tasks/TasksListPage.tsx",
@@ -208,17 +178,47 @@
       "detail": "2 raw-button, 2 raw-input"
     },
     {
+      "file": "pages/loops/LoopPlanReview.tsx",
+      "score": 6,
+      "detail": "2 raw-button, 2 raw-input"
+    },
+    {
       "file": "pages/prompts/PromptDetail.tsx",
       "score": 6,
       "detail": "1 raw-button, 4 raw-input"
+    },
+    {
+      "file": "pages/prompts/RunnableTemplateField.tsx",
+      "score": 6,
+      "detail": "1 raw-button, 4 raw-input"
+    },
+    {
+      "file": "pages/prompts/SyntaxReference.tsx",
+      "score": 6,
+      "detail": "3 raw-button"
+    },
+    {
+      "file": "pages/settings/AccountPanel.tsx",
+      "score": 6,
+      "detail": "3 raw-button"
+    },
+    {
+      "file": "pages/skills/SkillInspector.tsx",
+      "score": 6,
+      "detail": "3 raw-button"
+    },
+    {
+      "file": "pages/settings/PacksPanel.tsx",
+      "score": 5,
+      "detail": "1 color"
     }
   ],
   "a11y": {
-    "outlineNoneCount": 153,
-    "outlineNoneFiles": 75,
+    "outlineNoneCount": 126,
+    "outlineNoneFiles": 70,
     "localFocusVisibleFiles": 53,
     "reducedMotionFiles": 17,
-    "animatedFiles": 183,
+    "animatedFiles": 185,
     "hasGlobalReducedMotion": true,
     "hasGlobalFocusRing": true
   },
@@ -311,8 +311,8 @@
       "raw-dialog": 0
     },
     "pages/ChatPage.tsx": {
-      "raw-button": 8,
-      "raw-input": 6,
+      "raw-button": 7,
+      "raw-input": 5,
       "raw-dialog": 0
     },
     "pages/agents/AgentDetail.tsx": {
@@ -405,14 +405,24 @@
       "raw-input": 0,
       "raw-dialog": 0
     },
+    "pages/chat/transcript/AssistantSegments.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/transcript/UserEditor.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
     "pages/code/CodeCockpitPage.tsx": {
       "raw-button": 13,
       "raw-input": 4,
       "raw-dialog": 0
     },
     "pages/code/CodePlanReview.tsx": {
-      "raw-button": 7,
-      "raw-input": 9,
+      "raw-button": 2,
+      "raw-input": 4,
       "raw-dialog": 0
     },
     "pages/code/CodeSection.tsx": {
@@ -426,8 +436,8 @@
       "raw-dialog": 0
     },
     "pages/code/WorkspacePicker.tsx": {
-      "raw-button": 4,
-      "raw-input": 2,
+      "raw-button": 1,
+      "raw-input": 1,
       "raw-dialog": 0
     },
     "pages/dashboard/DashboardPage.tsx": {
@@ -501,7 +511,7 @@
       "raw-dialog": 0
     },
     "pages/knowledge/AudioRecorder.tsx": {
-      "raw-button": 6,
+      "raw-button": 1,
       "raw-input": 0,
       "raw-dialog": 0
     },
@@ -511,8 +521,8 @@
       "raw-dialog": 0
     },
     "pages/knowledge/KnowledgeDetail.tsx": {
-      "raw-button": 6,
-      "raw-input": 5,
+      "raw-button": 1,
+      "raw-input": 2,
       "raw-dialog": 0
     },
     "pages/knowledge/KnowledgeDetailPage.tsx": {
@@ -521,8 +531,8 @@
       "raw-dialog": 0
     },
     "pages/knowledge/KnowledgeListPage.tsx": {
-      "raw-button": 7,
-      "raw-input": 3,
+      "raw-button": 5,
+      "raw-input": 0,
       "raw-dialog": 0
     },
     "pages/loop/LoopComposer.tsx": {
@@ -546,23 +556,23 @@
       "raw-dialog": 0
     },
     "pages/loops/DesignCockpitPage.tsx": {
-      "raw-button": 6,
-      "raw-input": 2,
+      "raw-button": 4,
+      "raw-input": 1,
       "raw-dialog": 0
     },
     "pages/loops/LoopCockpitPage.tsx": {
-      "raw-button": 8,
+      "raw-button": 7,
       "raw-input": 2,
       "raw-dialog": 0
     },
     "pages/loops/LoopPlanReview.tsx": {
-      "raw-button": 8,
-      "raw-input": 8,
+      "raw-button": 2,
+      "raw-input": 2,
       "raw-dialog": 0
     },
     "pages/projects/ProjectsSection.tsx": {
       "raw-button": 9,
-      "raw-input": 4,
+      "raw-input": 1,
       "raw-dialog": 0
     },
     "pages/prompts/PromptDetail.tsx": {
@@ -656,8 +666,8 @@
       "raw-dialog": 0
     },
     "pages/settings/MemoryPanel.tsx": {
-      "raw-button": 7,
-      "raw-input": 6,
+      "raw-button": 5,
+      "raw-input": 2,
       "raw-dialog": 0
     },
     "pages/settings/ModelBackends.tsx": {
@@ -706,8 +716,8 @@
       "raw-dialog": 0
     },
     "pages/settings/SecurityPanel.tsx": {
-      "raw-button": 4,
-      "raw-input": 3,
+      "raw-button": 1,
+      "raw-input": 1,
       "raw-dialog": 0
     },
     "pages/settings/SettingsPage.tsx": {
@@ -716,8 +726,8 @@
       "raw-dialog": 0
     },
     "pages/settings/VoicePanel.tsx": {
-      "raw-button": 4,
-      "raw-input": 3,
+      "raw-button": 1,
+      "raw-input": 1,
       "raw-dialog": 0
     },
     "pages/settings/bento.tsx": {
@@ -751,8 +761,8 @@
       "raw-dialog": 0
     },
     "pages/tasks/TaskDetail.tsx": {
-      "raw-button": 5,
-      "raw-input": 1,
+      "raw-button": 4,
+      "raw-input": 0,
       "raw-dialog": 0
     },
     "pages/tasks/TasksListPage.tsx": {
