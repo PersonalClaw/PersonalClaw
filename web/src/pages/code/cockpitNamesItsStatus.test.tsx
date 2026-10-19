@@ -118,19 +118,23 @@ describe('the cockpit status strip', () => {
 
 // ── the announced explanation, and the one vocabulary ────────────────────────────────────────
 
-const SRC = readFileSync(join(process.cwd(), 'src/pages/code/CodeCockpitPage.tsx'), 'utf8')
+// The banners live in the cockpit's footer, which moved out of `CodeCockpitPage` into its own module.
+const SRC = readFileSync(join(process.cwd(), 'src/pages/code/cockpit/footer/ProjectFooter.tsx'), 'utf8')
 
 /** Source with comment-only lines stripped.
  *
  *  🪤 Learned the hard way on two earlier fixes: the fix's own comment QUOTES the copy it replaced
  *  ("Paused — needs you") to explain what changed, so a raw-text search reports the defect as still
  *  present. A rail that reds on an accurate explanation is worse than no rail. */
-const CODE = SRC.split('\n')
+const codeOf = (src: string) => src.split('\n')
   .filter((l) => {
     const t = l.trim()
     return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*')
   })
   .join('\n')
+const CODE = codeOf(SRC)
+// The page itself draws status words too (its header and its notices).
+const PAGE_CODE = codeOf(readFileSync(join(process.cwd(), 'src/pages/code/CodeCockpitPage.tsx'), 'utf8'))
 
 describe('the blocked explanation is reachable', () => {
   it('🔑 the persisted blocked banner carries a role', () => {
@@ -163,9 +167,12 @@ describe('the blocked explanation is reachable', () => {
   it('every status word on this page comes from the registry', () => {
     // The invariant that keeps this surface from growing back a vocabulary the registry replaced.
     // A literal label for a status is what "a fifth table" looks like on arrival.
-    for (const word of ['Stalled', 'Needs you', 'Ended early', 'Analyzing']) {
-      expect(CODE).not.toContain(`>${word}<`)
+    for (const code of [PAGE_CODE, CODE]) {
+      for (const word of ['Stalled', 'Needs you', 'Ended early', 'Analyzing']) {
+        expect(code).not.toContain(`>${word}<`)
+      }
     }
-    expect(CODE).toContain("from '../../lib/loopStatus'")
+    expect(PAGE_CODE).toContain("from '../../lib/loopStatus'")
+    expect(CODE).toContain("from '../../../../lib/loopStatus'")
   })
 })

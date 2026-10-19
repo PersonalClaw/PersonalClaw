@@ -126,7 +126,8 @@ const INVENTORY: { file: string; anchor: string; ring: RegExp; what: string }[] 
     what: 'ask-the-side composer',
   },
   {
-    file: 'pages/code/CodeCockpitPage.tsx',
+    // The project-level one, which moved with the cockpit's footer into its own module.
+    file: 'pages/code/cockpit/footer/ProjectFooter.tsx',
     anchor: 'max-h-24 min-h-0 flex-1 resize-none overflow-y-auto bg-transparent',
     ring: CONTAINER_RING,
     what: 'steer-the-worker composer (the project-level one)',

@@ -1,17 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fvs, withWeight } from '../../design/fontWeight'
+import { fvs } from '../../design/fontWeight'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Code2, Play, Pause, Square, Trash2, Loader2, ListChecks, FolderTree,
-  TerminalSquare, Send, CircleDot, CheckCircle2, Circle,
-  ChevronLeft, Target, HelpCircle, Folder, Repeat, Clock, XCircle, AlertTriangle,
-  PanelLeftClose, PanelRightClose, Plus, RotateCcw, FolderKanban,
+  TerminalSquare, CircleDot, CheckCircle2, Circle,
+  ChevronLeft, Target, HelpCircle, Folder, Repeat, Clock, AlertTriangle,
+  PanelLeftClose, PanelRightClose, RotateCcw, FolderKanban,
 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Button } from '../../ui/Button'
-import { SpendCapPause } from '../../ui/SpendCapPause'
-import { NoToolsPause } from '../loops/NoToolsPause'
 import { IconButton } from '../../ui/IconButton'
 import { LoadError } from '../../ui/ListScaffold'
 import { Centered } from '../../ui/Centered'
@@ -39,29 +37,24 @@ import { LoopRunsOn } from '../loop/LoopRuntimePill'
 import { runtimeFields, runtimeOf, showRuntime, type LoopRuntime } from '../loop/loopRuntime'
 import { withArticle } from '../../lib/article'
 import { codeDeleteBody } from './codeMeta'
-import { KeptWork } from './KeptWork'
-import { StageGateVerdict } from './StageGateVerdict'
 import { RepromptNotice } from '../loops/RepromptNotice'
 import { useResizablePanel } from '../../ui/useResizablePanel'
 import { CockpitPromptBar } from '../loops/CockpitPromptBar'
-import { LoopApprovals } from '../loops/LoopApprovals'
-import { MergeReview } from './MergeReview'
-import { MergeConflict } from './MergeConflict'
-import { CockpitToast, useOnScreenReport, type CodeToastState } from './CodeToast'
+import { CockpitToast, type CodeToastState } from './CodeToast'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { messageEnter } from '../../design/motion'
-import { BUSY_REASON } from '../../ui/unavailable'
 import { CenterEditor } from './cockpit/CenterEditor'
 import { PROJECT_DIR_HIDDEN, PROJECT_DIR_HIDDEN_PREFIXES } from './cockpit/files/WorkspaceTree'
 import { FilesRail } from './cockpit/files/FilesRail'
 import { isTerminalTask } from './cockpit/tasks/taskState'
 import { TaskDetailView } from './cockpit/tasks/TaskDetailView'
 import { StageTasks } from './cockpit/tasks/StageTasks'
-import { STEERABLE, TERMINAL_STATUSES, stageKey, autoGrowTextarea, type ActivityItem, resolveTouchedPath } from './cockpit/cockpitShared'
-import { FilesTouched } from './cockpit/FilesTouched'
+import { TERMINAL_STATUSES, stageKey, type ActivityItem, resolveTouchedPath } from './cockpit/cockpitShared'
+import { missingCommandNotices, cmdLabel } from './cockpit/cockpitCommands'
+import { ProjectFooter } from './cockpit/footer/ProjectFooter'
 
 // The page's own tests still import these from it, where they used to live.
-export { StageTasks, resolveTouchedPath }
+export { StageTasks, ProjectFooter, resolveTouchedPath, missingCommandNotices }
 
 /** Strip a model-authored stage decoration — '1 — ', 'Stage 2/2 — ', '3: ' — down to
  *  the bare title, case-folded (issue 642). Mirrors the ingest-side canonicalizer in
@@ -97,40 +90,6 @@ function loopToCodeProject(p: Loop): CodeProject {
 const WARN_STRIP: React.CSSProperties = {
   background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)',
   color: 'var(--color-warn)',
-}
-
-// Truncate a build/test command for an overflow-menu label. A blunt slice(0,48) on
-// the WHOLE "Run build (<cmd>)" string cut the command mid-word and dropped the
-// closing paren (e.g. "Run build (python -m pytest --cov=src --c") — reads as broken.
-// Cap just the command + add an ellipsis so the wrapper "(…)" always stays intact.
-const cmdLabel = (cmd: string, max = 36): string => {
-  const c = (cmd || '').trim()
-  return c.length > max ? `${c.slice(0, max - 1)}…` : c
-}
-
-export interface MissingCommandNotice {
-  key: 'verify_command' | 'test_command'
-  label: 'build' | 'test'
-  command: string
-  binary: string
-}
-
-/** Missing-binary diagnostics only. A missing project manifest is a stage-timing
- *  state, not a dead cockpit command, so it must not disable the user's run control. */
-export function missingCommandNotices(
-  checks: CodeProject['command_runnability'],
-): MissingCommandNotice[] {
-  const out: MissingCommandNotice[] = []
-  for (const [key, label] of [
-    ['verify_command', 'build'],
-    ['test_command', 'test'],
-  ] as const) {
-    const check = checks?.[key]
-    if (check?.runnable === false && check.reason === 'binary_not_on_path' && check.binary) {
-      out.push({ key, label, command: check.command, binary: check.binary })
-    }
-  }
-  return out
 }
 
 /** The Code cockpit — a mini-VSCode/Cursor execution view for one project:
@@ -1234,341 +1193,6 @@ function RightPanel({ project, onTasksChanged, tasksNonce, activityBySession, ga
 }
 
 // ── right: live activity + steer ──
-
-/** A closing banner for a terminal project (complete / failed / stopped): the
- *  outcome + a one-line tally (stages done · cycles · distinct files touched).
- *  Nothing for an active/pre-run project — those have their own affordances. */
-function OutcomeBanner({ project: p, findings }: { project: CodeProject; findings: CodeFinding[] }) {
-  const TERMINAL: Record<string, { label: string; tone: string; ok: boolean }> = {
-    complete: { label: 'Project complete', tone: 'var(--color-ok)', ok: true },
-    // failed is NOT a frozen terminal state (the status machine allows failed →
-    // running) — frame it as recoverable so the banner agrees with the Resume
-    // button + steer box rather than reading like a dead end.
-    failed: { label: 'Project failed — fix the issue + Resume to retry', tone: 'var(--color-danger)', ok: false },
-    stopped: { label: 'Project stopped', tone: 'var(--color-on-surface-low)', ok: false },
-  }
-  let meta = TERMINAL[p.status]
-  if (!meta) return null
-  // A COMPLETE project carrying an error_message finished NON-genuinely (the cycle
-  // budget ran out / the loop exhausted before all stages passed their gates). Re-
-  // frame it so the user isn't misled by a green "complete" check: a warn tone +
-  // honest label, with the persisted reason shown below (the !meta.ok branch).
-  const incompleteFinish = p.status === 'complete' && !!p.error_message
-  if (incompleteFinish) {
-    meta = { label: 'Project ended before finishing', tone: 'var(--color-warn)', ok: false }
-  }
-  const stages = p.stage_plan?.length ?? 0
-  const stagesDone = Object.values(p.stage_status ?? {}).filter((s) => s === 'done').length
-  const cycles = p.total_cycles || findings.length
-  // distinct files the worker touched across all cycles, scoped to the file root
-  // (workspace, or the project files dir for no-workspace doc projects)
-  const ws = (p.workspace_dir || p.files_dir || '').replace(/\/$/, '')
-  // For a no-workspace project the root is the engine dir, so drop its bookkeeping
-  // (findings/, brief.md, …) from "what was built" — only the real deliverables.
-  const isProjectDir = !p.workspace_dir
-  const root = (ws || '').replace(/\/$/, '')
-  // Distinct files the worker actually built — resolve via the shared helper (worktree
-  // remap + bare-relative + outside-root rejection), Set-dedup, and in project-dir mode
-  // drop engine bookkeeping (incl. the dynamic guidance_<id>.txt prefix this tally
-  // previously missed) so the count reflects real deliverables.
-  const files = new Set<string>()
-  for (const f of findings) for (const raw of (f.files_touched ?? [])) {
-    const r = resolveTouchedPath(raw, root)
-    if (!r) continue
-    if (isProjectDir) {
-      const top = r.rel.split('/')[0]
-      if (PROJECT_DIR_HIDDEN.has(top) || [...PROJECT_DIR_HIDDEN_PREFIXES].some((pre) => top.startsWith(pre))) continue
-    }
-    files.add(r.abs)
-  }
-  const bits = [
-    stages > 0 ? `${stagesDone}/${stages} stages` : '',
-    cycles > 0 ? `${cycles} cycle${cycles === 1 ? '' : 's'}` : '',
-    files.size > 0 ? `${files.size} file${files.size === 1 ? '' : 's'}` : '',
-  ].filter(Boolean)
-  const Icon = meta.ok ? CheckCircle2 : XCircle
-  return (
-    <div data-type="body-s" className="mb-3 rounded-lg p-2.5"
-      style={{ background: `color-mix(in srgb, ${meta.tone} 12%, transparent)` }}>
-      <div className="inline-flex items-center gap-1.5" style={withWeight({ color: meta.tone }, 550)}>
-        <Icon size={14} /> {meta.label}
-      </div>
-      {bits.length > 0 && <p data-type="caption" className="mt-1 text-on-surface-var">{bits.join(' · ')}</p>}
-      {!meta.ok && p.error_message && <p data-type="caption" className="mt-1 text-on-surface-low">{p.error_message}</p>}
-      {/* Surface the files the worker produced as clickable chips — the payoff of the
-          run is "open + read what was built". Shown for ANY terminal outcome that
-          produced files: a genuine complete, an incomplete (budget-exhausted) finish,
-          AND a stopped/failed run that still wrote real work (reviewing partial output
-          is exactly why you'd open a stopped run). Only suppressed when nothing was
-          built. */}
-      {files.size > 0 && (
-        <div className="mt-1.5">
-          {/* FilesTouched now owns the cap + "+N more" reveal (max=12 here), so no
-              external slice / static "showing 12" note — the toggle is self-describing. */}
-          <p data-type="caption" className="text-on-surface-low">What was built — click to open:</p>
-          <FilesTouched files={[...files]} ws={ws} max={12} />
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** Project-level footer for the Tasks panel: signals that aren't task-scoped
- *  (attended question, gate failure, stall, terminal outcome) + the steer box.
- *  Per-task agent loop events live under each task card (StageTasks), not here. */
-export function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew, onAnswerOnScreen, answerWanted, onAnswerShown }: { project: CodeProject; gateFail: { label: string; command: string; output: string } | null; stalled: StallInfo | null; onNudged: () => void; onStartNew?: () => void; onAnswerOnScreen?: (onScreen: boolean) => void; answerWanted?: boolean; onAnswerShown?: () => void }) {
-  // The answer panel reports whether it is on screen, so the cockpit's toast that points here
-  // never stands over it (`CodeToast`).
-  const answerRef = useOnScreenReport(onAnswerOnScreen)
-  const [text, setText] = useState('')
-  const [sending, setSending] = useState(false)
-  // Synchronous double-send guard (sending state is async — rapid double Enter/click
-  // both pass before the re-render → a double nudge). Mirrors the task steer's guard.
-  const sendingRef = useRef(false)
-  // The steer textarea — focused when the user clicks "Respond" on the needs-input
-  // toast, so answering is one click away wherever they were.
-  const steerRef = useRef<HTMLTextAreaElement>(null)
-  // Auto-grow the box to fit a multi-line steer (and shrink back after send clears it).
-  useEffect(() => { autoGrowTextarea(steerRef.current) }, [text])
-  // A standing Respond, whether this footer was on screen when it was pressed or mounted after it
-  // (the rail opened, a task's detail closed): take the cursor, then say it is done.
-  useEffect(() => {
-    if (!answerWanted) return
-    steerRef.current?.focus()
-    steerRef.current?.scrollIntoView({ block: 'nearest' })
-    onAnswerShown?.()
-  }, [answerWanted, onAnswerShown])
-  const [steers, setSteers] = useState<{ text: string; failed?: boolean }[]>([])
-  const findings = project.findings ?? []
-  const missingCommands = missingCommandNotices(project.command_runnability)
-  // The worker asked something only when the pause is its question: a merge waiting, a conflict and
-  // a spend cap are the scheduler's, each answered on its own card above, not in the steer box; a
-  // wait after your Deny is the loop's, which your steer settles.
-  const pq = project.pending_question
-  const workerAsks = project.status === 'needs_input' && !pq?.merge && !pq?.conflict && !pq?.spend_cap && !pq?.declined
-
-  // Resume a loop a spend cap paused, from the notice that says so (the header's Resume does the same).
-  const [resuming, setResuming] = useState(false)
-  async function resume() {
-    if (resuming) return
-    setResuming(true)
-    try { await api.uLoopAction(project.id, 'resume'); onNudged() }
-    catch (e) {
-      window.dispatchEvent(new CustomEvent('ne:code-toast', { detail: { kind: 'error', text: `Couldn't resume this project: ${(e as Error).message || 'unknown error'}` } }))
-    } finally { setResuming(false) }
-  }
-
-  async function steer(explicit?: string) {
-    const t = (explicit ?? text).trim()
-    if (!t || sending || sendingRef.current) return
-    sendingRef.current = true
-    setSending(true)
-    setSteers((s) => [...s, { text: t }])
-    if (explicit === undefined) setText('')
-    try { await api.uLoopNudge(project.id, t); onNudged() }
-    catch {
-      setSteers((s) => s.map((m, i) => (i === s.length - 1 ? { ...m, failed: true } : m)))
-      // Restore the typed text so a failed send isn't lost — the user shouldn't have
-      // to retype a (possibly long) steer because the worker was briefly unreachable.
-      if (explicit === undefined) setText((cur) => cur || t)
-    }
-    finally { setSending(false); sendingRef.current = false }
-  }
-
-  const lastSteer = (() => {
-    const persisted = project.nudges ?? []
-    // The last optimistic steer is still "pending" (not yet in persisted) ONLY if it
-    // hasn't been confirmed by the backend. Count by SUCCESSFUL optimistic sends, not
-    // steers.length: a FAILED steer never enters `persisted`, so slicing by raw length
-    // would drift after any failure — making later successful steers show their
-    // optimistic copy (no "applied cycle N") forever instead of the confirmed one. A
-    // failed steer surfaces only when it's genuinely the latest event.
-    const lastOptimistic = steers[steers.length - 1]
-    const succeededCount = steers.filter((s) => !s.failed).length
-    // A trailing failure, or more successful sends than persisted yet → show optimistic.
-    if (lastOptimistic && (lastOptimistic.failed || succeededCount > persisted.length)) return lastOptimistic
-    return persisted[persisted.length - 1] || lastOptimistic || null
-  })()
-
-  return (
-    <div ref={answerRef} className="shrink-0 border-t border-outline-variant/40">
-      <div className="max-h-[40vh] overflow-y-auto px-2 pt-2">
-        {/* An Attended build's workers ask before they act, and their asks are answered here. */}
-        <LoopApprovals loopId={project.id} className="mb-2" />
-        {/* An Attended build's finished work, waiting for you to merge it into your branch. */}
-        {project.status === 'needs_input' && project.pending_question?.merge && (
-          <MergeReview loopId={project.id} waiting={project.pending_question.merge} onMerged={onNudged} />
-        )}
-        {/* A finished task's work conflicts with your branch: kept on its branch until you redo it,
-            resolve it yourself and Resume, or drop it. */}
-        {project.status === 'needs_input' && project.pending_question?.conflict && (
-          <MergeConflict loopId={project.id} conflict={project.pending_question.conflict} onChosen={onNudged} />
-        )}
-        {/* A spend cap refused the loop's next call: paused rather than asking, with the cap's
-            own sentence, where it is changed, and Resume. */}
-        {project.status === 'needs_input' && project.pending_question?.spend_cap && (
-          <SpendCapPause className="mb-s" reason={project.pending_question.question}
-            detail={project.pending_question.why} settings={project.pending_question.settings}
-            onResume={() => void resume()} busy={resuming} />
-        )}
-        {/* Its worker's model can't use tools: paused rather than asking, naming the model, where
-            another is chosen, and Resume. */}
-        {project.status === 'needs_input' && project.pending_question?.no_tools && (
-          <NoToolsPause className="mb-s" question={project.pending_question.question}
-            why={project.pending_question.why} onResume={() => void resume()} busy={resuming} />
-        )}
-        {/* Attended question — the call to action; answer in the steer box below. */}
-        {project.status === 'needs_input' && project.pending_question?.question && !project.pending_question.merge && !project.pending_question.spend_cap && !project.pending_question.no_tools && !project.pending_question.conflict && (
-          <div role="alert" data-type="body-s" className="mb-2 rounded-lg p-2.5"
-            style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
-            <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-info)' }, 550)}>
-              <HelpCircle size={14} /> The worker needs your input
-            </div>
-            <p className="whitespace-pre-wrap text-on-surface">{project.pending_question.question}</p>
-            {/* The worker's reasoning for asking (what changes based on the answer) —
-                context that helps the user answer well. */}
-            {project.pending_question.why && (
-              <p data-type="caption" className="mt-1 whitespace-pre-wrap text-on-surface-low">{project.pending_question.why}</p>
-            )}
-            <div className="mt-2 flex items-center gap-2">
-              <p data-type="caption" className="flex-1 text-on-surface-low">Answer below to resume the build.</p>
-              {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
-              <Button variant="ghost" size="xs" disabled={sending} disabledReason={BUSY_REASON}
-                onClick={() => steer('Proceed with your best judgment / the sensible default you proposed. Record the assumption in your finding and continue.')}
-                className="shrink-0 px-2 text-[0.75rem] text-info hover:bg-info/10">
-                Use your best judgment
-              </Button>
-            </div>
-          </div>
-        )}
-        {/* needs_input but NO structured question (the question file failed to write /
-            was cleared, or a generic pause): the header pill says "needs input" but
-            without this the panel gave zero explanation + no call to action. Fall back
-            to a generic prompt so the user always knows what to do — steer to resume. */}
-        {project.status === 'needs_input' && !project.pending_question?.question && (
-          <div role="alert" data-type="body-s" className="mb-2 rounded-lg p-2.5"
-            style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
-            <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-info)' }, 550)}>
-              <HelpCircle size={14} /> The worker is waiting on you
-            </div>
-            <p data-type="caption" className="text-on-surface-var">It paused for input but didn't leave a specific question. Steer it below with direction (or tell it to use its best judgment), then it resumes.</p>
-            <div className="mt-2 flex justify-end">
-              {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
-              <Button variant="ghost" size="xs" disabled={sending} disabledReason={BUSY_REASON}
-                onClick={() => steer('Proceed with your best judgment / the sensible default. Record any assumption in your finding and continue.')}
-                className="shrink-0 px-2 text-[0.75rem] text-info hover:bg-info/10">
-                Use your best judgment
-              </Button>
-            </div>
-          </div>
-        )}
-        <OutcomeBanner project={project} findings={findings} />
-        {/* A run that ended with tasks still at work kept their work: what, where, and Merge / Discard. */}
-        {project.workspace_dir && <KeptWork loopId={project.id} status={project.status} />}
-        {/* The stage's exit criteria as its gate last judged them: which are met, which are not,
-            and which the loop's records could not show. What a steer or a relaxed criterion is for. */}
-        <StageGateVerdict project={project} />
-        {/* BLOCKED — persisted (reload-safe) explanation of WHY the build paused (e.g.
-            the stall-pause: a stage produced many cycles without clearing its gate).
-            The transient `stalled` SSE banner below only shows while running; once the
-            supervisor flips the project to blocked, this is what tells the user what
-            happened + that a steer/Resume gets it going again. */}
-        {/* `role="status"`, not `alert`: this banner is PERSISTED and reload-safe, so an
-            assertive role would re-interrupt a screen-reader user on every visit to a state they
-            already know about. Its sibling below (`gateFail`) is `alert` correctly — that one
-            fires while the run is live. The two sat adjacent with only one announced at all,
-            which is the half of issue 671 that made the explanation unreachable rather than
-            just quiet. (Issue numbers in this block are spelled bare:
-            `design/tokenLint` skips only lines that OPEN with a comment marker, so a hash
-            followed by three digits on a continuation line reads as a raw hex colour.) The heading says "Blocked" (the registry's word for this status) instead of
-            "Paused": `paused` is a DIFFERENT status the user chose, and calling this one by its
-            name is what makes the state searchable on the page. */}
-        {project.status === 'blocked' && project.error_message && (
-          <div role="status" data-type="body-s" className="mb-2 rounded-lg p-2.5"
-            style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)' }}>
-            <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-warn)' }, 550)}>
-              <AlertTriangle size={14} /> {loopStatusLabel('blocked')} — needs you
-            </div>
-            <p className="whitespace-pre-wrap text-on-surface-var">{project.error_message}</p>
-            <p data-type="caption" className="mt-1 text-on-surface-low">
-              {missingCommands.length > 0
-                ? `Edit the stored ${missingCommands.length === 1 ? 'command' : 'commands'}, then Resume.`
-                : 'Steer it below (or relax a stage criterion), then Resume.'}
-            </p>
-          </div>
-        )}
-        {gateFail && project.status === 'running' && (
-          <div role="alert" data-type="body-s" className="mb-2 rounded-lg p-2.5"
-            style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)' }}>
-            <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-warn)' }, 550)}>
-              <XCircle size={14} /> Supervisor {gateFail.label} check failed — stage held
-            </div>
-            {gateFail.command && <p data-type="caption" className="font-mono text-on-surface-low">{gateFail.command}</p>}
-            {gateFail.output && (
-              <pre data-type="caption" className="mt-1 max-h-40 overflow-auto rounded-md bg-surface-high/60 p-2 text-on-surface-var whitespace-pre-wrap break-words">{gateFail.output}</pre>
-            )}
-          </div>
-        )}
-        {/* Show while running (early stall warning) AND when blocked: the watchdog's
-            stall escalation flips the project to BLOCKED, and this banner is what
-            explains WHY — gating on 'running' alone hid it exactly when the user most
-            needs it (the project is parked awaiting their steer). */}
-        {stalled && !gateFail && (project.status === 'running' || project.status === 'blocked') && (
-          <div role="status" data-type="body-s" className="mb-2 rounded-lg p-2.5"
-            style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)' }}>
-            <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-warn)' }, 550)}>
-              <AlertTriangle size={14} /> “{stalled.title}” {project.status === 'blocked' ? 'is stuck — paused for you' : 'seems stuck'}
-            </div>
-            <p data-type="caption" className="text-on-surface-var">
-              {stalled.cause === 'binary'
-                ? `${stalled.findings} cycles in and ${stalled.binary || 'the command binary'} is not on PATH — edit the stored command${project.status === 'blocked' ? ', then Resume' : ''}.`
-                : `${stalled.findings} cycles in and the gate still hasn't passed — steer it or relax a criterion${project.status === 'blocked' ? ', then Resume' : ''}.`}
-            </p>
-          </div>
-        )}
-        {/* the most recent steer, so the user sees their message landed */}
-        {lastSteer && (
-          <div data-type="body-s" className="mb-2 self-end rounded-xl bg-primary/15 px-2.5 py-1.5 text-on-surface-var">
-            {lastSteer.text}
-            {'applied_cycle' in lastSteer && (lastSteer as { applied_cycle?: number }).applied_cycle != null && (
-              <span data-type="caption" className="ml-1.5 text-on-surface-low">· applied cycle {(lastSteer as { applied_cycle?: number }).applied_cycle}</span>
-            )}
-            {'failed' in lastSteer && (lastSteer as { failed?: boolean }).failed && <span data-type="caption" className="ml-1.5 text-danger">· failed to send</span>}
-          </div>
-        )}
-      </div>
-      {/* steer box — only while the worker can ACT on it. */}
-      <div className="p-2">
-        {STEERABLE.has(project.status) ? (
-          <div className="flex items-end gap-1.5 rounded-xl bg-surface-container px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
-            <textarea ref={steerRef} value={text} onChange={(e) => setText(e.target.value)} rows={1}
-              placeholder={workerAsks ? 'Answer the worker…' : 'Steer the worker…'}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); steer() } }}
-              data-type="body-s" className="max-h-24 min-h-0 flex-1 resize-none overflow-y-auto bg-transparent text-on-surface outline-none placeholder:text-on-surface-low" />
-            {/* Same split as the task-level steer box above: emptiness stays `disabled` (with the
-                reason), in-flight becomes `loading` and the primitive owns the spinner. */}
-            <IconButton icon={Send} label="Send steer" filled size={28} iconSize={13}
-              disabled={!text.trim()} disabledReason={!text.trim() ? 'Type a steer first' : undefined}
-              loading={sending} onClick={() => steer()} className="shrink-0" />
-          </div>
-        ) : project.status === 'ready' || project.status === 'review' ? (
-          <p data-type="caption" className="px-1.5 py-1 text-center text-on-surface-low">Press Start to launch — steer the worker once it's running.</p>
-        ) : (
-          // Finished: the steer box is gone, so give the dangling "start a new one"
-          // call-to-action a real button (was prose pointing nowhere — the only paths
-          // out were buried in the overflow menu). Navigates to the new-project composer.
-          <div className="flex flex-col items-center gap-1.5 px-1.5 py-1 text-center">
-            <p data-type="caption" className="text-on-surface-low">This project has finished.</p>
-            {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
-            <Button variant="tonal" size="xs" onClick={() => onStartNew?.()} className="gap-1.5 px-3 text-[0.75rem]">
-              <Plus size={13} /> Start a new project
-            </Button>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
 
 // ── shells ──
 
