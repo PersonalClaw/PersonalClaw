@@ -102,7 +102,9 @@ const TIGHTENED: [string, RegExp, number][] = [
   // commit. If a later change reintroduces an aggregate floor there, add the entry back with its
   // measured number.
   ['ui/requiredFieldMarked.test.tsx', /population must still be visible to this rail'\)\.toBeGreaterThanOrEqual\((\d+)\)/, 20],
-  ['design/controlNameFloor.test.ts', /expected the inline rename\/edit inputs'\)\.toBeGreaterThanOrEqual\((\d+)\)/, 18],
+  // 18 → 41: the census counts the shared TextInput/TextArea's on-demand inputs too, so moving one onto
+  // the primitive no longer reads as one leaving.
+  ['design/controlNameFloor.test.ts', /expected the inline rename\/edit inputs'\)\.toBeGreaterThanOrEqual\((\d+)\)/, 41],
   ['ui/escapeDismissContract.test.tsx', /scrim-bearing overlays'\)\.toBeGreaterThanOrEqual\((\d+)\)/, 10],
 ]
 
