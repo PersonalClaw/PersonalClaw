@@ -38,11 +38,13 @@ export function CockpitHeader({ id, project: p, setProject, setToast, onOpenProj
         )}
         <Code2 size={18} className="shrink-0 text-primary" />
         {editingTitle ? (
+          // Raw: TextInput takes no onBlur, and the rename commits on blur.
           <input autoFocus value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
             onBlur={commitRename} onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') abortRename() }}
             aria-label="Rename project"
             data-type="body-m" className="min-w-[14rem] h-7 rounded-md bg-surface-high px-2 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         ) : (
+          // Raw: the title is its own rename control, and no primitive draws bare title-l text.
           <button type="button" onClick={startRename} title="Rename project"
             data-type="title-l" className="truncate text-on-surface text-left hover:text-on-surface-var">
             {p.name}

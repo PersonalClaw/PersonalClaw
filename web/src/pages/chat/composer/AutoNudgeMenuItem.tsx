@@ -4,7 +4,7 @@ import { api, type NudgeLoop } from '../../../lib/api'
 import { Button } from '../../../ui/Button'
 import { Modal } from '../../../ui/Modal'
 import { MenuRow } from '../../../ui/Popover'
-import { FieldError } from '../../../ui/forms'
+import { FieldError, NumberField, TextArea } from '../../../ui/forms'
 import { BUSY_REASON } from '../../../ui/unavailable'
 
 /** Auto-nudge entry for the composer "+" menu — a MenuRow that reflects the
@@ -68,14 +68,13 @@ export function AutoNudgeMenuItem({ session, onOpen }: { session: string; onOpen
               <p className="text-[0.8125rem] text-on-surface-low">Disabled on this server (<code className="font-mono">PERSONALCLAW_AUTONUDGE=0</code>).</p>
             ) : (<>
               <p className="text-[0.8125rem] text-on-surface-low">When a turn finishes and you're idle, this message is re-injected into this chat to keep it working on its own.</p>
-              <textarea value={msg} onChange={(e) => setMsg(e.target.value)} rows={3} autoFocus
-                placeholder="e.g. Continue toward the goal; if done, write a summary and stop."
-                className="w-full rounded-md bg-surface-high px-2 py-1.5 text-on-surface text-[0.8125rem] outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary" />
+              <TextArea value={msg} onChange={setMsg} rows={3} autoFocus size="sm" surface="high"
+                placeholder="e.g. Continue toward the goal; if done, write a summary and stop." />
               <div className="flex items-center gap-3 text-[0.8125rem] text-on-surface-var">
                 <label className="flex items-center gap-1">Idle
-                  <input type="number" min={15} value={idle} onChange={(e) => setIdle(Number(e.target.value))} className="w-16 rounded bg-surface-high px-1.5 py-0.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />s</label>
+                  <NumberField value={idle} onChange={setIdle} min={15} width="w-16" />s</label>
                 <label className="flex items-center gap-1">Max cycles
-                  <input type="number" min={0} value={maxCycles} onChange={(e) => setMaxCycles(Number(e.target.value))} className="w-14 rounded bg-surface-high px-1.5 py-0.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" /></label>
+                  <NumberField value={maxCycles} onChange={setMaxCycles} min={0} width="w-14" /></label>
               </div>
               {loop && <p className="text-[0.75rem] text-on-surface-low">Active · {loop.cycle_count} cycle{loop.cycle_count === 1 ? '' : 's'} fired{loop.max_cycles ? ` / ${loop.max_cycles}` : ''}.</p>}
               <div className="flex justify-end gap-2 mt-1">

@@ -1,11 +1,11 @@
 {
   "totals": {
-    "driftHits": 16,
-    "filesScanned": 831,
-    "filesWithDrift": 10
+    "driftHits": 17,
+    "filesScanned": 891,
+    "filesWithDrift": 11
   },
   "byCategory": {
-    "color": 12,
+    "color": 13,
     "spacing": 0,
     "radius": 1,
     "shadow": 0,
@@ -13,19 +13,9 @@
   },
   "ranked": [
     {
-      "file": "pages/code/CodeCockpitPage.tsx",
-      "score": 30,
-      "detail": "13 raw-button, 4 raw-input"
-    },
-    {
       "file": "app/onboarding/EssentialsStep.tsx",
       "score": 20,
       "detail": "4 color"
-    },
-    {
-      "file": "pages/ChatPage.tsx",
-      "score": 19,
-      "detail": "7 raw-button, 5 raw-input"
     },
     {
       "file": "pages/projects/ProjectsSection.tsx",
@@ -211,14 +201,24 @@
       "file": "pages/settings/PacksPanel.tsx",
       "score": 5,
       "detail": "1 color"
+    },
+    {
+      "file": "pages/workflows/LedgerRailsPanel.tsx",
+      "score": 5,
+      "detail": "1 color"
+    },
+    {
+      "file": "ui/AgentOrb.tsx",
+      "score": 5,
+      "detail": "1 color"
     }
   ],
   "a11y": {
-    "outlineNoneCount": 126,
-    "outlineNoneFiles": 70,
-    "localFocusVisibleFiles": 53,
-    "reducedMotionFiles": 17,
-    "animatedFiles": 185,
+    "outlineNoneCount": 123,
+    "outlineNoneFiles": 76,
+    "localFocusVisibleFiles": 55,
+    "reducedMotionFiles": 18,
+    "animatedFiles": 208,
     "hasGlobalReducedMotion": true,
     "hasGlobalFocusRing": true
   },
@@ -286,6 +286,13 @@
       "shadow": 0,
       "duration": 0
     },
+    "ui/AgentOrb.tsx": {
+      "color": 1,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 0
+    },
     "ui/composer/liveMarkdown.ts": {
       "color": 0,
       "spacing": 0,
@@ -308,11 +315,6 @@
     "app/Onboarding.tsx": {
       "raw-button": 0,
       "raw-input": 1,
-      "raw-dialog": 0
-    },
-    "pages/ChatPage.tsx": {
-      "raw-button": 7,
-      "raw-input": 5,
       "raw-dialog": 0
     },
     "pages/agents/AgentDetail.tsx": {
@@ -405,6 +407,36 @@
       "raw-input": 0,
       "raw-dialog": 0
     },
+    "pages/chat/composer/ContextPickers.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/composer/PasteCards.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/composer/QueueStack.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/header/ChatHeader.tsx": {
+      "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/chat/history/ChatHistoryPage.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/chat/history/SessionPeek.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
     "pages/chat/transcript/AssistantSegments.tsx": {
       "raw-button": 1,
       "raw-input": 0,
@@ -413,11 +445,6 @@
     "pages/chat/transcript/UserEditor.tsx": {
       "raw-button": 0,
       "raw-input": 1,
-      "raw-dialog": 0
-    },
-    "pages/code/CodeCockpitPage.tsx": {
-      "raw-button": 13,
-      "raw-input": 4,
       "raw-dialog": 0
     },
     "pages/code/CodePlanReview.tsx": {
@@ -438,6 +465,71 @@
     "pages/code/WorkspacePicker.tsx": {
       "raw-button": 1,
       "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/CenterEditor.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/FilesTouched.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/files/ChangesPanel.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/files/FileFinder.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/files/FilesRail.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/files/WorkspaceTree.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/footer/ProjectFooter.tsx": {
+      "raw-button": 0,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/header/CockpitHeader.tsx": {
+      "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/meta/CockpitMeta.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/tasks/FindingCard.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/tasks/StageTasks.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/tasks/TaskDetailView.tsx": {
+      "raw-button": 1,
+      "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/code/cockpit/tasks/TaskRow.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
       "raw-dialog": 0
     },
     "pages/dashboard/DashboardPage.tsx": {
@@ -921,6 +1013,12 @@
       "line": 127,
       "category": "color",
       "snippet": "uses for the identical fact over the identical `step_completed` rows (#3400). Before"
+    },
+    {
+      "file": "ui/AgentOrb.tsx",
+      "line": 116,
+      "category": "color",
+      "snippet": "return `rgb(${r}, ${g}, ${b})`"
     },
     {
       "file": "ui/composer/liveMarkdown.ts",

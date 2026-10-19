@@ -47,10 +47,12 @@ export function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { w
               data-type="body-s" className={`group flex shrink-0 items-center gap-1.5 rounded-t-md px-2.5 py-1.5 ${!diff && !commit && t.path === activePath ? 'bg-surface text-on-surface' : 'text-on-surface-low hover:text-on-surface'}`}>
               {/* Selecting a tab shows that file — clear BOTH the working-diff and the
                   commit-patch overlays (either would otherwise keep covering the editor). */}
+              {/* Raw: a tab in the editor's tab strip, which no primitive draws. */}
               <button type="button" onClick={() => { setDiff(null); setCommit(null); setActivePath(t.path) }} title={t.path} className="max-w-[180px] truncate">{tabLabels[t.path]}</button>
               {/* VSCode-style: a dirty tab shows a dot where the close-X sits, swapped
                   for the X on hover, so unsaved work is visible without hovering. */}
               {dirty[t.path] ? (
+                // Raw: the unsaved dot that turns into a close on hover; IconButton draws one icon, and SquareIconButton is taller than the tab.
                 <button type="button" onClick={() => requestClose(t.path, t.name)} aria-label={`Close ${t.name} (unsaved changes)`} title="Unsaved changes" className="shrink-0">
                   <span className="size-2 rounded-full group-hover:hidden" style={{ background: 'var(--color-primary)' }} />
                   <X size={12} className="hidden group-hover:block" />

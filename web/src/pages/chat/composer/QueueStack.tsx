@@ -37,6 +37,7 @@ export function QueueStack({ items, onCancel, onEdit, onInterrupt, canInterrupt 
   const peekScale = expr(0.04, 0.5)
   const maxPeek = 3               // cards visibly peeking behind the top
 
+  // Raw: the stack's caption header toggles only with two or more queued; QuietButton would fill on hover where it does nothing.
   const header = (
     <button type="button" onClick={() => items.length > 1 && setExpanded((e) => !e)}
       className={`flex items-center gap-1.5 px-1 text-[0.75rem] uppercase tracking-wide text-on-surface-low ${items.length > 1 ? 'hover:text-on-surface-var' : 'cursor-default'}`}>

@@ -37,6 +37,7 @@ export function FilesTouched({ files, ws, max = 8 }: { files?: string[]; ws: str
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-1">
       {shown.map(({ abs: p, rel }) => {
+        // Raw: a truncating file chip that opens the file; ui/MetaChip is an h-6 untruncated filter pill.
         return (
           <button key={p} type="button" onClick={() => open(p)} title={rel}
             data-type="caption" className="inline-flex max-w-full items-center gap-1 rounded bg-surface-high px-1.5 py-0.5 text-on-surface-low transition-colors hover:text-primary">

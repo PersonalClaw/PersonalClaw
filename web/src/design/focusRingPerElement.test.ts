@@ -73,25 +73,6 @@ const INVENTORY: { file: string; anchor: string; ring: RegExp; what: string }[] 
     ring: ELEMENT_RING,
     what: 'rename-this-chat input',
   },
-  // The auto-continue settings moved with the chat's composer region.
-  {
-    file: 'pages/chat/composer/AutoNudgeMenuItem.tsx',
-    anchor: 'w-full rounded-md bg-surface-high px-2 py-1.5',
-    ring: ELEMENT_RING,
-    what: 'auto-continue message textarea',
-  },
-  {
-    file: 'pages/chat/composer/AutoNudgeMenuItem.tsx',
-    anchor: 'w-16 rounded bg-surface-high',
-    ring: ELEMENT_RING,
-    what: 'auto-continue idle-seconds number input',
-  },
-  {
-    file: 'pages/chat/composer/AutoNudgeMenuItem.tsx',
-    anchor: 'w-14 rounded bg-surface-high',
-    ring: ELEMENT_RING,
-    what: 'auto-continue max-cycles number input',
-  },
   {
     file: 'pages/code/CodePlanReview.tsx',
     anchor: 'min-w-0 flex-1 bg-transparent text-on-surface-var',
@@ -190,11 +171,23 @@ const INVENTORY: { file: string; anchor: string; ring: RegExp; what: string }[] 
   },
 ]
 
-/** Inventory controls that moved onto `ui/forms`' `TextInput`. The primitive draws the box and rings
- *  the control itself (`INPUT_BASE`), so the call site has no class string left to anchor on: each
- *  entry pins the call site, and the primitive's ring is asserted with it. */
-const ON_TEXT_INPUT: { file: string; site: RegExp; what: string }[] = [
-  { file: 'pages/knowledge/KnowledgeDetail.tsx', site: /<TextInput value=\{draft\.url\}/, what: 'bookmark URL field (edit)' },
+/** Where each primitive rings the control it draws: `TextInput` through its shared `INPUT_BASE`,
+ *  the other two in the control's own class string. */
+const PRIMITIVE_RING = {
+  TextInput: new RegExp(`const INPUT_BASE = '[^']*${ELEMENT_RING.source}`),
+  TextArea: new RegExp(`<textarea value=\\{value\\}[\\s\\S]*?className=\\{cx\\('[^']*${ELEMENT_RING.source}`),
+  NumberField: new RegExp(`<input type="number" id=\\{fieldId\\}[\\s\\S]*?className=\\{cx\\('[^']*${ELEMENT_RING.source}`),
+}
+
+/** Inventory controls that moved onto a `ui/forms` primitive. The primitive draws the box and rings
+ *  the control itself, so the call site has no class string left to anchor on: each entry pins the
+ *  call site, and the primitive's ring is asserted with it. */
+const ON_FORM_PRIMITIVE: { file: string; site: RegExp; primitive: keyof typeof PRIMITIVE_RING; what: string }[] = [
+  { file: 'pages/knowledge/KnowledgeDetail.tsx', site: /<TextInput value=\{draft\.url\}/, primitive: 'TextInput', what: 'bookmark URL field (edit)' },
+  // The auto-continue settings, which moved with the chat's composer region.
+  { file: 'pages/chat/composer/AutoNudgeMenuItem.tsx', site: /<TextArea value=\{msg\}/, primitive: 'TextArea', what: 'auto-continue message textarea' },
+  { file: 'pages/chat/composer/AutoNudgeMenuItem.tsx', site: /<NumberField value=\{idle\}/, primitive: 'NumberField', what: 'auto-continue idle-seconds number input' },
+  { file: 'pages/chat/composer/AutoNudgeMenuItem.tsx', site: /<NumberField value=\{maxCycles\}/, primitive: 'NumberField', what: 'auto-continue max-cycles number input' },
 ]
 
 /** Controls that carry `outline-none` and correctly have NO treatment of their own, because an
@@ -287,10 +280,10 @@ describe('every control that kills its outline carries a replacement ring', () =
     ).toEqual([])
   })
 
-  it.each(ON_TEXT_INPUT)('$file — $what, on TextInput', ({ file, site }) => {
-    expect(read(file), `${file} no longer renders this field through TextInput`).toMatch(site)
-    expect(read('ui/forms.tsx'), 'TextInput no longer rings the control it draws')
-      .toMatch(new RegExp(`const INPUT_BASE = '[^']*${ELEMENT_RING.source}`))
+  it.each(ON_FORM_PRIMITIVE)('$file — $what, on $primitive', ({ file, site, primitive }) => {
+    expect(read(file), `${file} no longer renders this field through ${primitive}`).toMatch(site)
+    expect(read('ui/forms.tsx'), `${primitive} no longer rings the control it draws`)
+      .toMatch(PRIMITIVE_RING[primitive])
   })
 
   it('the ancestor-ringed controls still have the ancestor that rings them', () => {

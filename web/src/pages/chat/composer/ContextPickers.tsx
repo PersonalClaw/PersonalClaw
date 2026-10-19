@@ -151,6 +151,7 @@ export function KnowledgeContextPicker({ attached, onPick, onRemove, onClose }: 
             : (res?.results.length ?? 0) === 0 ? <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">No matches for “{q}”.</p>
             : res!.results.map((r) => {
               const on = attachedIds.has(r.id)
+              // Raw: a full-row selectable result card with its own check mark, which no primitive draws.
               return (
                 <button key={r.id} type="button" aria-pressed={on}
                   onClick={() => on ? onRemove(r.id) : onPick({ id: r.id, name: r.title })}

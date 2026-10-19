@@ -59,6 +59,7 @@ export function CockpitMeta({ project: p, onOpenProject, onRuntimeChange }: {
         )}
         {showProj && (
           onOpenProject ? (
+            // Raw: a link in the strip's own ink that turns accent on hover; TextLink draws accent ink at rest.
             <button type="button" onClick={() => onOpenProject(projId)} title={`Project: ${projName} — open`}
               className="inline-flex min-w-0 items-center gap-1 text-on-surface-var hover:text-primary">
               <FolderKanban size={11} className="shrink-0 text-primary" />

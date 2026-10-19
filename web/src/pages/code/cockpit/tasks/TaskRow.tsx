@@ -23,6 +23,7 @@ export function TaskRow({ task, state, preview, active, onSelect }: {
       </div>
     )
   }
+  // Raw: a full-row clickable list item, which no primitive draws.
   return (
     <button type="button" onClick={onSelect} aria-label={`${task.title} — ${STATE_LABEL[state]}`}
       data-type="body-s" className="group flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left hover:bg-surface-high/60">

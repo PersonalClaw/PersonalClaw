@@ -164,6 +164,7 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
                 </span>
               )
             }
+            // Raw: an 18px provenance chip in the row's meta line; ui/MetaChip is an h-6 filter pill.
             return (
               <button type="button"
                 onClick={(e) => { e.stopPropagation(); navigate(`${s.origin === 'code' ? 'code' : 'loops'}/${s.source_id}`) }}
@@ -356,6 +357,7 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
                 <span className="text-on-surface-low text-[0.75rem] mr-1">Filter:</span>
                 {tags.map((t) => {
                   const on = tagFilter.has(t.id)
+                  // Raw: a filter toggle tinted with its tag's own colour; no toggle-chip primitive takes a colour.
                   return (
                     <button key={t.id} type="button" aria-pressed={on} onClick={() => { const nx = new Set(tagFilter); nx.has(t.id) ? nx.delete(t.id) : nx.add(t.id); setTagFilter(nx) }}
                       className="inline-flex items-center gap-1 rounded-pill px-2 h-7 text-[0.75rem] transition-colors"

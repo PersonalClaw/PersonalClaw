@@ -27,6 +27,7 @@ function BlockerList({ blockers, onOpenTask }: { blockers: { id: string; title: 
   return (
     <div className="mt-1 flex flex-col gap-0.5">
       {blockers.map((b) => (
+        // Raw: a link in the list's own ink that turns accent on hover; TextLink draws accent ink at rest.
         <button key={b.id} type="button" onClick={() => onOpenTask(b.id)} title={`Open “${b.title}”`}
           className="group/bl inline-flex max-w-full items-center gap-1 self-start rounded px-1 text-on-surface-var hover:text-primary">
           <Circle size={9} className="shrink-0 opacity-60" />
@@ -258,6 +259,7 @@ export function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, fi
               </div>
             )}
             <div className="flex items-end gap-1.5 rounded-xl bg-surface-container px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
+              {/* Raw: a bare text surface inside the steer card, focused through a ref; TextArea draws its own fill and takes no ref. */}
               <textarea ref={steerRef} value={text} onChange={(e) => setText(e.target.value)} rows={1}
                 placeholder={project.status === 'needs_input' ? 'Answer for this task…' : `Steer “${task.title.slice(0, 24)}${task.title.length > 24 ? '…' : ''}”…`}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); steer() } }}

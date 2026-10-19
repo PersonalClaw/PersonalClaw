@@ -271,6 +271,7 @@ function AgentWork({ stepCount, toolNames, failedCount, unaskedCount, children }
     : ''
   return (
     <div className="mb-1.5">
+      {/* Raw: a full-row disclosure, which no primitive draws. */}
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
         className="group/work flex w-full items-center gap-1.5 rounded-md py-1 text-left text-on-surface-low/85 text-[0.75rem] transition-colors hover:text-on-surface-low">
         <motion.span animate={{ rotate: open ? 90 : 0 }} transition={spring.spatialFast} className="shrink-0 opacity-60">

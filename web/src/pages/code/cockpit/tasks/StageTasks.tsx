@@ -181,6 +181,7 @@ function StageGroup({ stage: s, status: st, tasks, preview, doneIds, queuedSet, 
         // popping the block in/out — the SAME stage row grows to reveal its detail
         // ("morph, don't mount"). Reduced-motion degrades to an instant swap.
         <Expandable open={open} header={
+          // Raw: a full-row disclosure header, which no primitive draws.
           <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label={a11yLabel}
             data-type="caption" className="flex w-full items-center gap-1.5 px-2 py-1.5 hover:bg-surface-high/40" style={{ color }}>
             <motion.span animate={{ rotate: open ? 90 : 0 }} transition={physics.snappy} className="shrink-0">

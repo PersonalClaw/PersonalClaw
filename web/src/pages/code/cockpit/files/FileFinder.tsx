@@ -114,6 +114,7 @@ export function FileFinder({ ws }: { ws: string }) {
             const marker = `/${wsBase}/`
             const mi = wsBase ? r.path.lastIndexOf(marker) : -1
             const rel = mi >= 0 ? r.path.slice(mi + marker.length) : (r.path.startsWith(ws) ? r.path.slice(ws.replace(/\/$/, '').length + 1) : r.name)
+            // Raw: a listbox option scrolled into view through a ref, which no primitive draws.
             return (
               <button key={r.path} type="button" role="option" aria-selected={i === hi}
                 id={`${qoId}-opt-${i}`}
