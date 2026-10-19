@@ -104,12 +104,23 @@ describe('a button that reveals content says that it does', () => {
 
   it("the loop cockpit's Details button is a disclosure, not a setting", () => {
     // The same case as the Terminal button: it shows and hides the Details rail, which renders only
-    // while `railOpen` holds. Pinned on its own tag because the census below cannot tell: its window
-    // reaches back into the Nudge button beside it, whose `ariaExpanded={nudgeOpen}` read as this
+    // while `railOpen` holds. Pinned on its own tag because the census below could not tell: its window
+    // reached back into the Nudge button beside it, whose `ariaExpanded={nudgeOpen}` read as this
     // toggle's announcement before it had one.
     const src = read('loops/LoopCockpitPage.tsx')
     expect(src).toMatch(/label="Details" active=\{railOpen\} ariaExpanded=\{railOpen\} onClick=\{\(\) => \{ setRailOpen\(!railOpen\); setSelected\(null\) \}\}/)
     expect(src, 'and the rail is gated on that same flag').toMatch(/\{railOpen && \(\s*<SidePanel/)
+  })
+
+  it("the chat's Activity button is a disclosure, not a setting", () => {
+    // The same case again: it shows and hides the Activity pane, which renders only while
+    // `activityOpen` holds. The census read it as announced while it had only `active`, because its
+    // window reached back into the Session map button's `ariaExpanded={mapOpen}`. The census now
+    // counts only a toggle's own attribute, and this pins the tag itself.
+    expect(read('chat/header/ChatHeader.tsx'))
+      .toMatch(/label="Activity" active=\{activityOpen\} ariaExpanded=\{activityOpen\} onClick=\{\(\) => setActivityOpen\(!activityOpen\)\}/)
+    expect(read('chat/panes/ChatPanes.tsx'), 'and the pane is gated on that same flag')
+      .toMatch(/\{activityOpen && started && \(\s*<SidePanel title="Activity"/)
   })
 
   it('a MODE toggle is not given a disclosure promise', () => {
@@ -192,6 +203,71 @@ describe('a button that reveals content says that it does', () => {
     TOGGLE.lastIndex = 0
   })
 
+  // 🔴 AND THE SILENT CHECK READ A NEIGHBOUR'S ATTRIBUTE. It took a window around each toggle and
+  // called the toggle announced if ANY `aria-expanded`/`aria-pressed` sat in it, so a control beside
+  // one that announces counted as announcing too. Two did: the loop cockpit's Details button, by the
+  // Nudge button's `ariaExpanded={nudgeOpen}`, and the chat's Activity button, by the Session map
+  // button's `ariaExpanded={mapOpen}`. Both showed and hid a pane and said only "pressed". The check
+  // is now bound: the attribute must read the state the setter flips (`setRailOpen` → `railOpen`).
+  //
+  // A state can reach the attribute through a name derived from it. The chat composer's queue header
+  // flips `expanded` and announces `aria-expanded={items.length > 1 ? !stacked : undefined}`, where
+  // `const stacked = !reduce && items.length > 1 && !expanded`. `stacked` is the right state to read:
+  // under reduced motion the list is always flat, and `expanded` would claim a collapse that is not
+  // there. So a `const` written from the flipped state counts as that state, and a check bound to the
+  // name alone would wrongly call the queue header silent.
+
+  /** Each toggle in `src`: the flip it matched, and the markup around it, anchored on the toggle. */
+  const togglesIn = (src: string) => [...src.matchAll(TOGGLE)].map((m) => ({
+    flip: m[0], around: src.slice(Math.max(0, m.index! - 200), m.index! + 260),
+  }))
+
+  /** The check this replaced: any announcing attribute in the window. */
+  const ANY_ATTRIBUTE = /aria-expanded|aria-pressed|ariaExpanded|ariaPressed/
+
+  /** Does the toggle carry an attribute that reads the state its flip writes? The state is the
+   *  setter's own (`setRailOpen` → `railOpen`), plus the name a `setX(!y)` negates, plus any `const`
+   *  in `src` written from one of those (`const stacked = … && !expanded`). A primitive takes the
+   *  state as `ariaExpanded`/`ariaPressed` and renders the same attribute. */
+  function announcesOwnState({ flip, around }: { flip: string; around: string }, src: string): boolean {
+    const [, setter, negated] = /set(\w+)\((?:\(?\w*\)? ?=> ?!\w+|!(\w+))\)$/.exec(flip)!
+    const states = new Set([setter[0].toLowerCase() + setter.slice(1), ...(negated ? [negated] : [])])
+    const reads = (expr: string) => [...states].some((s) => new RegExp(`\\b${s}\\b`).test(expr))
+    for (const [, name, expr] of src.matchAll(/\bconst (\w+) = ([^\n]+)/g)) if (reads(expr)) states.add(name)
+    return [...around.matchAll(/(?:aria-expanded|aria-pressed|ariaExpanded|ariaPressed)=\{([^{}]*)\}/g)]
+      .some(([, expr]) => reads(expr))
+  }
+
+  it("the window check credits a neighbour's attribute — the bound check does not", () => {
+    // Synthetic and exact: the Session map and Activity buttons as the chat header had them.
+    const before = [
+      '<HeaderControl icon={ListTree} label="Session map" ariaExpanded={mapOpen} onClick={() => setMapOpen(!mapOpen)} />',
+      '<HeaderControl icon={PanelRight} label="Activity" active={activityOpen} onClick={() => setActivityOpen(!activityOpen)} />',
+    ].join('\n')
+    const [map, activity] = togglesIn(before)
+    expect(ANY_ATTRIBUTE.test(activity.around), "the window check reads Map's attribute as Activity's").toBe(true)
+    expect(announcesOwnState(activity, before), 'the bound check does not').toBe(false)
+    expect(announcesOwnState(map, before), 'and still credits Map with its own').toBe(true)
+    // Its own attribute counts, in either spelling and either flip.
+    const after = before.replace('active={activityOpen}', 'active={activityOpen} ariaExpanded={activityOpen}')
+    expect(announcesOwnState(togglesIn(after)[1], after)).toBe(true)
+    const arrow = '<button onClick={() => setRailOpen((v) => !v)} aria-pressed={railOpen}>'
+    expect(announcesOwnState(togglesIn(arrow)[0], arrow)).toBe(true)
+
+    // A derived state counts, as the queue header writes it.
+    const queue = [
+      'const stacked = !reduce && items.length > 1 && !expanded',
+      '<button type="button" onClick={() => items.length > 1 && setExpanded((e) => !e)}',
+      '  aria-expanded={items.length > 1 ? !stacked : undefined}>',
+    ].join('\n')
+    expect(/\bexpanded\b/.test('items.length > 1 ? !stacked : undefined'),
+      'bound to the name alone, the queue header would read as silent').toBe(false)
+    expect(announcesOwnState(togglesIn(queue)[0], queue), 'bound through the derivation, it announces').toBe(true)
+    // But a name derived from a neighbour's state is still the neighbour's.
+    const shown = `const mapShown = started && mapOpen\n${before.replace('ariaExpanded={mapOpen}', 'ariaExpanded={mapShown}')}`
+    expect(announcesOwnState(togglesIn(shown)[1], shown)).toBe(false)
+  })
+
   it('the census is reproducible — every boolean-toggling button is accounted for', () => {
     // Not vacuous, and the number is the point: if a new toggle appears it must be classified (disclosure
     // → `aria-expanded`, mode → `aria-pressed` or a state-naming label), not left silent by default.
@@ -202,19 +278,19 @@ describe('a button that reveals content says that it does', () => {
     // TOGGLE (which is what defines the population) and look for the attribute around it.
     const toggles = walk(PAGES).flatMap((abs) => {
       const src = readSource(abs)
-      return [...src.matchAll(TOGGLE)].map((m) => src.slice(Math.max(0, m.index! - 200), m.index! + 260))
+      return togglesIn(src).map((t) => ({ ...t, announced: announcesOwnState(t, src) }))
     })
     // 58 measured when the guard went in: 57 unguarded flips (the tree grew past the 48 this floor once
     // held, and the floor never followed) plus the queue header. 59 when the block body went in: the
     // Details button is the only block-bodied flip in `pages/`. A measured population, so it sits at
     // the measurement.
     expect(toggles.length, 'the scan must still find the population it was written for').toBeGreaterThanOrEqual(59)
-    expect(toggles.some((w) => w.includes('items.length > 1 && setExpanded((e) => !e)')),
-      'including the guarded flip that widened the matcher').toBe(true)
-    expect(toggles.some((w) => w.includes('{ setRailOpen(!railOpen); setSelected(null) }')),
+    const queue = toggles.find((t) => t.around.includes('items.length > 1 && setExpanded((e) => !e)'))
+    expect(queue, 'including the guarded flip that widened the matcher').toBeDefined()
+    expect(queue!.announced, 'which announces through the state derived from its flip').toBe(true)
+    expect(toggles.some((t) => t.around.includes('{ setRailOpen(!railOpen); setSelected(null) }')),
       'and the block-bodied flip that widened it again').toBe(true)
-    // A primitive takes the state as `ariaExpanded`/`ariaPressed` and renders the same attribute.
-    const silent = toggles.filter((w) => !/aria-expanded|aria-pressed|ariaExpanded|ariaPressed/.test(w))
+    const silent = toggles.filter((t) => !t.announced)
     // A CEILING on the backlog, not a claim that it is empty: 34 measured when it was written, and it may
     // only fall. A new toggle that announces nothing pushes this over and has to be classified before
     // it lands. 9 once the primitives' `ariaExpanded`/`ariaPressed` counted: 24 of the 33 "silent"
@@ -225,8 +301,11 @@ describe('a button that reveals content says that it does', () => {
     // window reads 200 characters back, which reaches a neighbouring control's attribute. The Details
     // button counted as announced because of the Nudge button's `ariaExpanded={nudgeOpen}` beside it,
     // so it was classified on its own tag (pinned above) and now announces its own rail.
-    expect(silent.length, 'measured backlog — classify a new toggle, do not add to this number')
-      .toBeLessThanOrEqual(8)
+    // 9 when the check was bound to the toggle's own state, which closed that gap: the Activity button
+    // had counted as announced by the Session map button's `ariaExpanded={mapOpen}`. 8 again once
+    // Activity, a disclosure, announced its own pane (pinned above).
+    expect(silent.length, `measured backlog — classify a new toggle, do not add to this number:\n${
+      silent.map((t) => t.flip).join('\n')}`).toBeLessThanOrEqual(8)
   })
 })
 

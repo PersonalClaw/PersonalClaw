@@ -18,6 +18,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A chat's Activity button tells a screen reader whether the Activity pane is showing, where it said the button was pressed.**
 - **A loop page's Details button tells a screen reader whether the Details rail is showing, where it said the button was pressed.**
 - **The code cockpit's Terminal button tells a screen reader whether the terminal is showing, where it said the button was pressed.**
 - **`python -m tools.ci rails check` reads every test module of a checkout that sits inside a hidden folder, where it found none and passed, and a tree with no test modules fails the check instead of passing it.**
