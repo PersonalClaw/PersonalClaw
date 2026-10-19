@@ -62,8 +62,21 @@ RED = "failure"
 INPUT_KEYS = ("tree", "image", "image_version", "arch", "python", "uv", "node", "external")
 
 #: Legs that may not be reused: security, advisory, live or time-varying. They run every night,
-#: whatever the tree. The contract row holds ``breadth.yml``'s jobs to this list.
-NON_REUSABLE = frozenset({"security-corpus", "canary", "install-smoke", "audit"})
+#: whatever the tree. The suite legs are here because the suite runs the security-marked
+#: modules: a security result is never carried from an earlier night, so each runs every night.
+#: The contract row holds ``breadth.yml``'s jobs to this list.
+NON_REUSABLE = frozenset(
+    {
+        "ubuntu-24.04-3.13",
+        "macos-26-3.12",
+        "ubuntu-24.04-arm-3.13",
+        "coverage",
+        "security-corpus",
+        "canary",
+        "install-smoke",
+        "audit",
+    }
+)
 
 #: Every leg ``breadth.yml`` runs, and how many shards it has. A run's record holds an entry for
 #: each, and a shard that wrote none is recorded red (:func:`fill_missing`). The contract row

@@ -261,6 +261,26 @@ def external_revisions(job_or_jobs: Sequence[Job], host: Host) -> dict[str, str]
     return out
 
 
+def _python(job: Job, host: Host) -> str:
+    """The uv-managed interpreter of ``job``'s Python, as ``{python}`` stands for it: what
+    ``uv python find`` answers here. A job with no Python of its own, or one uv cannot find,
+    cannot run here."""
+    if not job.python or job.python == "image":
+        raise Unreadable(f"{job.id} names no Python, so {{python}} has no value")
+    done = subprocess.run(
+        ["uv", "python", "find", job.python],
+        cwd=host.root,
+        capture_output=True,
+        text=True,
+        env={"PATH": host.path, "HOME": os.environ.get("HOME", "")},
+        stdin=subprocess.DEVNULL,
+    )
+    found = done.stdout.strip()
+    if done.returncode != 0 or not found or "\n" in found:
+        raise Unreadable(f"uv found no Python {job.python} here: {done.stderr.strip()[:200]}")
+    return found
+
+
 def _base(host: Host, options: Options) -> str:
     if options.base:
         return options.base
@@ -821,6 +841,8 @@ def run_one(
         values["shard"] = str(shard)
     if any("base" in step.placeholders() for step in job.command):
         values["base"] = _base(host, options)
+    if any("python" in step.placeholders() for step in job.command):
+        values["python"] = _python(job, host)
     plan: str | None = None
     if job.shards > 1:
         if host.on_github:

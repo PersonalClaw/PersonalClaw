@@ -186,9 +186,9 @@ candidate's own suite, so a candidate could delete one.
 
 `tools/ci/catalogue.toml` lists CI's validation jobs, one `[[job]]` entry each, and
 `tools/ci/catalogue.py` reads it into typed jobs. `python -m tools.ci run-job` and `run` run its
-jobs on a maintainer's machine (see "Local runs"); `ci.yml` still runs its own `run:` lines. The
-contract table's row "every catalogue command is the workflow's" holds each entry to the `ci.yml`
-jobs it maps to, in both directions:
+jobs on a maintainer's machine (see "Local runs"); `ci.yml` and `breadth.yml` still run their own
+`run:` lines. The contract table's row "every catalogue command is the workflow's" holds each
+entry to the `ci.yml` and `breadth.yml` jobs it maps to, in both directions:
 
 - Each step is one of those jobs' `run:` lines, token for token, from the same working directory
   and with the same step `env`. An entry's steps come in `ci.yml`'s order, and none comes twice.
@@ -196,8 +196,11 @@ jobs it maps to, in both directions:
   list in the row, each named for what it does: the runner's identity, the installs the
   toolchain names, the shell around a step (its options, and the branch on which base there is,
   with the scan's arm that has none), the fetch of that base, a value set through `GITHUB_ENV`,
-  and the lint job's wrapper and feedback relay. A listed line that no mapped job runs any more
+  the lint job's wrapper and feedback relay, and breadth's evidence lines (a leg's inputs, the
+  one leg's decision to carry, what it ran, its result read back) with the scratch interpreter
+  they run on and the coverage shards' gate. A listed line that no mapped job runs any more
   fails the row too, so the list holds only lines that exist. No line is a step of two entries.
+  An entry mapped to a job in each workflow (`security`) holds each workflow's lines on its own.
 - An install is toolchain, never a step: `uv sync`, `npm ci` and the Playwright browser install
   are refused as steps, and each install an entry's toolchain names (`uv-sync`, `npm-ci`,
   `chromium`) is one its `ci.yml` jobs run. Each entry names every install it needs, so no entry
@@ -210,8 +213,15 @@ jobs it maps to, in both directions:
   are marked.
 - Each entry's tiers, `security`, `live` and `reuse` are the ones the row's table gives it, so
   changing one takes an edit in both places.
-- Every `ci.yml` job is an entry's or orchestration (`tree-check`, `changes`, `shard-plan`,
-  `test`, `test-macos-gate`).
+- Every `ci.yml` and `breadth.yml` job is an entry's or orchestration (`tree-check`, `changes`,
+  `shard-plan`, `test`, `test-macos-gate`; breadth's `freshness` and `report`). One breadth job
+  is on a closed not-yet-mapped list, `install-smoke`, until its smokes move into scripts the
+  supply-chain check and the installer rail read; the list only shrinks, and names only jobs
+  that exist.
+- `breadth.yml` names each suite leg and its shard count as literals (`--leg ubuntu --shard
+  ${{ matrix.shard }}/4`), as `ci.yml` does. Its steps that must not install the project first
+  run the uv-managed interpreter of the job's Python, `"$(uv python find "$PY")"`, which the
+  catalogue writes `{python}`; `run-job` fills it from `uv python find <python>`.
 
 The map from entry to job lives in that row.
 
@@ -285,7 +295,8 @@ A job has either a `command` or a `script` with its `container`, never both. A c
 of steps. Each step is an argv run from the repository root, or from `workdir` under it, with its
 own `env` set on top of the job's: the workflow step's own `env:`, such as a flag that turns a
 skip into a failure. A value only the runner knows is written as a placeholder: `{runner_temp}`,
-`{shard}` or `{base}` (the commit a diff is taken against). An argument or an `env` value
+`{shard}`, `{base}` (the commit a diff is taken against) or `{python}` (the uv-managed
+interpreter of the entry's `python`). An argument or an `env` value
 containing `$`, or a placeholder the catalogue does not have, is refused, so no step reads the
 environment around the catalogue. An `env` name is a variable name (`[A-Z_][A-Z0-9_]*`), and not
 one the runner owns (`tools.ci.run.runner_owns`: `PATH`, `HOME`, `TMPDIR`, the locale, git's
@@ -727,7 +738,7 @@ same and the plan is still whole.
 
 On `main`, `breadth.yml` keeps the plan. A breadth shard's list digest is one of its inputs, so
 a plan made afresh each night, from durations that move a few percent, would hand every shard
-other files, and no tree-keyed shard would ever carry its result. Measured: two green `main`
+other files, and the plan's digest would differ every night. Measured: two green `main`
 runs a few hours apart planned 885 to 949 of each shard's files differently. So `freshness`
 passes `--keep-from-main breadth.yml`, and the newest earlier `main` run's plan is reused for
 every leg it still plans whole: the same test files, in the same number of shards. Any change
@@ -750,16 +761,20 @@ The rest of the platform breadth runs nightly (09:37 UTC) and on dispatch:
   is left out, and its shard runs. When there are no earlier results, every shard runs. It
   also publishes the run's night: the date of the 09:37 UTC slot at or before the run's
   `created_at`, which every attempt of a run keeps.
-- **Tree-keyed legs:** Ubuntu 24.04 on 3.13, macOS 26 on 3.12 (six shards, two at a time),
-  Ubuntu 24.04 on arm64 on 3.13, coverage, the rails on macOS, and `collection-parses`: one
+- **The legs that may carry:** the rails on macOS 26 on 3.12, and `collection-parses`: one
   whole-suite collection in one process with `tests/collection_parse_guard.py` loaded, red on any
   parse named as a file under the source index's roots, or of a whole `.py` file under them,
   while pytest collects, except by pytest's assertion rewrite and Hypothesis's own constants
-  scan. Each shard reads its own runner's image, architecture and toolchain. On `main` it skips
-  pytest and carries the earlier result, red or green, only when every input matches.
-- **Legs that run every night:** the security corpus, a canary on the next Ubuntu image
-  (advisory), the installer smoke, and the dependency audit. `NON_REUSABLE` in
-  `tools/ci/breadth_evidence.py` names them. The canary differs from the ubuntu-24.04 leg
+  scan. It collects and runs no test, and no rail is security-marked. Each reads its own
+  runner's image, architecture and toolchain, and on `main` it skips pytest and carries the
+  earlier result, red or green, only when every input matches.
+- **Legs that run every night:** the suite on Ubuntu 24.04 on 3.13, on macOS 26 on 3.12 (six
+  shards, two at a time), on Ubuntu 24.04 on arm64 on 3.13, and under coverage; the security
+  corpus, a canary on the next Ubuntu image (advisory), the installer smoke, and the
+  dependency audit. `NON_REUSABLE` in `tools/ci/breadth_evidence.py` names them. The suite legs
+  are here because the suite runs the security-marked modules, and a security result is never
+  carried from an earlier night: each runs every night, which costs runner time and nothing
+  else. The canary differs from the ubuntu-24.04 leg
   only in image and Python, so a red is the new image's: pytest keeps its own temporary
   folders, since `RUNNER_TEMP` sits under the runner's home, where the suite's home guard
   refuses a test's folders and paths print as `~/...`.
@@ -792,7 +807,7 @@ all of them green.
 On a tag or a release branch, no earlier result is read or carried, and no leg issue is read.
 `previous` writes an empty map and reads no earlier run (the `freshness` job still asks the API
 for its own run's `created_at`, for the night), every `decide` says run whatever map it is
-handed, the tree-keyed shards download the map only on `main`, and every leg executes on every
+handed, the one leg that may carry downloads the map only on `main`, and every leg executes on every
 dispatch. `report` reads none of `main`'s leg issues off `main`, so an open issue there can
 neither turn a tag's green into a flake nor, by failing to load, pin it red. The record a
 release reads is what that dispatch measured.
@@ -862,7 +877,8 @@ of the same commit was red is the release gate's question (#3911), not this work
   `--basetemp` and no `TMPDIR` under `RUNNER_TEMP`, the workspace, `$HOME` or `~`;
 - no workflow command passes `--no-cov`, which would only undo a default that is not there;
 - `freshness` first and `report` last;
-- `NON_REUSABLE` matches the jobs;
+- `NON_REUSABLE` matches the jobs, holds every leg that runs security-marked tests (the suite
+  included), and no leg in it carries an earlier result;
 - the evidence is named by its digest and kept 90 days;
 - `report` writes only issues, and only on `main`;
 - every breadth shard records what it ran: every job but `freshness`, `coverage` and `report`

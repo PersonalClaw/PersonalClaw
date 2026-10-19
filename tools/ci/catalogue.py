@@ -31,7 +31,7 @@ import re
 import shlex
 import sys
 import tomllib
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -130,7 +130,14 @@ PLACEHOLDERS: dict[str, tuple[str, ...]] = {
     "runner_temp": ("$RUNNER_TEMP",),
     "shard": ("${{ matrix.shard }}",),
     "base": ("${{ steps.base.outputs.ref }}", "$BASE_SHA", "$BEFORE"),
+    # The uv-managed interpreter of the job's own Python, as a step that must not install the
+    # project first runs it: breadth's shard list and evidence steps, before deciding to run.
+    "python": ('"$(uv python find "$PY")"',),
 }
+
+#: The job-level variables a placeholder's workflow spelling reads, and nothing else: ``PY``
+#: names the Python ``{python}`` finds, which is the entry's ``python``.
+PLACEHOLDER_ENV: frozenset[str] = frozenset({"PY"})
 
 #: The smallest cap a job may have: a local run stops a job a minute before its cap, so CI's
 #: own timeout never decides it, and a one-minute cap would leave it no time at all.
@@ -581,7 +588,10 @@ def _job(raw: object, n: int, problems: list[str]) -> Job | None:
         reuse = NEVER
     env = _env(fields, "env", raw.get("env", {}))
     workers = raw.get("workers")
-    if workers is not None and workers != "auto" and fields.count("workers", None) is None:
+    # 0 is pytest's `-n0`: one process, no workers, as a collection that must not split asks.
+    if workers == 0 and not isinstance(workers, bool):
+        pass
+    elif workers is not None and workers != "auto" and fields.count("workers", None) is None:
         workers = None
     workers_env = fields.string("workers_env")
     if workers_env is not None and not _VARIABLE.fullmatch(workers_env):
@@ -751,6 +761,72 @@ def _tier_merge(raw: object, source: str, problems: list[str]) -> tuple[str, ...
     return tuple(jobs)
 
 
+#: pytest's own spellings of "collect, run nothing". No other word counts.
+COLLECT_ONLY_FLAGS = frozenset({"--collect-only", "--co"})
+#: pytest options whose next word is their value, never a flag of its own.
+_PYTEST_VALUED = frozenset(
+    {
+        "-k",
+        "-m",
+        "-p",
+        "-o",
+        "-c",
+        "-W",
+        "-n",
+        "--numprocesses",
+        "--rootdir",
+        "--junitxml",
+        "--junit-xml",
+        "--deselect",
+        "--ignore",
+        "--ignore-glob",
+        "--basetemp",
+        "--confcutdir",
+        "--override-ini",
+        "--shard-list",
+        "--timeout",
+        "--dist",
+        "--maxfail",
+    }
+)
+
+
+def _is_python(word: str) -> bool:
+    return bool(re.fullmatch(r"(?:\S*/)?python(?:\d+(?:\.\d+)*)?", word))
+
+
+def pytest_args(words: Sequence[str]) -> list[str] | None:
+    """The words pytest itself is given, when *words* is one pytest command: ``pytest``,
+    ``python -m pytest`` or ``uv run [flags] [python -m] pytest``, after any ``NAME=value``
+    assignments. None for any other command, so a ``pytest`` that is another program's argument
+    (``echo pytest --co``, ``sh -c "pytest --co"``) is no pytest command."""
+    words = list(words)
+    while words and re.fullmatch(r"[A-Za-z_]\w*=\S*", words[0]):
+        words = words[1:]
+    if words[:2] == ["uv", "run"]:
+        words = words[2:]
+        while words and words[0].startswith("-"):
+            words = words[1 + (words[0] in ("--with", "--python", "--project", "--directory")) :]
+    if len(words) >= 3 and _is_python(words[0]) and words[1] == "-m":
+        words = words[2:]
+    if not words or words[0] != "pytest":
+        return None
+    return words[1:]
+
+
+def collect_only(words: Sequence[str]) -> bool:
+    """Whether *words* is a pytest command that only collects: ``--collect-only`` or ``--co``
+    as a word of the pytest command itself. It runs no test, so it is never security evidence.
+    A flag inside a quoted string or another tool's arguments is not one of its words."""
+    args = pytest_args(words)
+    if args is None:
+        return False
+    for i, word in enumerate(args):
+        if word in COLLECT_ONLY_FLAGS and (i == 0 or args[i - 1] not in _PYTEST_VALUED):
+            return True
+    return False
+
+
 def pytest_workers(step: Step) -> list[str]:
     """Each worker count a pytest step passes (``-n N``, ``-nN``, ``--numprocesses[=]N``)."""
     if "pytest" not in step.argv:
@@ -785,6 +861,12 @@ def validate(catalogue: Catalogue, complete: bool = True) -> list[str]:
                     " pin, so a result for one fetch could stand for another"
                 )
         _workers_faults(job, problems)
+        tests = [step for step in job.command if pytest_args(step.argv) is not None]
+        if job.security == "security" and tests and all(collect_only(s.argv) for s in tests):
+            problems.append(
+                f"{job.id}: security posture, and every pytest step only collects"
+                " (--collect-only): it runs no test, so it is no security evidence"
+            )
         for feed in sorted(LIVE_INPUTS & set(job.external_inputs)):
             if not job.live:
                 problems.append(

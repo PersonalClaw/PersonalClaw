@@ -7,6 +7,7 @@ command is the workflow's".
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 
 import pytest
@@ -545,8 +546,18 @@ def _step(extra: str) -> str:
         ),
         pytest.param(
             _with("timeout_min = 10", "timeout_min = 10\nworkers = 0"),
+            "rails: workers is 0, and no step passes pytest -n nor does workers_env name",
+            id="no workers, and no step passes -n0",
+        ),
+        pytest.param(
+            _with("timeout_min = 10", "timeout_min = 10\nworkers = -1"),
             "rails: workers is a positive whole number",
-            id="no workers",
+            id="a negative worker count",
+        ),
+        pytest.param(
+            _with("timeout_min = 10", "timeout_min = 10\nworkers = false"),
+            "rails: workers is a positive whole number",
+            id="workers that is a boolean",
         ),
         pytest.param(
             _with("timeout_min = 10", 'timeout_min = 10\nworkers = "many"'),
@@ -782,3 +793,59 @@ def test_explain_refuses_a_bad_catalogue_naming_the_fault(
     captured = capsys.readouterr()
     assert "rails: unknown key 'timout_min'" in captured.err
     assert captured.out == ""
+
+
+# ── a pytest that only collects runs no test ─────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pytest --collect-only tests",
+        "pytest --co tests",
+        "uv run pytest --collect-only -qq -n0 tests",
+        "uv run --frozen pytest --co tests",
+        "uv run python -m pytest --co tests",
+        "python3.13 -m pytest -k smoke --co tests",
+        "PYTHONPATH=tests uv run pytest --co tests",
+    ],
+)
+def test_pytests_own_collect_only_spellings_only_collect(command: str) -> None:
+    assert catalogue.collect_only(command.split())
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("pytest tests", id="no flag"),
+        pytest.param("pytest --collect tests", id="a flag pytest does not spell so"),
+        pytest.param("pytest --collect-only=yes tests", id="a flag with a value"),
+        pytest.param("pytest -k --co tests", id="the value of -k"),
+        pytest.param("pytest -m --collect-only tests", id="the value of -m"),
+        pytest.param("echo pytest --co", id="another program's argument"),
+        pytest.param("sh -c 'pytest --co tests'", id="inside a quoted string"),
+        pytest.param("uv run ruff --co", id="another tool's argument"),
+    ],
+)
+def test_anything_else_is_not_collect_only(command: str) -> None:
+    assert not catalogue.collect_only(shlex.split(command))
+
+
+def test_no_workers_loads_when_its_step_passes_pytest_n0() -> None:
+    """``workers = 0`` is pytest's ``-n0``: one process, as a whole-suite collection asks."""
+    text = _with('"tests/rails"]', '"-n0", "tests/rails"]').replace(
+        "timeout_min = 10", "timeout_min = 10\nworkers = 0", 1
+    )
+    assert catalogue.load(text).job("rails").workers == 0
+
+
+def test_a_security_job_whose_every_pytest_step_only_collects_is_refused() -> None:
+    """A collect-only leg runs no test, so it is never any job's security evidence."""
+    text = _in_job("python-suite-macos", '"pytest", "tests"]', '"pytest", "--co", "tests"]')
+    problems = _refused(text)
+    assert any(
+        p.startswith("python-suite-macos: security posture, and every pytest step only collects")
+        for p in problems
+    ), problems
+    hidden = _in_job("python-suite-macos", '"pytest", "tests"]', '"pytest", "-k", "--co", "tests"]')
+    assert catalogue.load(hidden).job("python-suite-macos").security == "security"

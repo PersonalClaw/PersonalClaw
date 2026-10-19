@@ -63,9 +63,10 @@ _DOCKER = ".github/workflows/docker-single-container.yml"
 _WALK = ".github/workflows/clean-machine-walkthroughs.yml"
 _BREADTH = ".github/workflows/breadth.yml"
 _SUITE_LEGS = ("ubuntu", "macos", "arm", "coverage-shard")
-#: The tree-keyed breadth legs: the suite legs, the rails on macOS, and the whole-suite
-#: collection that counts parses of the source tree.
-_TREE_KEYED_LEGS = (*_SUITE_LEGS, "rails-macos", "collection-parses")
+#: The breadth legs that may carry an earlier result: the rails on macOS, and the whole-suite
+#: collection that counts parses of the source tree (it runs no test). The suite legs run the
+#: security-marked modules, so they run every night and carry nothing.
+_TREE_KEYED_LEGS = ("rails-macos", "collection-parses")
 
 MASKED: tuple[Masked, ...] = (
     Masked(
@@ -167,7 +168,7 @@ TOLERATED: tuple[Tolerated, ...] = (
     ),
     Tolerated(
         _BREADTH,
-        (*_TREE_KEYED_LEGS, "security-corpus", "canary"),
+        (*_SUITE_LEGS, *_TREE_KEYED_LEGS, "security-corpus", "canary"),
         "pytest",
         "Its outcome is the shard's result: `ran` records it, and the last step fails the job "
         "on a red entry, after the evidence is written and uploaded.",
