@@ -52,6 +52,8 @@ from personalclaw.dashboard.chat_handlers import (  # noqa: F401
     api_chat,
     api_chat_image_input,
     api_chat_mode,
+    api_chat_own_reply_style_delete,
+    api_chat_own_reply_style_put,
     api_chat_reply_styles,
     api_chat_screen_frame,
     api_chat_screen_frame_pin,

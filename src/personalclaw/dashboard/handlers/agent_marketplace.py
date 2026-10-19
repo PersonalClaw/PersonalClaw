@@ -116,8 +116,8 @@ async def api_agent_marketplace_create(request: web.Request) -> web.Response:
         model=string_field(body, "model"),
         system_prompt=string_field(body, "system_prompt", strip=False),
         voice=string_field(body, "voice", strip=False),
-        # Read here or a definition made through this route loses its style; `validate` holds
-        # it to the bundled set, as the update route's does.
+        # Read here or a definition made through this route loses its style; the marketplace's
+        # create holds it to a style available now, as its update does for a newly chosen one.
         reply_style=string_field(body, "reply_style"),
         skills=list(body.get("skills") or []),
         provider_entry=string_field(body, "provider_entry"),

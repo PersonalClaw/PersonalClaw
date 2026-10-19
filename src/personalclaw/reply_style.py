@@ -21,8 +21,11 @@ A style is tone guidance and nothing else. Its text is sent as ONE bounded secti
 (``prompt_providers.runtime.safety_rules``) are sent right after the fence, by core, whatever the
 style says, so the last word before the request's guidance is never the style's. A style whose text
 opens or closes a style fence of its own is refused (:class:`StyleRefused`) and the turn goes
-without it: otherwise text after its fake closing tag would read as outside the style section. A
-turn with no style carries no section and no restated rules, so it is unchanged byte for byte.
+without it: otherwise text after its fake closing tag would read as outside the style section. Your
+own and an app's styles are also refused at load when their text, title or description says what
+the bundled styles' content rail refuses (:data:`BEHAVIOUR_PATTERNS`, the one list both read), or
+when their name in the fence could break it (:func:`_refusal`). A turn with no style carries no
+section and no restated rules, so it is unchanged byte for byte.
 
 Naming: ``reply_style``, deliberately not ``voice``. ``AgentProfile.voice`` already means the
 persona ("WHO the agent is") and ``voice_profiles`` means speech.
@@ -57,11 +60,20 @@ logger = logging.getLogger(__name__)
 
 
 class Style(NamedTuple):
-    """A bundled reply style: its id, its name in the picker and its one-line description."""
+    """A reply style: its id, its name in the picker and its one-line description.
+
+    ``source`` is ``bundled``, ``own`` (a file under the home's ``styles/``, id ``own:<name>``)
+    or ``app`` (shipped by an app holding ``replyStyles``, id ``<app>:<name>``). ``app`` and
+    ``by`` name the app that adds it, ``file`` the file it was read from.
+    """
 
     id: str
     title: str
     description: str
+    source: str = "bundled"
+    app: str = ""
+    by: str = ""
+    file: str = ""
 
 
 #: No style instruction: the agent writes as its own prompt says.
@@ -117,37 +129,63 @@ class Resolved(NamedTuple):
     """A resolved style and the scope (a member of :data:`REPLY_STYLE_PRECEDENCE`) that decided it.
 
     ``source`` is returned rather than inferred because the composer shows WHICH scope is in
-    charge, and the frontend must not re-derive the order to say so.
+    charge, and the frontend must not re-derive the order to say so. ``skipped`` lists the styles
+    a more specific scope chose that are not available now (an app disabled, a grant removed, a
+    file deleted): the walk passes over them, and the chat says so.
     """
 
     style: str
     source: str
+    skipped: tuple[str, ...] = ()
+
+
+#: A style's own name: what follows ``own:`` or ``<app>:`` in its id, and an own style's file name.
+_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
+#: An app's name, as the manifest allows it (kebab-case).
+_APP = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+#: The namespace of your own styles. No app adds styles under it.
+OWN = "own"
 
 
 def normalize_choice(value: object) -> str:
     """A stored or client-sent choice as a style id, or ``""`` ("this scope states nothing").
 
-    A closed set: anything outside it (``None``, a number, a typo, the retired ``on``/``off``)
-    states nothing, so a malformed value inherits instead of forcing a style.
+    A bundled id, or a well-formed ``own:<name>`` / ``<app>:<name>`` id, whether or not that style
+    is available right now, so a pick survives a config load while its app is off. Anything else
+    (``None``, a number, a typo, the retired ``on``/``off``) states nothing, so a malformed value
+    inherits instead of forcing a style.
     """
     if not isinstance(value, str):
         return ""
     word = value.strip().lower()
-    return word if word in STYLE_IDS else ""
+    if word in STYLE_IDS:
+        return word
+    space, sep, name = word.partition(":")
+    if sep and _APP.fullmatch(space) and _NAME.fullmatch(name):
+        return word
+    return ""
 
 
 def resolve(conversation: object = "", agent: object = "", platform: object = "") -> Resolved:
-    """Resolve one turn's style by walking :data:`REPLY_STYLE_PRECEDENCE`."""
+    """Resolve one turn's style by walking :data:`REPLY_STYLE_PRECEDENCE`.
+
+    A scope whose style is not available states nothing for this turn; the style it named is
+    reported in ``skipped`` (most specific first) and the walk goes on to the next scope.
+    """
     stated = {
         "conversation": normalize_choice(conversation),
         "agent": normalize_choice(agent),
-        "platform": normalize_choice(platform) or PLATFORM_FLOOR,
+        "platform": normalize_choice(platform),
     }
+    skipped: list[str] = []
     for source in REPLY_STYLE_PRECEDENCE:
-        if stated[source]:
-            return Resolved(stated[source], source)
-    # Unreachable: the last scope is the floor, which always states.
-    raise AssertionError(f"no scope in {REPLY_STYLE_PRECEDENCE!r} stated a style")
+        style = stated[source]
+        if not style:
+            continue
+        if is_available(style):
+            return Resolved(style, source, tuple(skipped))
+        skipped.append(style)
+    return Resolved(PLATFORM_FLOOR, "platform", tuple(skipped))
 
 
 def _configured(agent_name: str) -> tuple[str, str]:
@@ -201,14 +239,287 @@ def _render(name: str) -> str:
     return render_snippet_block(name)
 
 
-def instruction(style: str) -> str:
-    """The text of *style*'s bundled snippet (``reply-style-<id>``), ``""`` for ``default``.
+#: The most a style may hold, in bytes, measured as the file that holds it: its front matter and
+#: its text (:func:`_as_file`), for your own styles and an app's alike. The bundled styles are
+#: 1.1-2.3 KB; a style is tone guidance, and every styled turn carries it.
+STYLE_SIZE_CAP = 4096
 
-    Read on every call rather than cached, so an edit in Settings → Prompts reaches the next turn.
-    Raises :class:`StyleRefused` when the text opens or closes a style fence.
+#: What a style may not say. A style that names tools, permissions, approvals or the sandbox is
+#: reaching for what the agent may do, not for how it writes, and one that speaks of the prompt or
+#: the rules around it is reaching past its section. The ONE list: your own and an app's styles are
+#: refused at load when their text, title or description matches any of it (:func:`_refusal`), and
+#: the bundled styles' content rail (``tests/test_reply_style.py``, ``TestStyleOnly``) reads this
+#: tuple, so the two cannot drift.
+BEHAVIOUR_PATTERNS: tuple[str, ...] = (
+    r"\btools?\b",
+    r"\bpermission",
+    r"\bapprov",
+    r"\bsandbox",
+    r"\bsystem prompt",
+    r"\bsafety rules\b",
+    r"\bignore (the|any|all|previous|earlier)\b",
+    r"\byou may now\b",
+)
+_BEHAVIOUR = re.compile("|".join(f"(?:{p})" for p in BEHAVIOUR_PATTERNS), re.IGNORECASE)
+
+
+def _as_file(title: str, description: str, text: str) -> str:
+    """A style as its file holds it: the front matter, then the text. What your own style is written
+    as, and what the size cap measures an app's style as."""
+    return f"---\ntitle: {title}\ndescription: {description}\n---\n{text}\n"
+
+
+def _breaks_fence(value: str) -> bool:
+    """Whether *value* holds a bracket or a line break of any kind, either of which could break the
+    one line of the fence it is written into."""
+    return "[" in value or "]" in value or (value != "" and value.splitlines() != [value])
+
+
+def _refusal(file: str, text: str, title: str, description: str, size: int, *, by: str = "") -> str:
+    """Why a style file is refused at load, naming *file*, or ``""`` when it is accepted.
+
+    *by* is the app's name for an app's style: it is written into the fence beside the title
+    (:func:`_title`), so it is held to the title's rule."""
+    if size > STYLE_SIZE_CAP:
+        return f"{file} is {size} bytes, over the {STYLE_SIZE_CAP}-byte (4 KB) cap for a style."
+    if not text.strip():
+        return f"{file} is empty: a style needs text."
+    if not title.strip():
+        return f"{file} has no title: a style needs one for the picker."
+    named = [("title", title), ("description", description)]
+    if by:
+        named.append(("app's name", by))
+    for label, value in named:
+        if _breaks_fence(value):
+            return (
+                f"{file}: its {label} holds a line break or a bracket, which could break the fence."
+            )
+    if _FENCE.search(text):
+        return f"{file} opens or closes the style section (a style fence), so it is not loaded."
+    for label, value in [("text", text), *named]:
+        found = _BEHAVIOUR.search(value)
+        if found:
+            # The match to the end of its word ("approv" says "approving").
+            said = found.group(0) + re.split(r"\W", value[found.end() :], maxsplit=1)[0]
+            return (
+                f"{file}: its {label} says {said!r}. A style is tone guidance only: it may not "
+                "name tools, permissions, approvals or the sandbox, nor speak of the prompt or "
+                "the rules around it."
+            )
+    return ""
+
+
+class _Loaded(NamedTuple):
+    style: Style
+    text: str
+
+
+#: The styles enabled apps add, by id (``<app>:<name>``), registered by the app loader
+#: (``apps.prompt_seed``) and dropped when the app is unloaded.
+_APP_STYLES: dict[str, _Loaded] = {}
+#: What an app shipped and was refused, by id: ``{"id", "app", "file", "reason"}``.
+_APP_REFUSED: dict[str, dict[str, str]] = {}
+#: The title and owner of every style this process has seen, so a style that went away is named
+#: in the chat as it was named in the picker.
+_KNOWN: dict[str, tuple[str, str]] = {}
+
+
+def register_app_style(
+    app: str, by: str, name: str, title: str, description: str, text: str, file: str
+) -> str:
+    """Add an app's style (the app holds ``replyStyles``); its refusal reason, ``""`` when added."""
+    style_id = f"{app}:{name}"
+    by = by.strip() or app
+    if app == OWN or not _APP.fullmatch(app) or not _NAME.fullmatch(name):
+        reason = f"{file}: {style_id!r} is not a style id an app can add."
+    else:
+        size = len(_as_file(title.strip(), description.strip(), text.strip()).encode("utf-8"))
+        reason = _refusal(file, text, title, description, size, by=by)
+    if reason:
+        _APP_REFUSED[style_id] = {"id": style_id, "app": app, "file": file, "reason": reason}
+        _APP_STYLES.pop(style_id, None)
+        return reason
+    style = Style(style_id, title.strip(), description.strip(), "app", app, by, file)
+    _APP_STYLES[style_id] = _Loaded(style, text.strip())
+    _APP_REFUSED.pop(style_id, None)
+    _KNOWN[style_id] = (style.title, style.by)
+    return ""
+
+
+def refuse_app_style(app: str, name: str, file: str, reason: str) -> None:
+    """Record an app style that is not loaded (the app does not hold ``replyStyles``)."""
+    style_id = f"{app}:{name}"
+    _APP_STYLES.pop(style_id, None)
+    _APP_REFUSED[style_id] = {"id": style_id, "app": app, "file": file, "reason": reason}
+
+
+def unregister_app(app: str) -> None:
+    """Drop every style *app* added or had refused: it is unloaded (``apps.app_runtime.unload``,
+    whether or not its manifest could be read)."""
+    for table in (_APP_STYLES, _APP_REFUSED):
+        for style_id in [k for k in table if k.partition(":")[0] == app]:
+            del table[style_id]
+
+
+def _own_dir() -> Any:
+    from personalclaw.config.loader import config_dir
+
+    return config_dir() / "styles"
+
+
+def _own_path(name: str) -> Any:
+    """Your style *name*'s file, ``styles/<name>.md``. Every caller has held *name* to a plain id
+    (``_NAME``); ``record_path`` holds it to one path segment inside the folder as well."""
+    from personalclaw.record_ids import record_path
+
+    return record_path(_own_dir(), name, suffix=".md", kind="reply style name")
+
+
+def _front_matter(raw: str) -> tuple[dict[str, str], str]:
+    """``---`` front matter (``key: value`` lines) and the body after it."""
+    if not raw.startswith("---\n"):
+        return {}, raw
+    head, sep, body = raw[4:].partition("\n---\n")
+    if not sep:
+        return {}, raw
+    meta: dict[str, str] = {}
+    for line in head.splitlines():
+        key, colon, value = line.partition(":")
+        if colon:
+            meta[key.strip().lower()] = value.strip()
+    return meta, body
+
+
+def _read_own(name: str) -> tuple[_Loaded | None, dict[str, str] | None]:
+    """Your style *name* and, when it is refused, why."""
+    file = f"styles/{name}.md"
+    try:
+        raw_bytes = _own_path(name).read_bytes()
+    except OSError:
+        return None, None
+    style_id = f"{OWN}:{name}"
+    try:
+        raw = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, {"id": style_id, "file": file, "reason": f"{file} is not UTF-8 text."}
+    meta, body = _front_matter(raw)
+    title, description = meta.get("title", ""), meta.get("description", "")
+    reason = _refusal(file, body, title, description, len(raw_bytes))
+    if reason:
+        return None, {"id": style_id, "file": file, "reason": reason}
+    style = Style(style_id, title, description, OWN, "", "", file)
+    _KNOWN[style_id] = (style.title, "")
+    return _Loaded(style, body.strip()), None
+
+
+def _own_names() -> list[str]:
+    try:
+        return sorted(
+            p.stem for p in _own_dir().glob("*.md") if p.is_file() and _NAME.fullmatch(p.stem)
+        )
+    except OSError:
+        return []
+
+
+def save_own_style(name: object, *, title: object, description: object, text: object) -> Style:
+    """Write your style *name* to ``styles/<name>.md`` and return it.
+
+    Raises :class:`ValueError` naming why when the name is not a plain id, a field is not a
+    string, or the file would be refused at load (:func:`_refusal`); nothing is written then.
     """
-    if style not in STYLE_IDS or style == DEFAULT:
+    if not isinstance(name, str) or not _NAME.fullmatch(name):
+        raise ValueError("a style's name is lowercase letters, digits and dashes, up to 40")
+    fields = {"title": title, "description": description, "text": text}
+    for key, value in fields.items():
+        if not isinstance(value, str):
+            raise ValueError(f"'{key}' must be a string")
+    title_s, desc_s, text_s = str(title).strip(), str(description).strip(), str(text).strip()
+    raw = _as_file(title_s, desc_s, text_s)
+    file = f"styles/{name}.md"
+    reason = _refusal(file, text_s, title_s, desc_s, len(raw.encode("utf-8")))
+    if reason:
+        raise ValueError(reason)
+    from personalclaw.atomic_write import atomic_write
+
+    _own_dir().mkdir(parents=True, exist_ok=True)
+    atomic_write(_own_path(name), raw)
+    loaded, why = _read_own(name)
+    if loaded is None:
+        raise ValueError((why or {}).get("reason", f"{file} could not be read back"))
+    return loaded.style
+
+
+def delete_own_style(name: object) -> bool:
+    """Remove your style *name*; False when there is no such file."""
+    if not isinstance(name, str) or not _NAME.fullmatch(name):
+        return False
+    try:
+        _own_path(name).unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _lookup(style_id: str) -> _Loaded | None:
+    space, _, name = style_id.partition(":")
+    if space == OWN:
+        return _read_own(name)[0] if _NAME.fullmatch(name) else None
+    return _APP_STYLES.get(style_id)
+
+
+def is_available(style: str) -> bool:
+    """Whether *style* can be sent now: a bundled id, or a loaded own or app style."""
+    return style in STYLE_IDS or _lookup(style) is not None
+
+
+def style_by_id(style_id: str) -> Style | None:
+    if style_id in STYLE_IDS:
+        return next(s for s in STYLES if s.id == style_id)
+    found = _lookup(style_id)
+    return found.style if found else None
+
+
+def available_styles() -> list[Style]:
+    """Every style the picker lists: the bundled ones, then yours, then the apps'."""
+    own = [loaded.style for n in _own_names() if (loaded := _read_own(n)[0])]
+    apps = [_APP_STYLES[k].style for k in sorted(_APP_STYLES)]
+    return [*STYLES, *own, *apps]
+
+
+def refused_styles() -> list[dict[str, str]]:
+    """The style files that are not loaded, each with the file and why."""
+    own = [why for n in _own_names() if (why := _read_own(n)[1])]
+    return [*own, *(_APP_REFUSED[k] for k in sorted(_APP_REFUSED))]
+
+
+def own_text(style_id: str) -> str:
+    """The text of your own or an app's style, for its editor and the list; ``""`` otherwise."""
+    found = _lookup(style_id) if style_id not in STYLE_IDS else None
+    return found.text if found else ""
+
+
+def _title(style_id: str) -> str:
+    """The style's name as its fence and the chat say it: ``Formal (Acme)`` for an app's."""
+    style = style_by_id(style_id)
+    if style is None:
+        known = _KNOWN.get(style_id)
+        return known[0] if known else style_id.partition(":")[2] or style_id
+    return f"{style.title} ({style.by})" if style.source == "app" else style.title
+
+
+def instruction(style: str) -> str:
+    """The text *style* sends: a bundled snippet (``reply-style-<id>``), your file or an app's.
+    ``""`` for ``default`` and for a style that is not available.
+
+    Read on every call rather than cached, so an edit reaches the next turn. Raises
+    :class:`StyleRefused` when a bundled snippet's text opens or closes a style fence (your own and
+    an app's are refused at load instead, and so are not available).
+    """
+    if style == DEFAULT:
         return ""
+    if style not in STYLE_IDS:
+        found = _lookup(style)
+        return found.text if found else ""
     text = _render(f"reply-style-{style}").strip()
     if _FENCE.search(text):
         raise StyleRefused(
@@ -222,6 +533,7 @@ def section(style: str) -> str:
     """What a turn under *style* carries after its message: the style's text in its fence, then
     the platform's safety rules. ``""`` for ``default`` or a style with no text.
 
+    The same one fence for every style, bundled, yours or an app's, and the rules always after it.
     Raises :class:`StyleRefused` as :func:`instruction` does.
     """
     text = instruction(style)
@@ -229,7 +541,35 @@ def section(style: str) -> str:
         return ""
     from personalclaw.prompt_providers.runtime import safety_rules
 
-    return f"[REPLY STYLE: {_TITLES[style]}]\n{text}\n{_CLOSE}\n\n{safety_rules()}"
+    return f"[REPLY STYLE: {_title(style)}]\n{text}\n{_CLOSE}\n\n{safety_rules()}"
+
+
+def notice_for(resolved: Resolved) -> str:
+    """What the chat says when the style it or its agent chose is gone, or ``""``."""
+    if not resolved.skipped:
+        return ""
+    gone = resolved.skipped[0]
+    title = _title(gone)
+    space = gone.partition(":")[0]
+    known = _KNOWN.get(gone)
+    by = (known[1] if known and known[1] else space) if space != OWN else ""
+    now = "no style" if resolved.style == DEFAULT else _title(resolved.style)
+    whose = f'The "{title}" reply style from {by}' if by else f'Your "{title}" reply style'
+    return f"{whose} is no longer available, so this chat uses {now}."
+
+
+def notice_once(session: Any, resolved: Resolved) -> str:
+    """The notice the next turn of *session* posts for a style it or its agent chose that is gone
+    (its app disabled or without its grant, its file deleted), or ``""``.
+
+    Said once per style that went (``session._reply_style_noticed`` remembers it, and the chat's
+    saved record keeps it, so a restart does not say it again), and again only after it came back
+    and went again. The turn itself uses the next level down (:func:`resolve`).
+    """
+    gone = resolved.skipped[0] if resolved.skipped else ""
+    said = notice_for(resolved) if gone and gone != session._reply_style_noticed else ""
+    session._reply_style_noticed = gone
+    return said
 
 
 def appended(message: str, style: str) -> str:

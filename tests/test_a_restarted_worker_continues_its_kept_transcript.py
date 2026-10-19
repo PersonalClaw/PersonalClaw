@@ -578,6 +578,8 @@ _RECORD: dict[str, Any] = {
     "color_index": 3,
     "color_theme": "sage",
     "reply_style": "plain",
+    # A chosen style that went away and that the chat has said so about (`notice_once`).
+    "reply_style_noticed": "acme:formal",
     "tags": ["home", "spring"],
     "lifecycle": "archived",
     "last_activity_at": 1_791_067_183.0,

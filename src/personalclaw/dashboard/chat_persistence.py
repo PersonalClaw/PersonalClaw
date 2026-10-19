@@ -649,12 +649,14 @@ def continue_kept_chat(
         session.color_index = meta["color_index"]
     if meta.get("color_theme"):
         session.color_theme = meta["color_theme"]
-    # Reply style, per-conversation scope. Re-normalized on read so a hand-edited meta line
-    # can only ever yield one of the bundled styles.
-    if meta.get("reply_style"):
+    # Reply style, per-conversation scope, and the chosen style that went away that this chat has
+    # already said so about (``reply_style.notice_once``), so a restart does not say it again.
+    # Re-normalized on read so a hand-edited meta line can only ever yield a well-formed style id.
+    if meta.get("reply_style") or meta.get("reply_style_noticed"):
         from personalclaw.reply_style import normalize_choice
 
-        session.reply_style = normalize_choice(meta["reply_style"])
+        session.reply_style = normalize_choice(meta.get("reply_style"))
+        session._reply_style_noticed = normalize_choice(meta.get("reply_style_noticed"))
     raw_tags = meta.get("tags")
     if isinstance(raw_tags, list):
         session.tags = [str(t) for t in raw_tags if isinstance(t, str) and t]
@@ -1015,6 +1017,9 @@ def save_session_to_history(
         # inheriting session adds no key.
         if session.reply_style:
             meta_line["reply_style"] = session.reply_style
+        _noticed = getattr(session, "_reply_style_noticed", "")
+        if _noticed:
+            meta_line["reply_style_noticed"] = _noticed
         if session.tags:
             meta_line["tags"] = list(session.tags)
         # Lifecycle. Written only when non-default, matching every field above —

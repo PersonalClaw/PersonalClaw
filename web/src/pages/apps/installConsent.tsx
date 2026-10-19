@@ -847,6 +847,8 @@ export function permissionRows(perms: AppSummary['permissions']): string[] {
   // box would now UNDERSTATE what the gateway does — the mirror image of the `network` defect that
   // kept it out of the bullets while no host existed.
   if (perms.backgroundTasks) rows.push('Run a long-lived background worker')
+  // Enforced by `apps/prompt_seed`, which loads none of an app's styles without the grant.
+  if (perms.replyStyles) rows.push('Add reply styles your chats can choose, as tone guidance only')
   // The settings `/api/config` reaches for this app — only these, named exactly
   // (`permissions.can_use_config_field`).
   const settings = perms.config ?? []

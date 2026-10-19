@@ -299,6 +299,8 @@ describe('the runner rows in Settings → Agent defaults', () => {
       checkAgentRunner: (...a) => checkAgentRunner(...a),
       allowAgentRunner: (...a) => allowAgentRunner(...a),
       personalclawConfig: () => Promise.resolve({ agent: { unattended_requires_verified_adapter: false } }),
+      // The Reply style row's list.
+      replyStyles: () => Promise.resolve({ styles: [], precedence: [] }),
       // The agent picker's catalog, and the durable-workers hint's ask of the host.
       savedAgents: () => Promise.resolve([]),
       agentsInstalled: () => Promise.resolve([]),

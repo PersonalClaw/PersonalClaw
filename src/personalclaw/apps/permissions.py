@@ -169,6 +169,12 @@ class PermissionChecker:
         nothing)."""
         return self.permissions.storageShared
 
+    def can_add_reply_styles(self) -> bool:
+        """Whether this app's ``_entity: style`` files are loaded as reply styles
+        (``apps.prompt_seed``). Boolean, deny-by-default, read off the installed manifest at each
+        load, so an update that drops the grant drops the styles."""
+        return self.permissions.replyStyles
+
     def can_run_background_tasks(self) -> bool:
         """Whether this app may have a long-lived supervised worker (``worker_runtime.py``).
 
@@ -1108,6 +1114,9 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "POST /api/onboarding/state": OwnerOnly(
         "your first-run setup's progress — the step it resumes at, and what it counts as set up"
     ),
+    "POST /api/onboarding/explain": OwnerOnly(
+        "how you like things explained, which is written to your preferences"
+    ),
     "GET /api/onboarding/model-check": OwnerOnly(
         "checking that your chat model builds — it names the model your chats are bound to"
     ),
@@ -1643,6 +1652,12 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "GET /api/chat/tags": OwnerOnly(_YOUR_ORGANISATION),
     "GET /api/chat/tag-columns": OwnerOnly(_YOUR_ORGANISATION),
     "GET /api/chat/reply-styles": OwnerOnly("the reply styles your chats choose from"),
+    "PUT /api/chat/reply-styles/own/{name}": OwnerOnly(
+        "your own reply styles, whose text reaches every turn that chooses them"
+    ),
+    "DELETE /api/chat/reply-styles/own/{name}": OwnerOnly(
+        "your own reply styles, whose text reaches every turn that chooses them"
+    ),
     "GET /api/chat/screen-frame": OwnerOnly(
         "whether one of your chats can share your screen, and the frame staged for it"
     ),

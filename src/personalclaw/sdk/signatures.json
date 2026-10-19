@@ -6096,7 +6096,8 @@
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "config"},
     {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "unknown_keys"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "agent_declared_raw"},
-    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "agent_tier"}
+    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "agent_tier"},
+    {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "replyStyles"}
    ],
    "returns": "None"
   },

@@ -872,6 +872,18 @@ INVENTORY: tuple[StateEntry, ...] = (
         help="prompt snippets injected into system prompts",
     ),
     StateEntry(
+        id="styles",
+        # Your own reply styles, one Markdown file each (`styles/<name>.md`, `reply_style`),
+        # written from Settings > Agent defaults. A folder store like `prompt_snippets`, so a
+        # backup's export and a sync carry every file of it, and two homes that each wrote a style
+        # keep both.
+        kind=KIND_JSON_ENTITY_DIR,
+        path="styles",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="your own reply styles written in Settings > Agent defaults",
+    ),
+    StateEntry(
         id="apps",
         kind=KIND_TREE,
         path="apps",

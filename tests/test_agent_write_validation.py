@@ -214,6 +214,86 @@ class TestScalarTypesOnCreate:
         assert "zz-rs" not in _agents_on_disk(home)
 
 
+def _own_style(home, name: str) -> Any:
+    folder = home / "styles"
+    folder.mkdir(exist_ok=True)
+    path = folder / f"{name}.md"
+    path.write_text("---\ntitle: Mine\ndescription: d\n---\nWrite formally.\n", encoding="utf-8")
+    return path
+
+
+class TestReplyStyleIsAStyleAvailableNow:
+    """A well-formed id is not enough: the style must be available at the write (bundled, your own
+    file, or an enabled app's), so a style that is gone cannot be newly chosen. The style an agent
+    already has is not a new choice: the agent form sends it back as stored, and an agent whose
+    style has since gone away stays editable, keeping the pick."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("gone", ["acme:gone", "own:missing"])
+    async def test_create_refuses_a_style_that_is_not_available(self, home, gone):
+        resp = await _create({"name": "zz-rs", "reply_style": gone})
+        assert resp.status == 400
+        assert "reply_style" in _error_text(resp)
+        assert "zz-rs" not in _agents_on_disk(home)
+
+    @pytest.mark.asyncio
+    async def test_create_takes_your_own_style_while_its_file_is_there(self, home):
+        _own_style(home, "formal")
+        assert (await _create({"name": "zz-rs", "reply_style": "own:formal"})).status == 200
+        assert _agents_on_disk(home)["zz-rs"]["reply_style"] == "own:formal"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("gone", ["acme:gone", "own:missing"])
+    async def test_update_refuses_a_newly_chosen_style_that_is_not_available(self, home, gone):
+        assert (await _create({"name": "zz-rs", "reply_style": "terse"})).status == 200
+        before = _agents_on_disk(home)["zz-rs"]
+        for body, base in (
+            ({"reply_style": gone}, None),
+            ({"description": "edited", "reply_style": gone}, await _revision("zz-rs")),
+        ):
+            resp = await _update("zz-rs", body, base=base)
+            assert resp.status == 400, body
+            assert "reply_style" in _error_text(resp)
+        assert _agents_on_disk(home)["zz-rs"] == before
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad", ("shouty", "Terse!", "acme:Formal Style"), ids=repr)
+    async def test_an_update_naming_no_style_id_is_refused_before_the_write(self, home, bad):
+        """Like every other field, a value that is no style id at all is refused as the body is
+        read, before the write looks at the agent: a 400 naming the field, whatever revision
+        the save names."""
+        assert (await _create({"name": "zz-rs", "reply_style": "terse"})).status == 200
+        before = _agents_on_disk(home)["zz-rs"]
+        resp = await _update("zz-rs", {"description": "x", "reply_style": bad}, base="stale")
+        assert resp.status == 400
+        assert "reply_style" in _error_text(resp)
+        assert _agents_on_disk(home)["zz-rs"] == before
+
+    @pytest.mark.asyncio
+    async def test_an_agent_whose_style_went_away_saves_from_its_form_and_keeps_it(self, home):
+        path = _own_style(home, "formal")
+        assert (await _create({"name": "zz-rs", "reply_style": "own:formal"})).status == 200
+        path.unlink()
+        resp = await _update(
+            "zz-rs",
+            {"description": "edited", "reply_style": "own:formal"},
+            base=await _revision("zz-rs"),
+        )
+        assert resp.status == 200, _error_text(resp)
+        stored = _agents_on_disk(home)["zz-rs"]
+        assert (stored["description"], stored["reply_style"]) == ("edited", "own:formal")
+
+    @pytest.mark.asyncio
+    async def test_a_style_that_went_away_cannot_be_chosen_back_by_another_agent(self, home):
+        path = _own_style(home, "formal")
+        assert (await _create({"name": "zz-a", "reply_style": "own:formal"})).status == 200
+        assert (await _create({"name": "zz-b"})).status == 200
+        path.unlink()
+        resp = await _update("zz-b", {"reply_style": "own:formal"})
+        assert resp.status == 400
+        assert _agents_on_disk(home)["zz-b"].get("reply_style", "") == ""
+
+
 class TestListTypesOnCreate:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("field", _LIST_FIELDS)

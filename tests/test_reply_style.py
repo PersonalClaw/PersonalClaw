@@ -63,17 +63,9 @@ class TestStyleOnly:
     """A style changes how a reply is written, never what it says or what the agent may do."""
 
     #: A style that names tools, permissions or approvals, or talks about the rules around it,
-    #: is reaching for behaviour, not tone.
-    FORBIDDEN = (
-        r"\btools?\b",
-        r"\bpermission",
-        r"\bapprov",
-        r"\bsandbox",
-        r"\bsystem prompt",
-        r"\bsafety rules\b",
-        r"\bignore (the|any|all|previous|earlier)\b",
-        r"\byou may now\b",
-    )
+    #: is reaching for behaviour, not tone. The one list: your own and an app's styles are refused
+    #: at load by the same tuple (``reply_style._refusal``), so this rail and that check are one.
+    FORBIDDEN = rs.BEHAVIOUR_PATTERNS
 
     def test_no_bundled_style_names_tools_permissions_or_approvals(self, subtests):
         for style in STYLED:
@@ -182,13 +174,21 @@ class TestThePlatformDefault:
         config_path().write_text(json.dumps({"agent": {"reply_style": "shouty"}}))
         assert AppConfig.load().agent.reply_style == "default"
 
-    def test_it_is_editable_through_the_config_api_as_a_closed_set(self):
+    def test_it_is_editable_from_settings_as_the_set_available_now(self, tmp_path, monkeypatch):
+        """Not a fixed enum: your own styles and an enabled app's join the set. Still closed at
+        the write: a value that names no available style is refused."""
+        from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
         from personalclaw.config.editable import _EDITABLE_CONFIG
 
-        assert _EDITABLE_CONFIG["agent.reply_style"] == {
-            "type": "enum",
-            "values": list(rs.STYLE_IDS),
-        }
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        spec = _EDITABLE_CONFIG["agent.reply_style"]
+        assert spec["type"] == "str"
+        assert spec["values_fn"]() == set(rs.STYLE_IDS)
+        for ok in rs.STYLE_IDS:
+            assert coerce_edit_value("agent.reply_style", ok, spec) == ok
+        for bad in ("shouty", "own:missing", "acme:gone", ""):
+            with pytest.raises(ConfigValueError):
+                coerce_edit_value("agent.reply_style", bad, spec)
 
     @pytest.mark.asyncio
     async def test_the_config_api_sets_it_and_refuses_a_value_outside_the_set(self):

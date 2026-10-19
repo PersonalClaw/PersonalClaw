@@ -125,7 +125,8 @@ export interface ComposerProps {
     effective: string
     source: string
     agentDefault: string
-    styles: { id: string; title: string; description: string }[]
+    /** `by` names the app that adds a style (an app's style only). */
+    styles: { id: string; title: string; description: string; by?: string }[]
     /** The backend's preview of what the next turn carries for its voice; null before the chat
      *  exists. Shown in the picker as it arrives. */
     preview?: {

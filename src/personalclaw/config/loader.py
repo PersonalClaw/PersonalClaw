@@ -542,8 +542,8 @@ def _bot_name_disallowed(name: str) -> list[str]:
 def _reply_style_choice(value: object, empty: str) -> str:
     """A stored reply style as one of the bundled ids, or *empty* for anything else.
 
-    The set is ``reply_style.STYLE_IDS``; an unknown value never resolves to a style nobody
-    chose."""
+    A bundled id or a well-formed ``own:``/``<app>:`` id, kept while its style is unavailable so the
+    pick survives; anything else never resolves to a style nobody chose."""
     from personalclaw.reply_style import normalize_choice
 
     return normalize_choice(value) or empty
@@ -750,9 +750,10 @@ class AgentConfig:
         metadata=_meta(
             "Reply Style",
             "How every agent writes its replies unless the agent or the conversation chooses "
-            "its own: 'default' (no style instruction), 'plain', 'terse' or 'conversational'. "
-            "Changes style only, never facts, caveats or refusals.",
-            enum=["default", "plain", "terse", "conversational"],
+            "its own: 'default' (no style instruction), 'plain', 'terse', 'conversational', one "
+            "of your own styles ('own:<name>') or one an app adds ('<app>:<name>'). A style that "
+            "is not available is passed over. Changes style only, never facts, caveats or "
+            "refusals.",
         ),
     )
     orchestrator_skill: bool = field(
@@ -1921,12 +1922,12 @@ class AgentProfile:
         default="",
         metadata=_meta(
             "Reply Style",
-            "How this agent writes its replies: 'plain', 'terse' or 'conversational', "
-            "'default' for no style instruction, or empty to follow the platform default. "
-            "Travels with the agent into every conversation that binds it; a conversation "
-            "can choose its own from the composer. Distinct from Voice (WHO the agent is) "
-            "and from voice profiles (speech). Never changes facts, caveats or refusals.",
-            enum=["", "default", "plain", "terse", "conversational"],
+            "How this agent writes its replies: a bundled style ('plain', 'terse', "
+            "'conversational'), one of your own ('own:<name>') or an app's ('<app>:<name>'), "
+            "'default' for no style instruction, or empty to follow Agent defaults. Travels "
+            "with the agent into every conversation that binds it; a conversation can choose "
+            "its own from the composer. Distinct from Voice (WHO the agent is) and from voice "
+            "profiles (speech). Never changes facts, caveats or refusals.",
         ),
     )
     model: str = field(

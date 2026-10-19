@@ -422,6 +422,9 @@ class Permissions:
     # binding to a string and granting nothing (the SDK's loud-break rule,
     # ``scripts/sdk_signature_snapshot.py``).
     agent_tier: str = field(default="", kw_only=True, metadata={_MANIFEST_KEY: "agent"})
+    # Its ``_entity: style`` files load as reply styles. ENFORCED, deny-by-default, in
+    # ``apps.prompt_seed`` (``reply_style`` holds them to your own styles' floor). Keyword-only.
+    replyStyles: bool = field(default=False, kw_only=True)  # noqa: N815
     # Target app names this app may send a brokered message to (via
     # POST /api/apps/message). Same list-of-names shape as ``events``/``mcpTools``
     # — an exact name or a trailing-``*`` prefix. Empty → may message NO app (deny
@@ -573,6 +576,8 @@ class Permissions:
             d["proposals"] = [p.to_dict() for p in self.proposals]
         if self.backgroundTasks:
             d["backgroundTasks"] = True
+        if self.replyStyles:
+            d["replyStyles"] = True
         if self.eventSubscriptions:
             d["eventSubscriptions"] = self.eventSubscriptions
         if self.config:
@@ -602,6 +607,7 @@ class Permissions:
                 ProposalKind.from_dict(p) for p in data.get("proposals", []) if isinstance(p, dict)
             ],
             backgroundTasks=strict_bool(data.get("backgroundTasks"), field="backgroundTasks"),
+            replyStyles=strict_bool(data.get("replyStyles"), field="replyStyles"),
             eventSubscriptions=[  # noqa: N815
                 str(e) for e in data.get("eventSubscriptions", []) if e
             ],
@@ -611,6 +617,7 @@ class Permissions:
         perms.not_booleans = _not_booleans(
             data, "storage", "network", "memory", "cron", "storageShared", "backgroundTasks"
         )
+        perms.not_booleans |= _not_booleans(data, "replyStyles")
         return perms
 
     def proposal_kind(self, kind_suffix: str) -> "ProposalKind | None":
@@ -1937,7 +1944,7 @@ class AppManifest:
     # --- App-owned prompts ---
     # Prompt/snippet DEFINITION files (paths relative to the app dir) the app SHIPS
     # and OWNS. Each is a YAML with the same shape as a bundled prompt/snippet on
-    # disk PLUS a top-level ``_entity`` (``prompt``|``snippet``) discriminator and,
+    # disk PLUS a top-level ``_entity`` (``prompt``|``snippet``|``style``) discriminator and,
     # for a prompt, a ``use_case``. Seeded into the native prompt store on enable
     # (idempotent, non-clobbering) and removed on disable. See apps.prompt_seed.
     prompts: list[str] = field(default_factory=list)

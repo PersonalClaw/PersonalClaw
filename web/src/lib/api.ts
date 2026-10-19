@@ -948,6 +948,10 @@ export interface AppPermissionsWire {
   // "declared, not yet in effect", never among the enforced bullets.
   backgroundTasks?: boolean
   eventSubscriptions?: string[]
+  // The app may add reply styles (its `_entity: style` files). Enforced: without it none of them
+  // load (`apps/prompt_seed`); with it, each is held to the floor your own styles are and shows in
+  // the picker named with the app.
+  replyStyles?: boolean
   // The owner's settings this app reads and writes through `/api/config` — exact dotted field
   // paths (`voice.echo_filter_enabled`). Enforced: `GET /api/config/personalclaw` returns only
   // these to the app, and a write to any other setting is refused 403 + SEL. A security setting
@@ -6418,6 +6422,8 @@ export interface OnboardingState {
   /** The name and handle this run continued past step 1 with, until it finishes — what a second
    *  tab joins the run with. Not identity: the flow writes that only when the run finishes. */
   name_draft?: OnboardingNameDraft | null
+  /** Whether "How should I explain things?" was answered or skipped, so its card shows once. */
+  explain_asked?: boolean
 }
 /** `name_draft` in `onboarding.json` (`_NAME_DRAFT_SCHEMA` in `personalclaw/onboarding.py`). */
 export interface OnboardingNameDraft { name: string; handle: string; handle_touched: boolean }
@@ -6580,8 +6586,26 @@ export interface OnboardingImportJob {
  *  gateway has them now. `job` is null when this gateway has run none — after a restart too. */
 export interface OnboardingImportStatus { reading: OnboardingImportReading; job: OnboardingImportJob | null }
 export interface ChatModelOption { name: string; model_id: string; provider: string; description?: string }
-/** A bundled reply style, as the picker lists it. */
-export interface ReplyStyle { id: string; title: string; description: string }
+/** A reply style, as the picker lists it: bundled, your own (`own:<name>`, a file under the home's
+ *  `styles/`) or one an app adds with the `replyStyles` permission (`<app>:<name>`). */
+export interface ReplyStyle {
+  id: string; title: string; description: string
+  source?: 'bundled' | 'own' | 'app'
+  /** The app that adds it and the name it goes by (an app's style only). */
+  app?: string; by?: string
+  /** The file it was read from (your own or an app's style). */
+  file?: string
+  /** Your own style's text, for its editor (your own style only). */
+  text?: string
+}
+/** A style file that is not loaded, and why, naming the file. */
+export interface RefusedReplyStyle { id: string; file: string; reason: string; app?: string }
+/** `GET /api/chat/reply-styles`. */
+export interface ReplyStyleList {
+  styles: ReplyStyle[]; refused?: RefusedReplyStyle[]; precedence: string[]; size_cap?: number
+}
+/** The answers to "How should I explain things?" (`POST /api/onboarding/explain`). */
+export type ExplainAnswer = 'briefly' | 'step_by_step' | 'with_background' | 'skip'
 
 /** What the next turn of a chat carries for its voice, read from the backend's resolution:
  *  the style's section, or the identity's persona when no style is chosen, or nothing. */
@@ -8900,6 +8924,10 @@ export const api = {
 
   // onboarding readiness + the in-flow fix (bind a chat model)
   onboarding: () => get<OnboardingState>('/api/onboarding'),
+  /** Answer "How should I explain things?" once: an answer pins a `style` preference, `skip` writes
+   *  nothing, and either way the question is recorded as asked. A second answer is a 409. */
+  answerExplain: (answer: ExplainAnswer) =>
+    post<{ ok: boolean; facet: string | null }>('/api/onboarding/explain', { answer }),
   /** Record first-run progress — a PARTIAL merge at both levels, so each step sends
    *  only what it learned. Never read-modify-write the whole document. */
   saveOnboardingState: (patch: OnboardingStatePatch) =>
@@ -9058,7 +9086,13 @@ export const api = {
     patch<{ ok: boolean } & ReplyStyleState>(
       `/api/chat/sessions/${encodeURIComponent(session)}/reply-style`, { reply_style: style }),
   /** The reply styles a conversation or an agent can choose, in the picker's order. */
-  replyStyles: () => get<{ styles: ReplyStyle[]; precedence: string[] }>('/api/chat/reply-styles'),
+  replyStyles: () => get<ReplyStyleList>('/api/chat/reply-styles'),
+  /** Create or replace one of your own styles (`styles/<name>.md`). The server applies the checks a
+   *  style file meets at load; a refusal is a 400 whose message says why. */
+  saveOwnReplyStyle: (name: string, body: { title: string; description: string; text: string }) =>
+    put<{ ok: boolean; style: ReplyStyle }>(`/api/chat/reply-styles/own/${encodeURIComponent(name)}`, body),
+  /** Remove one of your own styles. A chat or agent that chose it falls back to the next level down. */
+  deleteOwnReplyStyle: (name: string) => del(`/api/chat/reply-styles/own/${encodeURIComponent(name)}`),
   // ── session lifecycle + bulk ──
   setSessionLifecycle: (session: string, body: { lifecycle?: 'active' | 'archived'; never_archive?: boolean }) =>
     patch<{ ok: boolean; lifecycle: string; never_archive: boolean }>(`/api/chat/sessions/${encodeURIComponent(session)}/lifecycle`, body),

@@ -58,6 +58,7 @@ def test_fresh_home_starts_at_the_first_step(_isolate_home):
         "essentials": {"model": None, "search": False, "speech": False, "channel": None},
         "first_success": {"knowledge": False, "trigger": False, "loop": False},
         "name_draft": None,
+        "explain_asked": False,
     }
 
 

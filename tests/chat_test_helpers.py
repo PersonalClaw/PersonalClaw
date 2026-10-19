@@ -106,6 +106,8 @@ def _make_app(state: DashboardState) -> web.Application:
     from personalclaw.dashboard.chat import (
         api_chat,
         api_chat_mode,
+        api_chat_own_reply_style_delete,
+        api_chat_own_reply_style_put,
         api_chat_reply_styles,
         api_chat_session_approve,
         api_chat_session_color,
@@ -129,6 +131,8 @@ def _make_app(state: DashboardState) -> web.Application:
     app.router.add_post("/api/chat", api_chat)
     app.router.add_get("/api/chat/sessions", api_chat_sessions)
     app.router.add_get("/api/chat/reply-styles", api_chat_reply_styles)
+    app.router.add_put("/api/chat/reply-styles/own/{name}", api_chat_own_reply_style_put)
+    app.router.add_delete("/api/chat/reply-styles/own/{name}", api_chat_own_reply_style_delete)
     app.router.add_post("/api/chat/sessions/cleanup", api_chat_sessions_cleanup)
     app.router.add_get("/api/chat/sessions/{session}", api_chat_session_detail)
     app.router.add_get("/api/chat/sessions/{session}/map", api_chat_session_map)

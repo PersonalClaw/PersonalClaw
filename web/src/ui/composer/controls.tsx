@@ -267,8 +267,12 @@ export function ReasoningPill({ value, efforts, onSelect, openSignal }: {
   )
 }
 
-/** A reply style the picker lists: the backend's `GET /api/chat/reply-styles` rows. */
-export type ReplyStyleOption = { id: string; title: string; description: string }
+/** A reply style the picker lists: the backend's `GET /api/chat/reply-styles` rows. `by` names the
+ *  app that adds it (an app's style only), which the picker shows beside its title. */
+export type ReplyStyleOption = { id: string; title: string; description: string; by?: string }
+
+/** A style's name as the picker says it: an app's carries the app, `Brief (Acme)`. */
+export const replyStyleName = (s: ReplyStyleOption) => (s.by ? `${s.title} (${s.by})` : s.title)
 
 /** What the next turn carries for its voice, as the backend previews it (`reply_style.preview`). */
 export type ReplyStylePreviewView = {
@@ -342,7 +346,14 @@ export function ReplyStylePill({ choice, effective, source, agentDefault, styles
   preview?: ReplyStylePreviewView | null
   onSelect: (style: string) => void
 }) {
-  const title = (id: string) => styles.find((s) => s.id === id)?.title ?? id
+  const title = (id: string) => {
+    const s = styles.find((x) => x.id === id)
+    return s ? replyStyleName(s) : id
+  }
+  // A style this chat chose that the server no longer lists (its app disabled or without its grant,
+  // its file deleted). The pick is kept and the turn uses the next level down; the row says so and
+  // cannot be picked again until the style is back. Only once the list has arrived.
+  const gone = source !== '' && choice !== '' && styles.length > 0 && !styles.some((s) => s.id === choice)
   const label = source === ''
     ? (choice ? title(choice) : 'Agent default')
     : `${title(effective)}${effective === 'default' ? '' : (REPLY_STYLE_CHOSEN_BY[source] ?? '')}`
@@ -356,9 +367,13 @@ export function ReplyStylePill({ choice, effective, source, agentDefault, styles
             hint={agentDefault ? `This agent asks for ${title(agentDefault)}` : 'Follows this agent, then the platform default'}
             selected={choice === ''} onClick={() => { onSelect(''); close() }} />
           {styles.map((s) => (
-            <MenuRow key={s.id} label={s.id === 'default' ? 'No style' : s.title} hint={s.description}
+            <MenuRow key={s.id} label={s.id === 'default' ? 'No style' : replyStyleName(s)} hint={s.description}
               selected={choice === s.id} onClick={() => { onSelect(s.id); close() }} />
           ))}
+          {gone && (
+            <MenuRow label={`${choice} — no longer available`} disabled selected
+              hint="This chat keeps the choice and uses the next level down until the style is back." />
+          )}
           {preview && <ReplyStylePreviewLine preview={preview} title={title} />}
           <div data-type="caption" className="border-t border-outline-variant/30 px-m py-2 text-on-surface-low">
             Changes style only, never a fact, a caveat or a refusal. A choice here applies to this conversation and does not edit the agent.

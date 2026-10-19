@@ -849,6 +849,74 @@ async def api_onboarding(request: web.Request) -> web.Response:
     )
 
 
+#: The answers to "How should I explain things?", each the ``style`` preference it pins.
+EXPLAIN_ANSWERS: dict[str, str] = {
+    "briefly": "Explain things briefly.",
+    "step_by_step": "Explain things step by step.",
+    "with_background": "Explain things with the background.",
+}
+
+
+def _explain_store(request: web.Request):
+    """The global memory's record store, where preference facets live (the Memory page's)."""
+    from personalclaw.dashboard.handlers.memory import _global_provider
+
+    return _global_provider(request.app["state"])
+
+
+async def api_onboarding_explain(request: web.Request) -> web.Response:
+    """Answer the one optional question, "How should I explain things?", once.
+
+    ``POST /api/onboarding/explain`` with ``{"answer": "briefly" | "step_by_step" |
+    "with_background" | "skip"}``. An answer writes a pinned ``style`` preference facet, so it shows
+    wherever preferences are listed and can be changed or forgotten there; ``skip`` writes nothing.
+    Either way the onboarding state records that the question was asked (``explain_asked``), so
+    the card does not come back. A second answer is refused (409) and changes nothing.
+
+    The question is claimed before anything is written: the check and the claim are one step on
+    the loop, with nothing awaited between them, so of two answers in flight (two tabs, a retry)
+    the second is the 409 and one preference is kept. A write that fails gives the claim back,
+    so the question can be answered again.
+    """
+    from personalclaw.http_errors import json_error
+    from personalclaw.onboarding import load_onboarding_state, merge_onboarding_state
+    from personalclaw.preference_facets import pin_facet, upsert_facet
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return json_error("invalid_json", status=400)
+    answer = body.get("answer") if isinstance(body, dict) else None
+    if not isinstance(answer, str) or (answer != "skip" and answer not in EXPLAIN_ANSWERS):
+        return json_error(
+            "bad_request",
+            message="'answer' must be one of: " + ", ".join([*EXPLAIN_ANSWERS, "skip"]),
+            status=400,
+        )
+    vs = _explain_store(request) if answer != "skip" else None
+    if load_onboarding_state()["explain_asked"]:
+        return json_error("question_answered", status=409)
+    state = merge_onboarding_state({"explain_asked": True})
+    key = None
+    if vs is not None:
+        text = EXPLAIN_ANSWERS[answer]
+
+        def write() -> str | None:
+            written = upsert_facet(vs, "style", text, cue="explicit")
+            if written:
+                pin_facet(vs, written, True)
+            return written
+
+        try:
+            key = await asyncio.get_running_loop().run_in_executor(None, write)
+        except Exception:
+            # The write failed, so nothing is kept: give the question back. Not on a cancel, whose
+            # write may still finish in its thread.
+            merge_onboarding_state({"explain_asked": False})
+            raise
+    return web.json_response({"ok": True, "facet": key, "state": state})
+
+
 async def api_onboarding_state(request: web.Request) -> web.Response:
     """Record first-run progress — a partial merge into the onboarding entity state.
 

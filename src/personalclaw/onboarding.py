@@ -100,6 +100,9 @@ def default_state() -> dict[str, Any]:
         "essentials": {"model": None, "search": False, "speech": False, "channel": None},
         "first_success": {k: False for k in _FIRST_SUCCESS_KEYS},
         "name_draft": None,
+        # Whether the one optional "How should I explain things?" question has been answered or
+        # skipped (``POST /api/onboarding/explain``), so its card is offered once.
+        "explain_asked": False,
     }
 
 
@@ -149,6 +152,9 @@ def _sanitize(raw: Any) -> dict[str, Any]:
         for key in _FIRST_SUCCESS_KEYS:
             if isinstance(fs.get(key), bool):
                 state["first_success"][key] = fs[key]
+
+    if isinstance(raw.get("explain_asked"), bool):
+        state["explain_asked"] = raw["explain_asked"]
 
     # A finished run holds no draft whatever the file says (see `merge_onboarding_state`).
     if state["step"] != "done":
@@ -206,7 +212,7 @@ def merge_onboarding_state(patch: Any) -> dict[str, Any]:
     if not isinstance(patch, dict):
         raise ValueError("Body must be a JSON object")
 
-    known = {"step", "essentials", "first_success", "name_draft"}
+    known = {"step", "essentials", "first_success", "name_draft", "explain_asked"}
     unknown = sorted(set(patch) - known)
     if unknown:
         raise ValueError(f"Unknown field(s): {', '.join(repr(k) for k in unknown)}")
@@ -227,7 +233,13 @@ def merge_onboarding_state(patch: Any) -> dict[str, Any]:
                 "'handle_touched'"
             )
 
+    if "explain_asked" in patch and not isinstance(patch["explain_asked"], bool):
+        raise ValueError("'explain_asked' must be a boolean")
+
     state = load_onboarding_state()
+
+    if "explain_asked" in patch:
+        state["explain_asked"] = patch["explain_asked"]
 
     if "step" in patch:
         step = patch["step"]

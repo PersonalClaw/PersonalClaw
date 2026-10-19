@@ -217,6 +217,7 @@ def unload(name: str, manifest: AppManifest | None, *, forget: bool = False) -> 
         _remove_prompts(manifest)
         _remove_skills(manifest)
         _deregister_proposal_kinds(manifest)
+    _drop_reply_styles(name)
     _forget_availability(name)
     left = _release_code(name) + _processes_left(name)
     if left:
@@ -477,6 +478,17 @@ def _settle_channel_receivers() -> None:
         settle_from_thread()
     except Exception:  # noqa: BLE001
         logger.debug("channel receivers did not settle", exc_info=True)
+
+
+def _drop_reply_styles(name: str) -> None:
+    """Its reply styles leave the next turn (``reply_style.unregister_app``). Held by the app's
+    name, so they go whether or not its manifest could be read: an app that is off sends none."""
+    try:
+        from personalclaw import reply_style
+
+        reply_style.unregister_app(name)
+    except Exception:  # noqa: BLE001
+        logger.debug("app %s: reply styles not dropped", name, exc_info=True)
 
 
 def _forget_availability(name: str) -> None:

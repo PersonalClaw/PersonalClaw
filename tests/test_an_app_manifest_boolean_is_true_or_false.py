@@ -60,7 +60,15 @@ PLACES: dict[tuple[str, str], tuple[typing.Callable, typing.Callable, str, objec
             f"permissions.{key}",
             False,
         )
-        for key in ("storage", "network", "memory", "cron", "storageShared", "backgroundTasks")
+        for key in (
+            "storage",
+            "network",
+            "memory",
+            "cron",
+            "storageShared",
+            "backgroundTasks",
+            "replyStyles",
+        )
     },
     ("CronEntry", "silent"): (
         lambda v: {"permissions": _JOBS, "crons": [{**_JOB, "silent": v}]},

@@ -119,11 +119,28 @@ class AgentDefinition:
             if not isinstance(s, str) or ".." in s or "/" in s:
                 errors.append(f"invalid skill name: {s!r}")
         if self.reply_style:
-            from personalclaw.reply_style import STYLE_IDS
+            from personalclaw.reply_style import normalize_choice
 
-            if self.reply_style not in STYLE_IDS:
-                errors.append(f"reply_style must be one of {list(STYLE_IDS)} or empty")
+            if normalize_choice(self.reply_style) != self.reply_style:
+                errors.append("reply_style must be a style id or empty")
         return errors
+
+
+def _unavailable_style(style: str, *, kept: str = "") -> list[str]:
+    """``[why]`` when a write newly chooses a reply style that is not available now, else ``[]``.
+
+    The rule the agent profile and the chat hold (``reply_style.is_available``): a style that is
+    gone cannot be newly chosen. *kept* is the style the definition already has, which is not a new
+    choice: a definition whose style has since gone away keeps it when another field is edited.
+    Kept out of :meth:`AgentDefinition.validate`, which checks a definition's shape wherever it is
+    read, so a stored pick survives a load while its app is off.
+    """
+    from personalclaw.reply_style import is_available, normalize_choice
+
+    # A value that is no style id at all is `validate`'s to name.
+    if not style or style == kept or normalize_choice(style) != style or is_available(style):
+        return []
+    return [f"reply_style {style!r} is not a style available now (GET /api/chat/reply-styles)"]
 
 
 # ── Abstract base ─────────────────────────────────────────────────────────────
@@ -226,7 +243,7 @@ class LocalAgentMarketplace(AgentMarketplace):
     # ── Write ─────────────────────────────────────────────────────────────────
 
     def create(self, defn: AgentDefinition) -> AgentDefinition:
-        errors = defn.validate()
+        errors = defn.validate() + _unavailable_style(defn.reply_style)
         if errors:
             raise ValueError(f"Invalid agent definition: {'; '.join(errors)}")
         self._ensure_base()
@@ -246,6 +263,7 @@ class LocalAgentMarketplace(AgentMarketplace):
         existing = self.get(name)
         if existing is None:
             raise KeyError(f"Agent '{name}' not found")
+        kept_style = existing.reply_style
         _UPDATABLE = {
             "description",
             "model",
@@ -273,7 +291,7 @@ class LocalAgentMarketplace(AgentMarketplace):
             else:
                 setattr(existing, key, str(value) if value is not None else "")
         existing.updated_at = time.time()
-        errors = existing.validate()
+        errors = existing.validate() + _unavailable_style(existing.reply_style, kept=kept_style)
         if errors:
             raise ValueError(f"Invalid agent definition: {'; '.join(errors)}")
         self._write(self._agent_path(name), existing)
