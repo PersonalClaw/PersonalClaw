@@ -469,7 +469,8 @@ no ongoing capture to audit, because the capture ends before the crop overlay ev
 ## Reply style: how the agent writes
 
 **Where:** the feather pill in the composer. An agent's own default is under **Reply style** on
-the agent's form.
+the agent's form, and the default for every agent is under Settings → Agent defaults →
+**Reply style**.
 
 A reply style changes how replies are written, never what they say: every fact, caveat and
 refusal stays as it would be without it, and so does what the agent may do.
@@ -481,12 +482,10 @@ refusal stays as it would be without it, and so does what the agent may do.
 | Terse | Short and direct: the answer first, no padding, only the reasoning that matters. |
 | Conversational | Fuller and warmer: full sentences, the reasoning and background, an example when it helps. |
 
-**Which style applies.** This conversation's choice wins, then the agent's, then the platform
-default: Default, unless you set `agent.reply_style` through the config API
-(`PATCH /api/config/personalclaw` with `{"path": "agent.reply_style", "value": "terse"}`).
-Settings has no control for it. The pill names the style in effect and who chose it
-("Terse (agent)"). **Agent default** resets this conversation so it follows its agent again;
-choosing here never edits the agent. A change applies from the next turn.
+**Which style applies.** This conversation's choice wins, then the agent's, then Agent defaults
+(No style unless you change it). The pill names the style in effect and who chose it ("Terse
+(agent)"). **Agent default** resets this conversation so it follows its agent again; choosing
+here never edits the agent. A change applies from the next turn.
 
 **A personality's own voice.** Some personalities, such as Retro Terminal, bring a voice of
 their own on a new chat's first turn. A chosen style wins over it: while this chat has a style
@@ -495,6 +494,12 @@ voice as before. The chat's detail carries a preview that names which of the two
 its exact text: a style's section, which every turn adds, or the personality's voice, which only
 a new chat's first turn adds (the preview marks it `first_turn_only`), so a turn after that adds
 nothing for it.
+
+**What the next reply carries.** Open the pill: under the styles, a line says what the next turn
+adds, the chosen style on every turn, the personality's voice on a new chat's first turn, or no
+style instruction, and whether a chosen style is replacing a personality's voice. **Show what is
+sent** shows the exact text, safety rules included. A brand-new chat has nothing to preview
+until its first message creates it.
 
 **Editing a style.** Each style's wording is a prompt in Settings → Prompts
 (`reply-style-plain`, `reply-style-terse`, `reply-style-conversational`). Its text is sent as

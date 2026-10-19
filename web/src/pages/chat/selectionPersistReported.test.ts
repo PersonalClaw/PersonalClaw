@@ -43,7 +43,7 @@ const SELECTION_WRITES = [
   'setSessionAcpAgent', 'setSessionAgent', 'setSessionModel',
   'setApprovalMode', 'setTaskMode', 'setReasoningEffort',
 ]
-// The reply style is a composer pick too, but its state lives in `chat/useReplyStyle.ts`, whose own
+// The reply style is a composer pick too, but its state lives in `chat/composer/useReplyStyle.ts`, whose own
 // test holds it to the same rule: a failed PATCH is told, and the picker keeps what it showed.
 
 describe('a selection that fails to persist tells the user', () => {

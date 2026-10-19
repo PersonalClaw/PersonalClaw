@@ -126,6 +126,13 @@ export interface ComposerProps {
     source: string
     agentDefault: string
     styles: { id: string; title: string; description: string }[]
+    /** The backend's preview of what the next turn carries for its voice; null before the chat
+     *  exists. Shown in the picker as it arrives. */
+    preview?: {
+      applies: 'style' | 'persona' | 'none'
+      style: string; persona: string
+      instruction: string; first_turn_only: boolean; refused: string
+    } | null
     onSelect: (style: string) => void
   }
   /** Pills a host owns, drawn in the toolbar after the built-in ones — a choice that belongs to

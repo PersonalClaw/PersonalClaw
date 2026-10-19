@@ -16,13 +16,13 @@ const h = vi.hoisted(() => ({
   notify: vi.fn(),
 }))
 
-vi.mock('../../lib/api', () => ({
+vi.mock('../../../lib/api', () => ({
   api: { setSessionReplyStyle: h.setSessionReplyStyle, replyStyles: h.replyStyles },
 }))
-vi.mock('../../app/appSdk', () => ({ notify: h.notify }))
+vi.mock('../../../app/appSdk', () => ({ notify: h.notify }))
 
 import { useReplyStyle } from './useReplyStyle'
-import type { ReplyStylePreview, ReplyStyleState } from '../../lib/api'
+import type { ReplyStylePreview, ReplyStyleState } from '../../../lib/api'
 
 const STYLES = [
   { id: 'default', title: 'Default', description: 'No style instruction.' },

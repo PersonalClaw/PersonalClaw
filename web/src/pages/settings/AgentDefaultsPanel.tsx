@@ -139,6 +139,7 @@ export function AgentDefaultsPanel() {
       <Section title="Defaults" hint="Baseline behavior for every session.">
         <RowGroup>
           <ApprovalModeRow cfg={cfg} patch={patch} />
+          <ReplyStyleRow cfg={cfg} patch={patch} />
           <ToggleRow label="YOLO mode" cfg={cfg} field="yolo" patch={patchYolo}
             hint="Skip every tool-approval confirmation — overrides approval mode, applies immediately, and stays on until turned off (no expiry, unlike the chat YOLO pill). Only inside a sandbox or for trusted automation." danger />
           {/* Was a fixed two hours, so an approval asked at night was denied before anyone woke.
@@ -476,6 +477,34 @@ function ApprovalModeRow({ cfg, patch }: {
         {value === 'auto' && <AlertTriangle size={14} className="text-warn" role="img" aria-label="Relaxes a safety default" />}
         <SegPills ariaLabel="Approval mode" value={value} onChange={(v) => patch('approval_mode', v, flash)}
           options={options.map(({ key, label }) => ({ key, label }))} />
+      </div>
+    </Row>
+  )
+}
+
+/** The reply style every agent uses unless the agent or the chat chooses its own: the platform
+ *  scope of `reply_style.REPLY_STYLE_PRECEDENCE`. A config with no stored style reads as No style,
+ *  which is what the backend resolves it to (`reply_style.PLATFORM_FLOOR`). */
+const REPLY_STYLES = [
+  { key: 'default', label: 'No style' },
+  { key: 'plain', label: 'Plain' },
+  { key: 'terse', label: 'Terse' },
+  { key: 'conversational', label: 'Conversational' },
+]
+
+function ReplyStyleRow({ cfg, patch }: {
+  cfg: AgentCfg; patch: (k: string, v: unknown, cb: () => void, label?: string) => void
+}) {
+  const [saved, flash] = useSavedFlash()
+  const stored = String(cfg.reply_style ?? 'default')
+  const value = REPLY_STYLES.some((s) => s.key === stored) ? stored : 'default'
+  return (
+    <Row label="Reply style"
+      hint="How every agent writes its replies, unless the chat or the agent chooses its own. Changes style only, never a fact, a caveat or a refusal.">
+      <div className="flex items-center gap-s">
+        <SavedToast show={saved} />
+        <SegPills ariaLabel="Reply style" value={value} onChange={(v) => patch('reply_style', v, flash, 'reply style')}
+          options={REPLY_STYLES} />
       </div>
     </Row>
   )

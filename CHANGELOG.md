@@ -14,6 +14,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **`personalclaw://` links open the desktop app on one of its pages, from a browser, another app or Terminal; a link only opens a page and never sends, approves or runs anything.**
 - **A link that opens a new thread with a prompt puts the prompt in the composer, unsent, also when the app is already showing a new thread, and a link can open a thread's Activity pane or a new thread's Chat history; a link that names an artifact by key is refused, because an artifact opens on its own page.**
 - **Pick a terse or a conversational reply style for a chat from the composer, or for an agent on its form.**
+- **Settings → Agent defaults → Reply style sets the style every agent uses unless the agent or the chat chooses its own, and the composer's style picker says what the next reply carries, with Show what is sent for the exact text.**
 
 ### Fixed
 
