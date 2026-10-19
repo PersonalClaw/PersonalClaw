@@ -732,15 +732,15 @@ async function getDashboardThemeVars() {
 
 function modalCSSForMode(dark) {
   return `* { margin:0; padding:0; box-sizing:border-box; }
-    body { font-family:-apple-system,sans-serif; padding:24px; background:${dark ? "#1e293b" : "#f8fafc"}; color:${dark ? "#e2e8f0" : "#1e293b"}; }
-    label { display:block; margin-bottom:8px; font-size:13px; color:${dark ? "#94a3b8" : "#64748b"}; }
-    input { width:100%; padding:10px; border-radius:6px; border:1px solid ${dark ? "#475569" : "#cbd5e1"};
-      background:${dark ? "#0f172a" : "#ffffff"}; color:${dark ? "#e2e8f0" : "#1e293b"}; font-size:14px; outline:none; margin-bottom:12px; }
-    input:focus { border-color:#f97316; }
+    body { font-family:-apple-system,sans-serif; padding:24px; background:${dark ? "#1e1f20" : "#ffffff"}; color:${dark ? "#e3e3e3" : "#1f1f1f"}; }
+    label { display:block; margin-bottom:8px; font-size:13px; color:${dark ? "#9a9b9c" : "#444746"}; }
+    input { width:100%; padding:10px; border-radius:6px; border:1px solid ${dark ? "#444746" : "#e1e3e1"};
+      background:${dark ? "#131314" : "#ffffff"}; color:${dark ? "#e3e3e3" : "#1f1f1f"}; font-size:14px; outline:none; margin-bottom:12px; }
+    input:focus { border-color:${dark ? "#ff6b5b" : "#b12e18"}; }
     .row { display:flex; gap:8px; }
     button { flex:1; padding:8px; border-radius:6px; border:none; cursor:pointer; font-size:13px; font-weight:600; }
-    .ok { background:#f97316; color:#fff; } .ok:hover { background:#ea580c; }
-    .cancel { background:${dark ? "#334155" : "#e2e8f0"}; color:${dark ? "#94a3b8" : "#475569"}; } .cancel:hover { background:${dark ? "#475569" : "#cbd5e1"}; }`;
+    .ok { background:${dark ? "#ff6b5b" : "#b12e18"}; color:${dark ? "#3f1008" : "#ffffff"}; } .ok:hover { background:${dark ? "#ff9a86" : "#8d240b"}; }
+    .cancel { background:${dark ? "#282a2c" : "#eef1f5"}; color:${dark ? "#9a9b9c" : "#444746"}; } .cancel:hover { background:${dark ? "#333537" : "#e6eaef"}; }`;
 }
 
 function modalCSSFromVars(v) {
@@ -1029,7 +1029,7 @@ function makeWindow() {
     minHeight: 600,
     tabbingIdentifier: "personalclaw",
     titleBarStyle: "hidden",
-    backgroundColor: "#0f1117",
+    backgroundColor: "#0f0f0f",
   });
 }
 
@@ -1068,7 +1068,7 @@ function showMainWindow() {
  * `setupWindowContents`), so this follows the tab the user is actually looking at.
  *
  * The hash comes from `DEEP_LINKS`, a closed map, and any interpolated id is
- * `encodeURIComponent`-ed there before `JSON.stringify` quotes it here — a loop name
+ * `encodeURIComponent`-ed there before `hashAssignmentScript` checks and quotes it — a loop name
  * from the gateway never reaches the page as code.
  */
 function deepLink(hash) {
@@ -1076,7 +1076,7 @@ function deepLink(hash) {
   const wc = mainWindow?.webContents;
   if (!wc || wc.isDestroyed?.()) return;
   try {
-    wc.executeJavaScript(`window.location.hash = ${JSON.stringify(String(hash))}`);
+    wc.executeJavaScript(hashAssignmentScript(hash));
   } catch (err) {
     console.warn(`deep link to ${hash} failed: ${err.message}`);
   }
@@ -1588,6 +1588,26 @@ function mergeAllWindows() {
   }, 50);
 }
 
+// ── personalclaw:// links ──
+
+// Required here rather than at the top: `deepLink()` above runs only on menu-bar clicks, long after
+// this file has loaded, and keeping the new lines below the ones the docs cite by number keeps
+// those citations true (`test/connectSeam.test.js`).
+const { hashAssignmentScript, makeWindowDeepLinkInbox, registerDeepLinks } = require("./deepLinks");
+
+/**
+ * Links from other apps and pages wait here until the dashboard can take them. A link is
+ * delivered only to the active tab's dashboard, on the gateway the window is pointed at: never to
+ * the loading page, the gateway switcher, another of the gateway's pages or another origin. It
+ * moves the page to a route and nothing more (`deepLinks.js`).
+ */
+const deepLinkInbox = makeWindowDeepLinkInbox({
+  contents: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null),
+  gatewayUrl: () => activeUrl || localGatewayUrl,
+  show: () => showMainWindow(),
+  log: (msg) => console.log(`desktop: ${msg}`),
+});
+
 // ── App lifecycle ──
 
 // Single-instance: a second launch focuses the existing window instead of
@@ -1600,6 +1620,15 @@ if (!app.requestSingleInstanceLock()) {
       if (!mainWindow.isVisible()) mainWindow.show();
       mainWindow.focus();
     }
+  });
+  // Before ready: macOS hands a link that launched the app to `open-url` early in the start. This
+  // also offers a held link again each time a page finishes loading.
+  registerDeepLinks({
+    app,
+    inbox: deepLinkInbox,
+    isPackaged: app.isPackaged,
+    argv: process.argv,
+    log: (msg) => console.log(`desktop: ${msg}`),
   });
 
   app.whenReady().then(async () => {

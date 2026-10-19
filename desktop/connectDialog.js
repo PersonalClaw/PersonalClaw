@@ -141,7 +141,7 @@ function makeConnectDialog({ BrowserWindowCtor, ipcMain, handlers, log = () => {
       parent: parent || undefined,
       modal: Boolean(parent),
       title: "Gateways",
-      backgroundColor: "#0f1117",
+      backgroundColor: "#0f0f0f",
       webPreferences: {
         preload: path.join(__dirname, "connectPreload.js"),
         contextIsolation: true,

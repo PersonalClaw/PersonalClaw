@@ -31,6 +31,14 @@
     "dmg": {
       "writeUpdateInfo": false
     },
+    "protocols": [
+      {
+        "name": "PersonalClaw",
+        "schemes": [
+          "personalclaw"
+        ]
+      }
+    ],
     "linux": {
       "category": "Development",
       "icon": "icon.png",
@@ -49,6 +57,7 @@
       "capabilities.js",
       "pushToTalk.js",
       "trayPresence.js",
+      "deepLinks.js",
       "loginItem.js",
       "nativeNotifications.js",
       "systemBrowser.js",

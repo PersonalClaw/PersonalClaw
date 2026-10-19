@@ -90,6 +90,50 @@ If the app is signed out from another device (Settings → Devices), or its sign
 (`auth.session_ttl`, 30 days by default), the window says so. Quit PersonalClaw and open it again
 to sign it back in.
 
+## Links that open the app
+
+A `personalclaw://` link opens the desktop app on one of its pages, from a browser, another app or
+Terminal (`open "personalclaw://settings"` on macOS). The installed app registers the scheme; a
+development run started from the repository does not take it over.
+
+```
+personalclaw://<page>[/<item>...][?<state>=<value>&...]
+```
+
+- **The page** is one of the dashboard's pages, by the name its address uses: `dashboard`, `chat`,
+  `projects`, `knowledge`, `tasks`, `inbox`, `triggers`, `files`, `artifacts`, `terminal`,
+  `agents`, `tools`, `skills`, `learning`, `prompts`, `workflows`, `apps`, `settings`,
+  `notifications`, `discover`, `loop`, `loops`, `code`, `app` or `mission-control`. `threads` is
+  another name for `chat` and `automations` for `triggers`. Names are lower case. The app's two
+  shell pages, `onboarding` and `companion`, are not on the list: a link to either is refused.
+- **Up to four items** follow: a thread, a settings panel, an item's id. Each is letters, digits and
+  `. _ : @ ~ -`.
+- **The state** is `project`, `mode`, `pane`, `artifact`, `file` (a path inside the thread's
+  folder) and, on a new thread only, `prompt`, each given once.
+
+For example:
+
+| Link | Opens |
+|---|---|
+| `personalclaw://threads/new?prompt=draft%20this` | a new thread, with the prompt in its address |
+| `personalclaw://settings/providers` | Settings, at its providers address |
+| `personalclaw://skills` | Skills |
+| `personalclaw://automations` | Automations |
+| `personalclaw://threads/<key>?pane=review&file=src%2Fapp.py` | that thread, with its state in the address |
+
+**A link only opens a page. It never acts.** It sends nothing, approves nothing, answers nothing
+and runs nothing. Any other key in a link, a key that would act included, gets the link refused.
+So does an unknown page, an encoded `/`, `#`, `?` or quote inside an item, a fragment, a value
+that is too long or the wrong shape, a file path outside the thread's folder, and a prompt with
+control characters other than tabs and line breaks. A refused link brings the app forward and
+changes nothing.
+
+A link that arrives while the app is still starting waits until the dashboard has loaded, and only
+the newest one waits. It is delivered once, and only to the dashboard of the gateway the window
+shows: never to the loading page, the gateway switcher, the gateway's sign-in or pairing page, or
+another site. The app's log says which page a link opened, or why it was refused, and never repeats
+the link itself, which can hold a prompt.
+
 ## Other sites open in your browser
 
 The app's windows show only the dashboard of the gateway you are looking at. A link to another

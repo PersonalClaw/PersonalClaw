@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **`personalclaw://` links open the desktop app on one of its pages, from a browser, another app or Terminal; a link only opens a page and never sends, approves or runs anything.**
+
 ### Fixed
 
 - **Form fields announce their errors, and the busiest pages use the shared controls.**

@@ -115,6 +115,22 @@ describe("electron-builder Linux target", () => {
   });
 });
 
+describe("electron-builder declares the personalclaw:// scheme", () => {
+  // The scheme is claimed twice: at run time (`app.setAsDefaultProtocolClient`, `deepLinks.js`) and
+  // at install time. macOS reads the app's Info.plist for it and Linux the .desktop file's
+  // `x-scheme-handler`, both of which electron-builder writes from `build.protocols`.
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+  const { SCHEME } = require("../deepLinks");
+
+  it("lists exactly the scheme the app claims at run time", () => {
+    assert.deepStrictEqual(pkg.build.protocols, [{ name: "PersonalClaw", schemes: [SCHEME] }]);
+  });
+
+  it("bundles the module that reads the links", () => {
+    assert.ok(pkg.build.files.includes("deepLinks.js"));
+  });
+});
+
 describe("electron-builder never publishes", () => {
   // Without `--publish`, electron-builder decides for itself: a build on a git tag publishes
   // "onTag" (v0.2.0's desktop jobs logged "Implicit publishing triggered by git tag") and any
