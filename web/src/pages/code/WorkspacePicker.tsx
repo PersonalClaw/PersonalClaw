@@ -4,7 +4,10 @@ import { Check, CornerDownLeft, CornerLeftUp, Folder, FolderPlus, GitBranch, Loa
 import { Modal } from '../../ui/Modal'
 import { SearchField } from '../../ui/SearchField'
 import { Button } from '../../ui/Button'
-import { unavailableWhen, BUSY_REASON } from '../../ui/unavailable'
+import { QuietButton } from '../../ui/QuietButton'
+import { SquareIconButton } from '../../ui/SquareIconButton'
+import { TextInput } from '../../ui/forms'
+import { BUSY_REASON } from '../../ui/unavailable'
 import { api } from '../../lib/api'
 
 /** Why "New folder here" is off until a folder has actually been opened. */
@@ -180,18 +183,15 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
           {/* Stays REACHABLE at the filesystem root (`aria-disabled`, not the native attribute)
               and names the limit. Browsing upward with the keyboard otherwise destroys focus at
               the top: the button being pressed leaves the tab order and focus falls to <body>. */}
-          <button type="button" onClick={() => parent && parent !== path && browse(parent)}
-            aria-label="Up one level"
-            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface aria-disabled:opacity-40 aria-disabled:hover:bg-transparent aria-disabled:hover:text-on-surface-low aria-disabled:cursor-default"
-            {...unavailableWhen(!parent || parent === path, 'Already at the top level', { title: 'Up one level' })}>
-            <CornerLeftUp size={16} />
-          </button>
+          <SquareIconButton icon={CornerLeftUp} iconSize={16} label="Up one level" onClick={() => parent && parent !== path && browse(parent)}
+            disabled={!parent || parent === path} disabledReason="Already at the top level" className="shrink-0" />
           {/* Editable: type/paste an absolute path + Enter to jump there, or type it and hit
               "Use this folder" to bind it directly. Escape abandons the draft.
               🪤 NO `onBlur` REVERT. It used to reset the draft to the browsed dir, and since
               clicking a button blurs the input first, the typed value was destroyed a moment
               before the click that was meant to submit it (issue 311). Losing focus is not a
-              retraction — Escape is, and it stays. */}
+              retraction — Escape is, and it stays.
+              Raw: a path must not be spell-checked or auto-corrected, and TextInput takes neither prop. */}
           <input value={pathDraft} onChange={(e) => { draftTouched.current = true; setPathDraft(e.target.value) }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') { const t = pathDraft.trim(); if (t && t !== path) void browse(t, path) }
@@ -248,6 +248,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
                 // selects it directly — so the user can pick a repo they can SEE in
                 // the list without having to navigate into it then hit the footer.
                 <div key={d.path} data-type="body-s" className="group/row flex items-center gap-2 px-3 py-2 text-on-surface-var transition-colors hover:bg-surface-high">
+                  {/* Raw: the row itself is the target; no button primitive draws a full-width list row. */}
                   <button type="button" onClick={() => browse(d.path)}
                     className="flex min-w-0 flex-1 items-center gap-2 text-left hover:text-on-surface" title={`Open ${d.name}`}>
                     <Folder size={15} className="shrink-0 text-on-surface-low" />
@@ -264,11 +265,11 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
                       pure opacity-0 hid this primary "select without navigating in"
                       action from touch users entirely (no hover, no easy focus), leaving
                       the footer "Use this folder" as their only path. */}
-                  <button type="button" onClick={() => onPick(d.path)}
-                    data-type="caption" className="shrink-0 rounded px-1.5 py-0.5 text-on-surface-low opacity-50 transition-opacity hover:bg-surface-highest hover:text-primary hover:opacity-100 focus-visible:opacity-100 group-hover/row:opacity-100"
+                  <QuietButton onClick={() => onPick(d.path)}
+                    className="-my-1 shrink-0 opacity-50 transition-opacity hover:opacity-100 focus-visible:opacity-100 group-hover/row:opacity-100"
                     title={mode === 'brownfield' ? `Use ${d.name} as the codebase` : `Use ${d.name} as the project home`}>
                     Use
-                  </button>
+                  </QuietButton>
                 </div>
               ))}
             </div>
@@ -283,20 +284,19 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
         {canCreate && (
           creating ? (
             <div className="flex items-center gap-2">
-              <input autoFocus value={newName} onChange={(e) => { setNewName(e.target.value); if (createError) setCreateError(null) }}
-                onKeyDown={(e) => { if (e.key === 'Enter') createFolder(); else if (e.key === 'Escape' && !submitting) { setCreating(false); setCreateError(null) } }}
-                disabled={submitting} placeholder="new-project-folder"
-                data-type="body-s" className="h-9 min-w-0 flex-1 rounded-md bg-surface-high px-2.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-60" />
+              <div className="min-w-0 flex-1">
+                <TextInput autoFocus value={newName} onChange={(v) => { setNewName(v); if (createError) setCreateError(null) }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') createFolder(); else if (e.key === 'Escape' && !submitting) { setCreating(false); setCreateError(null) } }}
+                  disabled={submitting} placeholder="new-project-folder" size="md" surface="high" />
+              </div>
               <Button size="sm" onClick={createFolder} loading={submitting} disabled={!path || !newName.trim() || submitting}
                 disabledReason={!path ? NO_FOLDER_OPEN : !newName.trim() ? 'Enter a folder name first' : undefined}><Check size={14} /> Create + use
               </Button>
             </div>
           ) : (
-            <button type="button" onClick={() => setCreating(true)}
-              {...unavailableWhen(!path, NO_FOLDER_OPEN)}
-              data-type="body-s" className="inline-flex items-center gap-1.5 self-start rounded-md px-2 py-1.5 text-on-surface-low hover:text-on-surface aria-disabled:opacity-40 aria-disabled:hover:text-on-surface-low aria-disabled:cursor-default">
+            <QuietButton onClick={() => setCreating(true)} disabled={!path} disabledReason={NO_FOLDER_OPEN} className="self-start">
               <FolderPlus size={15} /> New folder here
-            </button>
+            </QuietButton>
           )
         )}
 

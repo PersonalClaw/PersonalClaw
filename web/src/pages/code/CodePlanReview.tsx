@@ -6,6 +6,9 @@ import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
+import { QuietButton } from '../../ui/QuietButton'
+import { TileButton } from '../../ui/TileButton'
+import { NumberField, Select, TextArea, TextInput } from '../../ui/forms'
 import { CapRow, CapabilityPeekModal } from '../../ui/CapabilityPicker'
 import { Markdown } from '../../ui/Markdown'
 import { LoadError } from '../../ui/ListScaffold'
@@ -326,7 +329,7 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
                 {/* the stage plan */}
                 <div className="flex items-center justify-between">
                   <span data-type="label-s" className="text-on-surface-var" style={fvs(550)}>Stages ahead ({stages.length})</span>
-                  <button type="button" onClick={addStage} data-type="caption" className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-on-surface-low hover:text-on-surface hover:bg-surface-high"><Plus size={13} /> Add stage</button>
+                  <QuietButton onClick={addStage}><Plus size={13} /> Add stage</QuietButton>
                 </div>
 
                 {/* Stages that collide on launch (one TaskList + one status entry per
@@ -368,22 +371,24 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
                 <div className="flex flex-col gap-1.5 rounded-xl border border-outline-variant/50 bg-surface-container/60 p-3">
                   <span data-type="label-s" className="text-on-surface-var" style={fvs(550)}>How should it run?</span>
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setAutopilot(true)} aria-pressed={autopilot}
-                      className={`flex flex-1 items-start gap-2 rounded-lg border p-2.5 text-left transition-colors ${autopilot ? 'border-primary/60 bg-primary/10' : 'border-outline-variant/50 hover:bg-surface-high'}`}>
-                      <Rocket size={15} className={`mt-0.5 shrink-0 ${autopilot ? 'text-primary' : 'text-on-surface-low'}`} />
-                      <span>
-                        <span data-type="body-s" className="block text-on-surface">Autopilot</span>
-                        <span data-type="caption" className="block text-on-surface-low">The system queues + drives every phase to completion.</span>
+                    <TileButton onClick={() => setAutopilot(true)} active={autopilot} className="flex-1 p-2.5">
+                      <span className="flex items-start gap-2">
+                        <Rocket size={15} className={`mt-0.5 shrink-0 ${autopilot ? 'text-primary' : 'text-on-surface-low'}`} />
+                        <span>
+                          <span data-type="body-s" className="block text-on-surface">Autopilot</span>
+                          <span data-type="caption" className="block text-on-surface-low">The system queues + drives every phase to completion.</span>
+                        </span>
                       </span>
-                    </button>
-                    <button type="button" onClick={() => setAutopilot(false)} aria-pressed={!autopilot}
-                      className={`flex flex-1 items-start gap-2 rounded-lg border p-2.5 text-left transition-colors ${!autopilot ? 'border-primary/60 bg-primary/10' : 'border-outline-variant/50 hover:bg-surface-high'}`}>
-                      <Hand size={15} className={`mt-0.5 shrink-0 ${!autopilot ? 'text-primary' : 'text-on-surface-low'}`} />
-                      <span>
-                        <span data-type="body-s" className="block text-on-surface">One-by-one</span>
-                        <span data-type="caption" className="block text-on-surface-low">You queue tasks yourself, at your own pace.</span>
+                    </TileButton>
+                    <TileButton onClick={() => setAutopilot(false)} active={!autopilot} className="flex-1 p-2.5">
+                      <span className="flex items-start gap-2">
+                        <Hand size={15} className={`mt-0.5 shrink-0 ${!autopilot ? 'text-primary' : 'text-on-surface-low'}`} />
+                        <span>
+                          <span data-type="body-s" className="block text-on-surface">One-by-one</span>
+                          <span data-type="caption" className="block text-on-surface-low">You queue tasks yourself, at your own pace.</span>
+                        </span>
                       </span>
-                    </button>
+                    </TileButton>
                   </div>
                   <div className="flex flex-wrap items-center gap-s border-t border-outline-variant/30 pt-s">
                     <span data-type="label-s" className="text-on-surface-var" style={fvs(550)}>Runs on</span>
@@ -527,6 +532,7 @@ function PlanArtifacts({ steps }: { steps: PlanStep[] }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="rounded-xl border border-outline-variant/50 bg-surface-container/60">
+      {/* Raw: the full-width header row of this card; no button primitive draws a row, and DisclosureCard brings a card of its own. */}
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
         aria-label={open ? 'Hide plan artifacts' : 'Show plan artifacts'}
         data-type="label-s" className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-on-surface-var" style={fvs(550)}>
@@ -590,6 +596,7 @@ function StageQualityGate({ stage, onPatch }: { stage: CodeStage; onPatch: (p: P
   }
   return (
     <div className="mt-2 flex flex-col gap-1">
+      {/* Raw: a pressed toggle, and QuietButton, the nearest look, takes no ariaPressed. */}
       <button type="button" onClick={toggle} aria-pressed={on}
         data-type="caption" className="flex w-fit items-center gap-1.5 text-on-surface-low uppercase tracking-wide hover:text-on-surface-var">
         <Gauge size={12} className={on ? 'text-primary' : ''} />
@@ -602,15 +609,11 @@ function StageQualityGate({ stage, onPatch }: { stage: CodeStage; onPatch: (p: P
         <div data-type="caption" className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md bg-surface-high/60 px-2.5 py-2 text-on-surface-var">
           <label className="flex items-center gap-1.5">
             <span className="text-on-surface-low">Pass ≥</span>
-            <input type="number" min={0} max={5} step={0.5} value={pass}
-              onChange={(e) => setPass(parseFloat(e.target.value))} aria-label="Quality pass score"
-              className="w-14 rounded bg-surface-high px-1.5 py-0.5 text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+            <NumberField value={pass} onChange={setPass} min={0} max={5} step={0.5} width="w-14" ariaLabel="Quality pass score" />
           </label>
           <label className="flex items-center gap-1.5">
             <span className="text-on-surface-low">Hold ≥</span>
-            <input type="number" min={0} max={pass} step={0.5} value={hold}
-              onChange={(e) => setHold(parseFloat(e.target.value))} aria-label="Quality hold floor"
-              className="w-14 rounded bg-surface-high px-1.5 py-0.5 text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+            <NumberField value={hold} onChange={setHold} min={0} max={pass} step={0.5} width="w-14" ariaLabel="Quality hold floor" />
           </label>
           <span data-type="caption" className="text-on-surface-low">score 0–5 · below hold rolls back</span>
         </div>
@@ -625,6 +628,7 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
 }) {
   const [crit, setCrit] = useState('')
   const [taskTitle, setTaskTitle] = useState('')
+  const typed = SDLC_STAGES.includes(stage.stage as typeof SDLC_STAGES[number])
   function addCrit() {
     const c = crit.trim()
     if (!c) return
@@ -662,32 +666,33 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <input value={stage.title} onChange={(e) => onPatch({ title: e.target.value })} placeholder="Stage title"
-              data-type="body-s" className="min-w-0 flex-1 rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+            <div className="min-w-0 flex-1">
+              <TextInput value={stage.title} onChange={(v) => onPatch({ title: v })} placeholder="Stage title" size="sm" surface="high" />
+            </div>
             {/* Stage type — the canonical SDLC id (drives capabilities + gate
                 tracking). Editable so a user can re-type a stage or fix an added
                 one; the SDLC ladder is the only valid set. */}
-            <select value={SDLC_STAGES.includes(stage.stage as typeof SDLC_STAGES[number]) ? stage.stage : ''}
-              onChange={(e) => onPatch({ stage: e.target.value })} aria-label="Stage type"
-              data-type="caption" className="shrink-0 rounded-md bg-surface-high px-2 py-1.5 text-on-surface-var outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
-              {!SDLC_STAGES.includes(stage.stage as typeof SDLC_STAGES[number]) && <option value="">— type —</option>}
-              {SDLC_STAGES.map((sg) => <option key={sg} value={sg}>{sg}</option>)}
-            </select>
+            <div className="shrink-0">
+              <Select value={typed ? stage.stage : ''} onChange={(v) => onPatch({ stage: v })} ariaLabel="Stage type" size="sm" surface="high"
+                options={[...(typed ? [] : [{ value: '', label: '— type —' }]), ...SDLC_STAGES.map((sg) => ({ value: sg, label: sg }))]} />
+            </div>
             <SquareIconButton icon={Trash2} iconSize={13} tone="danger" label="Remove stage" onClick={onRemove} className="shrink-0" />
           </div>
-          <textarea value={stage.objective} onChange={(e) => onPatch({ objective: e.target.value })} rows={2} placeholder="What this stage accomplishes…"
-            data-type="body-s" className="mt-2 w-full resize-none rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface-var outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          <div className="mt-2">
+            <TextArea value={stage.objective} onChange={(v) => onPatch({ objective: v })} rows={2} placeholder="What this stage accomplishes…" size="sm" surface="high" />
+          </div>
           {/* exit criteria */}
           <div className="mt-2 flex flex-col gap-1">
             <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">Done when</span>
             {(stage.exit_criteria ?? []).map((c, ci) => (
               <div key={ci} data-type="body-s" className="flex items-center gap-1.5 rounded-md bg-surface-high/60 px-2 py-1 text-on-surface-var">
                 <span className="min-w-0 flex-1">{c}</span>
-                <button type="button" onClick={() => removeCrit(ci)} aria-label="Remove criterion" className="shrink-0 text-on-surface-low hover:text-danger"><X size={12} /></button>
+                <SquareIconButton icon={X} iconSize={12} tone="danger" label="Remove criterion" onClick={() => removeCrit(ci)} className="-my-1 shrink-0" />
               </div>
             ))}
             {/* Commit on blur too — else a criterion typed but not Enter'd is silently
-                lost when the user clicks Launch (which just blurs this input). */}
+                lost when the user clicks Launch (which just blurs this input). Raw for
+                that reason: TextInput takes no onBlur. */}
             <input value={crit} onChange={(e) => setCrit(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCrit() } }}
               onBlur={addCrit}
               placeholder="Add a concrete, checkable condition…"
@@ -709,6 +714,7 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
               <div key={ti} data-type="body-s" className="flex items-start gap-1.5 rounded-md bg-surface-high/60 px-2 py-1">
                 <span className="mt-1.5 size-3 shrink-0 rounded-full border border-outline-variant/60" />
                 <div className="flex min-w-0 flex-1 flex-col">
+                  {/* Raw, with the description below: two fill-less fields sharing this row's box, and TextInput always draws its own fill and height. */}
                   <input value={t.title} onChange={(e) => patchTask(ti, { title: e.target.value })}
                     placeholder="Task…"
                     className="min-w-0 flex-1 bg-transparent text-on-surface-var outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary" />
@@ -718,11 +724,12 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
                     placeholder="how / details (optional)…"
                     data-type="caption" className="min-w-0 flex-1 bg-transparent text-on-surface-low outline-none placeholder:text-on-surface-low/60 focus:ring-2 focus:ring-inset focus:ring-primary" />
                 </div>
-                <button type="button" onClick={() => removeTask(ti)} aria-label="Remove task" className="mt-1 shrink-0 text-on-surface-low hover:text-danger"><X size={12} /></button>
+                <SquareIconButton icon={X} iconSize={12} tone="danger" label="Remove task" onClick={() => removeTask(ti)} className="shrink-0" />
               </div>
             ))}
             <div className="flex items-center gap-1.5 rounded-md px-2 py-1">
               <span className="size-3 shrink-0 rounded-full border border-dashed border-outline-variant/50" />
+              {/* Raw: it commits on blur, and TextInput takes no onBlur. */}
               <input value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTask() } }}
                 onBlur={addTask}
                 placeholder="Add a task…"

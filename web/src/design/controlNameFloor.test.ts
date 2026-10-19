@@ -42,11 +42,11 @@ const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !
  *  like `onChange={(e) => f(e)}` contains a `>`, which truncates the match and drops any
  *  later attribute. That mistake has produced wrong counts three times
  *  already — collect the whole tag, then test its text. */
-function inputTags(): Array<{ file: string; line: number; tag: string }> {
+function inputTags(opening: RegExp = /<input\b/g): Array<{ file: string; line: number; tag: string }> {
   const out: Array<{ file: string; line: number; tag: string }> = []
   for (const abs of walk(SRC)) {
     const text = readSource(abs)
-    for (const m of text.matchAll(/<input\b/g)) {
+    for (const m of text.matchAll(opening)) {
       let depth = 0
       for (let i = m.index! + m[0].length; i < text.length; i++) {
         const ch = text[i]
@@ -110,17 +110,22 @@ describe('an on-demand edit input carries its own name', () => {
   // `autoFocus` is the reliable marker: an input that steals focus the moment it mounts IS
   // the on-demand edit pattern. It is also exactly why the name matters — focus moves there
   // with no user action, so the announcement is the only thing telling them where they are.
-  const autoFocused = tags.filter((t) => /\bautoFocus\b/.test(t.tag))
+  //
+  // The shared `TextInput`/`TextArea` count too: moving an edit input onto the primitive keeps it an
+  // on-demand input, and a census of raw tags alone shrank every time one moved, which reads exactly
+  // like the population leaving. A primitive names itself through `ariaLabel` or a placeholder.
+  const autoFocused = [...tags, ...inputTags(/<(?:TextInput|TextArea)\b/g)].filter((t) => /\bautoFocus\b/.test(t.tag))
 
   it('finds the on-demand inputs (not vacuously green)', () => {
-    // Measured 18, floored at 6 — the six the header names are the ones that EXISTED when it was written.
-    // Twelve more shipped since, and none of them was protected (a later audit found them).
-    expect(autoFocused.length, 'expected the inline rename/edit inputs').toBeGreaterThanOrEqual(18)
+    // Measured 18 raw, floored at 6 — the six the header names are the ones that EXISTED when it was
+    // written. Twelve more shipped since, and none of them was protected (a later audit found them).
+    // Measured 41 once the primitives' own on-demand inputs counted too (24 of them, every one named).
+    expect(autoFocused.length, 'expected the inline rename/edit inputs').toBeGreaterThanOrEqual(41)
   })
 
   it('every autoFocus input is named', () => {
     const nameless = autoFocused
-      .filter((t) => !/aria-label|aria-labelledby|\bid=|placeholder=/.test(t.tag))
+      .filter((t) => !/aria-label|aria-labelledby|ariaLabel=|\bid=|placeholder=/.test(t.tag))
       .map((t) => `${t.file}:${t.line}`)
     expect(
       nameless,
