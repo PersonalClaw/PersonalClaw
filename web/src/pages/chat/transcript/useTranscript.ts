@@ -129,13 +129,6 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
     setFindParam('')
   }, [findParam]) // eslint-disable-line react-hooks/exhaustive-deps -- setFindParam is per-render; findParam drives it
 
-  // show the thinking indicator while streaming and the active assistant turn
-  // has produced nothing renderable yet (no text/tool/approval segment)
-  const lastTurn = turns[turns.length - 1]
-  // thinking indicator only when the active turn has produced nothing visible
-  // (an activity line counts as visible, so we don't stack two indicators)
-  const showThinking = streaming && (!lastTurn || lastTurn.role === 'user' || lastTurn.segments.length === 0)
-
   // Cmd/Ctrl+F → open the in-conversation find bar, but ONLY when a
   // session is open and the chat page owns focus (not typing in another field). A
   // SECOND press or Esc closes it and falls through to the browser's native find.
@@ -213,13 +206,18 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
   // turn to its outcome: the frame that ends it still scrolls, and then the arm is spent. A
   // scroll away from the bottom disarms it (the listener below), so a reader who scrolls up
   // mid-answer is left where they went.
-  useEffect(() => {
+  // The head of the running reply shows a moment after its turn starts (`TurnHead`), so it follows
+  // the end into view the same way when it does.
+  const followEnd = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200
     if (followTurnRef.current || nearBottom) endRef.current?.scrollIntoView({ block: 'end' })
+  }, [])
+  useEffect(() => {
+    followEnd()
     if (!streaming) followTurnRef.current = false
-  }, [turns, streaming, showThinking])
+  }, [turns, streaming, followEnd])
 
   // Track distance from the bottom so a "jump to latest" pill can show when the
   // user has scrolled up (e.g. reading history while a reply streams in below).
@@ -494,7 +492,7 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
 
   return {
     // Where the view is.
-    scrollRef, endRef, scrolledUp, followTurnRef, followNewTurn, turnNodes, showThinking,
+    scrollRef, endRef, scrolledUp, followTurnRef, followNewTurn, followEnd, turnNodes,
     // The find bar.
     findOpen, setFindOpen, findSeed,
     // The Session Map: its form, its open state, its entries and its jumps.

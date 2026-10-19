@@ -134,6 +134,9 @@ phase.
 
 - **The chat's own turn view** reads its turn's frames directly, as it reads the
   turn's other frames, applying one only when its `seq` is newer than the snapshot's.
+  The head of the running reply shows them: the agent orb in the phase's look and the
+  phase's line beside it, settling on the ending the last frame says
+  ([agent-orb.md](../design/agent-orb.md)).
   So do the loop and code cockpits for their worker's turn: their list of its steps
   gains a phase's line once per change, but none for a phase the list shows its own
   way (a step's, which its row says, and in the code cockpit the writing, whose words

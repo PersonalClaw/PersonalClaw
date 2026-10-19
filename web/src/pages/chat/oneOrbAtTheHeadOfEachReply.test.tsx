@@ -1,0 +1,158 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, waitFor, act } from '@testing-library/react'
+import { runState, runningState } from '../../test/runState'
+
+// ── One orb at the head of each reply, for the whole turn ───────────────────────────────────────
+//
+// The chat's turn had two indicators and a gap between them: a "Thinking" label with rotating
+// stock phrases until the reply's first word, and then nothing while the reply streamed, its tools
+// ran or it waited on her. Now the turn has one orb, at the head of its reply, driven only by the
+// turn's `work_phase` frames: it changes with the phase, its line is the gateway's, and it settles
+// and goes when the turn ends. The frames below are what the gateway sends for one turn.
+
+const SESSION = 'chat-4-orb'
+
+const h = vi.hoisted(() => {
+  const idle = {
+    key: 'chat-4-orb', title: 'chat-4-orb',
+    messages: [
+      { role: 'user', content: 'earlier question', ts: '2026-10-19T09:00:00Z' },
+      { role: 'assistant', content: 'earlier answer', ts: '2026-10-19T09:00:05Z' },
+    ] as unknown[],
+    queue: [] as unknown[], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
+  }
+  return { idle, detailCalls: [] as { resolve: (d: unknown) => void }[], chatSessionDetail: vi.fn() }
+})
+
+vi.mock('../../lib/api', () => {
+  const ok = () => Promise.resolve([])
+  const base: Record<string, unknown> = {
+    chatSessionDetail: h.chatSessionDetail,
+    sendChat: () => Promise.resolve({ ok: true, session: 'chat-4-orb' }),
+    chatSessions: () => Promise.resolve([]),
+    agents: () => Promise.resolve({ agents: [] }),
+    agentProviders: () => Promise.resolve([]),
+    models: () => Promise.resolve([]),
+    chatSessionTemplates: () => Promise.resolve([]),
+    sessionCost: () => Promise.resolve({ turns: 0, cost_usd: 0, input_tokens: 0, output_tokens: 0 }),
+  }
+  const api = new Proxy(base, {
+    get(t, p: string) {
+      if (p in t) return t[p]
+      return (t[p] = (...__a: unknown[]) => ok())
+    },
+  })
+  return { api, errText: (e: unknown) => String((e as Error)?.message ?? e) }
+})
+
+class FakeSocket {
+  static last: FakeSocket | null = null
+  onopen: (() => void) | null = null
+  onmessage: ((e: { data: string }) => void) | null = null
+  onclose: (() => void) | null = null
+  onerror: (() => void) | null = null
+  readyState = 1
+  constructor(public url: string) { FakeSocket.last = this; setTimeout(() => this.onopen?.(), 0) }
+  send(): void {}
+  close(): void { this.readyState = 3 }
+}
+
+function pushFrame(type: string, data: Record<string, unknown>) {
+  act(() => { FakeSocket.last?.onmessage?.({ data: JSON.stringify({ type, data: { session: SESSION, ...data } }) }) })
+}
+
+let ChatPage: typeof import('../ChatPage')['ChatPage']
+let AppearanceProvider: typeof import('../../app/appearance')['AppearanceProvider']
+
+beforeEach(async () => {
+  vi.stubGlobal('WebSocket', FakeSocket as unknown as typeof WebSocket)
+  Element.prototype.scrollIntoView ??= () => {}
+  if (typeof globalThis.IntersectionObserver === 'undefined') {
+    vi.stubGlobal('IntersectionObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+      takeRecords(): [] { return [] }
+    })
+  }
+  FakeSocket.last = null
+  h.detailCalls.length = 0
+  h.chatSessionDetail.mockReset().mockImplementation(
+    () => new Promise((resolve) => { h.detailCalls.push({ resolve }) }),
+  )
+  ;({ ChatPage } = await import('../ChatPage'))
+  ;({ AppearanceProvider } = await import('../../app/appearance'))
+})
+
+afterEach(() => { vi.unstubAllGlobals() })
+
+const orbs = () => document.querySelectorAll('[data-agent-orb]')
+const head = () => document.querySelector('[data-turn-head]') as HTMLElement | null
+const line = () => document.querySelector('[data-turn-line]')?.textContent
+
+/** The chat open and idle, then a turn starting on it: her question, and the turn waiting to start. */
+async function aTurnStarts() {
+  render(
+    <AppearanceProvider>
+      <ChatPage sub={SESSION} navigate={() => {}} query={{}} setQuery={() => {}} />
+    </AppearanceProvider>,
+  )
+  await waitFor(() => expect(h.detailCalls.length).toBe(1))
+  await act(async () => { h.detailCalls[0].resolve({ ...h.idle, run_state: runState({ session: SESSION }) }) })
+  await waitFor(() => expect(screen.queryByText('earlier answer')).not.toBeNull())
+  // Nothing runs: nothing at the head of any reply, and nothing on the page animates.
+  expect(orbs()).toHaveLength(0)
+  pushFrame('work_phase', { ...runningState({ session: SESSION, phase: 'queued', line: 'Waiting to start' }) })
+  await waitFor(() => expect(h.detailCalls.length).toBe(2))
+  await act(async () => {
+    h.detailCalls[1].resolve({
+      ...h.idle,
+      run_state: runningState({ session: SESSION, phase: 'queued', line: 'Waiting to start' }),
+      messages: [...h.idle.messages, { role: 'user', content: 'which stage is the run on?', ts: '2026-10-19T09:05:00Z' }],
+    })
+  })
+  await waitFor(() => expect(screen.queryByText('which stage is the run on?')).not.toBeNull())
+}
+
+describe('a running turn has one orb, at the head of its reply', () => {
+  it('follows the turn’s phases from waiting to start to its ending, and goes', async () => {
+    await aTurnStarts()
+    await waitFor(() => expect(line()).toBe('Waiting to start'))
+    expect(orbs()).toHaveLength(1)
+
+    pushFrame('work_phase', { ...runningState({ session: SESSION, phase: 'thinking', line: 'Thinking', seq: 2 }) })
+    await waitFor(() => expect(line()).toBe('Thinking'))
+
+    // The first word of the reply: the reply now has a slot, and the orb is at its head.
+    pushFrame('work_phase', { ...runningState({ session: SESSION, phase: 'streaming', line: 'Writing', seq: 3 }) })
+    pushFrame('chat_chunk', { content: 'The run is on the deploy stage.' })
+    await waitFor(() => expect(screen.queryByText('The run is on the deploy stage.')).not.toBeNull())
+    expect(line()).toBe('Writing')
+    expect(orbs()).toHaveLength(1)
+    const reply = screen.getByText('The run is on the deploy stage.')
+    const question = screen.getByText('which stage is the run on?')
+    expect(question.compareDocumentPosition(head()!) & Node.DOCUMENT_POSITION_FOLLOWING, 'the head follows her question').toBeTruthy()
+    expect(head()!.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING, 'the head leads the reply').toBeTruthy()
+
+    // A step, and the wait on her OK: the same orb, its line the gateway's, still while it waits.
+    pushFrame('work_phase', { ...runningState({ session: SESSION, phase: 'tool', line: 'Terminal git log', seq: 4 }) })
+    await waitFor(() => expect(line()).toBe('Terminal git log'))
+    pushFrame('work_phase', { ...runningState({ session: SESSION, phase: 'approval', line: 'Needs your OK: shell', seq: 5 }) })
+    await waitFor(() => expect(line()).toBe('Needs your OK: shell'))
+    expect((orbs()[0] as HTMLElement).dataset.agentOrb).toBe('still')
+    expect(orbs()).toHaveLength(1)
+
+    // The turn's last frame says how it ended, and then the turn is done.
+    pushFrame('work_phase', { ...runState({ session: SESSION, phase: 'done', line: 'Done in 9 seconds', last_outcome: 'complete', seq: 6 }) })
+    await waitFor(() => expect(line()).toBe('Done in 9 seconds'))
+    pushFrame('chat_done', { outcome: 'complete' })
+    await waitFor(() => expect(head()).toBeNull())
+    expect(orbs()).toHaveLength(0)
+  })
+
+  it('never shows the old indicator’s guessed label beside it', async () => {
+    await aTurnStarts()
+    await waitFor(() => expect(orbs()).toHaveLength(1))
+    expect(document.querySelector('[data-phase-label]')).toBeNull()
+  })
+})

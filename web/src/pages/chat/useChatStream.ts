@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { playCue } from '../../design/soundCues'
-import { phaseFamily, phaseLabel, workPhaseOf, type PhaseFamily, type WorkPhase } from '../../lib/workPhase'
+import { workPhaseOf, type WorkPhase } from '../../lib/workPhase'
 import { api, ApiError, type RunState } from '../../lib/api'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../../lib/data'
@@ -20,6 +20,7 @@ import { applyApprovalFrame, applyApprovalResolved, applyToolCallFrame, applyToo
 import { applyQuestionFrame, applyQuestionResolved, graftPendingQuestions } from './questionFrames'
 import type { RoutingSuggestion } from './RoutingChip'
 import type { TurnPaste } from './PasteChip'
+import type { TurnEnding } from './transcript/TurnHead'
 import { type ChatTurn, type Segment, type ApprovalSegment, type QuestionSegment, appendThinking, type SubagentCard, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, foldStepLine, noteOf, ranPromptOf, replyCutOf, type ReplyCut, pastesOf, shownText, servedModelOf, imageDeliveryOf, noticeSegment } from './chatTypes'
 
 // ── The chat's stream: the open session as the gateway tells it ───────────────────────────────
@@ -172,11 +173,12 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   // Bumped when a turn settles (streaming → false) so the session-skills review
   // re-checks for drafts the agent just captured.
   const [sessionSkillsEpoch, setSessionSkillsEpoch] = useState(0)
-  // Screen-reader narration of the turn lifecycle: the visual "Thinking"/glow cue is silent to
-  // assistive tech, so a polite live region says a turn started, and then how it ENDED, in the
-  // words `chat/turnOutcome.ts` owns for the outcome the gateway reported. Never inferred from
-  // `streaming` going false: Stop, a failed turn and a retry notice all end streaming too, and
-  // every one of them used to be announced as "Response complete."
+  // Screen-reader narration of the turn lifecycle: a polite live region says a turn started, and
+  // then how it ENDED, in the words `chat/turnOutcome.ts` owns for the outcome the gateway
+  // reported; what the turn does in between is the line at the head of its reply, a live region of
+  // its own (`transcript/TurnHead`). The ending is never inferred from `streaming` going false:
+  // Stop, a failed turn and a retry notice all end streaming too, and every one of them used to be
+  // announced as "Response complete."
   const [srAnnounce, setSrAnnounce] = useState('')
   // Whether the turn this view follows has ended without the region saying how. Stop settles the
   // composer at once, before the gateway has said the turn stopped; whichever terminal fact comes
@@ -203,6 +205,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
       turnSeqRef.current += 1
       endUnsaidRef.current = true
       setSrAnnounce(TURN_RESPONDING)
+      setTurnEnding(null)
     }
     if (streamingRef.current && !v) {
       setSessionSkillsEpoch((n) => n + 1)
@@ -326,6 +329,9 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   // apply; each snapshot sets it again, as its `stream_seq` does the answer's.
   const [turnPhase, setTurnPhase] = useState<WorkPhase | null>(null)
   const [turnLine, setTurnLine] = useState('')
+  // How the turn this view follows ended, from its last frame (`done` or `error`, and its ending
+  // line), for the head of its reply to settle on; cleared when the next turn starts.
+  const [turnEnding, setTurnEnding] = useState<TurnEnding | null>(null)
   const runSeqRef = useRef(0)
   const [title, setTitle] = useState(seededDetail?.title || '')
   // Why the chat has no title yet, when no model is chosen for the chores (the gateway's sentence);
@@ -385,16 +391,6 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   //    so landing the tail would write the old answer into the new turn — discard is correct.
   const endTextRun = () => { coalescer.seal(); textRun.release() }
   const dropTextRun = () => { coalescer.reset(); textRun.release() }
-  // While a turn runs, what it waits on is narrated as it changes: its phase's word when its family
-  // does (it waits on her OK or her answer, it goes on), never call by call. The start and the end
-  // are said where they happen (`markStreaming`, `sayTurnEnded`).
-  const narratedFamily = useRef<PhaseFamily>('active')
-  useEffect(() => {
-    if (!streaming) { narratedFamily.current = 'active'; return }
-    if (!turnPhase || phaseFamily(turnPhase) === narratedFamily.current) return
-    narratedFamily.current = phaseFamily(turnPhase)
-    setSrAnnounce(phaseLabel(turnPhase))
-  }, [streaming, turnPhase])
   /** Take a run state: the turn's phase and line while one runs, and whether it takes a steer. A
    *  snapshot's always (a restarted gateway stamps from the start again), a `work_phase` frame's
    *  only when it is newer than the one held. */
@@ -405,6 +401,12 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     setTurnPhase(running ? workPhaseOf(rs.phase) : null)
     setTurnLine(running ? String(rs.line ?? '') : '')
     setTakesSteers(running && !!rs.steerable)
+    // A turn's last frame says how it ended. A snapshot's idle run state says nothing of the turn
+    // this view watched, so it leaves the ending as the frame said it.
+    if (from === 'frame') {
+      const ended = running ? null : workPhaseOf(rs.phase)
+      setTurnEnding(ended === 'done' || ended === 'error' ? { phase: ended, line: String(rs.line ?? '') } : null)
+    }
   }
 
   // ── segment helpers: mutate the LAST assistant turn immutably ──
@@ -494,6 +496,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     runSeqRef.current = 0
     setTurnPhase(null)
     setTurnLine('')
+    setTurnEnding(null)
     setQueued([])  // queue is per-session; clear when the open session changes
     setSubagents([])  // subagent cards are per-session too
     setBranchedFrom(null)  // lineage is per-session; the load below re-reads it
@@ -1194,7 +1197,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     sessionRef, turns, setTurns, patchLastAssistant, dropTextRun, readSnapshot, adoptSnapshot,
     // The live turn: the streaming claim, how it ends, what it is doing, whether it takes a steer.
     streaming, streamingRef, markStreaming, sayTurnEnded, srAnnounce, turnSeqRef, stoppedTurnRef,
-    takesSteers, takesSteersRef, turnPhase, turnLine, sessionSkillsEpoch, wsConnected,
+    takesSteers, takesSteersRef, turnPhase, turnLine, turnEnding, sessionSkillsEpoch, wsConnected,
     // The read that opened the session.
     loadingHistory, missing, setMissing, loadFailure, setLoadAttempt,
     // What the frames and the reads say beside the transcript.

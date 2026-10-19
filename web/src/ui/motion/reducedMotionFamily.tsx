@@ -25,6 +25,7 @@
 
 import type { ReactElement } from 'react'
 
+import { AgentOrb } from '../AgentOrb'
 import { DotGlow } from '../DotGlow'
 import { WavyProgress } from '../WavyProgress'
 import { Bud } from './Bud'
@@ -114,6 +115,17 @@ export const REDUCED_MOTION_FAMILY: ReducedMotionMember[] = [
     // The layer is still mounted (it paints one static frame); its canvas is the proof
     // that the decision is not "render nothing".
     positiveControl: (el) => el.querySelector('canvas'),
+  },
+  {
+    id: 'AgentOrb — live work is one still frame of its drawing',
+    source: 'ui/AgentOrb.tsx',
+    render: () => <AgentOrb phase="thinking" />,
+    selector: '[data-agent-orb]',
+    attr: 'data-agent-orb',
+    reduced: 'instant',
+    animated: 'animated',
+    // The orb is still drawn, and still named for its phase: the branch is not "draw nothing".
+    positiveControl: (el) => el.querySelector('canvas[role="img"][aria-label="Thinking"]'),
   },
   {
     id: 'WavyProgress (indeterminate) — the traveling crest never starts',
