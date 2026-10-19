@@ -135,7 +135,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
   // 🔑 THIS READ USED TO BE SWALLOWED (`.catch(() => {})`), and five consumers infer
   // their whole state from `tokens === null`. That made ONE dropped rejection produce
   // five separate false statements — two of them downloadable FILES. See `tokensErr`'s
-  // consumers below; the enumeration lives in `designTokensHonest.test.tsx`.
+  // consumers below; the enumeration lives in `pages/honestStateSources.test.ts`.
   const loadTokens = useCallback(() => {
     setTokensErr(null)
     api.uLoopDesignTokens(id, scheme)

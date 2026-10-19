@@ -159,6 +159,17 @@ async function openChat(query: Record<string, string> = {}) {
 
 const noWarningSign = (root: HTMLElement) => expect(root.textContent ?? '').not.toContain('⚠️')
 
+/** The chat list, with a query the page can actually update: it keeps its search in the URL. */
+function History() {
+  const [query, setQuery] = useState<Record<string, string>>({})
+  const patch = (p: Record<string, string | null | undefined>) => setQuery((q) => {
+    const next = { ...q }
+    for (const [k, v] of Object.entries(p)) { if (v == null || v === '') delete next[k]; else next[k] = v }
+    return next
+  })
+  return <ChatPage sub="history" navigate={() => {}} query={query} setQuery={patch} />
+}
+
 describe('Edit & resend', () => {
   it('leaves every later turn in place when the server refuses, and says why in the editor', async () => {
     const user = userEvent.setup()
@@ -279,16 +290,6 @@ describe('Chat history content search', () => {
     h.chatSessions.mockResolvedValue([{ key: 'chat-1', title: 'Trip planning', updated_at: '2026-09-26T10:00:00Z', origin: 'manual' }])
     h.sessionsSearch.mockRejectedValueOnce(new ApiError('search index unavailable', 503))
       .mockResolvedValue({ sessions: [], source: 'index' })
-    // The list keeps its search in the URL, so the page needs a query that actually updates.
-    function History() {
-      const [query, setQuery] = useState<Record<string, string>>({})
-      const patch = (p: Record<string, string | null | undefined>) => setQuery((q) => {
-        const next = { ...q }
-        for (const [k, v] of Object.entries(p)) { if (v == null || v === '') delete next[k]; else next[k] = v }
-        return next
-      })
-      return <ChatPage sub="history" navigate={() => {}} query={query} setQuery={patch} />
-    }
     render(<AppearanceProvider><History /></AppearanceProvider>)
     await user.type(await screen.findByRole('searchbox', { name: 'Search chats' }), 'budget')
     const line = await screen.findByText(/Couldn't search inside your chats: search index unavailable\./, {}, { timeout: 3000 })
@@ -310,15 +311,6 @@ describe('Chat history content search', () => {
     h.sessionsSearch.mockImplementation((_q: string, opts?: { rest?: boolean }) => Promise.resolve(opts?.rest
       ? { sessions: [{ key: 'dashboard_chat-1', snippet: 'the <<zebra>> crossing' }], source: 'index+scan', searched: { chats: 12005, of: 12005 }, complete: true, index: building }
       : { sessions: [], source: 'index', searched: { chats: 3210, of: 12005 }, complete: false, index: building }))
-    function History() {
-      const [query, setQuery] = useState<Record<string, string>>({})
-      const patch = (p: Record<string, string | null | undefined>) => setQuery((q) => {
-        const next = { ...q }
-        for (const [k, v] of Object.entries(p)) { if (v == null || v === '') delete next[k]; else next[k] = v }
-        return next
-      })
-      return <ChatPage sub="history" navigate={() => {}} query={query} setQuery={patch} />
-    }
     render(<AppearanceProvider><History /></AppearanceProvider>)
     await user.type(await screen.findByRole('searchbox', { name: 'Search chats' }), 'zebra')
     const notice = await screen.findByText(
@@ -343,15 +335,6 @@ describe('Chat history content search', () => {
       sessions: [{ key: 'dashboard_chat-1', snippet: 'the <<zebra>> crossing' }], source: 'index',
       searched: { chats: 12005, of: 12005 }, complete: true, index: { indexed: 12005, of: 12005, building: false, long: 0 }, matched: 240,
     })
-    function History() {
-      const [query, setQuery] = useState<Record<string, string>>({})
-      const patch = (p: Record<string, string | null | undefined>) => setQuery((q) => {
-        const next = { ...q }
-        for (const [k, v] of Object.entries(p)) { if (v == null || v === '') delete next[k]; else next[k] = v }
-        return next
-      })
-      return <ChatPage sub="history" navigate={() => {}} query={query} setQuery={patch} />
-    }
     render(<AppearanceProvider><History /></AppearanceProvider>)
     await user.type(await screen.findByRole('searchbox', { name: 'Search chats' }), 'zebra')
     const notice = await screen.findByText(/^Showing 1 of 240 matching chats — the search lists its 1 best/, {}, { timeout: 3000 })

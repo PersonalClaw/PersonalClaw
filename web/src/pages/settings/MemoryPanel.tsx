@@ -367,7 +367,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
   // ── data: facts + episodics + lessons + entities + slots + both graphs ──
   // These feed a LIST BODY, so the rejections reach the hook rather than being substituted
   // with `[]` — a failed read used to render "No memories yet" to someone whose memories
-  // merely failed to load. See `settingsListHonesty.test.ts`.
+  // merely failed to load. See `pages/honestStateSurfaces.test.tsx`.
   const { data: facts, error: factsErr, refresh: refreshFacts } = useQuery(
     k('settings:memory-semantic'), () => api.memorySemantic(partition),
   )

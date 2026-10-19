@@ -46,7 +46,7 @@ describe('sessionTemplatePatch — only the fields the starter carries', () => {
 
 // The other half of the clause — "prefills the … prompt and enables Send" — is a composer-INPUT
 // write inside the chat composer's `applyTemplate` (`composer/useChatComposer.ts`). ChatPage is not rendered in this suite (its own tests
-// read source structurally, e.g. sessionLoadHonesty.test.ts), so this pins the wiring the same
+// read source structurally, e.g. honestStateSources.test.ts), so this pins the wiring the same
 // way: the prompt is prefilled through `setInput(t.first_prompt)`, guarded so an empty starter
 // leaves the composer untouched. A non-empty input is what enables Send.
 describe('applyTemplate wires the prompt prefill (ChatPage source)', () => {
