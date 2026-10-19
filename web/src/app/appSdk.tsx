@@ -404,7 +404,8 @@ function _readAppTheme(): AppTheme {
   const colors = {} as AppTheme['colors']
   const cssVars: Record<string, string> = {}
   for (const [name, token] of Object.entries(_APP_COLOR_TOKENS)) {
-    const val = cs.getPropertyValue(token).trim() || ''
+    // The sheets are minified, so white computes as `#fff`; an app was promised six-digit hex.
+    const val = (cs.getPropertyValue(token).trim() || '').replace(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i, '#$1$1$2$2$3$3')
     ;(colors as Record<string, string>)[name] = val
     cssVars[`--app-${name.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase())}`] = `var(${token})`
   }

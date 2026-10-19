@@ -30,11 +30,14 @@ function scheme(id: string, label: string, s: {
   primaryContainer: [string, string]
   secondary: [string, string]
   gradient: [string, string, string, string]  // grad-1..4 (shared dark/light here for the wave)
+  /** grad-1..4 in light mode, for a scheme whose light stops are not the derived ones below. */
+  gradientLight?: [string, string, string, string]
   glowA: [string, string]
   glowB: [string, string]
   info: [string, string]
 }): Scheme {
   const dl = (d: string, l: string) => ({ dark: d, light: l })
+  const gl = s.gradientLight ?? [s.gradient[0], s.primary[1], s.glowB[1], s.gradient[3]]
   return {
     id, label,
     swatch: { dark: s.primary[0], light: s.primary[1] },
@@ -45,10 +48,10 @@ function scheme(id: string, label: string, s: {
       '--color-primary-container': dl(s.primaryContainer[0], s.primaryContainer[1]),
       '--color-secondary': dl(s.secondary[0], s.secondary[1]),
       '--color-info': dl(s.info[0], s.info[1]),
-      '--grad-1': dl(s.gradient[0], s.gradient[0]),
-      '--grad-2': dl(s.gradient[1], s.primary[1]),
-      '--grad-3': dl(s.gradient[2], s.glowB[1]),
-      '--grad-4': dl(s.gradient[3], s.gradient[3]),
+      '--grad-1': dl(s.gradient[0], gl[0]),
+      '--grad-2': dl(s.gradient[1], gl[1]),
+      '--grad-3': dl(s.gradient[2], gl[2]),
+      '--grad-4': dl(s.gradient[3], gl[3]),
       '--glow-a': dl(s.glowA[0], s.glowA[1]),
       '--glow-b': dl(s.glowB[0], s.glowB[1]),
     },
@@ -139,6 +142,11 @@ export const SCHEMES: Scheme[] = [
     onPrimary: ['#3f1008', '#ffffff'], primaryContainer: ['#5a1d12', '#ffe0d6'],
     secondary: ['#ffb454', '#cf7a23'], info: ['#629efe', '#1059bc'],
     gradient: ['#c85a48', '#ff6b5b', '#ff9a7a', '#ffb454'],
+    // Coral's light stops are the ones a default install has always painted (tokenRegistry's), not
+    // the derived pair: the derivation gave `--grad-2` the light primary (#b12e18) and `--grad-4`
+    // the dark amber (#ffb454), so picking Coral by hand and never picking a scheme drew two
+    // different wordmarks. Coral is the base sheet, so it has one value: this one.
+    gradientLight: ['#c85a48', '#e85a3f', '#e07a54', '#cf7a23'],
     glowA: ['#ff6b5b', '#e85a3f'], glowB: ['#ff9a7a', '#e07a54'],
   }),
   // Honey — warm like coral but golden/muted; cozy, understated.

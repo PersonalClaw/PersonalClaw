@@ -46,6 +46,10 @@ const MAY_WRITE: Record<string, string> = {
     'The generator for the committed drift inventory, gated on ' +
     `${WRITE_ENV}=1 and invoked only by \`npm run audit:consistency\`. A plain test ` +
     'run skips it, so the tree stays clean.',
+  'design/schemeSheets.test.ts':
+    'The generator for the committed scheme override sheets (design/schemes/*.css), gated on ' +
+    'PC_WRITE_SCHEMES=1 and invoked only by `npm run generate:schemes`. A plain test run only ' +
+    'compares the committed sheets with what their tables generate.',
 }
 
 /** Test files that write only inside a scratch directory of their own, under the OS temp

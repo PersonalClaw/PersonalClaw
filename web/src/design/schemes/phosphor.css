@@ -1,0 +1,44 @@
+/* Phosphor. Generated from design/schemes.ts by `npm run generate:schemes`. Edit the table, not this file. */
+:root[data-theme="phosphor"] {
+  /* layer 1: the steps the base sheet does not have */
+  --green-225: #062211;
+  --green-321: #0f3d22;
+  --green-387: #005324;
+  --green-465: #0f6b38;
+  --green-473: #006f2f;
+  --green-525: #1a7f3c;
+  --green-567: #2b8b52;
+  --green-790: #3ddc74;
+  --green-852: #8ce6a8;
+  --green-879: #7bf5a5;
+  --green-945: #d4f7e0;
+  --teal-466: #00695b;
+  --teal-801: #5cd6c0;
+  /* layer 2, dark */
+  --color-primary: var(--green-790);
+  --color-primary-emphasis: var(--green-879);
+  --color-on-primary: var(--green-225);
+  --color-primary-container: var(--green-321);
+  --color-secondary: var(--green-852);
+  --color-info: var(--teal-801);
+  --grad-1: var(--green-465);
+  --grad-2: var(--green-790);
+  --grad-3: var(--green-879);
+  --grad-4: var(--green-567);
+  --glow-a: var(--green-790);
+  --glow-b: var(--green-879);
+}
+:root.light[data-theme="phosphor"] {
+  --color-primary: var(--green-473);
+  --color-primary-emphasis: var(--green-387);
+  --color-on-primary: var(--gray-1000);
+  --color-primary-container: var(--green-945);
+  --color-secondary: var(--green-567);
+  --color-info: var(--teal-466);
+  --grad-1: var(--green-465);
+  --grad-2: var(--green-473);
+  --grad-3: var(--green-567);
+  --grad-4: var(--green-567);
+  --glow-a: var(--green-525);
+  --glow-b: var(--green-567);
+}

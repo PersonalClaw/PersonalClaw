@@ -105,8 +105,10 @@ describe('the two canvas-painted accent texts use the emphasis shade', () => {
   it('the scheme rail now measures the canvas, which is what makes this rule enforceable', () => {
     const rail = read('design/schemeContrast.test.ts')
     expect(rail).toMatch(/primary-emphasis as accent text on the CANVAS/)
+    // …and it reads the LIGHT value through the sheet cascade (`tokenSheet.ts`, which parses the
+    // `.light` RULE BLOCK with comments stripped), not the first mention of `.light` in the file.
     expect(rail, 'and it reads the LIGHT block, not the first mention of .light')
-      .toMatch(/\\.light\\s\*\\\{/)
+      .toMatch(/tokenValue\('--color-canvas', 'light'\)/)
   })
 
   it('the emphasis token exists in light for every scheme', () => {

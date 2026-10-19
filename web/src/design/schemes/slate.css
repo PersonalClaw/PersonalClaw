@@ -1,0 +1,45 @@
+/* Slate. Generated from design/schemes.ts by `npm run generate:schemes`. Edit the table, not this file. */
+:root[data-theme="slate"] {
+  /* layer 1: the steps the base sheet does not have */
+  --blue-247: #1a212e;
+  --blue-318: #2a3340;
+  --blue-421: #3f4e66;
+  --blue-488: #3955bc;
+  --blue-493: #53627a;
+  --blue-520: #5a6a82;
+  --blue-560: #6a7588;
+  --blue-572: #4f6fd8;
+  --blue-620: #7a86a0;
+  --blue-643: #7f8cb0;
+  --blue-714: #7f9cff;
+  --blue-722: #9aa6b8;
+  --gray-830: #c0c8d4;
+  --gray-913: #dde3ec;
+  /* layer 2, dark */
+  --color-primary: var(--blue-722);
+  --color-primary-emphasis: var(--gray-830);
+  --color-on-primary: var(--blue-247);
+  --color-primary-container: var(--blue-318);
+  --color-secondary: var(--blue-714);
+  --color-info: var(--blue-714);
+  --grad-1: var(--blue-560);
+  --grad-2: var(--blue-722);
+  --grad-3: var(--gray-830);
+  --grad-4: var(--blue-643);
+  --glow-a: var(--blue-722);
+  --glow-b: var(--gray-830);
+}
+:root.light[data-theme="slate"] {
+  --color-primary: var(--blue-493);
+  --color-primary-emphasis: var(--blue-421);
+  --color-on-primary: var(--gray-1000);
+  --color-primary-container: var(--gray-913);
+  --color-secondary: var(--blue-572);
+  --color-info: var(--blue-488);
+  --grad-1: var(--blue-560);
+  --grad-2: var(--blue-493);
+  --grad-3: var(--blue-620);
+  --grad-4: var(--blue-643);
+  --glow-a: var(--blue-520);
+  --glow-b: var(--blue-620);
+}

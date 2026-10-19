@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { join } from 'node:path'
 import { SCHEMES } from './schemes'
+import { tokenValue } from './tokenSheet'
 import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The app's keyboard focus indicator was invisible, and a rail was mandating it ──────────────────
@@ -61,12 +62,7 @@ const overlay = (hex: string, base: string, alpha: number): string => {
 /** A surface token in a given mode, read from source so a retint cannot drift this guard — the same
  *  discipline (and the same `.light` rule-block trap) as `schemeContrast.test.ts`. */
 function tier(mode: 'dark' | 'light', name: string): string {
-  const css = readSource(join(process.cwd(), 'src/design/tokens.css'))
-  // 🪤 Match the RULE BLOCK, not `indexOf('.light')`: the file says ".light mode" in a comment first.
-  const scope = mode === 'dark' ? css : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
-  const m = scope.match(new RegExp(`--color-${name}:\\s*(#[0-9a-fA-F]{3,8})`))
-  if (!m) throw new Error(`no --color-${name} for ${mode}`)
-  return m[1]
+  return tokenValue(`--color-${name}`, mode)
 }
 
 /** Every surface a focused control can sit on. A ring is drawn INSET, so the ground it must separate

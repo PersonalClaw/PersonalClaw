@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.sw.json && tsc -p tsconfig.e2e.json",
     "test": "vitest run",
     "audit:consistency": "PC_WRITE_AUDIT=1 vitest run src/design/consistencyAudit.generate.test.ts",
+    "generate:schemes": "PC_WRITE_SCHEMES=1 vitest run src/design/schemeSheets.test.ts",
     "test:watch": "vitest",
     "e2e": "playwright test --grep-invert @visual && npm run e2e:visual",
     "e2e:visual": "playwright test e2e/visual.spec.ts",

@@ -23,18 +23,13 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { tokenValue } from '../../design/tokenSheet'
 
-const CSS = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
-
-/** The value of `name` in the dark (`:root`) block and in the light-scheme block.
- *
- *  Order matters and is asserted: `tokens.css` declares the dark values first, so the SECOND
- *  occurrence is the light override. A token declared once (no light override) would make both
- *  readings identical, which this returns honestly rather than papering over. */
+/** The value of `name` in dark and in light, as the base sheet resolves it (`design/tokenSheet.ts`
+ *  runs the `@theme` → `.light` cascade and follows each `var()` to the palette). A token with no
+ *  light reassignment reads the same in both, which this returns honestly rather than papering over. */
 function pair(name: string): { dark: string; light: string } {
-  const hits = [...CSS.matchAll(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`, 'g'))].map((m) => m[1])
-  expect(hits.length, `${name} must be declared in tokens.css`).toBeGreaterThan(0)
-  return { dark: hits[0], light: hits[hits.length - 1] }
+  return { dark: tokenValue(name, 'dark'), light: tokenValue(name, 'light') }
 }
 
 const rgb = (h: string) => [0, 2, 4].map((i) => parseInt(h.slice(1 + i, 3 + i), 16))

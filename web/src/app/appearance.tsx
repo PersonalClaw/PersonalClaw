@@ -127,6 +127,13 @@ function load(): Overrides {
   return structuredClone(empty)
 }
 
+/** A colour token's value as the owner set it or as the active curated scheme's sheet sets it, or
+ *  `undefined` where the base sheet decides (the registry default mirrors it). The sheets are
+ *  generated from these same tables, so this is what the browser computes, without reading CSS. */
+function effectiveColor(ov: Overrides, varName: string, m: 'dark' | 'light'): string | undefined {
+  return ov.colors[varName]?.[m] ?? getScheme(ov.scheme ?? DEFAULT_SCHEME)?.colors[varName]?.[m]
+}
+
 const hexToRgb = (hex: string): [number, number, number] => {
   const h = hex.replace('#', '')
   const n = h.length === 3 ? h.split('').map((x) => x + x).join('') : h
@@ -196,10 +203,11 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   }, [])
   useEffect(() => { void reloadThemes() }, [reloadThemes])
 
-  // resolve a token's effective value
+  // resolve a token's effective value: the owner's own edit, else the active curated scheme's sheet
+  // (whose table is `schemes.ts`), else the base sheet, which the registry's defaults mirror
   const colorValue = (t: Token, m: 'dark' | 'light') => {
     if (t.kind !== 'color') return ''
-    return ov.colors[t.varName]?.[m] ?? (m === 'dark' ? t.dark : t.light)
+    return effectiveColor(ov, t.varName, m) ?? (m === 'dark' ? t.dark : t.light)
   }
   const scalarValue = (t: Token) => {
     if (t.kind !== 'scalar') return 0
@@ -215,8 +223,14 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     const root = document.documentElement
     for (const t of TOKENS) {
       if (t.kind === 'color') {
-        const hex = ov.colors[t.varName]?.[mode] ?? (mode === 'dark' ? t.dark : t.light)
-        root.style.setProperty(t.varName, hex)
+        // 🔑 ONLY THE OWNER'S OWN COLOURS ARE WRITTEN INLINE. A curated scheme is its override sheet
+        // (`design/schemes/<id>.css`, picked by `data-theme` below) and the default is the base sheet,
+        // so neither needs a value here. This used to write every registry token inline on every
+        // mount, which is why the stylesheet was only ever a pre-hydration fallback. A saved theme
+        // and an unsaved edit still ride inline, on top of the base sheet.
+        const hex = ov.colors[t.varName]?.[mode]
+        if (hex) root.style.setProperty(t.varName, hex)
+        else root.style.removeProperty(t.varName)
       } else if (t.kind === 'scalar') {
         const v = ov.scalars[t.varName] ?? t.value
         root.style.setProperty(t.varName, `${v}${t.unit ?? ''}`)
@@ -231,8 +245,8 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     // feed glow colors to the canvas runtime
     const ga = TOKENS.find((t) => t.varName === '--glow-a') as Token | undefined
     const gb = TOKENS.find((t) => t.varName === '--grad-3') as Token | undefined
-    if (ga && ga.kind === 'color') runtime.glowA = hexToRgb(ov.colors[ga.varName]?.[mode] ?? (mode === 'dark' ? ga.dark : ga.light))
-    if (gb && gb.kind === 'color') runtime.glowB = hexToRgb(ov.colors[gb.varName]?.[mode] ?? (mode === 'dark' ? gb.dark : gb.light))
+    if (ga && ga.kind === 'color') runtime.glowA = hexToRgb(effectiveColor(ov, ga.varName, mode) ?? (mode === 'dark' ? ga.dark : ga.light))
+    if (gb && gb.kind === 'color') runtime.glowB = hexToRgb(effectiveColor(ov, gb.varName, mode) ?? (mode === 'dark' ? gb.dark : gb.light))
 
     // ── typography: whole-UI zoom, font-size scale, typeface ──
     const zoom = ov.scalars['--ui-zoom'] ?? 100
@@ -262,10 +276,11 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     root.style.setProperty('--content-width', isMobile ? '100%' : WIDTH_PRESETS[ov.widthPreset ?? DEFAULT_WIDTH_PRESET])
 
     // ── Orthogonal theming attributes on <html> ──
-    // data-theme = active palette identity (custom `--color-*` stay the mechanism; the
-    //   attribute lets CSS / embedded surfaces key off the scheme without re-reading
-    //   every var). data-ui = the density axis (comfortable/dense/cli) whose CSS blocks
-    //   in tokens.css re-scale --space-scale/--radius-scale/--font-sans app-wide.
+    // data-theme = active palette identity. For a curated scheme it is the mechanism: it switches
+    //   which override sheet is active. A saved theme's id (`custom:<slug>`) matches no sheet, so
+    //   it sits on the base sheet with its colours inline. data-ui = the density axis
+    //   (comfortable/dense/cli) whose CSS blocks in tokens.css re-scale
+    //   --space-scale/--radius-scale/--font-sans app-wide.
     //   data-mode stays owned by theme.tsx (canonical; appSdk reads it) — untouched here.
     root.dataset.theme = ov.scheme ?? DEFAULT_SCHEME
     root.dataset.ui = ov.selects['--ui-density'] ?? 'comfortable'
@@ -276,8 +291,16 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
   // Editing a color manually means you've diverged from the named scheme —
   // mark the active scheme as a custom/unsaved edit so the picker reflects it.
+  //
+  // A curated scheme's colours live in its sheet, not in `colors`, and `custom:unsaved` matches no
+  // sheet. So diverging from one copies its colours in first: without that, editing one colour of
+  // Jade would drop the other eleven back to coral.
   const setColor = (varName: string, m: 'dark' | 'light', hex: string) =>
-    setOv((p) => ({ ...p, scheme: p.scheme === DEFAULT_SCHEME || getScheme(p.scheme ?? '') ? 'custom:unsaved' : p.scheme, colors: { ...p.colors, [varName]: { ...p.colors[varName], [m]: hex } } }))
+    setOv((p) => {
+      const curated = getScheme(p.scheme ?? DEFAULT_SCHEME)
+      const colors = curated ? { ...curated.colors, ...p.colors } : p.colors
+      return { ...p, scheme: curated ? 'custom:unsaved' : p.scheme, colors: { ...colors, [varName]: { ...colors[varName], [m]: hex } } }
+    })
   const setScalar = (varName: string, value: number) =>
     setOv((p) => ({ ...p, scalars: { ...p.scalars, [varName]: value } }))
   const setSelect = (varName: string, value: string) =>
@@ -297,14 +320,15 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   const activeScheme = ov.scheme ?? DEFAULT_SCHEME
   const resolveScheme = (id: string): Scheme | undefined =>
     getScheme(id) ?? serverThemes.find((s) => s.id === id)
-  /** Apply a scheme: replace the color overrides with the scheme's color set so
-   *  switching schemes is clean (no stale per-token overrides linger). */
+  /** Apply a scheme: replace the color overrides so switching schemes is clean (no stale per-token
+   *  overrides linger). A curated scheme needs none (its sheet carries its colours); a saved theme's
+   *  colours ride inline. */
   const applyScheme = (id: string) => {
     const sc = resolveScheme(id)
     if (!sc) return
     // A saved theme's colors carry the copy they came from (`Overrides.themeBase`); a curated one has
     // no stored copy to update.
-    setOv((p) => ({ ...p, scheme: id, colors: { ...sc.colors }, themeBase: readBases[id] }))
+    setOv((p) => ({ ...p, scheme: id, colors: getScheme(id) ? {} : { ...sc.colors }, themeBase: readBases[id] }))
   }
 
   /** Snapshot the CURRENT effective color set into the server theme wire shape
@@ -315,8 +339,8 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     const light: Record<string, string> = {}
     for (const t of TOKENS) {
       if (t.kind !== 'color') continue
-      dark[t.varName] = ovRef.current.colors[t.varName]?.dark ?? t.dark
-      light[t.varName] = ovRef.current.colors[t.varName]?.light ?? t.light
+      dark[t.varName] = effectiveColor(ovRef.current, t.varName, 'dark') ?? t.dark
+      light[t.varName] = effectiveColor(ovRef.current, t.varName, 'light') ?? t.light
     }
     return { dark, light }
   }
@@ -356,7 +380,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     await reloadThemes()
     // If the deleted theme was active, fall back to the default scheme cleanly.
     setOv((p) => (p.scheme === id
-      ? { ...p, scheme: DEFAULT_SCHEME, colors: { ...(getScheme(DEFAULT_SCHEME)?.colors ?? {}) }, themeBase: undefined }
+      ? { ...p, scheme: DEFAULT_SCHEME, colors: {}, themeBase: undefined }
       : p))
   }
 

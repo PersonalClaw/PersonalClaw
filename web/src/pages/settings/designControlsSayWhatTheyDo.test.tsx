@@ -41,7 +41,7 @@ vi.mock('../../lib/api', () => ({
 import { ThemeProvider } from '../../app/theme'
 import { AppearanceProvider } from '../../app/appearance'
 import { PersonalityProvider } from '../../app/personality'
-import { TOKENS } from '../../design/tokenRegistry'
+import { TOKENS, type ColorToken } from '../../design/tokenRegistry'
 import { COLOR_GROUPS } from '../../design/schemes'
 import { DesignPanel } from './DesignPanel'
 
@@ -70,7 +70,10 @@ function hexFieldIn(varLabel: string): HTMLInputElement {
   return row.querySelector('input:not([type="color"])') as HTMLInputElement
 }
 
+/** The owner's own colour on <html>. A colour the owner has not touched is not written inline: the
+ *  base sheet paints it (the registry default mirrors that sheet, `design/schemeSheets.test.ts`). */
 const applied = (varName: string) => document.documentElement.style.getPropertyValue(varName)
+const inEffect = (t: { varName: string; dark: string }) => applied(t.varName) || t.dark
 
 describe('a hex color field takes what you type', () => {
   it('🔴 keeps every keystroke, and a complete value applies live', async () => {
@@ -86,12 +89,12 @@ describe('a hex color field takes what you type', () => {
   it('a half-typed value is marked, applies nothing, and gives way to the color in effect on blur', async () => {
     await mountEditor()
     const field = hexFieldIn(PRIMARY.label)
-    const before = applied(PRIMARY.varName)
+    const before = inEffect(PRIMARY as ColorToken)
     await userEvent.clear(field)
     await userEvent.type(field, '#12')
     expect(field.value).toBe('#12')
     expect(field.getAttribute('aria-invalid')).toBe('true')
-    expect(applied(PRIMARY.varName), 'an incomplete hex changes nothing').toBe(before)
+    expect(inEffect(PRIMARY as ColorToken), 'an incomplete hex changes nothing').toBe(before)
     await userEvent.tab()
     expect(field.value, 'leaving the field shows the color actually applied').toBe(before)
     expect(field.getAttribute('aria-invalid')).toBe('false')

@@ -96,6 +96,7 @@
 import { describe, expect, it } from 'vitest'
 import { join } from 'node:path'
 import { SCHEMES } from './schemes'
+import { tokenValue } from './tokenSheet'
 import { filesUnder, readSource } from '../test/sourceTree'
 
 const WEB = process.cwd()
@@ -153,10 +154,10 @@ function blocks(): { dark: string; light: string } {
 }
 const BLOCKS = blocks()
 type Mode = 'dark' | 'light'
+/** A token's value in `mode` as the sheets resolve it — the `.light` rule block's `var()` followed
+ *  to the palette, by `tokenSheet.ts`, rather than a hex matched in the source text. */
 function token(name: string, mode: Mode): string {
-  const m = BLOCKS[mode].match(new RegExp(`--color-${name}:\\s*(#[0-9a-fA-F]{6})`))
-  if (!m) throw new Error(`--color-${name} has no direct hex value in the ${mode} block of tokens.css`)
-  return m[1]
+  return tokenValue(`--color-${name}`, mode)
 }
 
 // ── The population, derived from the tree ───────────────────────────────────────────────────────
@@ -660,7 +661,8 @@ describe('status-chip tone over its own ≤16% tint clears AA on every resting t
 // Four 12px text sites are at 18% with one of those tones — `artifacts/ArtifactViewer.tsx:253`
 // ("source changed"), `prompts/VariableRow.tsx:40` (the required toggle),
 // `skills/MarketplaceDetail.tsx:80` (a scan-severity badge) and `ChatPage.tsx:4338` (which uses
-// `--color-secondary`, a token with NO `.light` value at all — it inherits the dark amber). Whether
+// `--color-secondary`, unswept: `tokens.css` once declared no `.light` value for it, though the registry's
+// `#cf7a23` was what painted, and the base sheet now says so). Whether
 // each is a live violation depends on the tier it rests on, and none of the four was reachable with
 // data on the seeded home, so the honest position is: the cells are recorded, the sweep does
 // not claim them, and the ceiling ratchet below stops a FIFTH appearing. Moving `ok`/`warn`/`danger`
@@ -764,13 +766,13 @@ describe('the tone-as-ink-and-tint family stays inside the swept envelope', () =
 
   it('the 18% population is exactly the eight sites whose tones were reasoned about', () => {
     // The pin is the point. `info` clears 18% on every tier; `ok`/`warn`/`danger` do NOT (see the
-    // tier-2 header for the six failing cells), and `--color-secondary` has no light value at all.
+    // tier-2 header for the six failing cells), and `--color-secondary` is not swept at all.
     // So a NINTH 18% chip is not a cosmetic addition — it is a contrast question, and it reds here
     // until someone measures the tier it rests on and either sweeps that cell or drops to ≤16%.
     const at18 = SITES.filter((s) => s.pct === 18)
     expect(at18.map(key).sort(), 'a new 18% chip needs its resting tier measured before it can be added here')
       .toEqual([
-        // --color-secondary — a token with NO `.light` value at all (see tier 2)
+        // --color-secondary — unswept at any strength (see tier 2)
         'pages/ChatPage.tsx @18% var(--color-secondary)',
         // a user-chosen tag colour, else --color-primary
         "pages/ChatPage.tsx @18% tagById[tid].color || 'var(--color-primary)",

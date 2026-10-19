@@ -1,0 +1,45 @@
+/* Ocean. Generated from design/schemes.ts by `npm run generate:schemes`. Edit the table, not this file. */
+:root[data-theme="ocean"] {
+  /* layer 1: the steps the base sheet does not have */
+  --blue-254: #04243f;
+  --blue-316: #0e3358;
+  --blue-401: #004298;
+  --blue-482: #0057c2;
+  --blue-494: #005ac9;
+  --blue-538: #1668d8;
+  --blue-565: #3a7bb0;
+  --blue-631: #3a92c8;
+  --blue-715: #4aa8ff;
+  --blue-805: #86c6ff;
+  --blue-823: #7fd0ff;
+  --blue-934: #d8ecff;
+  --cyan-592: #0a8f95;
+  --cyan-743: #28c2c8;
+  /* layer 2, dark */
+  --color-primary: var(--blue-715);
+  --color-primary-emphasis: var(--blue-805);
+  --color-on-primary: var(--blue-254);
+  --color-primary-container: var(--blue-316);
+  --color-secondary: var(--cyan-743);
+  --color-info: var(--blue-715);
+  --grad-1: var(--blue-565);
+  --grad-2: var(--blue-715);
+  --grad-3: var(--blue-823);
+  --grad-4: var(--cyan-743);
+  --glow-a: var(--blue-715);
+  --glow-b: var(--blue-823);
+}
+:root.light[data-theme="ocean"] {
+  --color-primary: var(--blue-494);
+  --color-primary-emphasis: var(--blue-401);
+  --color-on-primary: var(--gray-1000);
+  --color-primary-container: var(--blue-934);
+  --color-secondary: var(--cyan-592);
+  --color-info: var(--blue-482);
+  --grad-1: var(--blue-565);
+  --grad-2: var(--blue-494);
+  --grad-3: var(--blue-631);
+  --grad-4: var(--cyan-743);
+  --glow-a: var(--blue-538);
+  --glow-b: var(--blue-631);
+}

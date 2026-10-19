@@ -14,8 +14,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { tokenValue as resolvedToken, type Mode } from './tokenSheet'
 import { ERROR_TREATMENTS, getErrorTreatment, treatmentPaint, type ErrorTreatmentId } from './errorTreatments'
 import { PERSONALITIES } from './personalities'
 
@@ -39,24 +38,14 @@ function contrast(a: string, b: string): number {
  *  not the standard an error surface should ship at. */
 const AA = 4.5
 
-/** tokens.css split into the dark default block and the `.light` override, so a
- *  token's value is read per mode rather than restated here. */
-function blocks(): { dark: string; light: string } {
-  const src = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
-  // Match the `.light` RULE BLOCK, not the first mention of the string: the file
-  // says ".light mode" in prose earlier (the trap schemeContrast.test.ts records).
-  const at = src.search(/\.light\s*\{/)
-  if (at < 0) throw new Error('could not find the .light rule block in tokens.css')
-  return { dark: src.slice(0, at), light: src.slice(at) }
-}
+/** A token's value per mode, as the sheets resolve it (`tokenSheet.ts` reads the `.light` rule
+ *  block, not the first mention of the string, and follows each `var()` to the palette), so it is
+ *  read rather than restated here. */
+const BLOCKS = { dark: 'dark', light: 'light' } as const
 
-function tokenValue(block: string, name: string): string {
-  const m = block.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`))
-  if (!m) throw new Error(`${name} has no direct hex value in this tokens.css block`)
-  return m[1]
+function tokenValue(mode: Mode, name: string): string {
+  return resolvedToken(name, mode)
 }
-
-const BLOCKS = blocks()
 const MODES = ['dark', 'light'] as const
 
 describe('the treatment map is closed, complete, and non-vacuous', () => {

@@ -1,0 +1,29 @@
+/* Coral. Generated from design/schemes.ts by `npm run generate:schemes`. Edit the table, not this file. */
+:root[data-theme="coral"] {
+  --color-primary: var(--red-709);
+  --color-primary-emphasis: var(--red-786);
+  --color-on-primary: var(--red-252);
+  --color-primary-container: var(--red-324);
+  --color-secondary: var(--amber-824);
+  --color-info: var(--blue-702);
+  --grad-1: var(--red-602);
+  --grad-2: var(--red-709);
+  --grad-3: var(--red-784);
+  --grad-4: var(--amber-824);
+  --glow-a: var(--red-709);
+  --glow-b: var(--red-784);
+}
+:root.light[data-theme="coral"] {
+  --color-primary: var(--red-504);
+  --color-primary-emphasis: var(--red-428);
+  --color-on-primary: var(--gray-1000);
+  --color-primary-container: var(--red-930);
+  --color-secondary: var(--orange-659);
+  --color-info: var(--blue-483);
+  --grad-1: var(--red-602);
+  --grad-2: var(--red-649);
+  --grad-3: var(--orange-686);
+  --grad-4: var(--orange-659);
+  --glow-a: var(--red-649);
+  --glow-b: var(--orange-686);
+}

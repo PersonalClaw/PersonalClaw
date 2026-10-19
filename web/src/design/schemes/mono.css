@@ -1,0 +1,41 @@
+/* Mono. Generated from design/schemes.ts by `npm run generate:schemes`. Edit the table, not this file. */
+:root[data-theme="mono"] {
+  /* layer 1: the steps the base sheet does not have */
+  --gray-205: #171717;
+  --gray-260: #242424;
+  --gray-321: #333333;
+  --gray-348: #3a3a3a;
+  --gray-468: #5a5a5a;
+  --gray-633: #8a8a8a;
+  --gray-706: #a0a0a0;
+  --gray-870: #d4d4d4;
+  --gray-919: #e4e4e4;
+  --gray-955: #f0f0f0;
+  /* layer 2, dark */
+  --color-primary: var(--gray-870);
+  --color-primary-emphasis: var(--gray-955);
+  --color-on-primary: var(--gray-205);
+  --color-primary-container: var(--gray-321);
+  --color-secondary: var(--gray-706);
+  --color-info: var(--gray-706);
+  --grad-1: var(--gray-633);
+  --grad-2: var(--gray-870);
+  --grad-3: var(--gray-955);
+  --grad-4: var(--gray-706);
+  --glow-a: var(--gray-870);
+  --glow-b: var(--gray-955);
+}
+:root.light[data-theme="mono"] {
+  --color-primary: var(--gray-348);
+  --color-primary-emphasis: var(--gray-260);
+  --color-on-primary: var(--gray-1000);
+  --color-primary-container: var(--gray-919);
+  --color-secondary: var(--gray-468);
+  --color-info: var(--gray-468);
+  --grad-1: var(--gray-633);
+  --grad-2: var(--gray-348);
+  --grad-3: var(--gray-633);
+  --grad-4: var(--gray-706);
+  --glow-a: var(--gray-468);
+  --glow-b: var(--gray-633);
+}

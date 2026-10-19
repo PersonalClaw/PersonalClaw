@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { SCHEMES } from './schemes'
+import { declaredValue, tokenValue } from './tokenSheet'
 
 // ── Scheme contrast guard (design-system consistency) ──────────────────────
 // PRODUCT.md mandates WCAG 2.1 AA. The default 'coral' scheme's AA was verified
@@ -40,35 +41,21 @@ const AA = 4.5
 // not a text-bearing accent background — testing it would invent a failure the
 // default itself doesn't meet.
 function darkSurfaceContainer(): string {
-  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
-  // First occurrence = the default (dark) :root block, before the .light override.
-  const m = css.match(/--color-surface-container:\s*(#[0-9a-fA-F]{3,8})/)
-  if (!m) throw new Error('could not find --color-surface-container in tokens.css')
-  return m[1]
+  return tokenValue('--color-surface-container', 'dark')
 }
 
 /** `--color-surface-high` in a given mode — the ground the app's small accent CHIPS sit on (a tag
  *  pill, a status pill, a markdown citation/file chip). Read from source in both blocks so a retint
  *  cannot drift the guard, the same discipline as `darkSurfaceContainer` and `lightCanvas`. */
 function surfaceHigh(mode: 'dark' | 'light'): string {
-  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
-  const scope = mode === 'dark'
-    ? css                                              // the default :root block comes first
-    : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
-  const m = scope.match(/--color-surface-high:\s*(#[0-9a-fA-F]{3,8})/)
-  if (!m) throw new Error(`could not find --color-surface-high for ${mode}`)
-  return m[1]
+  return tokenValue('--color-surface-high', mode)
 }
 
 /** `--color-surface-low` in a given mode — the ground a dashboard ROW paints (`bg-surface-low`), which
  *  is where a row action's 15px label sits. Not white in light: **#f4f6f9**, and that difference is the
  *  whole finding, so the value is read from source per mode rather than assumed. */
 function surfaceLow(mode: 'dark' | 'light'): string {
-  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
-  const scope = mode === 'dark' ? css : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
-  const m = scope.match(/--color-surface-low:\s*(#[0-9a-fA-F]{3,8})/)
-  if (!m) throw new Error(`could not find --color-surface-low for ${mode}`)
-  return m[1]
+  return tokenValue('--color-surface-low', mode)
 }
 
 const WHITE = '#ffffff'
@@ -88,15 +75,11 @@ const WHITE = '#ffffff'
  *  canvas uses `--color-primary-emphasis`.** Asserted below for every scheme, so a new scheme cannot
  *  land with a canvas-illegible accent, and the two call sites carry the number in a comment. */
 function lightCanvas(): string {
-  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
-  // 🪤 Match the RULE BLOCK, not the first occurrence of the string ".light": the file mentions
-  // ".light mode" in a comment 380 characters in, so slicing from `indexOf('.light')` picked up the
-  // DARK `--color-canvas: #0f0f0f` and made this rail red at 2.89:1 against the wrong backdrop.
-  const block = /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1]
-  if (!block) throw new Error('could not find the .light rule block in tokens.css')
-  const m = block.match(/--color-canvas:\s*(#[0-9a-fA-F]{3,8})/)
-  if (!m) throw new Error('could not find --color-canvas inside the .light block')
-  return m[1]
+  // 🪤 Read the RULE BLOCK's value, not the first occurrence of the string ".light": the file
+  // mentions ".light mode" in a comment, so slicing from `indexOf('.light')` once picked up the DARK
+  // canvas and made this rail red at 2.89:1 against the wrong backdrop. `tokenValue` parses the
+  // `.light` rule block itself (comments stripped) and follows its `var()` to the palette.
+  return tokenValue('--color-canvas', 'light')
 }
 
 describe('scheme contrast: every scheme meets WCAG AA (not just the default)', () => {
@@ -205,10 +188,7 @@ describe('scheme contrast: every scheme meets WCAG AA (not just the default)', (
  *  cannot silently drift this guard. The FIRST occurrence is the default (dark) `:root` block; the
  *  one inside `.light` is the light override. */
 function onPrimaryContainer(mode: 'dark' | 'light'): string {
-  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
-  const all = [...css.matchAll(/--color-on-primary-container:\s*(#[0-9a-fA-F]{3,8})/g)].map((m) => m[1])
-  if (all.length < 2) throw new Error(`expected a dark AND a light --color-on-primary-container, found ${all.length}`)
-  return mode === 'dark' ? all[0] : all[all.length - 1]
+  return tokenValue('--color-on-primary-container', mode)
 }
 
 describe('accent container: ink on the tinted accent surface meets AA in every scheme', () => {
@@ -266,13 +246,9 @@ describe('accent container: ink on the tinted accent surface meets AA in every s
 /** The `--color-on-primary-tint` declaration for a mode, verbatim from tokens.css. Read from source
  *  (never restated) so a retint cannot drift this guard — the discipline the whole file follows. */
 function tintInkDecl(mode: 'dark' | 'light'): string {
-  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
-  const scope = mode === 'dark'
-    ? css.slice(0, css.search(/\.light\s*\{/))     // the @theme default block comes first
-    : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
-  const m = scope.match(/--color-on-primary-tint:\s*([^;]+);/)
-  if (!m) throw new Error(`could not find --color-on-primary-tint for ${mode}`)
-  return m[1].trim()
+  const decl = declaredValue('--color-on-primary-tint', mode)
+  if (!decl) throw new Error(`could not find --color-on-primary-tint for ${mode}`)
+  return decl
 }
 
 /** The surfaces a tonal button legitimately sits on, per mode, read from tokens.css.
@@ -281,13 +257,8 @@ function tintInkDecl(mode: 'dark' | 'light'): string {
  *  reason stated at the top of this file: even the AA-verified default coral does not clear them, so
  *  they are not text-bearing accent grounds and testing them would invent a failure. */
 function tonalGrounds(mode: 'dark' | 'light'): Array<[string, string]> {
-  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
-  const scope = mode === 'dark' ? css.slice(0, css.search(/\.light\s*\{/)) : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
-  return ['--color-surface', '--color-surface-low', '--color-surface-container'].map((name) => {
-    const m = scope.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`))
-    if (!m) throw new Error(`could not find ${name} for ${mode}`)
-    return [name.replace('--color-', ''), m[1]] as [string, string]
-  })
+  return ['--color-surface', '--color-surface-low', '--color-surface-container'].map((name) =>
+    [name.replace('--color-', ''), tokenValue(name, mode)] as [string, string])
 }
 
 /** Every `bg-primary/NN` alpha the `tonal` variant paints, parsed out of the variant string so the
@@ -330,15 +301,7 @@ function resolveTintInk(decl: string, s: (typeof SCHEMES)[number], mode: 'dark' 
    *  appearance store sets those inline on <html>), otherwise the mode's tokens.css value. Both are
    *  legitimate — `--color-primary-emphasis` is per-scheme, `--color-on-primary-container` is one
    *  value per mode — and the difference is exactly what the two assertions below are about. */
-  const resolveToken = (varName: string): Rgb => {
-    const fromScheme = s.colors[varName]?.[mode]
-    if (fromScheme) return toRgb(fromScheme)
-    const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
-    const scope = mode === 'dark' ? css.slice(0, css.search(/\.light\s*\{/)) : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
-    const m = scope.match(new RegExp(`${varName}:\\s*(#[0-9a-fA-F]{6})`))
-    if (!m) throw new Error(`the tonal ink references ${varName}, which is neither a scheme token nor a ${mode} value in tokens.css`)
-    return toRgb(m[1])
-  }
+  const resolveToken = (varName: string): Rgb => toRgb(tokenValue(varName, mode, s.id))
   const schemeToken = resolveToken
   const ref = /^var\(\s*(--[a-z0-9-]+)\s*\)$/.exec(decl)
   if (ref) return schemeToken(ref[1])
@@ -431,14 +394,10 @@ describe('tonal tint: the ink clears AA over the scheme\'s OWN composited tint, 
     // Nothing applies a scheme until the user picks one; the bare `@theme` + `.light` values are
     // what a first paint uses. They are coral's, so the coral row above measures the default state
     // too — but only while that stays true, hence this assertion.
-    const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
     const coral = SCHEMES.find((s) => s.id === 'coral')!
-    const dark = css.slice(0, css.search(/\.light\s*\{/))
-    const light = /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
-    for (const [mode, scope] of [['dark', dark], ['light', light]] as const) {
+    for (const mode of MODES) {
       for (const varName of ['--color-primary', '--color-primary-emphasis'] as const) {
-        const m = scope.match(new RegExp(`${varName}:\\s*(#[0-9a-fA-F]{6})`))
-        expect(m?.[1]?.toLowerCase(), `${mode} ${varName} default must equal coral's`)
+        expect(tokenValue(varName, mode), `${mode} ${varName} default must equal coral's`)
           .toBe(coral.colors[varName][mode].toLowerCase())
       }
     }
@@ -602,25 +561,12 @@ const RAIL_GROUND = '--color-canvas'
 /** WCAG 2.1 SC 1.4.11 Non-text Contrast — the floor for a UI component's own visual boundary. */
 const NON_TEXT = 3
 
-/** The mode's token block in tokens.css: the `@theme` default block is dark, `.light` overrides. */
-function modeScope(mode: 'dark' | 'light'): string {
-  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
-  return mode === 'dark'
-    ? css.slice(0, css.search(/\.light\s*\{/))
-    : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
-}
-
-/** Resolve a token for one scheme × mode THE WAY THE BROWSER DOES: a scheme override when the
- *  scheme carries one (the appearance store sets those inline on `<html>`), otherwise the mode's
- *  tokens.css value. The asymmetry is the reason this is resolved rather than assumed —
+/** Resolve a token for one scheme × mode THE WAY THE BROWSER DOES: the scheme's sheet when it
+ *  sets the token, otherwise the base sheet's value for the mode (`tokenSheet.ts` runs the cascade). The asymmetry is the reason this is resolved rather than assumed —
  *  `--color-primary` is per-scheme, while `--color-map-rest` and `--color-canvas` are one value
  *  per mode — and it is what makes the history tone's row honest in all twelve. */
 function resolvedToken(varName: string, s: (typeof SCHEMES)[number], mode: 'dark' | 'light'): string {
-  const fromScheme = s.colors[varName]?.[mode]
-  if (fromScheme) return fromScheme
-  const m = modeScope(mode).match(new RegExp(`${varName}:\\s*(#[0-9a-fA-F]{6})`))
-  if (!m) throw new Error(`${varName} is neither a scheme token nor a ${mode} value in tokens.css`)
-  return m[1]
+  return tokenValue(varName, mode, s.id)
 }
 
 /** The rail's two mark tones, PARSED OUT OF THE COMPONENT rather than restated here — the same

@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { join } from 'node:path'
 import { SCHEMES } from './schemes'
+import { tokenValue } from './tokenSheet'
 import { readSource } from '../test/sourceTree'
 
 /** The focus ring on a SOLID button (Button's `primary` and `danger` tiers) clears 3:1 against what
@@ -44,9 +45,7 @@ const BUTTON = () => readSource(join(process.cwd(), 'src/ui/Button.tsx'))
 /** A token in a given mode as `tokens.css` declares it, matching the `.light` RULE BLOCK (the file
  *  says ".light mode" in a comment first, the trap `focusRingContrast.test.ts` records). */
 function base(mode: 'dark' | 'light', name: string): string | undefined {
-  const css = CSS()
-  const scope = mode === 'dark' ? css : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
-  return scope.match(new RegExp(`--color-${name}:\\s*(#[0-9a-fA-F]{6})\\b`))?.[1]
+  return tokenValue(`--color-${name}`, mode)
 }
 
 /** A colour token in a scheme and mode: the scheme's value where the scheme sets it, else the base. */

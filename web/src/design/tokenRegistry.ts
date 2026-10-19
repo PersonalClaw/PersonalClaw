@@ -64,14 +64,14 @@ const sel = (varName: string, label: string, group: string, value: string, optio
 
 export const TOKENS: Token[] = [
   // ── Brand ──
-  // 🔴 THESE TWO LIGHT VALUES ARE WHAT A DEFAULT INSTALL ACTUALLY PAINTS, which is why #3503's
-  // retune had to land here and not only in `schemes.ts`. `app/appearance.tsx` writes EVERY
-  // registered colour token inline on `<html>` at mount, falling back to the values on this line
-  // whenever the user has no stored override — and `applyScheme` only populates overrides once the
-  // user picks a scheme. So on a fresh light-mode install `schemes.ts`'s coral entry is never read,
-  // an inline style beats `.light`'s class rule, and `tokens.css` is a pre-hydration fallback only.
-  // Fixing two of the three would have shipped contrast that depends on where the user's value came
-  // from. `schemeContrast.test.ts` now asserts all three agree.
+  // 🔴 THESE DEFAULTS MIRROR THE BASE SHEET, AND A RAIL HOLDS THEM TO IT. Until the token layers,
+  // `app/appearance.tsx` wrote every registered colour token inline on `<html>` at mount, so these
+  // lines were what a default install painted and `tokens.css` was a pre-hydration fallback — which
+  // is why #3503's retune had to land here and not only in `schemes.ts`. Now the stylesheets paint
+  // (the base sheet, then the active scheme's sheet) and only the owner's own colours ride inline;
+  // these values are what the Appearance panel shows and resets to. `schemeSheets.test.ts` asserts
+  // every one equals what the base sheet resolves to, and `schemeContrast.test.ts` that the
+  // registry, the coral table and the sheet agree.
   //
   // The history, because the direction repeats: light primary was once #e85a3f, which under 13px
   // white button text read 3.52:1 (axe serious on every list page's New-X button); #c8452e fixed

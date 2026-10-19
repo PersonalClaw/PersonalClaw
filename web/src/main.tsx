@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './app/monacoSetup'  // bind Monaco to the local bundle + workers (no CDN) — before any editor mounts
 import './design/tokens.css'
+import './design/schemes/index.css'  // each scheme's override sheet, after the main sheet
 import { App } from './app/App'
 import { ErrorBoundary } from './app/ErrorBoundary'
 import { ThemeProvider } from './app/theme'

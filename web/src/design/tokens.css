@@ -5,49 +5,110 @@
    PersonalClaw — design token core (Tailwind v4 @theme)
    A neutral surface/content ramp + one ownable warm accent (coral/terracotta,
    the default scheme). Everything here is token-driven + theme-customizable
-   (schemes + per-token overrides). Dark is default; .light overrides.
+   (schemes + per-token overrides).
+
+   THE COLOUR LAYERS (web/DESIGN.md §2, "The token layers"):
+     1. palette    raw values, named by what they are: `--<hue>-<OKLCH lightness × 1000>`
+                   (design/palette.ts). Declared in `:root` below; nothing outside design/ reads one.
+     2. semantic   `--color-*`, the brand gradient and the ring highlight, written only in terms of
+                   layer 1 (or as an alias of another layer-2 token). Dark is the default; `.light`
+                   reassigns the same names onto light palette steps, and nothing else.
+     3. editor     (none yet)
+     4. component  a token composed from layer 2 for one component (the ring stops, the glass
+                   material, the lift and composer-focus shadows). Never reassigned per mode.
+   A scheme is one override sheet, `schemes/<id>.css`, generated from `schemes.ts`, loaded after this
+   file, and setting layers 1 and 2 only. Elevation shadows sit outside the colour layers and keep a
+   light reassignment of their own.
    ════════════════════════════════════════════════════════════════════════ */
+
+/* ── layer 1: the palette (the steps the default look uses; a scheme sheet adds its own) ── */
+:root {
+  --gray-168: #0f0f0f;
+  --gray-187: #131314;
+  --gray-222: #1b1b1b;
+  --gray-239: #1e1f20;
+  --gray-240: #1f1f1f;
+  --gray-284: #282a2c;
+  --gray-328: #333537;
+  --gray-395: #444746;
+  --gray-498: #5f6368;
+  --gray-500: #616463;
+  --gray-625: #85888a;
+  --gray-654: #8e918f;
+  --gray-689: #9a9b9c;
+  --gray-827: #c4c7c5;
+  --gray-914: #e1e3e1;
+  --gray-916: #e3e3e3;
+  --gray-935: #e6eaef;
+  --gray-957: #eef1f5;
+  --gray-965: #f0f4f8;
+  --gray-972: #f4f6f9;
+  --gray-977: #fff5f2;
+  --gray-1000: #ffffff;
+  --red-252: #3f1008;
+  --red-324: #5a1d12;
+  --red-428: #8d240b;
+  --red-503: #af2f29;
+  --red-504: #b12e18;
+  --red-602: #c85a48;
+  --red-649: #e85a3f;
+  --red-699: #f66c66;
+  --red-709: #ff6b5b;
+  --red-784: #ff9a7a;
+  --red-786: #ff9a86;
+  --red-930: #ffe0d6;
+  --orange-498: #954c19;
+  --orange-659: #cf7a23;
+  --orange-686: #e07a54;
+  --orange-755: #ff8d41;
+  --amber-824: #ffb454;
+  --green-472: #076e37;
+  --green-697: #0ebc5f;
+  --blue-483: #1059bc;
+  --blue-702: #629efe;
+}
+
 @theme {
   /* ── fonts (PersonalClaw default = DM Sans; selectable via Appearance) ── */
   --font-sans: "DM Sans", system-ui, sans-serif;
   --font-display: "DM Sans", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
-  /* ── color: surfaces (dark) ── */
-  --color-canvas: #0f0f0f;
-  --color-surface: #131314;
-  --color-surface-low: #1b1b1b;
-  --color-surface-container: #1e1f20;
-  --color-surface-high: #282a2c;
-  --color-surface-highest: #333537;
-  --color-rail: #1f1f1f;
+  /* ── layer 2: surfaces (dark) ── */
+  --color-canvas: var(--gray-168);
+  --color-surface: var(--gray-187);
+  --color-surface-low: var(--gray-222);
+  --color-surface-container: var(--gray-239);
+  --color-surface-high: var(--gray-284);
+  --color-surface-highest: var(--gray-328);
+  --color-rail: var(--gray-240);
 
-  /* ── color: content/ink ── */
-  --color-on-surface: #e3e3e3;
-  --color-on-surface-low: #9a9b9c;
-  --color-on-surface-var: #c4c7c5;
-  --color-outline: #8e918f;
-  --color-outline-variant: #444746;
+  /* ── layer 2: content/ink ── */
+  --color-on-surface: var(--gray-916);
+  --color-on-surface-low: var(--gray-689);
+  --color-on-surface-var: var(--gray-827);
+  --color-outline: var(--gray-654);
+  --color-outline-variant: var(--gray-395);
   /* The Session Map's resting marker — a message NOT on screen (the on-screen ones are
      --color-primary). Colour is the only thing that separates the two, so this neutral is tuned
      to sit as far in lightness from the accent as 3:1 on the canvas allows (3.21:1 here);
      design/schemeContrast.test.ts measures it against the canvas and against every scheme's
      primary. */
-  --color-map-rest: #616463;
+  --color-map-rest: var(--gray-500);
 
-  /* ── color: CORAL brand (PersonalClaw accent, dark) ── */
-  --color-primary: #ff6b5b;
-  --color-on-primary: #3f1008;
-  --color-primary-container: #5a1d12;
-  --color-on-primary-container: #ffe0d6;
-  --color-primary-emphasis: #ff9a86;
-  --color-secondary: #ffb454; /* warm amber secondary */
+  /* ── layer 2: CORAL brand (PersonalClaw accent, dark) ── */
+  --color-primary: var(--red-709);
+  --color-on-primary: var(--red-252);
+  --color-primary-container: var(--red-324);
+  --color-on-primary-container: var(--red-930);
+  --color-primary-emphasis: var(--red-786);
+  --color-secondary: var(--amber-824); /* warm amber secondary */
 
-  /* ── color: semantic ── */
-  --color-ok: #0ebc5f;
-  --color-warn: #ff8d41;
-  --color-danger: #f66c66;
-  --color-info: #629efe;
+  /* ── layer 2: status tones ── */
+  --color-ok: var(--green-697);
+  --color-warn: var(--orange-755);
+  --color-danger: var(--red-699);
+  --color-info: var(--blue-702);
   /* Light-mode values live in the .light block below — they are DARKER shades
      of the same hues so status text passes WCAG AA on white and on the 14–16%
      tinted chip backgrounds components derive with color-mix.
@@ -95,7 +156,7 @@
      inventing a shade. Light overrides it back to white (its danger is a DEEP red, #af2f29,
      where white measures 6.44:1) — the two themes genuinely need opposite inks, which is why a
      single value could never satisfy both. */
-  --color-on-danger: #3f1008;
+  --color-on-danger: var(--red-252);
 
   /* Ink for a label ON A TRANSLUCENT primary TINT (Button's `tonal` variant, 22 sites, painted
      `bg-primary/15` at rest and `hover:bg-primary/25` on hover).
@@ -122,13 +183,13 @@
      Rail: schemeContrast.test.ts §"tonal tint". */
   --color-on-primary-tint: var(--color-primary-emphasis);
 
-  /* ── brand gradient stops (coral-weighted spectrum) ── */
-  --grad-1: #c85a48;
-  --grad-2: #ff6b5b;
-  --grad-3: #ff9a7a;
-  --grad-4: #ffb454;
-  --glow-a: #ff6b5b;
-  --glow-b: #ff9a7a;
+  /* ── layer 2: brand gradient stops (coral-weighted spectrum) ── */
+  --grad-1: var(--red-602);
+  --grad-2: var(--red-709);
+  --grad-3: var(--red-784);
+  --grad-4: var(--amber-824);
+  --glow-a: var(--red-709);
+  --glow-b: var(--red-784);
 
   /* ── shape (base × user's --radius-scale slider × the density-owned --radius-density
      multiplier, so the data-ui density can crisp corners WITHOUT fighting the
@@ -228,10 +289,13 @@
   --glass-bg: color-mix(in srgb, var(--color-surface-container) calc(var(--glass-alpha) * 100%), transparent);
   --glass-highlight: inset 0 1px 0 rgb(255 255 255 / 0.10);
 
-  /* ── composer focus ring gradient — stops 1/3/4 follow the brand gradient;
-        stop-2 is the highlight (own token: near-white on dark / ink on light) ── */
+  /* ── composer focus ring gradient — stops 1/3/4 (layer 4) follow the brand gradient;
+        stop-2 is the highlight (layer 2, its own token: near-white on dark / ink on light).
+        Its values are the registry's (#fff5f2 / #3f1008), which is what has always painted: the
+        appearance store wrote the registry inline over the #fdf8ff / #1a1430 this file used to
+        carry, so those only ever showed before the app mounted. ── */
   --ring-stop-1: var(--grad-1);
-  --ring-stop-2: #fdf8ff;
+  --ring-stop-2: var(--gray-977);
   --ring-stop-3: var(--grad-2);
   --ring-stop-4: var(--grad-4);
 
@@ -254,32 +318,43 @@
   --z-toast:   calc(var(--z-content) + 150);  /* 200 — toasts + the command palette: the topmost system surfaces, above everything else */
 }
 
-/* ── light mode overrides (coral brand, light) ── */
+/* ── light mode: layer 2 reassigned onto light palette steps (coral brand, light). Nothing else
+   is reassigned here but the elevation shadows, which sit outside the colour layers. ── */
 .light {
-  --color-canvas: #f0f4f8;
-  --color-surface: #ffffff;
-  --color-surface-low: #f4f6f9;
-  --color-surface-container: #ffffff;
-  --color-surface-high: #eef1f5;
-  --color-surface-highest: #e6eaef;
-  --color-rail: #f0f4f8;
-  --color-on-surface: #1f1f1f;
-  --color-on-surface-low: #444746;
-  --color-on-surface-var: #5f6368;
-  --color-outline: #8e918f;
-  --color-outline-variant: #e1e3e1;
-  --color-map-rest: #85888a;
+  --color-canvas: var(--gray-965);
+  --color-surface: var(--gray-1000);
+  --color-surface-low: var(--gray-972);
+  --color-surface-container: var(--gray-1000);
+  --color-surface-high: var(--gray-957);
+  --color-surface-highest: var(--gray-935);
+  --color-rail: var(--gray-965);
+  --color-on-surface: var(--gray-240);
+  --color-on-surface-low: var(--gray-395);
+  --color-on-surface-var: var(--gray-498);
+  --color-outline: var(--gray-654);
+  --color-outline-variant: var(--gray-914);
+  --color-map-rest: var(--gray-625);
   /* #3503: retuned from #c8452e / #a33922. The old pair was chosen against the BARE ground
      ("≥4.5:1 as white-text button fill AND as text on white"), and a status chip composites its ink
      over its own 16% wash of itself — which drags the ground toward the ink and spent the margin.
      Swept as a chip ink, `--color-primary` was under AA in 42 of 96 cells, every one light mode,
      worst 3.4870. Derivation and the full per-scheme table live in `schemes.ts`. These two values
      are coral's and `schemeContrast.test.ts` asserts that they stay coral's. */
-  --color-primary: #b12e18;
-  --color-on-primary: #ffffff;
-  --color-primary-container: #ffe0d6;
-  --color-on-primary-container: #3f1008;
-  --color-primary-emphasis: #8d240b;
+  --color-primary: var(--red-504);
+  --color-on-primary: var(--gray-1000);
+  --color-primary-container: var(--red-930);
+  --color-on-primary-container: var(--red-252);
+  --color-primary-emphasis: var(--red-428);
+  /* The light amber and the light brand gradient. Until the layers, this block had none of these and
+     inherited the dark values, but nothing ever painted that: the appearance store wrote
+     tokenRegistry's light values inline over them on every mount. These are those values, so the
+     light look is unchanged; the sheet now says what the screen shows. */
+  --color-secondary: var(--orange-659);
+  --grad-2: var(--red-649);
+  --grad-3: var(--orange-686);
+  --grad-4: var(--orange-659);
+  --glow-a: var(--red-649);
+  --glow-b: var(--orange-686);
   /* Light needs a MUCH deeper ink than dark, and unlike dark it does not need to track the scheme.
      Both halves of that are measured.
 
@@ -306,23 +381,23 @@
      in `dist/assets/*.css`. A plain `var()` reference emits verbatim; a color-mix does not. */
   --color-on-primary-tint: var(--color-on-primary-container);
   /* semantic status hues, AA-dark for light surfaces (see tokenRegistry.ts) */
-  --color-ok: #076e37;
-  --color-warn: #954c19;
-  --color-danger: #af2f29;
+  --color-ok: var(--green-472);
+  --color-warn: var(--orange-498);
+  --color-danger: var(--red-503);
   /* Darkened from #145cbf (4.41 → 4.56 over its own 18% tint on the canvas). The dark block's
      note carries the whole measurement; light needs the OPPOSITE nudge to dark's for the same
      reason `--color-on-danger` needs the opposite ink — a tint moves the ground toward the ink in
      both modes, so "away from the mid-tone" means darker here and brighter there. */
-  --color-info: #1059bc;
+  --color-info: var(--blue-483);
   /* Light's danger is a DEEP red, so the ink flips back to white (6.44:1). See the dark
      block's note: the two themes need opposite inks on this fill. */
-  --color-on-danger: #ffffff;
+  --color-on-danger: var(--gray-1000);
   --shadow-composer: 0 2px 8px -2px rgb(96 110 130 / 0.18);
   --shadow-menu: 0 0 20px rgb(96 110 130 / 0.16);
   --shadow-sheet: 0 16px 40px rgb(96 110 130 / 0.22);
   /* light: the highlight stop flips to a dark/ink tone instead of white
-     (stops 1/3/4 follow --grad-* which already carry light values) */
-  --ring-stop-2: #1a1430;
+     (stops 1/3/4 follow --grad-*, reassigned above) */
+  --ring-stop-2: var(--red-252);
   color-scheme: light;
 }
 
