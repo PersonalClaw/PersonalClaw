@@ -33,8 +33,10 @@ would exit 0 having judged nothing, and an option given twice is refused, not la
 appended to it.
 
 :func:`job_record` writes, and :func:`from_job_records` reads, the per-job record a local run of a
-catalogue job leaves (``python -m tools.ci run-job``): its key, result, identity, attempt, whether
-it needed a rerun, which quarantined tests failed, and each step's argv, exit and seconds.
+catalogue job leaves (``python -m tools.ci run-job``): its key, result, identity, attempt, the
+diagnostic rerun of a red job's failed tests (each classified :data:`FLAKE` or
+:data:`REPEATED_FAILURE`, never turning the result green), which quarantined tests failed, and
+each step's argv, exit and seconds.
 
 Standard library only, with no relative imports, so a trusted job can run it as a script.
 """
@@ -325,6 +327,15 @@ _RECORD_KEYS = frozenset(
     }
 )
 _STEP_RECORD_KEYS = frozenset({"argv", "exit", "seconds"})
+_RERUN_KEYS = frozenset({"argv", "exit", "tests"})
+_RERUN_TEST_KEYS = frozenset({"test", "rerun_result", "why"})
+
+#: How the diagnostic rerun classifies a failed test: it passed alone in a fresh process, or it
+#: failed again. A test that was not rerun (a rail, a security-marked test) is classified null.
+#: Neither word turns a red green: the first result is the result.
+FLAKE = "flake"
+REPEATED_FAILURE = "repeated failure"
+RERUN_RESULTS = frozenset({FLAKE, REPEATED_FAILURE})
 #: Where a sharded job's file list came from: CI's own plan, or a local run's even split.
 PLANS = frozenset({"ci", "offline"})
 
@@ -336,17 +347,21 @@ def job_record(
     identity: Identity,
     steps: Sequence[tuple[Sequence[str], int, float]],
     attempt: int = 1,
-    rerun: bool = False,
+    rerun: Mapping[str, object] | None = None,
     quarantined: Sequence[str] = (),
     plan: str | None = None,
     workers: int | None = None,
 ) -> str:
     """One job's (or one shard's) result as the JSON :func:`from_job_records` reads.
 
-    ``steps`` are each step's argv as run, its exit status and its seconds. ``rerun`` and
-    ``quarantined`` say whether the pass needed a rerun and which quarantined tests failed, for a
-    reader that keeps only a clean pass. ``plan`` is where a sharded job's list came from (one of
-    :data:`PLANS`), ``workers`` a worker count a local run set in place of the catalogue's.
+    ``steps`` are each step's argv as run, its exit status and its seconds. ``rerun`` is the
+    diagnostic rerun of a red job's failed tests, or None when there was no failed test to
+    diagnose: the rerun's ``argv`` and ``exit`` (both null when no failed test could be rerun),
+    and each failed test with its ``rerun_result`` (:data:`FLAKE`, :data:`REPEATED_FAILURE`, or
+    null when it was not rerun) and ``why``. Only a failure carries one, and it never changes
+    ``result``. ``quarantined`` names the quarantined tests that failed, for a reader that keeps
+    only a clean pass. ``plan`` is where a sharded job's list came from (one of :data:`PLANS`),
+    ``workers`` a worker count a local run set in place of the catalogue's.
     """
     record: dict[str, object] = {
         "schema": JOB_RECORD_SCHEMA,
@@ -355,7 +370,8 @@ def job_record(
         "head_sha": identity.head_sha,
         "external_revisions": dict(sorted(identity.external_revisions.items())),
         "attempt": attempt,
-        "rerun": rerun,
+        # A copy of a mapping; anything else is written as given, so the reader refuses it by name.
+        "rerun": dict(rerun) if isinstance(rerun, Mapping) else rerun,
         "quarantined": list(quarantined),
         "plan": plan,
         "workers": workers,
@@ -391,6 +407,46 @@ def _no_constant_in(what: str) -> Callable[[str], object]:
     return no_constant
 
 
+def _rerun_faults(rerun: object, where: str) -> None:
+    """Refuse a record's ``rerun`` that is not null or the one shape :func:`job_record` writes."""
+    if rerun is None:
+        return
+    if not isinstance(rerun, dict):
+        raise Refused(f"{where}: rerun must be null or an object")
+    if set(rerun) != _RERUN_KEYS:
+        raise Refused(f"{where}: rerun must hold exactly argv, exit and tests, got {sorted(rerun)}")
+    argv, code, tests = rerun["argv"], rerun["exit"], rerun["tests"]
+    if argv is not None and (
+        not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv)
+    ):
+        raise Refused(f"{where}: rerun argv must be null or a non-empty list of strings")
+    if code is not None and not _whole(code):
+        raise Refused(f"{where}: rerun exit must be null or a whole number")
+    if (argv is None) != (code is None):
+        raise Refused(f"{where}: rerun argv and exit are both null or both set")
+    if not isinstance(tests, list) or not tests:
+        raise Refused(f"{where}: rerun names no test")
+    seen: set[str] = set()
+    for entry in tests:
+        if not isinstance(entry, dict) or set(entry) != _RERUN_TEST_KEYS:
+            raise Refused(f"{where}: each rerun test holds exactly test, rerun_result and why")
+        test, result, why = entry["test"], entry["rerun_result"], entry["why"]
+        if not isinstance(test, str) or not test:
+            raise Refused(f"{where}: a rerun test must name a test id")
+        if test in seen:
+            raise Refused(f"{where}: rerun names {test} twice")
+        seen.add(test)
+        if result is not None and (not isinstance(result, str) or result not in RERUN_RESULTS):
+            raise Refused(
+                f"{where}: {test}'s rerun_result is {result!r}, not {FLAKE!r},"
+                f" {REPEATED_FAILURE!r} or null"
+            )
+        if result is not None and argv is None:
+            raise Refused(f"{where}: {test} is classified, and no rerun ran")
+        if not isinstance(why, str) or not why:
+            raise Refused(f"{where}: {test}'s why must be a non-empty string")
+
+
 def _one_record(text: str, n: int) -> JobResult:
     where = f"job record {n}"
     try:
@@ -413,7 +469,7 @@ def _one_record(text: str, n: int) -> JobResult:
     if not isinstance(key, str) or not key:
         raise Refused(f"{where} names no job key")
     where = f"job record {key!r}"
-    if data["result"] not in WORDS:
+    if not isinstance(data["result"], str) or data["result"] not in WORDS:
         raise Refused(f"{where} has the result {data['result']!r}, which is no job's")
     revisions = data["external_revisions"]
     if not isinstance(revisions, dict):
@@ -421,12 +477,16 @@ def _one_record(text: str, n: int) -> JobResult:
     identity = Identity(data["head_sha"], revisions)
     if not _whole(data["attempt"]) or data["attempt"] < 1:
         raise Refused(f"{where}: attempt must be a whole number from 1")
-    if not isinstance(data["rerun"], bool):
-        raise Refused(f"{where}: rerun must be true or false")
+    _rerun_faults(data["rerun"], where)
+    # run-job reruns only the failed tests of a red step, so only a failure names a rerun.
+    if data["result"] != FAILURE and data["rerun"] is not None:
+        raise Refused(f"{where}: only a failure has a rerun, and this {data['result']} names one")
     quarantined = data["quarantined"]
     if not isinstance(quarantined, list) or not all(isinstance(q, str) and q for q in quarantined):
         raise Refused(f"{where}: quarantined must be a list of test ids")
-    if data["plan"] is not None and data["plan"] not in PLANS:
+    if data["plan"] is not None and (
+        not isinstance(data["plan"], str) or data["plan"] not in PLANS
+    ):
         raise Refused(f"{where}: plan is {data['plan']!r}, not one of {sorted(PLANS)} or null")
     workers = data["workers"]
     if workers is not None and (not _whole(workers) or workers < 1):
@@ -455,9 +515,9 @@ def from_job_records(texts: Iterable[str]) -> list[JobResult]:
 
     Like :func:`from_needs` it refuses what it cannot read as a record: a repeated key, NaN or
     Infinity, a field missing or unknown, a result word that is no job's, an object id that is
-    not a full one, a step's seconds that are not a finite number, or a success with a step that
-    failed. Two records for the same key and attempt are refused, so
-    a failure cannot be followed by a success that hides it.
+    not a full one, a step's seconds that are not a finite number, a success with a step that
+    failed, or a rerun on a record that is not a failure. Two records for the same key and attempt
+    are refused, so a failure cannot be followed by a success that hides it.
     """
     out: list[JobResult] = []
     seen: set[tuple[str, int]] = set()

@@ -13,10 +13,11 @@ days that is), and the 90-day checks (#3946's replay among them) stay off: ``win
 false until the history spans 90 days.
 
 **First results.** A test's result in a run is its record in that run's lowest attempt: a later
-attempt, or a ``rerun_result`` #3947's ``run-job`` writes on the same line, adds a passing rerun
-to a first failure and never replaces it. Two records of one test in one attempt (a report read
-twice, a retried upload) count once, the first failure if either failed. Skips and expected
-failures are not runs of the test.
+attempt, or a ``rerun_result`` of ``flake`` (``telemetry.FLAKE``) that ``run-job``'s diagnostic
+rerun writes on the same line, adds a passing rerun to a first failure and never replaces it; a
+``repeated failure`` adds none. Two records of one test in one attempt (a report read twice, a
+retried upload) count once, the first failure if either failed. Skips and expected failures are
+not runs of the test.
 
 **Flake rate.** First failures that a rerun then passed, over the test's runs, rated only over
 ``MIN_RUNS`` runs or more.
@@ -147,7 +148,7 @@ def read(folder: Path) -> tuple[dict[int, _Run], dict[tuple[int, str], _Outcome]
         elif found.first in FAILED and result == "passed":
             found.passed_on_rerun = True
             continue
-        if found.first in FAILED and record.get("rerun_result") == "passed":
+        if found.first in FAILED and record.get("rerun_result") == telemetry.FLAKE:
             found.passed_on_rerun = True
     return runs, outcomes
 

@@ -272,7 +272,8 @@ def test_each_test_case_is_one_line_with_its_first_result(tmp_path: Path, monkey
     one = tests["tests.test_a::test_one"]
     assert one["seconds"] == 1.5 and one["report"] == "junit-test-shard-1"
     assert one["run_id"] == RUN and one["attempt"] == 1 and one["sha"] == "a" * 40
-    # Rerun and quarantine facts are #3947's run-job's; until it lands they are null, never guessed.
+    # A case run-job did not rerun carries no rerun_result; quarantine facts are not written yet.
+    # Both are null, never guessed.
     assert one["rerun_result"] is None and one["quarantined"] is None
 
 
@@ -644,3 +645,22 @@ def test_a_cron_that_names_both_days_matches_either_as_cron_does(at: str, matche
     when = telemetry._at(at)
     assert when is not None
     assert telemetry._cron_matches("0 6 15 * 1", when) is matches
+
+
+def test_a_test_line_carries_the_rerun_result_run_job_wrote_on_its_case(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """#3947's run-job writes the diagnostic rerun's word on the failed case; the line keeps the
+    first result and carries the word beside it."""
+    flaked = (
+        '<testcase classname="tests.test_a.TestB" name="test_two" time="2.0">'
+        '<properties><property name="rerun_result" value="flake"/></properties>'
+        '<failure message="boom">trace</failure></testcase>'
+    )
+    gh = FakeGh()
+    gh.artifacts[0] = gh._artifact(11, "junit-test-shard-1", _junit(PASSED, flaked))
+    _, lines = _collect(tmp_path, monkeypatch, gh)
+    tests = {line["test"]: line for line in lines if line["kind"] == "test"}
+    two = tests["tests.test_a.TestB::test_two"]
+    assert two["first_result"] == "failed" and two["rerun_result"] == "flake"
+    assert tests["tests.test_a::test_one"]["rerun_result"] is None
