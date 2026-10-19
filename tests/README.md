@@ -181,6 +181,43 @@ the repository again. `tests/rails/test_each_tree_check_runs_in_one_place.py` fa
 that runs one on the real tree, and on a test file a workflow job runs by name while the shards
 collect it too. Its lists of the copies still there only shrink.
 
+## Site baselines: a ratchet lists its sites
+
+A rail that holds a population down lists the sites it allows, rather than comparing a count with
+a fixed number. A count goes red on whichever of two pull requests merges second, though neither
+broke it: each fixed one site and added another. A list does not. The list is a `*.sites.jsonl`
+file, one JSON object per line, `{"site": "...", "reason": "..."}`, and `.gitattributes` merges
+every such file with git's `union` driver, so two branches that each add a line merge without a
+conflict. `check(found, path)` in `tests/site_baseline.py` fails on a site the file does not list,
+on a line whose site is gone, and on a site listed twice, each by name. Order is not checked.
+Only a vacuity floor stays a number: a scan that found fewer than N files measured nothing.
+
+- **You fixed a site:** delete its line, or run `python tests/site_baseline.py --prune`. That
+  runs the registered rails and deletes every stale and repeated line, and it never adds one.
+- **You add a site:** give its line a reason and `"added": "YYYY-MM-DD"`. With `BASE_SHA` set to
+  the pull request's base commit, each file is compared with the base's copy, so a branch cannot
+  grow its own list: a line the base does not have fails without `added`, and every added line is
+  printed for the job summary. A run with no base prints `compared with the working tree (no
+  base)`.
+- **You add a baseline file:** register it in `tests/rails/baselines/index.sites.jsonl`, with its
+  path as `site`, its `rail`, what it `replaces`, the `ceiling` it replaces, a reason and `added`.
+  A file the base does not have passes only with a registry line new in the branch and no more
+  lines than that ceiling. A registered file renamed or deleted fails until its registry line goes
+  too, and a registry line never raises its ceiling.
+- **A site in code** is named `path::qualified.name::<its source>` (`code_site`), so an edit above
+  it leaves its name alone; repeats of one name are `#2`, `#3` (`numbered`).
+
+`tests/rails/test_site_baseline_tree.py` holds the real tree to this: every baseline file is
+registered, and `.gitattributes` holds the line `*.sites.jsonl merge=union`.
+
+Pull requests land by GitHub's rebase merge, which refuses a conflicting pull request rather than
+resolving it. Whether GitHub applies the union driver is not known, and either way nothing is
+merged by hand: where it does not, a baseline two pull requests both changed stops the second as
+a conflict. Then rebase the branch on main on your machine, where git applies the driver, run the
+rails, and push. Never resolve a baseline in GitHub's web editor. A union merge keeps both sides
+of a hunk that both branches changed, so when two branches edit neighbouring lines, a line one of
+them deleted comes back: the check names it as stale, and `--prune` deletes it.
+
 ## Conventions
 
 - A variation earns its own test only by the rule in
