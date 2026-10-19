@@ -244,6 +244,21 @@ and the machine's CPUs, which shows a slow host for what it is.
 The durations only balance the shards: when neither source can be read, every file weighs the
 same and the plan is still whole.
 
+A shard that stalls leaves behind which test it was in. A shard killed at its cap writes no JUnit
+report, because pytest writes it when the session ends, and the 120 s per-test timeout does not
+fire for a hang outside a test's phases or in a call that never returns to the interpreter.
+Measured: three Linux shards stopped printing 43-45 minutes before the 55-minute cap, with every
+pytest process still alive, and nothing they left named the test. So both suite jobs set
+`PERSONALCLAW_TEST_STALL_DUMP_SECONDS` to 2700 (`tests/stall_catcher.py`). A pytest process still
+running 45 minutes after it started dumps every thread's stack from faulthandler's own thread,
+which reads the stacks even while a test holds the interpreter lock, and the run's controller
+writes `junit-so-far.xml` as the run goes, marking each test that started and has not finished as
+still running. Both land in `reports/stalls/`, which each shard uploads as `stalls-test-shard-N`
+or `stalls-test-macos-N` even when the job is cancelled. A run that ends on its own removes them,
+so the artifact exists only for a run that did not end. The controller takes the setting out of
+the environment and hands it to its xdist workers itself, so a pytest a test starts does not
+inherit it.
+
 On `main`, `breadth.yml` keeps the plan. A breadth shard's list digest is one of its inputs, so
 a plan made afresh each night, from durations that move a few percent, would hand every shard
 other files, and no tree-keyed shard would ever carry its result. Measured: two green `main`

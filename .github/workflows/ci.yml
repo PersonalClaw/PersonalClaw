@@ -586,6 +586,12 @@ jobs:
       # run containers and start the Compose stack run here (tests/container_runtime.py). A
       # developer's machine runs them only when it sets this too.
       PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
+      # A shard still running 45 minutes after its pytest started has stalled (the slowest green
+      # shard takes about 16 minutes here, 27 on macOS): every pytest process then dumps every
+      # thread's stack, and the run's report so far names the test still running, into
+      # reports/stalls/ (tests/stall_catcher.py). Under both legs' caps, with time left for the
+      # uploads; `test-macos` sets the same value, as its environment must equal this one.
+      PERSONALCLAW_TEST_STALL_DUMP_SECONDS: "2700"
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -686,6 +692,20 @@ jobs:
           path: reports/real-home-guard.txt
           if-no-files-found: ignore
           retention-days: 7
+      # ── What a shard that ran to its cap leaves behind ────────────────────────────────────
+      # A shard killed at the cap writes no JUnit report: pytest writes it when the session ends.
+      # Measured: three shards stopped printing 43-45 minutes before the cap, and nothing they left
+      # named the test. What the stall catcher wrote (every process's thread stacks, and the report
+      # so far, naming the test still running) is uploaded here; a run that ended on its own
+      # removes it, so nothing is uploaded then. `always()` runs this after the cap's cancel too.
+      - name: Upload what a stall left (shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: stalls-test-shard-${{ matrix.shard }}
+          path: reports/stalls/
+          if-no-files-found: ignore
+          retention-days: 7
 
   test:
     # ── Aggregation gate for the sharded suite above ──────────────────────────────────────────
@@ -774,6 +794,8 @@ jobs:
       # has one.
       PERSONALCLAW_SKIP_APP_BACKENDS: "1"
       PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
+      # And the stall catcher's time, as `test-shard`'s (tests/stall_catcher.py).
+      PERSONALCLAW_TEST_STALL_DUMP_SECONDS: "2700"
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -821,6 +843,14 @@ jobs:
         with:
           name: real-home-guard-macos-${{ matrix.shard }}
           path: reports/real-home-guard.txt
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload what a stall left (macOS shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: stalls-test-macos-${{ matrix.shard }}
+          path: reports/stalls/
           if-no-files-found: ignore
           retention-days: 7
 

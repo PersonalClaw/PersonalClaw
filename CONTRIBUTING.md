@@ -583,6 +583,11 @@ reports as `e2e-reports`;
 the nightly `full` workflow adds one per matrix leg. This is how you tell a
 known flake from a genuine break without a blind re-run.
 
+A shard that ran to its cap writes no JUnit report. If it was still running 45 minutes in, it
+uploads `stalls-test-shard-N` (or `stalls-test-macos-N`) instead: every pytest process's thread
+stacks, and `junit-so-far.xml`, which marks the test still running
+(see "The suite's shards" in [docs/maintainers/ci.md](docs/maintainers/ci.md)).
+
 ## Architecture orientation
 
 - Core package: `src/personalclaw/` — gateway (`gateway.py`), dashboard API

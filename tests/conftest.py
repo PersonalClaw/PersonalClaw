@@ -18,6 +18,7 @@ import pytest
 import real_home_guard
 import run_facts
 import shard_list
+import stall_catcher
 from hypothesis import HealthCheck, settings
 
 # ── Bytecode-cache rail (#2659) ─────────────────────────────────────────
@@ -267,6 +268,10 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     shard_list.configure(config)
+    # With PERSONALCLAW_TEST_STALL_DUMP_SECONDS set (CI sets it under each suite job's cap), a run
+    # still going by then leaves every thread's stack and a report naming the test it is in
+    # (tests/stall_catcher.py).
+    stall_catcher.configure(config)
     # Where this process ran (platform, xdist workers), for the telemetry record (#3948).
     run_facts.configure(config)
     if config.getoption("--fixture-costs"):

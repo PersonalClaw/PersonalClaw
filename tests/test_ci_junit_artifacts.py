@@ -30,6 +30,8 @@ from pathlib import Path
 
 import pytest
 import real_home_guard
+import stall_catcher
+from table_rows import row
 
 _REPO = Path(__file__).resolve().parents[1]
 _WORKFLOWS = _REPO / ".github" / "workflows"
@@ -440,6 +442,65 @@ def test_the_real_home_guard_report_is_uploaded_per_shard(
             f"all four shards upload the guard report as {name!r}; without a matrix "
             "coordinate they collide and only the last leg to finish survives."
         )
+
+
+#: The suite jobs a stall can run to the cap in, each with its matrix.
+_SUITE_JOBS = ("test-shard", "test-macos")
+#: What a job keeps after the dump for its last steps: the uploads of every report.
+_UPLOAD_MARGIN_SECONDS = 4 * 60
+
+
+def stall_dump_seconds(block: str) -> int | None:
+    """The job's own ``PERSONALCLAW_TEST_STALL_DUMP_SECONDS``, under its ``env:``."""
+    hit = re.search(
+        rf"^ {{6}}{stall_catcher.SETTING}:\s*\"?(\d+)\"?\s*$", block, flags=re.MULTILINE
+    )
+    return int(hit.group(1)) if hit else None
+
+
+def timeout_minutes(block: str) -> int | None:
+    hit = re.search(r"^ {4}timeout-minutes:\s*(\d+)\s*$", block, flags=re.MULTILINE)
+    return int(hit.group(1)) if hit else None
+
+
+def test_a_suite_job_dumps_its_stall_before_its_cap(subtests, workflows) -> None:
+    """🔴 Red before: a shard that ran to its 55-minute cap was killed with nothing written that
+    named its test. Each suite job sets the stall catcher's time (``tests/stall_catcher.py``)
+    under its cap, by the margin its uploads need, and uploads what it leaves, even when the run
+    is cancelled, with the shard in the artifact's name."""
+    assert len(_SUITE_JOBS) == 2
+    for job in _SUITE_JOBS:
+        with row(subtests, job=job):
+            block = workflows["ci.yml"][job]
+            seconds, cap = stall_dump_seconds(block), timeout_minutes(block)
+            assert cap, f"premise: `{job}` has a timeout-minutes"
+            assert seconds, f"`{job}` does not set {stall_catcher.SETTING} in its env"
+            assert seconds <= cap * 60 - _UPLOAD_MARGIN_SECONDS, (
+                f"`{job}` dumps at {seconds}s, too close to its {cap}-minute cap for its "
+                f"uploads to run after it"
+            )
+            uploads = [
+                s
+                for s in steps(block)
+                if "actions/upload-artifact" in s
+                and (with_key(s, "path") or "") == stall_catcher.FOLDER + "/"
+            ]
+            assert len(uploads) == 1, f"`{job}` uploads {stall_catcher.FOLDER}/ {len(uploads)}x"
+            assert key(uploads[0], "if") == "always()", f"`{job}`: a cancelled run must upload it"
+            assert "${{ matrix." in (with_key(uploads[0], "name") or ""), f"`{job}`: per shard"
+
+
+def test_the_stall_rail_reads_what_it_checks() -> None:
+    """Each reader answers None when its key is missing, and reads the job's own keys only."""
+    block = (
+        "    timeout-minutes: 55\n    env:\n"
+        f'      {stall_catcher.SETTING}: "2700"\n'
+        "    steps:\n      - name: x\n        env:\n"
+        f"          {stall_catcher.SETTING}: 9\n"
+    )
+    assert stall_dump_seconds(block) == 2700 and timeout_minutes(block) == 55
+    assert stall_dump_seconds(block.replace(f'      {stall_catcher.SETTING}: "2700"\n', "")) is None
+    assert timeout_minutes("        timeout-minutes: 5\n") is None
 
 
 def test_the_report_directory_is_gitignored() -> None:
