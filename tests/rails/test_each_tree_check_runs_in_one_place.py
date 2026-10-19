@@ -15,7 +15,9 @@ Two shapes of copy are found here, both read from source and never imported:
   to a tree it made) runs the check on that, not on the repository. Helpers in another module are
   not followed.
 - **A file.** A test file that a workflow job runs by name while the suite's shards also collect
-  it (``tools/ci/shards.py``), so it runs twice in one run.
+  it (``tools/ci/shards.py``), so it runs twice in one run. A file the shards leave to its job
+  (``shards.JOB_OWNED``) is no copy, and no reader of ``docs/`` in the suite either; a row holds
+  that its job still runs it by name.
 
 :data:`KNOWN_COPIES` and :data:`KNOWN_FILE_COPIES` list the copies that are still there, each
 with the job that owns the check. They only shrink: a copy not on them fails, and so does an
@@ -265,19 +267,18 @@ KNOWN_COPIES: frozenset[tuple[str, str]] = frozenset(
 )
 
 #: The suite's modules and helpers that read ``docs/``: prose checked against the tree. Each is a
-#: whole-tree read the suite still holds, so the suite's inputs are the docs too (#3945). They move
-#: to tests/rails after the scanner's whole-tree scan.
+#: whole-tree read the suite still holds, so the suite's inputs are the docs too (#3945). These
+#: three are security-marked, so the rails census keeps them where they are, and they stay.
 KNOWN_DOCS_READERS: frozenset[str] = frozenset(
     {
         "tests/security/test_scanner_adversarial.py",
         "tests/test_architecture_docs_match_the_tree.py",
         "tests/test_browse_cdp_preflight.py",
-        "tests/test_website_installer.py",
     }
 )
 
-#: The test files a workflow job runs by name while the shards collect them too, until the suite
-#: legs pass ``--ignore`` for them. ``(workflow job, file)``.
+#: The test files a workflow job runs by name while the shards collect them too, until the
+#: shards leave each to its job (``shards.JOB_OWNED``). ``(workflow job, file)``.
 KNOWN_FILE_COPIES: frozenset[tuple[str, str]] = frozenset(
     {
         ("breadth.yml security-corpus", "tests/security/test_app_data_reads_never_follow_links.py"),
@@ -295,7 +296,6 @@ KNOWN_FILE_COPIES: frozenset[tuple[str, str]] = frozenset(
         ("ci.yml browse-live", "tests/test_browse_behavioural_proof_is_reachable.py"),
         ("ci.yml browse-live", "tests/test_browse_cdp_live.py"),
         ("ci.yml browse-live", "tests/test_browse_safety_script.py"),
-        ("ci.yml lint", "tests/test_website_installer.py"),
         ("ci.yml rails-checks", "tests/test_npm_advisory_floors.py"),
         ("ci.yml security-corpus", "tests/security/test_app_data_reads_never_follow_links.py"),
         ("ci.yml security-corpus", "tests/security/test_app_installs_what_was_scanned.py"),
@@ -549,14 +549,18 @@ def reads_docs(source: str) -> bool:
     return False
 
 
-def docs_readers(root: Path) -> set[str]:
+def docs_readers(root: Path, owned: Mapping[str, str] | None = None) -> set[str]:
     """Every suite module or helper under *root*'s ``tests/`` that reads ``docs/``. Prose checked
     against the tree is a whole-tree read: while the suite holds one, the suite's inputs are the
-    docs too, and a docs-only change runs it (#3945)."""
+    docs too, and a docs-only change runs it (#3945). A file the shards leave to the job that
+    runs it by name (``shards.JOB_OWNED``, or *owned*) is that job's, not the suite's."""
+    skipped = shards.JOB_OWNED if owned is None else owned
     found: set[str] = set()
     for path in sorted((root / "tests").rglob("*.py")):
         rel = path.relative_to(root).as_posix()
         if rel.startswith(f"{shards.RAILS}/") or "/fixtures/" in rel or "/corpus/" in rel:
+            continue
+        if rel in skipped:
             continue
         if reads_docs(path.read_text(encoding="utf-8")):
             found.add(rel)
@@ -578,9 +582,16 @@ def _named_paths(run: str) -> Iterable[str]:
                 yield word.rstrip("/")
 
 
-def file_copies(root: Path) -> set[tuple[str, str]]:
-    """``("workflow job", file)`` for each test file a job runs by name that a shard collects."""
-    universe = set(shards.universe(root))
+def file_copies(root: Path, owned: Mapping[str, str] | None = None) -> set[tuple[str, str]]:
+    """``("workflow job", file)`` for each test file a job runs by name that a shard collects.
+    A file the shards leave to its job (``shards.JOB_OWNED``, or *owned*) is no copy."""
+    universe = set(shards.universe(root, owned))
+    return {(job, rel) for job, rel in named_runs(root) if rel in universe}
+
+
+def named_runs(root: Path) -> set[tuple[str, str]]:
+    """``("workflow job", file)`` for each test file a job's pytest step names, outside the
+    shards' own steps: a named folder counts as each ``test_*.py`` under it."""
     found: set[tuple[str, str]] = set()
     for workflow in sorted((root / ".github" / "workflows").glob("*.yml")):
         data = yaml.safe_load(workflow.read_text(encoding="utf-8")) or {}
@@ -600,8 +611,7 @@ def file_copies(root: Path) -> set[tuple[str, str]]:
                         else [named]
                     )
                     for rel in files:
-                        if rel in universe:
-                            found.add((f"{workflow.name} {job}", rel))
+                        found.add((f"{workflow.name} {job}", rel))
     return found
 
 
@@ -624,6 +634,31 @@ def test_no_whole_tree_check_gains_a_copy_in_the_suite() -> None:
 
 def test_no_test_file_runs_in_a_job_and_in_the_shards() -> None:
     problems = _diff(file_copies(REPO), KNOWN_FILE_COPIES, "file run in a job and the shards")
+    assert not problems, "\n  ".join(problems)
+
+
+def job_owned_problems(root: Path, owned: Mapping[str, str]) -> list[str]:
+    """Each file the shards leave to a job that the job no longer runs by name, or that is not a
+    test file pytest would collect: either way it would run nowhere."""
+    runs = named_runs(root)
+    collectable = set(shards.universe(root, {}))
+    problems = [
+        f"{rel} is left to {job}, which no longer runs it by name"
+        for rel, job in sorted(owned.items())
+        if (job, rel) not in runs
+    ]
+    problems += [
+        f"{rel} is left to {job}, but pytest would not collect it"
+        for rel, job in sorted(owned.items())
+        if rel not in collectable
+    ]
+    return problems
+
+
+def test_every_file_the_shards_leave_to_a_job_still_runs_there() -> None:
+    """The other half of leaving a file out of the shards: its owner runs it, by name, once."""
+    assert shards.JOB_OWNED, "nothing is left to a job, so this row checks nothing"
+    problems = job_owned_problems(REPO, shards.JOB_OWNED)
     assert not problems, "\n  ".join(problems)
 
 
@@ -863,6 +898,40 @@ def test_a_planted_job_that_runs_a_shard_file_is_a_file_copy(tmp_path) -> None:
         ("ci.yml security", "tests/security/test_b.py"),
         ("ci.yml security", "tests/test_a.py"),
     }
+
+
+_NAMED = _WORKFLOW + "  lint:\n    steps:\n      - run: uv run pytest tests/test_a.py\n"
+
+
+def test_a_named_file_stops_being_a_copy_only_once_the_shards_leave_it_to_its_job(
+    tmp_path,
+) -> None:
+    """The entry drops once the file is excluded, and not before: named by a job alone, it is
+    still a copy; left to that job, it is none."""
+    root = _planted_repo(tmp_path, _NAMED)
+    assert file_copies(root, {}) == {("ci.yml lint", "tests/test_a.py")}
+    assert file_copies(root, {"tests/test_a.py": "ci.yml lint"}) == set()
+
+
+def test_a_file_left_to_a_job_that_no_longer_runs_it_fails(tmp_path) -> None:
+    root = _planted_repo(tmp_path, _NAMED)
+    assert job_owned_problems(root, {"tests/test_a.py": "ci.yml lint"}) == []
+    assert job_owned_problems(root, {"tests/test_a.py": "ci.yml e2e"}) == [
+        "tests/test_a.py is left to ci.yml e2e, which no longer runs it by name"
+    ]
+    gone = {"tests/test_gone.py": "ci.yml lint"}
+    assert "tests/test_gone.py is left to ci.yml lint, but pytest would not collect it" in (
+        job_owned_problems(root, gone)
+    )
+
+
+def test_a_docs_reader_the_shards_leave_to_its_job_is_not_the_suites(tmp_path) -> None:
+    root = _planted_repo(tmp_path, _NAMED)
+    (root / "tests" / "test_a.py").write_text(
+        '_ROOT = None\nDOC = _ROOT / "docs" / "guide.md"\n', encoding="utf-8"
+    )
+    assert docs_readers(root, {}) == {"tests/test_a.py"}
+    assert docs_readers(root, {"tests/test_a.py": "ci.yml lint"}) == set()
 
 
 @pytest.mark.parametrize(

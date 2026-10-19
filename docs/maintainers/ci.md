@@ -682,6 +682,12 @@ run does but imports only the files the list names (`tests/shard_list.py`). A br
 records its list's digest as one of its inputs, so a result is carried only onto the files it
 measured. Modules stay whole, so a module-scoped fixture is set up in one shard.
 
+The plan leaves out `tests/rails`, which the `rails` job runs, and each file in `shards.JOB_OWNED`,
+which the job named beside it runs by name: `tests/test_website_installer.py`, in `lint`. `shards
+check` fails a plan that lists one, and a rail
+(`tests/rails/test_each_tree_check_runs_in_one_place.py`) fails when a listed job stops running
+its file, so a file left out of the shards never runs nowhere.
+
 The per-file seconds come from #3948's telemetry record (see "CI telemetry" below): each file's
 median first-attempt seconds over the leg's own reports in the three newest completed `main`
 runs whose history the collector wrote, red ones included and cancelled ones skipped, on the
