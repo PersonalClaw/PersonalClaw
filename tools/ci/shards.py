@@ -53,6 +53,7 @@ RAILS = "tests/rails"
 #: its file by name, so leaving a file out here never leaves it running nowhere.
 JOB_OWNED: Mapping[str, str] = {
     "tests/test_website_installer.py": "ci.yml lint",
+    "tests/test_npm_advisory_floors.py": "ci.yml rails-checks",
 }
 
 

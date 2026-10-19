@@ -683,7 +683,8 @@ records its list's digest as one of its inputs, so a result is carried only onto
 measured. Modules stay whole, so a module-scoped fixture is set up in one shard.
 
 The plan leaves out `tests/rails`, which the `rails` job runs, and each file in `shards.JOB_OWNED`,
-which the job named beside it runs by name: `tests/test_website_installer.py`, in `lint`. `shards
+which the job named beside it runs by name: `tests/test_website_installer.py`, in `lint`, and
+`tests/test_npm_advisory_floors.py`, in `rails-checks`. `shards
 check` fails a plan that lists one, and a rail
 (`tests/rails/test_each_tree_check_runs_in_one_place.py`) fails when a listed job stops running
 its file, so a file left out of the shards never runs nowhere.
