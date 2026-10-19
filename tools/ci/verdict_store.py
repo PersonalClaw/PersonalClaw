@@ -21,8 +21,11 @@ security is anything but ``ordinary``, or when it is live: marked ``live``, or r
 catalogue's live feeds. Live and security evidence is never reused, with no TTL.
 
 **What is recorded.** :meth:`Store.record` records only a pass (``success``) that needed no rerun
-and whose quarantined-failure list is present and empty, from a checkout that was clean when the
-run began and is still clean, on the same head and tree, when the pass is recorded. Clean means
+(:attr:`Result.rerun` is ``False``. Nothing feeds the store a ``run-job`` record yet; when one does,
+the record's ``rerun`` of null, which every success carries, is to map to ``False``, and a
+diagnostic rerun is only ever on a red job, which is never recorded) and whose quarantined-failure
+list is present and empty, from a checkout that was clean when the run began and is still clean, on
+the same head and tree, when the pass is recorded. Clean means
 ``git status --porcelain --untracked-files=all`` printed nothing, so an untracked file counts even
 where ``status.showUntrackedFiles`` hides it. The entry goes to a temporary file in the store's own
 folder, is flushed to disk, and only then takes its name, so a half-written entry is never under

@@ -160,7 +160,8 @@ def test_a_passing_job_leaves_a_success_record_naming_its_head(repo, tmp_path):
     assert record["key"] == "ok"
     assert record["result"] == verdict.SUCCESS
     assert record["head_sha"] == _git(repo, "rev-parse", "HEAD")
-    assert record["rerun"] is False and record["quarantined"] == []
+    # A passing job had no failed test to diagnose, so it carries no rerun.
+    assert record["rerun"] is None and record["quarantined"] == []
     assert [s["exit"] for s in record["steps"]] == [0, 0]
     assert record["steps"][1]["argv"] == [PY, "-c", "print('second')"]
     [read] = verdict.from_job_records([outcome.record.read_text()])

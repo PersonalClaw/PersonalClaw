@@ -74,7 +74,9 @@ TIER_TEXT: dict[str, tuple[str, str]] = {
 }
 
 #: A job's security posture. ``security``: its result is security evidence (it runs
-#: security-marked or fail-closed checks), so it is never reused, rerun or selected out.
+#: security-marked or fail-closed checks), so it is never selected out, the job's result is never
+#: rerun or reused, and a security-marked test is never rerun; an ordinary failed test inside it
+#: gets one diagnostic rerun, recorded only (``tools/ci/jobs.py``'s ``diagnose``).
 SECURITY: tuple[str, ...] = ("ordinary", "security")
 
 #: What a job installs before its steps run.

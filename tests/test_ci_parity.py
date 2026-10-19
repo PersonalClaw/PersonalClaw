@@ -57,8 +57,9 @@ def _history(tmp_path: Path, reports: dict[str, bytes], head: dict | None = None
     lines: list[dict] = [head or _head()]
     for name, junit in sorted(reports.items()):
         cases, platform, workers = telemetry.report_cases(name, _zip(name, junit))
-        for test, seconds, result, host in cases:
+        for test, seconds, result, host, rerun in cases:
             line = dict.fromkeys(telemetry.TEST_FIELDS)
+            line["rerun_result"] = rerun
             line.update(
                 kind="test",
                 run_id=RUN,

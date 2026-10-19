@@ -39,7 +39,7 @@ def test_a_record_reads_back_as_the_result_it_names() -> None:
 def test_a_record_holds_what_a_reuse_store_reads() -> None:
     data = json.loads(_record(quarantined=["tests/test_a.py::test_x"], plan="offline", workers=2))
     assert data["schema"] == verdict.JOB_RECORD_SCHEMA
-    assert data["rerun"] is False
+    assert data["rerun"] is None
     assert data["quarantined"] == ["tests/test_a.py::test_x"]
     assert data["plan"] == "offline" and data["workers"] == 2
     assert data["steps"] == [{"argv": ["uv", "run", "pytest"], "exit": 0, "seconds": 1.5}]
@@ -75,16 +75,21 @@ def test_a_record_with_seconds_that_are_no_number_is_never_written(seconds: floa
         (_with(schema="other/1"), "has schema"),
         (_with(key=""), "names no job key"),
         (_with(result="passed"), "which is no job's"),
+        # A word of another JSON type is refused by name, never a crash.
+        (_with(result=["success"]), "which is no job's"),
+        (_with(result={}), "which is no job's"),
         (_with(head_sha="a" * 39), "head_sha must be a full object id"),
         (_with(head_sha=HEAD + "\n"), "head_sha must be a full object id"),
         (_with(external_revisions={"apps-partner": "short"}), "must be a full object id"),
         (_with(external_revisions=[]), "external_revisions must be an object"),
         (_with(attempt=0), "attempt must be a whole number from 1"),
         (_with(attempt=True), "attempt must be a whole number from 1"),
-        (_with(rerun="no"), "rerun must be true or false"),
+        (_with(rerun="no"), "rerun must be null or an object"),
+        (_with(rerun=False), "rerun must be null or an object"),
         (_with(quarantined=[""]), "quarantined must be a list of test ids"),
         (_with(quarantined=None), "quarantined must be a list of test ids"),
         (_with(plan="guessed"), "plan is 'guessed'"),
+        (_with(plan=["ci"]), "plan is \\['ci'\\]"),
         (_with(workers=0), "workers must be a whole number from 1"),
         (_with(steps={}), "steps must be a list"),
         (_with(steps=[{"argv": ["x"], "exit": 0}]), "each step holds exactly"),

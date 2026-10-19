@@ -228,7 +228,10 @@ Every entry declares:
 - `external_inputs`: what the job reads that the tree does not pin, such as the apps checkout,
   the advisory feed, the package index or the shard history;
 - `toolchain` and `cache`;
-- `security`: `security` when its result is security evidence, else `ordinary`;
+- `security`: `security` when its result is security evidence, else `ordinary`. A `security`
+  job is never selected out; the job's result is never rerun or reused, and a security-marked
+  test is never rerun; an ordinary failed test inside it gets one diagnostic rerun, recorded
+  only (see "The diagnostic rerun" under "The quarantine");
 - `timeout_min`, 2 or more, since a local run stops a job a minute before its cap.
 
 An entry may also set `platform`, `python`, `live`, `reuse`, `env`, `workers`, `workers_env`,
@@ -805,8 +808,11 @@ the shard planner and the weekly report read it.
   figure they give, so 90 days of both would double the storage for nothing. At the 59 main CI
   runs measured in one busy week and one Breadth night a day, 90 days is about 860 histories,
   roughly 2.3 GB compressed.
-- **Not yet recorded:** `rerun_result` and `quarantined` are #3947's, `cache_hits` is #3909's,
-  and `worker` and `position` are #3949's. No API reports them, so they are null, never guessed.
+- **The diagnostic rerun:** `rerun_result` is read from the `rerun_result` property `run-job`
+  writes on each failed case it reran: `flake` or `repeated failure`, null for a case it did not
+  rerun. Any other value, or one on a case that did not fail first, fails the collection.
+- **Not yet recorded:** `quarantined` is #3947's, `cache_hits` is #3909's, and `worker` and
+  `position` are #3949's. No API reports them, so they are null, never guessed.
 
 `tools/ci/report.py` (`python -m tools.ci report --history <folder>`) reads only that schema
 and fails (exit 2) on a file in another schema or a newer version, and on a folder that does
@@ -816,9 +822,10 @@ and to the job summary, and `--json` writes the figures:
 - **the window:** the 90 days up to the newest run. While less than 90 days exist, it states the
   exact window it read, and `window.mature` stays false, which keeps the 90-day replay and
   maturity checks off;
-- **flake rates**, from first results: a first failure that a rerun then passed, over the test's
-  runs, rated only from 10 runs up. Two records of one test in one attempt count once. A skip or
-  an expected failure is not a run;
+- **flake rates**, from first results: a first failure that a rerun then passed (a later
+  attempt that passed, or a `rerun_result` of `flake`; a `repeated failure` is not one), over
+  the test's runs, rated only from 10 runs up. Two records of one test in one attempt count once.
+  A skip or an expected failure is not a run;
 - **durations:** each test's p50 and p99, the 20 slowest, and the week-over-week trend;
 - **scheduled runs:** from the newest slots file, each workflow's slots that ran, with the median
   lag, and every missed or pending slot as a line of its own.
@@ -858,7 +865,7 @@ runs no `test-macos`). It reads only the file it is given, and no workflow runs 
 - **Its reports.** Each JUnit report the job declares must exist and be newer than the job's
   start, or the job is red: a pytest that died before writing one is red, not green.
 - **One record per job, or per shard.** `verdict.job_record` writes its key, result, head,
-  partner revisions, attempt, whether it needed a rerun (never, here), which quarantined tests
+  partner revisions, attempt, the diagnostic rerun (below), which quarantined tests
   failed (read from the reports' `quarantine_issue` property), where a shard plan came from, a
   local worker count, and each step's argv, exit and seconds. The partner revisions are those
   of the partners the job's own external inputs name. `verdict.from_job_records` reads records
@@ -1021,9 +1028,53 @@ no test's outcome, and the guard. It is `security`-marked, so no entry may waive
 prove the list's rules. The file's shape is a contract with the weekly CI health report (#3948),
 which reads it for the quarantine's status: a field changes in both together.
 
-Not yet built: the rerun that classifies each failure as a flake or a repeated failure needs
-`tools/ci run-job` (#3909), and the web half (Vitest, Playwright's `failOnFlakyTests`) comes
-with it. Until then a flaky failure is red, as the first result always is.
+**The diagnostic rerun.** When a pytest step of `run-job` exits 1 (tests ran and some failed)
+and nothing else went wrong, its failed tests are read from the step's own JUnit report, as XML,
+and rerun once, alone, in a fresh process (`-n 0` when the step ran workers; a step that names no
+worker count ran in one process already, and its pytest may have no xdist), with the step's
+per-test `--timeout` and inside the job's remaining time. It classifies only: the job stays red
+whatever the rerun shows, since the first result is the result and only an entry here waives a
+known failure.
+
+- **Which test a case names:** pytest names a case from its own rootdir, which can be a
+  package's (`packages/personalclaw-client-py` has a pytest config of its own), so a case's
+  classname is looked up from each folder at or above the paths the step collects, and counts
+  only as a `.py` file under one of those paths. A case that names no such file, or two, is not
+  rerun, and its record says so. The rerun's own report is read only when every case in it is one
+  the step's report failed, named alike.
+- **Never rerun:** a rail (`tests/rails/`), and any `security`-marked test, which the rerun
+  deselects (`-m "not security"`). A failure there is red at once. A rail starts no process; a
+  security-marked test still starts one, which collects its module and deselects it (exit 5),
+  so the test itself never runs again.
+- **A security-posture job:** the job's result is never rerun or reused, and a security-marked
+  test is never rerun; an ordinary failed test inside it gets one diagnostic rerun, recorded
+  only. The suite jobs (`python-suite`, `python-suite-macos`) are such jobs, so their ordinary
+  failures are classified while the job stays red.
+- **Recorded three ways:** each failed test as `flake` (it passed alone) or `repeated failure`
+  (it failed again), or null with the reason it was not rerun, in the job record's `rerun` field;
+  as a `rerun_result` property on its case in the job's report, which the telemetry collector
+  reads into the test line's `rerun_result`; and as a `::warning` line.
+- **The step's own outputs:** the files the step left beside its JUnit report (the real-home
+  guard's `reports/real-home-guard.txt` among them) are put back after the rerun, and what the
+  rerun wrote there moves to the job's scratch folder, so the job's reports describe the job.
+- **Not rerun at all:** a passing job; a step that failed for any other reason (a usage error,
+  the job's time running out, a signal, the credential tripwire, a program that is not pytest);
+  and a step whose report is missing, older than the job or not XML. Their record's `rerun` is
+  null. A test stopped by its own per-test `--timeout` is a failed test, and is rerun.
+
+`tests/test_ci_jobs_rerun.py` plants a suite in a temporary repository and runs it through
+`run-job`'s step path: a test that fails then passes, one that fails twice, one that times out
+twice, and a security-marked one and a rail that fail, each job red; a package with its own
+pytest root, whose failure is rerun as its own test and never as its namesake at the root; a step
+stopped for its time, a signal or the tripwire, and a report it cannot trust, each with no rerun;
+a rerun stopped at the end of the job's time, one the runner is interrupted in, and one whose
+report cannot be read; and a session report beside the JUnit that the rerun leaves as the step
+wrote it. The weekly report counts the `flake` and not the `repeated failure`.
+
+The web half (Vitest, Playwright's `failOnFlakyTests`) comes later, and with it the CI contract's
+row per runner, pytest's included: one retry, in a fresh process, with the same time budget, and
+red on a first failure the retry passes. Until then a web job's failure is red with no rerun, and
+the pytest half is held by `tests/test_ci_jobs_rerun.py` alone.
 
 ## Supply chain
 

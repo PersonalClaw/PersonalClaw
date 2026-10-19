@@ -110,10 +110,13 @@ def test_a_failure_with_a_passing_rerun_is_a_failure_never_a_pass(
     assert row["first_passes"] == 10
 
 
-def test_a_rerun_result_in_one_record_counts_as_a_passing_rerun(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize(("word", "passed"), [("flake", 1), ("repeated failure", 0)])
+def test_a_rerun_result_in_one_record_counts_as_a_passing_rerun_only_when_a_flake(
+    tmp_path: Path, monkeypatch, word: str, passed: int
 ) -> None:
-    """#3947's run-job records the diagnostic rerun on the same line, as ``rerun_result``."""
+    """run-job records the diagnostic rerun on the same line, as ``rerun_result``, in the two
+    words the collector lets through: ``flake`` is a passing rerun, ``repeated failure`` is not."""
+    assert word in telemetry.RERUN_RESULTS
     folder = tmp_path / "h"
     for i in range(10):
         _write(folder, 400 + i, 1, i, {"t::y": ("passed", 1.0)})
@@ -126,13 +129,13 @@ def test_a_rerun_result_in_one_record_counts_as_a_passing_rerun(
         test="t::y",
         seconds=1.0,
         first_result="failed",
-        rerun_result="passed",
+        rerun_result=word,
         report="r",
     )
     _write(folder, 410, 1, 10, {}, extra=[rerun])
     _, data, _ = _report(folder, monkeypatch, tmp_path)
     row = _rates(data)["t::y"]
-    assert row["first_failures"] == 1 and row["passed_on_rerun"] == 1
+    assert row["first_failures"] == 1 and row["passed_on_rerun"] == passed
 
 
 def test_two_records_of_one_retried_attempt_are_counted_once(tmp_path: Path, monkeypatch) -> None:

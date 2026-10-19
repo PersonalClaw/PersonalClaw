@@ -33,9 +33,15 @@ than ``MAX_ARCHIVE_BYTES`` is never downloaded, a report is read in memory up to
 DOCTYPE anywhere. A report that cannot be read fails the collection and writes nothing, since a
 history with fewer tests would read as a run that ran fewer.
 
-Rerun and quarantine facts (``rerun_result``, ``quarantined``) are #3947's ``run-job``'s, and
-cache hits (``cache_hits``) are #3909's; no API reports them, so until those land they are null,
-never guessed. Standard library only, like every file in ``tools/ci``.
+**The diagnostic rerun.** ``run-job`` reruns a failed test once, alone, and writes its
+classification on the case as a ``rerun_result`` property: ``flake`` or ``repeated failure``. A
+test line carries it as ``rerun_result``, null for a case that was not rerun. Any other value,
+two on one case, or one on a case whose first result was not a failure, fails the collection.
+The first result is never replaced by it.
+
+Quarantine facts (``quarantined``) and cache hits (``cache_hits``) no API reports, so until they
+are written they are null, never guessed. Standard library only, like every file in
+``tools/ci``.
 """
 
 from __future__ import annotations
@@ -306,8 +312,33 @@ def _result(case: ET.Element) -> str:
     return "passed"
 
 
-Case = tuple[str, float, str, str | None]
-"""One test case: its id, its seconds, its first result, and the runner host it ran on."""
+#: The junit property ``run-job``'s diagnostic rerun writes on each failed case it classified,
+#: and its two words (``tools/ci/verdict.py``'s ``FLAKE`` and ``REPEATED_FAILURE``; this module
+#: imports no sibling, so they are spelled here and a test holds the two lists equal).
+RERUN_PROPERTY = "rerun_result"
+FLAKE = "flake"
+RERUN_RESULTS = frozenset({FLAKE, "repeated failure"})
+
+Case = tuple[str, float, str, str | None, str | None]
+"""One test case: its id, its seconds, its first result, the runner host it ran on, and the
+diagnostic rerun's classification of it, or None when it was not rerun."""
+
+
+def _rerun_result(name: str, test: str, first: str, case: ET.Element) -> str | None:
+    """The case's ``rerun_result`` property, refused unless it is one property, one of the two
+    words, on a case whose first result was a failure: a report that says otherwise is not this
+    rerun's."""
+    words = [p.get("value") for p in case.iter("property") if p.get("name") == RERUN_PROPERTY]
+    if not words:
+        return None
+    if len(words) > 1:
+        raise CollectError(f"{name}: {test} has more than one rerun_result: {words}")
+    [word] = words
+    if word not in RERUN_RESULTS:
+        raise CollectError(f"{name}: {test} has a rerun_result of {word!r}")
+    if first not in ("failed", "error"):
+        raise CollectError(f"{name}: {test} has a rerun_result, and its first result is {first}")
+    return word
 
 
 def report_cases(name: str, archive: bytes) -> tuple[list[Case], str | None, int | None]:
@@ -340,8 +371,10 @@ def report_cases(name: str, archive: bytes) -> tuple[list[Case], str | None, int
                     host = suite.get("hostname")
                     for case in suite.iter("testcase"):
                         test = f"{case.get('classname') or ''}::{case.get('name') or ''}"
-                        cases.append((test, float(case.get("time") or 0.0), _result(case), host))
                         found = {p.get("name"): p.get("value") for p in case.iter("property")}
+                        first = _result(case)
+                        rerun = _rerun_result(name, test, first, case)
+                        cases.append((test, float(case.get("time") or 0.0), first, host, rerun))
                         if PLATFORM_PROPERTY in found or WORKERS_PROPERTY in found:
                             facts.add((found.get(PLATFORM_PROPERTY), found.get(WORKERS_PROPERTY)))
     except zipfile.BadZipFile:
@@ -433,7 +466,7 @@ def collect(
         if len(data) > MAX_ARCHIVE_BYTES:
             raise CollectError(f"{name}: the archive passes {MAX_ARCHIVE_BYTES} bytes")
         cases, platform, workers = report_cases(name, data)
-        for test, seconds, result, host in cases:
+        for test, seconds, result, host, rerun in cases:
             tests.append(
                 {
                     "kind": "test",
@@ -446,7 +479,7 @@ def collect(
                     "test": test,
                     "seconds": seconds,
                     "first_result": result,
-                    "rerun_result": None,
+                    "rerun_result": rerun,
                     "quarantined": None,
                     "platform": platform,
                     "workers": workers,
