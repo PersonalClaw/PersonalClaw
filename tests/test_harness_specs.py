@@ -221,5 +221,6 @@ def test_resolve_commands_skips_needs_tests_when_none() -> None:
 def test_resolve_commands_dedups_and_ignores_unknown() -> None:
     cmds = profiles.resolve_commands(["web", "web", "does-not-exist"])
     commands = [c.command for c in cmds]
-    # web contributes 2 commands, requested twice → still 2 (deduped); unknown ignored.
-    assert commands == ["npm run typecheck:web", "npm run test:web"]
+    # web is the catalogue's web-unit job on the working tree; requested twice → still once
+    # (deduped); unknown ignored.
+    assert commands == [f"{profiles.HARNESS_PY} -m tools.ci run-job web-unit --working-tree"]

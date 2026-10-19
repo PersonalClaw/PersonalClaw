@@ -451,14 +451,26 @@ def test_the_jobs_time_is_shared_by_its_steps(repo, tmp_path):
     assert outcome.reasons[0].startswith("step 2: the job timed out after ")
 
 
+#: What keeps a job from running on this machine in either mode, and how its reason names it.
+_CANNOT_RUN_IN_EITHER_MODE = [
+    pytest.param(
+        {"container": "img:1", "script": "x.sh", "command": ()},
+        "it runs in the container",
+        id="container",
+    ),
+    pytest.param({"toolchain": ("tmux",)}, "its toolchain needs tmux", id="tmux"),
+    pytest.param({"toolchain": ("uv-sync",)}, "its toolchain needs uv", id="uv-sync"),
+    pytest.param(
+        {"external_inputs": ("apps-partner",)}, "there is no checkout at .ci-apps", id="partner"
+    ),
+]
+
+
 @pytest.mark.parametrize(
     ("kw", "why"),
     [
-        ({"platform": "macos-26"}, "it runs on macos-26"),
-        ({"container": "img:1", "script": "x.sh", "command": ()}, "it runs in the container"),
-        ({"toolchain": ("tmux",)}, "its toolchain needs tmux"),
-        ({"toolchain": ("uv-sync",)}, "its toolchain needs uv"),
-        ({"external_inputs": ("apps-partner",)}, "there is no checkout at .ci-apps"),
+        pytest.param({"platform": "macos-26"}, "it runs on macos-26", id="platform"),
+        *_CANNOT_RUN_IN_EITHER_MODE,
     ],
 )
 def test_a_job_this_machine_cannot_run_is_partial_and_named(repo, tmp_path, kw, why):
@@ -466,6 +478,28 @@ def test_a_job_this_machine_cannot_run_is_partial_and_named(repo, tmp_path, kw, 
     outcome = _run(repo, _job("elsewhere", "pass", **kw), tmp_path, host=host)
     assert outcome.code == run.PARTIAL and not outcome.ran and outcome.record is None
     assert any(why in reason for reason in outcome.reasons), outcome.reasons
+
+
+@pytest.mark.parametrize("platform", ["ubuntu-24.04", "macos-26"], ids=["on", "off"])
+@pytest.mark.parametrize(("kw", "why"), _CANNOT_RUN_IN_EITHER_MODE)
+def test_a_working_tree_run_of_a_job_this_machine_cannot_run_is_partial_and_named(
+    repo, tmp_path, kw, why, platform
+):
+    """Only the platform rule gives way in a working-tree run: a container, a missing toolchain
+    program and a missing partner checkout still keep the job from running, on its platform or
+    off it. Partial, named, none of its steps run, and no record. git is on PATH, so a rule that
+    gave way would let the job run and pass, not stop it on a missing git."""
+    marker = tmp_path / "ran"
+    kw = {"command": (Step((PY, "-c", f"open({str(marker)!r}, 'w')")),), **kw}
+    host = _host(repo, path=str(_git_only(tmp_path)))
+    job = _job("elsewhere", platform=platform, **kw)
+    outcome = _run(repo, job, tmp_path, host=host, working_tree=True)
+    assert outcome.code == run.PARTIAL and not outcome.ran and outcome.record is None
+    assert outcome.off_platform is None
+    assert any(why in reason for reason in outcome.reasons), outcome.reasons
+    assert all(reason.startswith("cannot run here: ") for reason in outcome.reasons)
+    assert not marker.exists()
+    assert not (tmp_path / "work").exists()
 
 
 def test_no_job_runs_on_a_machine_of_neither_platform_family(repo, tmp_path):
@@ -627,14 +661,17 @@ _ASKS_THEN_INTERRUPTS = (
 )
 
 
-def test_an_interrupted_job_stops_the_tier_even_when_its_git_made_it_red(repo, tmp_path):
+@pytest.mark.parametrize("working_tree", [False, True], ids=["committed tree", "working tree"])
+def test_an_interrupted_job_stops_the_tier_even_when_its_git_made_it_red(
+    repo, tmp_path, working_tree
+):
     marker = tmp_path / "ran"
     code, outcomes, _ = _tier(
         repo,
         tmp_path,
         _job("asked", _ASKS_THEN_INTERRUPTS),
         _job("after", f"open({str(marker)!r}, 'w')"),
-        options=jobs.Options(grace=0.5),
+        options=jobs.Options(grace=0.5, working_tree=working_tree),
     )
     asked, after = outcomes
     assert asked.code == run.RED, asked.reasons
@@ -1015,10 +1052,450 @@ def test_run_job_takes_no_changed_option(capsys):
     assert "unrecognized arguments: --changed" in capsys.readouterr().err
 
 
-def test_make_check_runs_the_change_tier_and_make_gate_the_merge_tier():
+def test_make_check_runs_the_change_tier_on_the_working_tree_and_make_gate_the_merge_tier():
     makefile = (REPO / "Makefile").read_text(encoding="utf-8")
     recipes = dict(re.findall(r"^(check|gate):\n\t(.+)$", makefile, flags=re.MULTILINE))
     assert recipes == {
-        "check": "$(PYTHON) -m tools.ci run change",
+        "check": "$(PYTHON) -m tools.ci run change --working-tree",
         "gate": "$(PYTHON) -m tools.ci run merge",
     }
+
+
+# ── a working-tree run: the same steps, no record, the steps' result ─────────────────────────
+
+
+def _git_only(tmp_path: Path) -> Path:
+    """A PATH folder holding git and nothing else, so a toolchain program is missing from it
+    on any machine while the runner can still read the checkout."""
+    folder = tmp_path / "git-only"
+    folder.mkdir(exist_ok=True)
+    found = shutil.which("git")
+    assert found, "the test needs git"
+    link = folder / "git"
+    if not link.exists():
+        link.symlink_to(found)
+    return folder
+
+
+def _dirty(repo: Path) -> None:
+    """A planted uncommitted change: one modified file and one untracked file."""
+    (repo / "tests" / "test_a.py").write_text("def test_it():\n    assert True\n")
+    (repo / "tests" / "test_new.py").write_text("def test_new():\n    pass\n")
+
+
+def test_a_working_tree_run_on_a_dirty_tree_passes_and_writes_no_record(repo, tmp_path):
+    _dirty(repo)
+    outcome = _run(repo, _job("wt", "pass"), tmp_path, working_tree=True)
+    assert outcome.code == run.OK, outcome.reasons
+    assert outcome.record is None
+    assert not (tmp_path / "work" / "records").exists()
+    assert any("working tree" in r for r in outcome.reasons)
+
+
+def test_a_working_tree_run_runs_the_uncommitted_change(repo, tmp_path):
+    _dirty(repo)
+    seen = tmp_path / "seen"
+    reader = f"open({str(seen)!r}, 'w').write(open('tests/test_a.py').read())"
+    assert _run(repo, _job("wt", reader), tmp_path, working_tree=True).code == run.OK
+    assert "assert True" in seen.read_text()
+
+
+def test_a_working_tree_run_with_a_red_step_is_red(repo, tmp_path):
+    _dirty(repo)
+    outcome = _run(repo, _job("wt", "raise SystemExit(4)"), tmp_path, working_tree=True)
+    assert outcome.code == run.RED and outcome.record is None
+    assert "step 1: the job exited 4" in outcome.reasons
+
+
+def test_a_working_tree_run_of_a_job_missing_a_toolchain_program_is_partial(repo, tmp_path):
+    host = _host(repo, path=str(tmp_path / "empty-path"))
+    job = _job("needs-tmux", "pass", toolchain=("tmux",))
+    outcome = _run(repo, job, tmp_path, host=host, working_tree=True)
+    assert outcome.code == run.PARTIAL and not outcome.ran
+    assert outcome.reasons == ["cannot run here: its toolchain needs tmux, which is not on PATH"]
+
+
+@pytest.mark.parametrize(("program", "code"), [("pass", run.OK), ("raise SystemExit(3)", run.RED)])
+def test_a_working_tree_run_runs_a_job_of_another_platform_and_exits_by_its_steps(
+    repo, tmp_path, program, code
+):
+    _dirty(repo)
+    job = _job("mac", program, platform="macos-26")
+    outcome = _run(repo, job, tmp_path, working_tree=True)
+    assert outcome.ran and outcome.code == code
+    assert outcome.off_platform == "macos-26"
+    assert any("off its platform" in r and "never CI's evidence" in r for r in outcome.reasons)
+
+
+@pytest.mark.parametrize("platform", ["ubuntu-24.04", "macos-26"], ids=["on", "off"])
+def test_a_working_tree_run_never_writes_a_record_on_its_platform_or_off_it(
+    repo, tmp_path, platform
+):
+    """Clean tree, passing steps: the one case a committed-tree run would record. Still none."""
+    outcome = _run(repo, _job("wt", "pass", platform=platform), tmp_path, working_tree=True)
+    assert outcome.code == run.OK, outcome.reasons
+    assert outcome.record is None
+    assert not (tmp_path / "work" / "records").exists()
+
+
+def test_the_committed_tree_mode_still_refuses_a_job_of_another_platform(repo, tmp_path):
+    marker = tmp_path / "ran"
+    job = _job("mac", f"open({str(marker)!r}, 'w')", platform="macos-26")
+    outcome = _run(repo, job, tmp_path)
+    assert outcome.code == run.PARTIAL and not outcome.ran and outcome.record is None
+    assert outcome.off_platform is None
+    assert not marker.exists(), "an off-platform job ran in the mode that records"
+    assert outcome.reasons == [
+        "cannot run here: it runs on macos-26, and this machine runs ubuntu-*"
+    ]
+
+
+def test_the_summary_names_each_job_that_ran_off_its_platform(repo, tmp_path, capsys):
+    options = jobs.Options(working_tree=True)
+    code, outcomes, _ = _tier(
+        repo,
+        tmp_path,
+        _job("here", "pass"),
+        _job("mac", "pass", platform="macos-26"),
+        options=options,
+    )
+    assert code == run.OK
+    jobs._say(outcomes)
+    out = capsys.readouterr().out
+    assert "ran off their platform family: mac (macos-26 in CI)" in out
+    assert "here (" not in out
+    assert "A local result is never CI's evidence" in out
+
+
+def test_a_working_tree_run_still_reds_a_missing_junit(repo, tmp_path):
+    _dirty(repo)
+    job = _job("wt", "pass", junit=("reports/junit.xml",))
+    outcome = _run(repo, job, tmp_path, working_tree=True)
+    assert outcome.code == run.RED
+    assert "wrote no junit at reports/junit.xml in this run" in outcome.reasons
+
+
+def test_a_working_tree_run_is_refused_on_github(repo, tmp_path):
+    with pytest.raises(jobs.Unreadable, match="--working-tree is a local mode"):
+        _run(
+            repo, _job("wt", "pass"), tmp_path, host=_host(repo, on_github=True), working_tree=True
+        )
+
+
+def test_a_working_tree_tier_is_ok_on_a_dirty_tree_when_every_job_passes(repo, tmp_path):
+    _dirty(repo)
+    options = jobs.Options(working_tree=True)
+    code, outcomes, _ = _tier(repo, tmp_path, _job("a", "pass"), _job("b", "pass"), options=options)
+    assert code == run.OK
+    assert all(o.record is None for o in outcomes)
+
+
+def test_a_working_tree_tier_is_red_on_a_red_job_and_partial_only_for_one_that_cannot_run(
+    repo, tmp_path
+):
+    _dirty(repo)
+    options = jobs.Options(working_tree=True)
+    red, _, _ = _tier(
+        repo,
+        tmp_path / "r",
+        _job("bad", "raise SystemExit(1)"),
+        _job("ok", "pass"),
+        options=options,
+    )
+    assert red == run.RED
+    partial, _, _ = _tier(
+        repo,
+        tmp_path / "p",
+        _job("ok", "pass"),
+        _job("needs-tmux", "pass", toolchain=("tmux",)),
+        host=_host(repo, path=str(_git_only(tmp_path))),
+        options=options,
+    )
+    assert partial == run.PARTIAL
+    # A red and one that cannot run here: red wins, as in the committed-tree mode, so a red job
+    # is never reported as one that could not run.
+    both, outcomes, _ = _tier(
+        repo,
+        tmp_path / "b",
+        _job("needs-tmux", "pass", toolchain=("tmux",)),
+        _job("bad", "raise SystemExit(1)"),
+        host=_host(repo, path=str(_git_only(tmp_path))),
+        options=options,
+    )
+    assert [o.code for o in outcomes] == [run.PARTIAL, run.RED]
+    assert both == run.RED
+
+
+def test_without_the_mode_a_dirty_tree_still_leaves_no_record_and_is_partial(repo, tmp_path):
+    """The control: the committed-tree mode keeps refusing to call a dirty run evidence."""
+    _dirty(repo)
+    code, outcomes, _ = _tier(repo, tmp_path, _job("a", "pass"))
+    assert code == run.PARTIAL and outcomes[0].record is None
+
+
+def test_changed_on_a_working_tree_sees_uncommitted_and_untracked_paths(repo, tmp_path):
+    """A working-tree plan reads what the tree holds: a modified file and an untracked one, and
+    no file git ignores (``reports/`` is ignored, so the job reading it is left out)."""
+    base = _git(repo, "rev-parse", "HEAD")
+    with (repo / "pyproject.toml").open("a") as project_file:
+        project_file.write("# an uncommitted change\n")
+    (repo / "notes").mkdir()
+    (repo / "notes" / "new.md").write_text("an untracked page\n")
+    (repo / "reports").mkdir()
+    (repo / "reports" / "junit.xml").write_text("<testsuite/>\n")
+    assert _git(repo, "check-ignore", "reports/junit.xml") == "reports/junit.xml"
+    planned = (
+        _job("n", "pass", inputs=("notes/",)),
+        _job("p", "pass", inputs=("pyproject.toml",)),
+        _job("r", "pass", inputs=("reports/",)),
+        _job("t", "pass", inputs=("tests/",)),
+    )
+    code, outcomes, _ = jobs.run_tier(
+        Catalogue(planned),
+        "change",
+        _host(repo),
+        jobs.Options(base=base, working_tree=True),
+        tmp_path / "work",
+        changed=True,
+    )
+    assert [o.key for o in outcomes] == ["n", "p"] and code == run.OK
+
+
+def _given_twice() -> list:
+    """Each option of the two verbs, as ``(verb, option)``."""
+    shared = ("--catalogue", "--base", "--workers", "--out", "--working-tree")
+    rows = [(verb, option) for verb in ("run-job", "run") for option in shared]
+    rows += [("run-job", "--shard"), ("run", "--changed"), ("run", "--fail-fast")]
+    return [pytest.param(verb, option, id=f"{verb} {option}") for verb, option in rows]
+
+
+@pytest.mark.parametrize(("verb", "option"), _given_twice())
+def test_every_option_of_the_two_verbs_given_twice_is_refused(verb, option, tmp_path, capsys):
+    """Refused as the line is read, never last-wins. The catalogue named is not there, so a line
+    the parser took would stop on reading it, not on the repeat, and no job could run."""
+    from tools.ci.__main__ import main
+
+    values = {
+        "--catalogue": str(tmp_path / "no-catalogue.toml"),
+        "--base": "HEAD",
+        "--workers": "2",
+        "--out": str(tmp_path / "out"),
+        "--shard": "1/4",
+    }
+    once = [option, values[option]] if option in values else [option]
+    rest = [
+        word for name in ("--catalogue", "--out") if name != option for word in (name, values[name])
+    ]
+    target = {"run-job": "sharded", "run": "change"}[verb]
+    assert main([verb, target, *once, *once, *rest]) == run.PARTIAL
+    assert f"argument {option}: given twice" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists(), "nothing ran"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["run-job", "plain", "--working"],
+        ["run-job", "plain", "--wor", "2"],
+        ["run-job", "sharded", "--sha", "1/4"],
+        ["run", "change", "--work", "2"],
+        ["run", "change", "--change"],
+        ["run", "change", "--fail"],
+    ],
+    ids=" ".join,
+)
+def test_no_prefix_of_an_option_stands_in_for_it(argv, tmp_path, capsys):
+    """Each option is spelled in full: ``--working`` is not ``--working-tree``, so a later option
+    can never change what a short spelling meant. The catalogue named is not there, so a line
+    the parser took would stop on reading it, and no job could run."""
+    from tools.ci.__main__ import main
+
+    out = tmp_path / "out"
+    safe = ["--catalogue", str(tmp_path / "no-catalogue.toml"), "--out", str(out)]
+    assert main([*argv, *safe]) == run.PARTIAL
+    assert f"unrecognized arguments: {' '.join(argv[2:])}" in capsys.readouterr().err
+    assert not out.exists(), "nothing ran"
+
+
+def test_a_working_tree_run_of_a_job_of_another_platform_missing_a_program_runs_nothing(
+    repo, tmp_path
+):
+    """Off its platform it runs only when every toolchain program is here; else it is "cannot
+    run here", naming the program, and none of its steps runs."""
+    marker = tmp_path / "ran"
+    job = _job("mac", f"open({str(marker)!r}, 'w')", platform="macos-26", toolchain=("tmux",))
+    host = _host(repo, path=str(_git_only(tmp_path)))
+    outcome = _run(repo, job, tmp_path, host=host, working_tree=True)
+    assert outcome.code == run.PARTIAL and not outcome.ran and outcome.record is None
+    assert outcome.reasons == ["cannot run here: its toolchain needs tmux, which is not on PATH"]
+    assert not marker.exists()
+
+
+def test_an_interrupted_working_tree_run_is_partial_and_runs_nothing_after_it(repo, tmp_path):
+    _dirty(repo)
+    marker = tmp_path / "ran"
+    code, outcomes, judged = _tier(
+        repo,
+        tmp_path,
+        _job("stopped", _INTERRUPTS_ITS_RUNNER),
+        _job("after", f"open({str(marker)!r}, 'w')"),
+        options=jobs.Options(grace=0.5, working_tree=True),
+    )
+    assert code == run.PARTIAL
+    stopped, after = outcomes
+    assert stopped.code == run.PARTIAL and stopped.interrupted and stopped.record is None
+    assert after.ran is False and after.reasons == ["not run: interrupted"]
+    assert not marker.exists()
+    assert not judged.green
+    assert not (tmp_path / "work" / "records").exists()
+
+
+def test_a_working_tree_tier_judges_nothing_green(repo, tmp_path):
+    """Every job passed on a clean tree, the one case a committed-tree tier calls green: the
+    working-tree tier exits by its steps and still judges nothing."""
+    options = jobs.Options(working_tree=True)
+    code, outcomes, judged = _tier(repo, tmp_path, _job("a", "pass"), options=options)
+    assert code == run.OK and not judged.green
+    assert [r.kind for r in judged.reasons] == ["working tree"]
+    assert not (tmp_path / "work" / "records").exists()
+
+
+def test_changed_in_the_committed_tree_mode_reads_no_untracked_path(repo, tmp_path):
+    """The control for the working-tree plan: an untracked file is no change to the committed
+    tree, so the plan is the one a change of nothing makes (every job)."""
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "notes").mkdir()
+    (repo / "notes" / "new.md").write_text("an untracked page\n")
+    notes = _job("n", "pass", inputs=("notes/",))
+    tests_job = _job("t", "pass", inputs=("tests/",))
+    _, outcomes, _ = jobs.run_tier(
+        Catalogue((notes, tests_job)),
+        "change",
+        _host(repo),
+        jobs.Options(base=base),
+        tmp_path / "work",
+        changed=True,
+    )
+    assert [o.key for o in outcomes] == ["n", "t"]
+
+
+# ── the two verbs with --working-tree, from the command line, on a planted checkout ──────────
+
+_THERE = "ubuntu-24.04" if sys.platform == "darwin" else "macos-26"
+
+#: The planted catalogue, with a job of the other platform family in the change tier, and a red
+#: job and one needing a program in a tier ``run change`` does not run.
+_PLANTED_WT = _PLANTED + f"""
+[[job]]
+id = "there"
+tiers = ["change"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = []
+cache = []
+security = "ordinary"
+platform = "{_THERE}"
+timeout_min = 5
+command = [{{ argv = ["python3", "-c", "pass"] }}]
+
+[[job]]
+id = "red"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = []
+cache = []
+security = "ordinary"
+platform = "{_HERE}"
+timeout_min = 5
+command = [{{ argv = ["python3", "-c", "raise SystemExit(3)"] }}]
+
+[[job]]
+id = "needs-tmux"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["tmux"]
+cache = []
+security = "ordinary"
+platform = "{_THERE}"
+timeout_min = 5
+command = [{{ argv = ["python3", "-c", "pass"] }}]
+"""
+
+
+@pytest.fixture
+def planted_cli(repo, tmp_path, monkeypatch):
+    """The command line's root is the planted checkout, dirty, and its catalogue the planted
+    one; the run's folder is under the test's own."""
+    catalogue.load(_PLANTED_WT, "planted")  # the planted catalogue loads
+    monkeypatch.setattr(catalogue, "REPO", repo)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    _dirty(repo)
+    planted = tmp_path / "catalogue.toml"
+    planted.write_text(_PLANTED_WT, encoding="utf-8")
+    return ["--catalogue", str(planted), "--out", str(tmp_path / "out")]
+
+
+@pytest.mark.parametrize(
+    ("argv", "code"),
+    [
+        (["run-job", "plain"], run.OK),
+        (["run-job", "there"], run.OK),
+        (["run-job", "red"], run.RED),
+        (["run", "change"], run.OK),
+    ],
+)
+def test_the_verbs_exit_by_the_steps_on_a_dirty_tree_and_write_no_record(
+    argv, code, planted_cli, tmp_path, capsys
+):
+    from tools.ci.__main__ import main
+
+    assert main([*argv, "--working-tree", *planted_cli]) == code
+    out = capsys.readouterr().out
+    assert not (tmp_path / "out" / "records").exists()
+    assert "(record " not in out and "### Verdict" not in out
+
+
+def test_run_on_the_working_tree_names_the_off_platform_job_and_claims_no_evidence(
+    planted_cli, capsys
+):
+    from tools.ci.__main__ import main
+
+    assert main(["run", "change", "--working-tree", *planted_cli]) == run.OK
+    out = capsys.readouterr().out
+    assert f"ran off their platform family: there ({_THERE} in CI)" in out
+    assert "A local result is never CI's evidence" in out
+    assert "no record was written, so this run is no evidence for a commit" in out
+    assert out.rstrip().splitlines()[-1] == "ok"
+
+
+def test_run_job_on_the_working_tree_missing_a_program_exits_partial_naming_it(
+    planted_cli, tmp_path, monkeypatch, capsys
+):
+    from tools.ci.__main__ import main
+
+    monkeypatch.setenv("PATH", str(_git_only(tmp_path)))
+    assert main(["run-job", "needs-tmux", "--working-tree", *planted_cli]) == run.PARTIAL
+    out = capsys.readouterr().out
+    assert "its toolchain needs tmux, which is not on PATH" in out
+    assert "not proven here: needs-tmux" in out
+
+
+@pytest.mark.parametrize(
+    "verb",
+    [["run-job", "plain"], ["run-job", "there"], ["run-job", "needs-tmux"], ["run", "change"]],
+)
+def test_the_working_tree_mode_is_refused_under_github_actions(
+    verb, planted_cli, tmp_path, monkeypatch, capsys
+):
+    """Refused as the input is read, before any job is planned: even a job that could not run
+    here anyway (needs-tmux, with no tmux on PATH) is refused for the mode, not skipped."""
+    from tools.ci.__main__ import main
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("PATH", str(_git_only(tmp_path)))
+    assert main([*verb, "--working-tree", *planted_cli]) == run.PARTIAL
+    err = capsys.readouterr().err
+    assert "--working-tree is a local mode" in err and "step 1" not in err, err
+    assert not (tmp_path / "out").exists(), "nothing ran"

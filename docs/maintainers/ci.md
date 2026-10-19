@@ -837,7 +837,8 @@ runs no `test-macos`). It reads only the file it is given, and no workflow runs 
 
 `python -m tools.ci run-job <id> [--shard i/N]` runs one catalogue job here, and
 `python -m tools.ci run <tier> [--changed] [--fail-fast]` runs every job of a tier
-(`tools/ci/jobs.py`). `make check` is `run change` and `make gate` is `run merge`.
+(`tools/ci/jobs.py`). `make check` is `run change --working-tree` and `make gate` is
+`run merge`.
 
 - **CI's commands.** A job's toolchain installs run first, as `ci.yml` runs them, then each step,
   word for word. A step's environment is built from nothing: what a GitHub runner gives every
@@ -880,9 +881,26 @@ runs no `test-macos`). It reads only the file it is given, and no workflow runs 
 - **Exit codes:** 0 every planned job ran here and passed; 1 a job ran and failed, git asked
   for a credential, or a job made the real home's `.personalclaw`; 2 a job could not run here,
   was interrupted or left no record, or the input could not be read: an unknown job or tier, a
-  tier with no job (`weekly` and `release` have none yet), an option given twice, or a job env
-  naming a variable the runner owns, which the loader refuses too. An account whose entry in the
-  user database names no absolute home runs no job here either, and exits 2 before any step.
+  tier with no job (`weekly` and `release` have none yet), an option given twice or not spelled
+  in full (no prefix stands in for an option), or a job env naming a variable the runner owns,
+  which the loader refuses too. An account whose entry in the user database names no absolute
+  home runs no job here either, and exits 2 before any step.
+- **`--working-tree`** (both verbs) runs on the checkout as it stands, uncommitted changes
+  included, so a check before a commit can pass. The steps, their environment, the time limit
+  and the JUnit check are the same; no record is written, since the steps ran on no commit, and
+  the exit is the steps' result: 0 when every planned job ran here and passed, 1 on a red, 2
+  only for a job that cannot run here or an interrupted one. With `--changed`, the plan reads
+  uncommitted changes and untracked files git does not ignore. It is refused on GitHub, where
+  the checkout is the commit under test. A working-tree run is no evidence for a commit: `run`
+  judges no record, and says so.
+- **Off its platform, in a working-tree run only.** A job of another platform family (an
+  `ubuntu-` job on a Mac) runs here when every toolchain program it needs is on `PATH`, so a
+  check before a commit means something on either platform. Its exit follows its steps, and the
+  summary names each job that ran off its platform with the platform CI runs it on, and says a
+  local result is never CI's evidence. A missing toolchain program, a container or a missing
+  partner checkout is still "cannot run here" (exit 2). The committed-tree mode, which records,
+  still refuses a job of another platform family, so an off-platform result never becomes a
+  record.
 - **Not yet:** nothing reuses a recorded pass, so `run` runs every job; and nothing reads these
   records on GitHub.
 

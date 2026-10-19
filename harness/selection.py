@@ -42,8 +42,8 @@ _FORCE_RULES: tuple[ForceRule, ...] = (
         "replay",
         "SSE registry touched — replay guards journal→widget-stream fidelity",
     ),
-    ForceRule("web/*", "web", "frontend touched — the web gate (typecheck + vitest) applies"),
-    ForceRule("web/**/*", "web", "frontend touched — the web gate (typecheck + vitest) applies"),
+    ForceRule("web/*", "web", "frontend touched — the web gate (the catalogue's web-unit job)"),
+    ForceRule("web/**/*", "web", "frontend touched — the web gate (the catalogue's web-unit job)"),
     ForceRule(
         "src/personalclaw/config/loader.py",
         "scan",
