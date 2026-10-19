@@ -466,10 +466,10 @@ def test_offer_check_work_has_a_frontend_control():
     assert "offer_check_work: boolean" in api
     chip = (web / "pages/chat/CheckWorkChip.tsx").read_text(encoding="utf-8")
     assert "CheckWorkChip" in chip
-    # The offer arrives on the chat's stream, which ChatPage composes and renders the chip from.
+    # The offer arrives on the chat's stream, and its transcript renders the chip.
     stream = (web / "pages/chat/useChatStream.ts").read_text(encoding="utf-8")
-    page = (web / "pages/ChatPage.tsx").read_text(encoding="utf-8")
-    assert "chat_check_work_offer" in stream and "<CheckWorkChip" in page
+    transcript = (web / "pages/chat/transcript/Transcript.tsx").read_text(encoding="utf-8")
+    assert "chat_check_work_offer" in stream and "<CheckWorkChip" in transcript
     # The loops half. `field="check_work_stages"` + the `loops.` PATCH prefix together are the
     # claim: a control bound to the right section. The prefix is what a copied panel gets wrong,
     # and a wrong prefix is a 400 the optimistic UI rolls back after the user has walked away —

@@ -269,7 +269,8 @@ class TestApproveActionVocabulary:
 
     @pytest.mark.asyncio
     async def test_every_frontend_verb_is_accepted(self, tmp_path, monkeypatch):
-        """Guards the FE/BE vocabulary seam — web/src/pages/ChatPage.tsx's union."""
+        """Guards the FE/BE vocabulary seam — the `ApproveAction` union in
+        web/src/pages/chat/transcript/AssistantSegments.tsx."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         for verb in ("approved", "rejected", "trust", "trust_agent", "trust_reads", "yolo"):
             state = _make_state(tmp_path)

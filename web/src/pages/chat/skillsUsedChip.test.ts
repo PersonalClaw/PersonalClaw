@@ -387,14 +387,17 @@ describe('the chip is wired at both surfaces (not an inert helper)', () => {
   // The ledger moved out of `ChatPage.tsx` so its one-action reach could be mounted and proved
   // (`contextLedgerReach.test.tsx`); these scans follow the code rather than the old address.
   const ledger = read('./ContextLedger.tsx')
-  // The WS handler moved out of `ChatPage.tsx` into the chat's stream; its scans follow it.
+  // The WS handler moved out of `ChatPage.tsx` into the chat's stream, and the assistant turn into
+  // the transcript region; the scans follow them.
   const stream = read('./useChatStream.ts')
+  const turnView = read('./transcript/AssistantSegments.tsx')
+  const transcriptView = read('./transcript/Transcript.tsx')
 
   it('the chat run panel renders the label + the names on hover', () => {
-    expect(chatPage).toContain('title={skillsUsedTitle(skills)}')
-    expect(chatPage).toContain('{skillsUsedLabel(skills)}')
+    expect(turnView).toContain('title={skillsUsedTitle(skills)}')
+    expect(turnView).toContain('{skillsUsedLabel(skills)}')
     // Gated on a non-empty list, so a turn that loaded nothing shows no chip.
-    expect(chatPage).toContain('skillsUsed.length > 0 && <SkillsUsedChip')
+    expect(turnView).toContain('skillsUsed.length > 0 && <SkillsUsedChip')
   })
 
   it('the loop cockpit renders the same two helpers in its status bar', () => {
@@ -424,9 +427,9 @@ describe('the chip is wired at both surfaces (not an inert helper)', () => {
     // every chip degrades, which would look exactly like "old messages" forever.
     expect(stream).toContain('textRun.activity(text, kind, origin, ref)')
     expect(textRunOwner).toContain('stampActivityOrigin(segs, insertActivity(')
-    expect(chatPage).toContain("ledger.learnedOrigin = (s as ActivitySegment).origin")
+    expect(turnView).toContain("ledger.learnedOrigin = (s as ActivitySegment).origin")
     // …and a learned preference's key, which is what its "Forget it" and its link need.
-    expect(chatPage).toContain("ledger.learnedRef = (s as ActivitySegment).ref")
+    expect(turnView).toContain("ledger.learnedRef = (s as ActivitySegment).ref")
     expect(ledger).toContain('learnedSurface(learnedOrigin, learnedRef)')
     expect(ledger).toContain('<TextLink href={surface.href}>')
     // Vacuity floor for this whole block: the old hardcoded link must be GONE. Without
@@ -440,11 +443,15 @@ describe('the chip is wired at both surfaces (not an inert helper)', () => {
     // still be rendered in production, with the origin the WS handler stamped handed through.
     // Without this, `contextLedgerReach.test.tsx` could stay green over a component no surface
     // renders — the exact inert-control shape this block exists to catch.
-    expect(chatPage).toContain('<ContextLedger fed={ledger.fed}')
-    expect(chatPage).toContain('learnedOrigin={ledger.learnedOrigin}')
-    expect(chatPage).toContain('learnedRef={ledger.learnedRef}')
-    expect(chatPage).toContain("import { ContextLedger } from './chat/ContextLedger'")
-    // And ChatPage no longer carries a second, private copy of it.
+    expect(turnView).toContain('<ContextLedger fed={ledger.fed}')
+    expect(turnView).toContain('learnedOrigin={ledger.learnedOrigin}')
+    expect(turnView).toContain('learnedRef={ledger.learnedRef}')
+    expect(turnView).toContain("import { ContextLedger } from '../ContextLedger'")
+    // …in a turn the transcript draws, in a transcript the page mounts.
+    expect(transcriptView).toContain('<AssistantSegments segments={turn.segments}')
+    expect(chatPage).toContain('<Transcript transcript={transcript}')
+    // And neither carries a second, private copy of it.
     expect(chatPage).not.toContain('function ContextLedger(')
+    expect(turnView).not.toContain('function ContextLedger(')
   })
 })

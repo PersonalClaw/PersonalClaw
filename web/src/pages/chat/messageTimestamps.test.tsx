@@ -137,8 +137,9 @@ describe('the preference actually reaches the transcript', () => {
   // Everything above can pass while the setting is still inert — which is the defect being fixed.
 
   it('chat reads the stored preference and gates the stamp on it', () => {
-    const code = codeOf('pages', 'ChatPage.tsx')
-    expect(code.length, 'read ChatPage.tsx').toBeGreaterThan(1000)
+    // The chat's transcript view draws the turns, so it reads the preference.
+    const code = codeOf('pages', 'chat', 'transcript', 'Transcript.tsx')
+    expect(code.length, 'read Transcript.tsx').toBeGreaterThan(1000)
     expect(code).toMatch(/useQuery\(\s*'chat:show-timestamps'/)
     expect(code).toMatch(/\.show_timestamps\b/)
     // Gating by withholding the value, so the row never sees the preference.

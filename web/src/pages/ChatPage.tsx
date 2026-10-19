@@ -1,11 +1,11 @@
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ResultAnnouncement } from '../ui/ListControls'
 import { failureSentence, reportActionFailure, reportingWrite } from '../app/reportingWrite'
 import { unavailableWhen, BUSY_REASON } from '../ui/unavailable'
 
 import { fvs, withWeight } from '../design/fontWeight'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, ArrowLeft, ArrowRight, ArrowUp, GripVertical, Bot, ShieldCheck, ShieldAlert, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, ListTree, Scissors, Shuffle, Send } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronDown, PanelRight, Clipboard, X, Pin, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, PlayCircle, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Target, Code2 as CodeIcon, ArrowLeft, ArrowRight, ArrowUp, GripVertical, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, ListTree, Send } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -13,8 +13,6 @@ import { TopBar } from '../ui/TopBar'
 import { SidePanel } from '../ui/SidePanel'
 import { Button } from '../ui/Button'
 import { Checkbox, useSyncedDraft } from '../ui/forms'
-import { QuietButton } from '../ui/QuietButton'
-import { SelectionToolbar } from '../ui/SelectionPill'
 import { Segmented } from '../ui/Segmented'
 import { Meter } from '../ui/Meter'
 import { ContextMenu, type ContextMenuItem } from '../ui/motion'
@@ -30,61 +28,43 @@ import { ComposerNoticeLine, useComposerNotice } from '../ui/composer/ComposerNo
 import { useVoiceConfig } from './chat/voiceConfig'
 import { deliverableToOpenSession } from './chat/sessionDelivery'
 import { workingDirectoryPrompt, workingDirectoryToast } from './chat/workingDirectory'
-import { ModelWaits } from '../ui/ModelWaitNotice'
 import { MEMORY_MODES, MEMORY_MODE_NOTICE } from './chat/memoryModeCopy'
 import { sessionRowMeta } from './chat/sessionRowMeta'
 import { AppPermissionNotice, StartedByApp } from './chat/StartedByApp'
 import { FromChannel } from './chat/FromChannel'
 import { chatContextChips } from './chat/ChatContextLine'
 import { OrganizeChip } from './chat/OrganizeChip'
-import { ContextLedger } from './chat/ContextLedger'
 import { chatFindPath, searchCoverage, searchSourceLabel } from './chat/searchDeepLink'
 import { useScreenShare } from '../ui/composer/useScreenShare'
 import { DotGlow } from '../ui/DotGlow'
 import { EmptyState, ListSkeleton, LoadError, Skeleton, LoadingStatus } from '../ui/ListScaffold'
 import { WindowedList } from '../ui/WindowedList'
 import { FieldError } from '../ui/forms'
-import { MessageUser } from '../ui/chat/MessageUser'
-import { MessageAssistant } from '../ui/chat/MessageAssistant'
 import { Spark } from '../ui/Spark'
-import { StreamingIndicator } from '../ui/chat/StreamingIndicator'
 import { idleRunState } from '../lib/workPhase'
 import { ChatPlanGate } from '../ui/chat/ChatPlanGate'
 import { Markdown } from '../ui/Markdown'
 import { useWidgetActionBridge, takePendingWidgetAction } from '../ui/widget/useWidgetActionBridge'
 import { InlineError } from '../ui/InlineError'
-import { TextLink } from '../ui/TextLink'
 import { PartialNotice } from '../ui/PartialNotice'
-import { NeedsModelNote, NoModelSetupState, isNoModelSetupError, MODELS_PATH } from './chat/NoModelSetupState'
+import { NeedsModelNote } from './chat/NoModelSetupState'
 import { BundledFloorNotice } from './chat/BundledFloorNotice'
-import { ToolCard } from './chat/ToolCard'
 import { onToolResultFull } from './chat/toolResultBridge'
 import { withoutFence } from '../lib/untrustedFence'
-import { SdlcProgressCard, sdlcRefFromTool } from './chat/SdlcProgressCard'
-import { WorkflowProgressCard, liveWorkflowCards, workflowRefFromTool } from './chat/WorkflowProgressCard'
-import { ManualAutomationCard, manualAutomationFromTool } from './chat/ManualAutomationCard'
-import { ApprovalCard } from './chat/ApprovalCard'
-import { QuestionCard, type QuestionReply } from './chat/QuestionCard'
 import { RoomView } from './chat/RoomView'
 import { RoomsScope } from './chat/RoomsScope'
 import { ChatFilePanel } from './chat/ChatFilePanel'
 import { sameSessionTarget, type CommentTarget } from '../ui/content/commentTarget'
 import { ChatActivityPanel } from './chat/ChatActivityPanel'
-import { AssistantActions, UserActions } from './chat/MessageActions'
-import { askToRepeat } from './chat/repeatedSteps'
 import { parseOptions, parseSwitchToAgent } from './chat/parseAssistant'
 import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, pruneBlocks, asSent, takeIn } from './chat/pasteBlocks'
 import type { TurnPaste } from './chat/PasteChip'
 import { sessionTemplatePatch } from './chat/sessionTemplate'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, turnText, failedStepCount, unaskedStepCount, LEDGER_ACTIVITY_KINDS, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, type ReplyCut, lastServedModel, type ServedModel } from './chat/chatTypes'
+import { type HistMsg, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity, lastServedModel } from './chat/chatTypes'
 import { isImagePath } from './chat/imageAttachments'
-import { AttachmentChips, TurnAttachments } from './chat/AttachmentChips'
-import { applyQuestionResolved } from './chat/questionFrames'
-import { waitsPastItsTurn } from './chat/approvalSegment'
-import { ThinkingBlock } from './chat/ThinkingBlock'
-import { branchIndexOf } from './chat/branchLineage'
+import { AttachmentChips } from './chat/AttachmentChips'
 import { buildOptimizerContext } from './chat/optimizerContext'
 import { optimizeFailure, optimizeOutcome } from '../ui/composer/optimizeOutcome'
 import { useIdentity, firstNameOf } from '../app/identity'
@@ -96,16 +76,11 @@ import { spring, stagger, listItemEnter, expr } from '../design/motion'
 import { api, hasApiCode, isSwitchedOff, transcriptionFailure, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type ChannelRuntime, type SessionSearchAnswer } from '../lib/api'
 import { refreshKinds, useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useChatStream, detailKey, writeCachedDetail, type ChatDetail, type QueuedMessage } from './chat/useChatStream'
-import { FindBar } from '../ui/FindBar'
-import { findSegments } from './chat/findSegments'
-import { editReplacesLaterTurns, replacedTurnsAreKept } from './chat/editReplaces'
-import { FollowupChips, followupAnnouncement } from './chat/FollowupChips'
-import { CheckWorkChip } from './chat/CheckWorkChip'
+import { useTranscript } from './chat/transcript/useTranscript'
+import { Transcript } from './chat/transcript/Transcript'
+import { MessagesSkeleton } from './chat/transcript/MessagesSkeleton'
 import { SessionMapReturnLatest, scrollToLatest } from './chat/SessionMapReturnLatest'
-import { SessionMapRail } from './chat/SessionMapRail'
 import { SessionMapDrawer } from './chat/SessionMapDrawer'
-import { sessionMapEntries } from './chat/sessionMap'
-import { turnOutcomeOf } from './chat/turnOutcome'
 import { useQuery, invalidateKeys } from '../lib/data'
 import { downloadFrom } from '../lib/download'
 import { rewindPreviewText } from '../lib/rewindPreview'
@@ -115,26 +90,7 @@ import { useComposerData } from '../lib/useComposerData'
 import type { ComposerControls, ComposerValue } from '../ui/composer/types'
 import { Popover, MenuRow } from '../ui/Popover'
 import { useQueryFlag, useQueryParam, type RouteProps } from '../app/useQueryState'
-import { useIsMobile } from '../app/useIsMobile'
 import { copyText } from '../app/clipboard'
-
-
-
-// The approval-card scope picker's one vocabulary (resolved with the user): a per-
-// approval SCOPE choice, not a mode toggle. `approved` = allow once; `trust` = allow
-// all tools this session (sets session trust); `trust_agent` = always allow all tools
-// for this agent (persists AgentProfile.approval_mode="auto") + this session; `rejected`
-// = deny. (`trust_reads`/`yolo` remain valid backend actions the Permission axis uses,
-// but the card no longer offers them — the card speaks only scope.)
-type ApproveAction = 'approved' | 'rejected' | 'trust' | 'trust_agent' | 'trust_reads' | 'yolo'
-
-/** Answer an ask raised by work the chat started (`ApprovalSegment.queued`) where it is held, the
- *  approvals queue, by its registry id. Its card offers Allow and Deny alone; anything but an
- *  Allow is a Deny. */
-function answerQueued(id: string, action: ApproveAction) {
-  api.resolveApproval(id, action === 'approved' ? 'approve' : 'reject')
-    .catch(reportActionFailure('record your decision'))
-}
 
 // Options for the chat-header segmented controls. Permission mirrors the
 // composer's approval modes; memory mirrors MEMORY_MODES — both as the canonical
@@ -148,12 +104,6 @@ const APPROVAL_SLIDER = [
   { key: 'trust', label: 'Trust', icon: ShieldCheck, title: 'Trust — auto-approve every tool in this chat' },
   { key: 'yolo', label: 'YOLO', icon: Zap, title: 'YOLO — auto-approve everywhere; auto-expires, re-enable to extend' },
 ]
-
-/** The transcript's bottom fade: opaque down to its bottom padding (`py-2xl` on the turn
- *  column), transparent at the edge. Keyed to that padding so the resting view — scrolled
- *  to the newest turn — is never faded; see the scroller for why the edge fades at all.
- *  (A mask reads only alpha, so `black` here is "keep", not a colour.) */
-const TRANSCRIPT_END_FADE = 'linear-gradient(to bottom, black calc(100% - var(--spacing-2xl)), transparent)'
 
 // Task mode — ORTHOGONAL to approval (which gates *whether* a tool auto-approves).
 // Task mode gates *which* tools run + how the agent frames the work, layered on the
@@ -632,19 +582,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   }, [projectId])
   // The open chat as the gateway tells it — its transcript, its live turn and everything its reads
   // and frames carry — and the machinery that keeps it true (`chat/useChatStream`).
-  const {
-    sessionRef, turns, setTurns, patchLastAssistant, dropTextRun, readSnapshot, adoptSnapshot,
-    streaming, streamingRef, markStreaming, sayTurnEnded, srAnnounce, turnSeqRef, stoppedTurnRef,
-    takesSteers, takesSteersRef, turnPhase, turnLine, sessionSkillsEpoch, wsConnected,
-    loadingHistory, missing, setMissing, loadFailure, setLoadAttempt,
-    queued, setQueued, steered, setSteered, subagents, setSubagents,
-    sideMsgs, setSideMsgs, sideBusy, setSideBusy, sideOpenedRef,
-    followups, setFollowups, followupsNeed, setFollowupsNeed, checkWorkOffer, setCheckWorkOffer,
-    contextPct, contextWindow, autoChain, setAutoChain, workingDir, setWorkingDir,
-    sessionBindingRef, bindingToldRef, bindingNonce,
-    title, setTitle, titleNeed, setTitleNeed, sessionCost,
-    branchedFrom, startedBy, investigateOrigin,
-  } = useChatStream({
+  const stream = useChatStream({
     sessionId, liveRun, setLiveRun,
     setRouting: setRoutingSuggestion,
     // Every tab with this chat open receives a reading's audio; only the tab whose reading it is
@@ -686,6 +624,19 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       })
     },
   })
+  const {
+    sessionRef, turns, setTurns, patchLastAssistant, dropTextRun,
+    streaming, streamingRef, markStreaming, sayTurnEnded, turnSeqRef, stoppedTurnRef,
+    takesSteers, takesSteersRef, sessionSkillsEpoch, wsConnected,
+    loadingHistory, missing, setMissing, loadFailure, setLoadAttempt,
+    queued, setQueued, steered, setSteered, subagents, setSubagents,
+    sideMsgs, setSideMsgs, sideBusy, setSideBusy, sideOpenedRef,
+    followups, setFollowups, followupsNeed, setFollowupsNeed, checkWorkOffer, setCheckWorkOffer,
+    contextPct, contextWindow, autoChain, setAutoChain, workingDir, setWorkingDir,
+    sessionBindingRef, bindingToldRef, bindingNonce,
+    title, setTitle, titleNeed, setTitleNeed, sessionCost,
+    branchedFrom, startedBy, investigateOrigin,
+  } = stream
   const [input, setInput] = useState(seed)
   const [composerFocused, setComposerFocused] = useState(false)
   const [promptPaletteOpen, setPromptPaletteOpen] = useState(false)
@@ -696,94 +647,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [openReasoningSignal, setOpenReasoningSignal] = useState(0)
   const [openProjectSignal, setOpenProjectSignal] = useState(0)
   const composerRef = useRef<HTMLDivElement>(null)
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const endRef = useRef<HTMLDivElement>(null)
-  // true when the transcript is scrolled away from the bottom — drives the
-  // "jump to latest" pill (so streamed content arriving above the fold isn't lost).
-  const [scrolledUp, setScrolledUp] = useState(false)
-  // Armed by a send: follow THIS turn to its outcome — see the auto-scroll effect. Seeded
-  // from `streaming`'s INITIAL value, which is true only when this mount is the replacement
-  // for the instance whose first send created the session (`streamingAtMount`): that send
-  // re-keys and remounts ChatSession, and the turn it asked for must still be followed here
-  // (the measured 60k-paste case was exactly a new chat's first message).
-  const followTurnRef = useRef(streaming)
-  const followNewTurn = () => { followTurnRef.current = true }
   // activity panel (Stage 5) — Index/Files/Links, chat-only, toggled from header.
   // URL-backed (?activity=1, push → Back closes it; refresh restores it).
   const [activityOpen, setActivityOpen] = useQueryFlag(query, setQuery, 'activity')
   // New-chat page: a right-docked chat-history panel (the shared SidePanel), toggled
   // from the header. URL-bound (?history=1) so Back closes it + refresh restores it.
   const [historyOpen, setHistoryOpen] = useQueryFlag(query, setQuery, 'history')
-  // ── SESSION MAP ────────────────────────────────────────────────────────────────────────────
-  // The in-session index: a fixed rail in the transcript's left gutter on a pointer device, a
-  // tappable SidePanel drawer on the mobile form. Open/closed is URL state so it is
-  // deep-linkable and survives a reload, exactly like `?activity`.
-  //
-  // 🪤 NOT `useQueryFlag`, and the reason is the DEFAULT. The map is always available, so
-  // its default is OPEN — and a present-or-absent flag can only record the non-default, i.e. it
-  // could never express "this user closed it". `useQueryParam` with a '1' default is the same
-  // one-key URL contract in both directions: open is the clean URL, `?map=0` records a
-  // deliberate close and restores it on refresh. (This is `useQueryFlag`'s two-way form,
-  // not a second mechanism — same module, same `setQuery`.)
-  //
-  // Which FORM the map takes. `useIsMobile` (the app's ≤768px breakpoint) rather than a
-  // `(pointer: coarse)` query of its own: the shell already switches its nav rail to a drawer on
-  // exactly this signal, and a second "is this the touch form?" mechanism would be free to
-  // disagree with the first. It is also the discriminator a browser gate can drive — a mobile
-  // VIEWPORT is what `web/e2e/a11y.spec.ts` can set; pointer type is not.
-  const isMobile = useIsMobile()
-  // 🪤 THE DEFAULT IS PER-FORM, AND A SINGLE `'1'` DEFAULT WAS A REAL DEFECT rather than a
-  // preference. The "always available" is what the gutter rail delivers for free — it occupies
-  // the empty left column, so open-by-default costs the transcript nothing. The
-  // mobile form is not that: it is the shared `SidePanel`, a docked column whose fit-width fills a
-  // 390px viewport, so defaulting it open means the drawer is ALREADY COVERING the composer the
-  // moment `started` flips — a phone user arrives at a chat they cannot type into. Measured, not
-  // reasoned: `a11y.spec.ts`'s mobile tier timed out clicking `Message input` with the panel's
-  // resize separator (`aria-valuenow=420`) intercepting the pointer, and `sessionMap.spec.ts`'s
-  // own mobile test drives three turns and THEN taps the control to open the drawer, i.e. both
-  // gates were written against a closed default.
-  //
-  // The URL contract is unchanged and still two-way in both forms, because `useQueryParam` writes
-  // `null` exactly when the value equals the default it was given: on a pointer device the clean
-  // URL means open and `?map=0` records a deliberate close; on the mobile form the clean URL means
-  // closed and `?map=1` records a deliberate open. One key, one mechanism, one control — only the
-  // resting state differs, which is the thing the two forms genuinely do not share.
-  const [mapFlag, setMapFlag] = useQueryParam(query, setQuery, 'map', isMobile ? '0' : '1')
-  const mapOpen = mapFlag === '1'
-  const setMapOpen = (on: boolean) => setMapFlag(on ? '1' : '0')
-  // per-turn DOM nodes so the Index tab and the Session Map can scroll to a turn.
-  //
-  // 🔑 KEYED BY THE MAP'S COORDINATE (`markCoordOf`), NOT BY ARRAY POSITION, and this was a real
-  // defect rather than a preference. `hydrateTurns` collapses loop re-injections and merges
-  // consecutive assistant messages, so a turn's array position runs BEHIND its
-  // `visibleIndex` — the coordinate every `SessionMark` carries and the one the rail hands back
-  // through `onJumpTo`. Registered under `i`, a mark jump on any tool-using transcript resolved
-  // an EARLIER turn's node (the same gap `branchLineage.ts` documents for the fork coordinate).
-  // One key, defined once on the map's contract, so the registry and the marks cannot disagree.
-  const turnNodes = useRef<Map<number, HTMLDivElement>>(new Map())
-  // Find-in-conversation — a client-side find bar over the hydrated
-  // turns, opened with Cmd/Ctrl+F while the chat page owns focus + a session is open.
-  const [findOpen, setFindOpen] = useState(false)
-  // Close the find bar when the open session changes (its matches no longer apply).
-  useEffect(() => { setFindOpen(false) }, [sessionId])
-  // Deep-link from chat-history search: a result opened this session with
-  // `?find=<term>`. `findSeed` is the term to pre-seed the find bar with — captured into
-  // state so it survives clearing the URL param, and keyed onto the FindBar so a fresh
-  // deep-link into an already-open bar re-seeds it. A ⌘F open always clears it first, so
-  // the manual find bar is never the deep-link's leftover term.
-  const [findParam, setFindParam] = useQueryParam(query, setQuery, 'find', '', { replace: true })
-  const [findSeed, setFindSeed] = useState('')
-  // Ordered AFTER the sessionId-reset effect above so, on a cross-session deep-link
-  // (ChatSession remounts under the new session key), the fresh find param OPENS the bar
-  // rather than the reset closing it. Seed + open, then drop `?find` (replace) so a
-  // re-render or Back-nav does not re-fire — after the clear `findParam` is '' and the
-  // guard returns. The bar itself does the scroll-to-first-match from the seed.
-  useEffect(() => {
-    if (!findParam) return
-    setFindSeed(findParam)
-    setFindOpen(true)
-    setFindParam('')
-  }, [findParam]) // eslint-disable-line react-hooks/exhaustive-deps -- setFindParam is per-render; findParam drives it
   // Agent routing suggestion: a non-blocking chip proposing a
   // better-fit specialist for this default-agent chat. Cleared on send / agent switch;
   // arrives EITHER on the routing_suggestion WS push (an already-open session) or on
@@ -896,13 +765,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [renaming, setRenaming] = useState(false)
   const [renameVal, setRenameVal] = useState('')
   const [regenningTitle, setRegenningTitle] = useState(false)
-  // "Show timestamps" — the same persisted-query shape as the read above, and read HERE because
-  // this is the component that owns a turn's `ts`. Gating happens by NOT PASSING the stamp down, so
-  // the action row never learns about the preference: absent means "no time", which is also what a
-  // turn mid-stream (no stamp yet) means, so one branch covers both. Default off, matching the
-  // config default, so an unresolved read shows nothing rather than flashing times on and off.
-  const { data: showTimestamps } = useQuery('chat:show-timestamps', () => api.dashboardConfig().then((c) => c.show_timestamps), { persist: true })
-  const stampOf = (turn: { ts?: string }) => (showTimestamps ? turn.ts : undefined)
   // The chat channels this chat can continue on — each connected channel with an owner to reach
   // (the Web UI has none). Not Settings → Providers' `settings:channels` key: that read keeps its
   // catch, so the `[]` it caches on a failure would reach this one as a success. A pairing on either
@@ -910,13 +772,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const { data: channelList, error: channelListError } = useQuery('settings:channels-owners', () => api.channels(), { persist: true })
   const handoffChannels = channelListError ? [] : (channelList ?? []).filter((c) => c.owner)
   const started = turns.length > 0
-  // show the thinking indicator while streaming and the active assistant turn
-  // has produced nothing renderable yet (no text/tool/approval segment)
-  const lastTurn = turns[turns.length - 1]
-  // thinking indicator only when the active turn has produced nothing visible
-  // (an activity line counts as visible, so we don't stack two indicators)
-  const showThinking = streaming && (!lastTurn || lastTurn.role === 'user' || lastTurn.segments.length === 0)
-
+  // The transcript's view and its turns' actions (`chat/transcript/useTranscript`).
+  const transcript = useTranscript({
+    sessionId, query, setQuery, navigate, stream, started, notice, memoryMode, setSelection,
+    agent: selection.agent, send,
+  })
+  const { followNewTurn, scrolledUp, endRef, isMobile, mapOpen, setMapOpen, sessionEntries, pendingMapJump, runPendingMapJump } = transcript
 
   // Restore the composer selection from the resumed session's binding, once both
   // the binding (from detail) and the discovered-agent catalog have loaded. ACP
@@ -939,7 +800,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     }
   }, [bindingNonce, data.discovered])
 
-
   // Global "/" shortcut → focus the composer (GitHub/Slack-style), unless the
   // user is already typing in a field or a menu/modal owns the key.
   useEffect(() => {
@@ -950,30 +810,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // The composer is a CodeMirror editor (.cm-content), not a <textarea>.
       const cm = composerRef.current?.querySelector<HTMLElement>('.cm-content')
       if (cm) { e.preventDefault(); cm.focus() }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-
-  // Cmd/Ctrl+F → open the in-conversation find bar, but ONLY when a
-  // session is open and the chat page owns focus (not typing in another field). A
-  // SECOND press or Esc closes it and falls through to the browser's native find.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'f' || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return
-      if (!sessionRef.current) return  // no open session → let the browser find run
-      const t = e.target as HTMLElement | null
-      // Don't hijack when the user is typing in a different input/editor — except our
-      // own find input, where a repeat ⌘F should close (toggle) rather than no-op.
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
-        const inFind = !!t.closest('[role="search"]')
-        if (!inFind) return
-      }
-      e.preventDefault()
-      // A manual ⌘F is always an EMPTY bar — clear any leftover deep-link seed so
-      // re-opening after a `?find=` deep-link doesn't resurrect that term.
-      setFindSeed('')
-      setFindOpen((o) => !o)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -996,84 +832,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (pending) void send(pending.text, { uiLabel: pending.label })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  // Her answer to an agent's question, or her Skip. The card says a refusal itself; what took is
-  // settled here at once, as the `question_resolved` frame that follows settles it.
-  const answerQuestion = useCallback(async (id: string, reply: QuestionReply) => {
-    const s = sessionRef.current
-    if (!s) return
-    const { outcome } = await api.answerChatQuestion(s, id, reply)
-    const answers = 'answers' in reply ? reply.answers : undefined
-    setTurns((prev) => prev.map((t) => ({ ...t, segments: applyQuestionResolved(t.segments, { id, outcome, ...(answers ? { answers } : {}) }) })))
-  }, [])
-
-  const approve = useCallback((id: string, action: ApproveAction) => {
-    const s = sessionRef.current
-    if (!s) return
-    // A card action that raises the session's standing posture must move the
-    // Permission-mode pill to match — otherwise the pill keeps claiming "Normal" (ask
-    // before a tool that needs approval) while the session silently auto-approves (a dishonest
-    // state). `trust`/`trust_agent` → this chat is now trusted; `trust_reads` →
-    // read-only auto; `yolo` → everywhere. `approved`/`rejected` are single-shot and
-    // leave the mode alone. Mirror-only (no extra API call — the approve request
-    // already set the server-side flag).
-    const raised: ApprovalMode | null =
-      action === 'trust' || action === 'trust_agent' ? 'trust'
-      : action === 'trust_reads' ? 'trust_reads'
-      : action === 'yolo' ? 'yolo'
-      : null
-    // 🪤 THE MIRROR IS GATED ON THE WRITE, AND THE FAILURE IS REPORTED. Both halves used to be
-    // wrong in the same direction. The request swallowed its rejection, and the mirror ran
-    // regardless — so a failed `yolo` left the pill claiming this chat auto-approves everything
-    // while the server was still asking. That is the EXACT INVERSE of the
-    // dishonest state the comment above sets out to prevent, and it is a claim about a security
-    // posture, not a cosmetic one. The pill is a mirror of a server flag, so it may only move once
-    // the server has the flag; a failed decision now says so instead of being absorbed.
-    //
-    // The card itself needs nothing here: it renders from `seg.resolved`, which the backend
-    // persists, so an unapproved tool call correctly stays unresolved and still asking.
-    api.approve(s, action, id)
-      .then(() => {
-        if (raised) setSelection((sel) => (sel.approval === raised ? sel : { ...sel, approval: raised }))
-      })
-      .catch(reportActionFailure('record your decision'))
-  }, [])
-
-  // Auto-scroll the transcript to the bottom as content streams in — but only if
-  // the user is already near the bottom (don't yank them while reading up)…
-  //
-  // 🔴 …OR THE USER JUST SENT THE TURN THAT IS ARRIVING. "Near the bottom" is measured AFTER
-  // the render, so the user's own new message could unfollow the view by itself: measured, a
-  // 60k-character paste put the bottom ~21,000px below the viewport the moment its bubble
-  // rendered, and the turn's outcome — its error — landed out of sight, reachable only through
-  // "Jump to latest". A send arms `followTurnRef` (`followNewTurn`), so the view follows that
-  // turn to its outcome: the frame that ends it still scrolls, and then the arm is spent. A
-  // scroll away from the bottom disarms it (the listener below), so a reader who scrolls up
-  // mid-answer is left where they went.
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200
-    if (followTurnRef.current || nearBottom) endRef.current?.scrollIntoView({ block: 'end' })
-    if (!streaming) followTurnRef.current = false
-  }, [turns, streaming, showThinking])
-
-  // Track distance from the bottom so a "jump to latest" pill can show when the
-  // user has scrolled up (e.g. reading history while a reply streams in below).
-  // Content growth fires no scroll event, so a large gap HERE is the user's own movement —
-  // the one thing that may cancel following a turn they sent.
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const onScroll = () => {
-      const up = el.scrollHeight - el.scrollTop - el.clientHeight > 240
-      setScrolledUp(up)
-      if (up) followTurnRef.current = false
-    }
-    setScrolledUp(el.scrollHeight - el.scrollTop - el.clientHeight > 240)
-    el.addEventListener('scroll', onScroll, { passive: true })
-    return () => el.removeEventListener('scroll', onScroll)
-  }, [started])
 
   // The paste cards above the composer are the blocks whose `[Paste #N]` marker is still in the
   // draft — DERIVED from the draft on render, never synced back into state.
@@ -1665,177 +1423,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (answer?.stopped && turnSeqRef.current === turn) sayTurnEnded('stopped')
   }
 
-  // ── message actions (stage 4) ──
-  const [editingTurn, setEditingTurn] = useState<number | null>(null)
-  // The inline editor's failure line: the edit could not be resent, and the editor stays open
-  // with the text the user wrote, beside the button that failed.
-  const [editFailure, setEditFailure] = useState<string | null>(null)
-
-  // Regenerate, Edit & resend and Rewind each REPLACE turns that are on screen, and none of them
-  // touches the page until the server has accepted the request. They used to remove the turns
-  // first, so a refusal (a turn already running, the message gone) left the later turns missing
-  // from the page with only a warning-sign line in the assistant's voice to say why. Now a
-  // refusal leaves the page exactly as it was. Once the server accepts, the page adopts the
-  // transcript the server just cut, instead of cutting its own copy to match: the new reply can
-  // already be streaming by the time the response lands, and the snapshot read holds those
-  // frames and replays them on top (see `readSnapshot`). `cutLocally` is the same cut made on
-  // the page's own copy, for when that read fails.
-  const replacingRef = useRef(false)
-  async function replaceTurns(
-    request: (session: string) => Promise<unknown>,
-    cutLocally: (prev: ChatTurn[]) => ChatTurn[],
-    onFailure: (e: unknown) => void,
-  ): Promise<boolean> {
-    const s = sessionRef.current
-    if (!s || streamingRef.current || replacingRef.current) return false
-    replacingRef.current = true
-    try { await request(s) }
-    catch (e) { onFailure(e); return false }
-    finally { replacingRef.current = false }
-    followNewTurn()
-    // The coalescer still holds the PRIOR answer's run; the new reply must open its own.
-    dropTextRun()
-    markStreaming(true)
-    readSnapshot(s, (d) => {
-      adoptSnapshot(d)
-      // A replacement that already ended by the time the read lands is said as it ended.
-      markStreaming(!!d.run_state.turn, turnOutcomeOf(d.run_state.last_outcome))
-      return true
-    }).catch(() => setTurns(cutLocally))
-    return true
-  }
-
-  async function regenerate() { await replay() }
-
-  // Retry or Regenerate over a turn whose finished steps may have changed something is answered
-  // with the gateway's question instead (`chat/repeatedSteps`): the turn runs again only on her
-  // yes, sent back as `confirmed`, and a No leaves the page as it was.
-  async function replay(confirmed?: string) {
-    await replaceTurns(
-      (s) => (confirmed ? api.regenerate(s, confirmed) : api.regenerate(s)),
-      // The last answer goes; the fresh reply streams in beneath its question.
-      (prev) => { const i = prev.map((t) => t.role).lastIndexOf('assistant'); return i >= 0 ? prev.slice(0, i) : prev },
-      (e) => { if (!askToRepeat(e, (yes) => replay(yes))) reportActionFailure('regenerate this reply')(e) },
-    )
-  }
-
-  // Page to a prior/next regenerated answer. The backend swaps the active variant
-  // and broadcasts chat_variant_switch, which the WS handler applies in place — so
-  // this just fires the request (no optimistic mutation, the echo is authoritative).
-  async function switchVariant(index: number) {
-    const s = sessionRef.current
-    if (!s || streaming) return
-    try { await api.switchVariant(s, index) }
-    catch (e) {
-      notice.showError(`Couldn’t switch answer: ${(e as Error).message}`)
-    }
-  }
-
-  // Branch this conversation at `turnIndex`. Branch DUPLICATES a timeline —
-  // both stay live and equal — which is why it is one click with no confirmation:
-  // it creates a new session and cannot overwrite anything in this one. (Rewind,
-  // which replaces a timeline, does confirm.) A branch of a branch and repeated
-  // branches off the same message are properties of the endpoint; nothing here
-  // prevents either.
-  //
-  // The wire coordinate is the backend's VISIBLE user/assistant index, which is NOT
-  // `turnIndex`: hydrateTurns collapses loop re-injections and merges consecutive
-  // assistant messages, so on a tool-using transcript the turn position runs behind
-  // the message index and the fork silently landed EARLIER than the clicked message.
-  // branchIndexOf translates; see branchLineage.ts.
-  function forkAt(turnIndex: number) {
-    const s = sessionRef.current
-    if (!s) return
-    api.forkSession(s, branchIndexOf(turns, turnIndex))
-      .then((r) => {
-        if (!r?.key) return
-        // Confirm on the SHELL toaster, not this page's inline strip: navigating to the
-        // child unmounts this session, and a confirmation that dies with the surface
-        // that raised it never gets read.
-        notify('Session branched — you’re now in the new branch.', 'success')
-        navigate(`chat/${r.key}`)
-      })
-      .catch((e: Error) => {
-        // Surface the failure instead of a silent no-op — the user clicked Branch
-        // and nothing happening looks broken. `e.message` is the endpoint's own
-        // wording, so the session-cap 429 arrives readable ("session cap reached
-        // (500)") rather than as a bare status.
-        notice.showError(`Couldn’t branch this chat: ${e.message}`)
-      })
-  }
-
-  async function editResend(turnIndex: number, content: string, rewind = false, confirmed?: string) {
-    const t = content.trim()
-    if (!t) return
-    const turn = turns[turnIndex]
-    // Her message as it leaves the page again: each block she pasted into it in place of its
-    // marker, and the blocks beside it (`asSent`), as every send has. The page shows her message
-    // with the markers, so the editor and Rewind to here both hold them.
-    const sent = asSent(t, turn?.pastes ?? [])
-    // Locate the message by the ORIGINAL turn's ts (backend truncates from there),
-    // and stamp the re-added turn with a FRESH ts that the backend also stores —
-    // so an immediate SECOND edit-resend still has a matching ts (the backend
-    // re-appends the edited message, which would otherwise get a new server ts the
-    // FE doesn't know). Falls back to the index when the original turn has no ts.
-    const newTs = new Date().toISOString()
-    // A rewind retains the discarded tail on the edited message and resets the provider so
-    // context rebuilds from the truncated transcript; the snapshot the page adopts carries the
-    // divider chip + read-only tail disclosure. An EARLIER turn is always a rewind — decided
-    // here for both callers (the inline editor and Rewind to here), and enforced by the server
-    // too, because a plain resend of a middle turn used to delete every later exchange with no
-    // trail. Only the latest turn's plain edit replaces just its own reply.
-    const asRewind = rewind || editReplacesLaterTurns(turns, turnIndex)
-    // Named for what the user pressed: Rewind to here, or the editor's Resend.
-    const what = rewind ? 'rewind to this message' : 'resend your edited message'
-    // Opened from the inline editor, the failure is said there, where the text still is. Rewind
-    // to here has no editor open, so it is said the way every other failed action is.
-    const fromEditor = editingTurn === turnIndex
-    setEditFailure(null)
-    // Her message sent as it is (Rewind to here, or a resend she did not change) runs its turn
-    // again, so the gateway asks first when that turn finished steps that may have changed
-    // something (`chat/repeatedSteps`), as it does for Retry. What the page shows of a message is
-    // not always the row's own words, so the page says it is sending the message again; the turn
-    // runs only on her yes, sent back as `confirmed`, and a No leaves the page as it was.
-    const again = !!turn && t === turnText(turn)
-    const landed = await replaceTurns(
-      (s) => api.editResend(s, sent.text, turn?.ts, turnIndex, newTs, asRewind, { again, confirm: confirmed }, sent.pastes),
-      (prev) => [...prev.slice(0, turnIndex), userTurn(t, newTs, sent.pastes.length ? sent.pastes : undefined)],
-      (e) => {
-        if (askToRepeat(e, (yes) => editResend(turnIndex, content, rewind, yes))) return
-        if (fromEditor) setEditFailure(failureSentence(what, e)); else reportActionFailure(what)(e)
-      },
-    )
-    if (landed) setEditingTurn(null)
-  }
-
-  // Rewind to an earlier user turn: confirm (it discards the later answers into
-  // history), then edit-resend with the same text and rewind=true. The inline
-  // editor stays available for changing the text first (Edit & resend); Rewind is
-  // the one-click "answer this again, keep the tail" affordance. The later messages
-  // are NOT re-sent — only this one is — so the confirmation says replaced, not replayed.
-  async function rewindTo(turnIndex: number) {
-    const turn = turns[turnIndex]
-    if (!turn || turn.role !== 'user') return
-    if (!(await confirm({
-      title: 'Rewind to this message?',
-      body: `Everything below this message is replaced by a fresh reply to it. ${replacedTurnsAreKept(memoryMode === 'persistent')}`,
-      confirmLabel: 'Rewind',
-    }))) return
-    await editResend(turnIndex, turnText(turn), true)
-  }
-
-  // Restore a retained rewind tail as a NEW fork (restore = fork, never swap).
-  async function forkRewound(turnIndex: number, snapshotIndex?: number) {
-    const s = sessionRef.current
-    if (!s) return
-    try {
-      const r = await api.forkRewound(s, turnIndex, snapshotIndex)
-      if (r?.key) navigate(`chat/${r.key}`)
-    } catch (e) {
-      notice.showError(`Couldn’t restore that history: ${(e as Error).message}`)
-    }
-  }
-
   // Voice playback uses the Web Audio API, not an <audio> element: Chrome
   // rejects piper's WAV stream via HTMLAudioElement.play() with NotSupportedError
   // even though the bytes are valid (decodeAudioData decodes them fine). The
@@ -1995,65 +1582,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     composerRef.current?.querySelector<HTMLElement>('.cm-content')?.focus()
   }
 
-  // Resolve who said the selected passage: walk up from the selection node to the
-  // enclosing turn's DOM node (turnNodes), then read that turn's role. Attribute the
-  // agent side to its name when one is bound, else the neutral "Assistant".
-  function attributionForNode(node: Node | null): string | undefined {
-    if (!node) return undefined
-    for (const [coord, el] of turnNodes.current.entries()) {
-      if (el.contains(node)) {
-        // The registry is keyed by the map's coordinate, so the owning turn is the one whose
-        // coordinate matches — not `turns[coord]`, which is the array lookup the key change
-        // above made wrong.
-        const turn = turns.find((t, i) => markCoordOf(t, i) === coord)
-        if (!turn) return undefined
-        return turn.role === 'user' ? 'You' : (selection.agent || 'Assistant')
-      }
-    }
-    return undefined
-  }
-
   // activity panel: the Files / Links tabs, derived from the transcript. No navigation —
   // the Session Map's rail and drawer are the session's only jump surface.
   const activity = useMemo(() => deriveActivity(turns), [turns])
-  // The tool results that show a run's live card: the first to name each run, however often the
-  // agent read it after (`liveWorkflowCards`). Every later read keeps its plain tool card.
-  const liveCards = useMemo(() => liveWorkflowCards(turns), [turns])
-  // The Session Map's entries — one per USER message, each owning the turns of its exchange.
-  // Derived ONCE, here, and handed to both forms, so the rail and the coarse-pointer drawer index
-  // the identical array (a "Message 3 of 7" that means a different 7 in each form is two maps).
-  const sessionEntries = useMemo(() => sessionMapEntries(turns), [turns])
-  /** Scroll the turn at a map coordinate into view — the ONE scroll implementation behind the
-   *  rail's tick and the drawer's row, which are the only two jump surfaces. */
-  function jumpToTurn(coord: number) {
-    const node = turnNodes.current.get(coord)
-    node?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }
-  /** A drawer row's coordinate, parked between the tap and the drawer finishing its exit.
-   *
-   *  🔴 THE ORDER IS THE WHOLE FIX, AND JUMPING FIRST WAS A REAL DEFECT. The mobile drawer is a
-   *  docked `SidePanel` flex SIBLING of this column, so while it is open the transcript is
-   *  squeezed to the 32px `EDGE_PEEK` sliver (measured at a 390px viewport: panel 358, column
-   *  32). `scrollIntoView` resolves a target offset against the layout it is called in — so
-   *  `jumpToTurn(coord); setMapOpen(false)` computed an offset for a 32px-wide transcript and
-   *  then immediately re-flowed it to 390px, where the retained `scrollTop` means something
-   *  else entirely. Tapping the oldest row left turn 1 at viewport ratio 0, i.e. the
-   *  tap navigated nowhere, which is the one thing the row exists to do.
-   *
-   *  So the tap now only RECORDS where it wants to go, and the scroll runs from the
-   *  `AnimatePresence` `onExitComplete` below — the first moment the panel is out of the DOM and
-   *  the transcript's width is final. `onExitComplete` rather than a `requestAnimationFrame` or a
-   *  timeout because the exit is a spring on `width` (`ui/SidePanel`): its duration is not a
-   *  number this file can know, and under `prefers-reduced-motion` it is zero. Framer's callback
-   *  is the only signal that means "the layout has stopped moving" in both cases.
-   */
-  const pendingMapJump = useRef<number | null>(null)
-  /** Run the parked jump, if a row tap (and not the panel's own close button) armed one. */
-  function runPendingMapJump() {
-    const coord = pendingMapJump.current
-    pendingMapJump.current = null
-    if (coord !== null) jumpToTurn(coord)
-  }
 
   // Kill EVERY running subagent of this chat's fan-out in one click.
   // Optimistically mark the running cards done; the subagent_done WS events reconcile. A batch's
@@ -2201,32 +1732,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     } catch (e) {
       notify(`Couldn't save this starter: ${String((e as Error)?.message || e)}`, 'error')
     }
-  }
-
-  // The model proposed a switch out of a restricted mode and the user clicked
-  // "Switch to Agent & run it". Flip the session to Agent (UI toggle + backend) and
-  // resume the work — the click IS the consent that makes the escalation safe (no
-  // silent self-escalation out of a read-only posture). The backend flip is awaited
-  // before resending so the continuation turn runs under Agent's gate + framing.
-  async function switchToAgentAndRun(continuation: string) {
-    setSelection((sel) => ({ ...sel, taskMode: 'agent' }))
-    const s = sessionRef.current
-    // 🔑 THIS ONE DOES NOT JUST REPORT — IT STOPS. The comment above states the invariant: the flip is
-    // awaited "so the continuation turn runs under Agent's gate + framing". It used to swallow the
-    // rejection and send anyway, which breaks exactly that invariant — the turn would run under the
-    // posture the user was escalating OUT of, while the composer showed Agent. For a consent-gated
-    // escalation, proceeding on a failed flip is the one outcome the click did not authorise, so report
-    // and return. The composer keeps showing Agent, which is now the honest state of the user's intent
-    // rather than a claim about the session; the next send re-attempts the flip through `applySelection`.
-    if (s) {
-      try { await api.setTaskMode('agent', s) }
-      catch (e) {
-        notify(`Couldn't switch this session to Agent: ${String((e as Error)?.message || e)}`, 'error')
-        return
-      }
-    }
-    const text = continuation.trim() || 'Go ahead and do it.'
-    await send(text)
   }
 
   // ── session title actions ──
@@ -2856,126 +2361,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             </div>
           ) : (
             <>
-              {/* ── SESSION MAP RAIL + TRANSCRIPT ────────────────────────────────────────────
-                  🔑 THE RAIL IS A SIBLING OF THE SCROLLER, NOT A CHILD OF IT, and that IS the
-                  "stays fixed while the transcript scrolls" requirement rather than a styling
-                  choice: an element outside the scroll container has no scroll offset to
-                  inherit, so no `sticky`, no scroll listener and no re-positioning code exists
-                  to get wrong. `e2e/sessionMap.spec.ts` asserts BOTH halves in a real browser —
-                  the rail's box does not move while the transcript scrolls, AND the scroll
-                  container does not contain the rail — because a `sticky` rail inside the
-                  scroller would pass the box check and still drift under an ancestor transform.
-                  The gutter is an empty column (measured: "No left sidebar"), so the rail
-                  costs the centred transcript nothing. */}
-              <div className="relative flex min-h-0 flex-1">
-              {mapOpen && !isMobile && (
-                <SessionMapRail entries={sessionEntries} turnNodes={turnNodes.current}
-                  scrollRef={scrollRef} onJumpTo={jumpToTurn} />
-              )}
-              {/* `data-transcript-scroll` names THIS element as the one `scrollRef` points at, so
-                  the browser gate can assert scroll-fixity and the jump against the real scroll
-                  container instead of guessing which ancestor scrolls. */}
-              {/* The transcript FADES OUT over its own bottom padding (`py-2xl` below) instead of
-                  stopping at a scroll clip. That edge sits in the halo's brightest band, right
-                  above the docked composer, and the clip sliced whatever crossed it — a code
-                  block or a bubble cut flat, above a strip of glow. At rest nothing is faded
-                  (the newest turn ends above the padding); anything scrolled past dissolves
-                  into the halo instead of ending in a line. */}
-              <div ref={scrollRef} data-transcript-scroll className="relative min-w-0 flex-1 overflow-y-auto"
-                style={{ maskImage: TRANSCRIPT_END_FADE, WebkitMaskImage: TRANSCRIPT_END_FADE }}>
-                <AnimatePresence>
-                  {/* `ui/FindBar` is surface-agnostic; chat supplies what a turn's searchable
-                      text is (`findSegments`) and which node to scroll to. Both references are
-                      stable, so a composer keystroke does not re-scan the transcript. */}
-                  {findOpen && (
-                    // key on the seed: a fresh `?find=` deep-link (even into an already-open
-                    // bar) remounts it so it re-seeds + re-scrolls; an empty seed (⌘F) is a
-                    // constant key, so the manual bar is never remounted out from under a typist.
-                    <FindBar key={`find-${findSeed}`} items={turns} segmentsOf={findSegments} nodeOf={(t, i) => turnNodes.current.get(markCoordOf(t, i))}
-                      scrollRef={scrollRef} label="Find in conversation" initialQuery={findSeed} onClose={() => setFindOpen(false)} />
-                  )}
-                </AnimatePresence>
-                <SelectionQuote scrollRef={scrollRef} onQuote={quoteToComposer} attributionFor={attributionForNode} />
-                <div className="mx-auto flex flex-col gap-2xl px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
-                  {turns.map((turn, i) => {
-                    const isLast = i === turns.length - 1
-                    const turnTextOf = (t: ChatTurn) => t.segments.map((s) => (s.kind === 'text' ? s.text : '')).join('')
-                    return (
-                      // `data-transcript-turn` names a turn node by its side of the exchange, so the
-                      // browser gate can put a REPLY on screen without its question and check the
-                      // Session Map still lights that question — the registry itself is a ref.
-                      <div key={i} className="relative" data-transcript-turn={turn.role}
-                        ref={(el) => { const c = markCoordOf(turn, i); if (el) turnNodes.current.set(c, el); else turnNodes.current.delete(c) }}>
-                        {turn.role === 'user' ? (
-                          editingTurn === i ? (
-                            <UserEditor initial={turnTextOf(turn)} onCancel={() => { setEditingTurn(null); setEditFailure(null) }}
-                              replacesLater={editReplacesLaterTurns(turns, i)} canFork={memoryMode === 'persistent'}
-                              failure={editFailure} onSubmit={(v) => editResend(i, v)} />
-                          ) : (
-                            <div className="group/msg">
-                              <MessageUser fromComposer={isLast} onFileClick={setOpenFile} pastes={turn.pastes} optimized={turn.optimized} ranPrompt={turn.ranPrompt} steered={turn.steered}
-                                onExpand={() => { followTurnRef.current = false }}>{turnTextOf(turn)}</MessageUser>
-                              {turn.files && turn.files.length > 0 && <TurnAttachments paths={turn.files} delivery={turn.imageDelivery} onOpenFile={setOpenFile} />}
-                              {turn.rewound && turn.rewound.length > 0 && (
-                                <RewindDivider snapshots={turn.rewound} canFork={memoryMode === 'persistent'} onFork={(si) => forkRewound(i, si)} />
-                              )}
-                              {!streaming && <UserActions text={asSent(turnTextOf(turn), turn.pastes ?? []).text} canFork={memoryMode === 'persistent'}
-                                canRewind={!isLast} onRewind={() => rewindTo(i)} ts={stampOf(turn)}
-                                onEdit={() => { setEditFailure(null); setEditingTurn(i) }} onFork={() => forkAt(i)} />}
-                            </div>
-                          )
-                        ) : (
-                          <MessageAssistant actions={!(isLast && streaming) && (
-                            <AssistantActions text={turnText(turn)} isLast={isLast} canFork={memoryMode === 'persistent'}
-                              variantCount={turn.variantCount} variantIdx={turn.variantIdx} ts={stampOf(turn)}
-                              onCopy={() => {}} onRegenerate={regenerate} onFork={() => forkAt(i)}
-                              onSwitchVariant={isLast ? switchVariant : undefined}
-                              speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />
-                          )}>
-                            <AssistantSegments segments={turn.segments} liveCards={liveCards} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onAnswerQuestion={answerQuestion} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} onRetry={isLast && !streaming ? regenerate : undefined} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} cutOff={turn.cutOff} modelSubstitution={turn.modelSubstitution} servedModel={turn.servedModel} />
-                          </MessageAssistant>
-                        )}
-                        {/* Follow-up chips under the last assistant turn only,
-                            once the reply has settled — click fills the composer to edit,
-                            send-glyph sends. */}
-                        {turn.role === 'assistant' && isLast && !streaming && followups.length > 0 && (
-                          <FollowupChips items={followups} onPick={(t) => { setInput(t); focusComposerSoon() }} onSend={(t) => { setFollowups([]); void send(t) }} />
-                        )}
-                        {/* No chips because no model is chosen for them: the place says why, and
-                            where to choose one. */}
-                        {turn.role === 'assistant' && isLast && !streaming && followupsNeed && (
-                          <div className="mt-m"><NeedsModelNote sentence={followupsNeed} /></div>
-                        )}
-                        {/* "Check this work" offer — user-clicked only. */}
-                        {turn.role === 'assistant' && isLast && !streaming && checkWorkOffer && (
-                          <CheckWorkChip label={checkWorkOffer.label}
-                            onRun={() => { const p = checkWorkOffer.prompt; setCheckWorkOffer(null); void send(p) }} />
-                        )}
-                      </div>
-                    )
-                  })}
-                  <AnimatePresence>
-                    {streaming && showThinking && (
-                      <StreamingIndicator phase={turnPhase} line={turnLine} />
-                    )}
-                  </AnimatePresence>
-                  {/* A step of this turn waiting for a busy local model: why, and what next. */}
-                  {streaming && sessionId && <ModelWaits session={sessionId} className="py-s" />}
-                  <div ref={endRef} />
-                  {/* visually-hidden polite live region — narrates the turn lifecycle to screen
-                      readers (the glow/Thinking cue is visual-only): that a turn started, its
-                      status lines, and how it ended, as the gateway reported it. */}
-                  <div aria-live="polite" className="sr-only">{srAnnounce}</div>
-                  {/* Second polite region, mounted from first render: the follow-up
-                      chips arrive from a WS event AFTER the turn's ending is said — a
-                      visual-only change until now. Kept separate from srAnnounce so the turn
-                      narration and the chips arrival do not overwrite one another. */}
-                  <div role="status" aria-live="polite" className="sr-only">
-                    {streaming ? '' : followupsNeed || followupAnnouncement(followups.length)}
-                  </div>
-                </div>
-              </div>
-              </div>
+              <Transcript transcript={transcript} stream={stream} sessionId={sessionId} memoryMode={memoryMode} navigate={navigate}
+                onOpenFile={setOpenFile} onQuote={quoteToComposer} onPickFollowup={(t) => { setInput(t); focusComposerSoon() }}
+                send={send} speak={speak} speakingTurn={speakingTurn} />
               <div className="relative shrink-0 px-l pb-l">
                 {/* reconnecting cue — the WS dropped; state will re-sync on
                     reconnect, but tell the user the link is down. */}
@@ -3280,7 +2668,6 @@ function KnowledgeChips({ items, onRemove }: { items: { id: string; name: string
   )
 }
 
-
 /** One of her earlier messages for ↑/↓ recall: its text as she wrote it, and the blocks she
  *  pasted into it, which come back to the composer with it. */
 interface RecalledPrompt { text: string; pastes: TurnPaste[] }
@@ -3378,29 +2765,6 @@ function QueueStack({ items, onCancel, onEdit, onInterrupt, canInterrupt = false
   )
 }
 
-/** Message-area skeleton shown while a chat session's history loads. Alternates a
- *  right-aligned user bubble and a left-aligned assistant block so the shape reads
- *  as a conversation the instant the page paints — no bare "Loading…" text. The
- *  chrome (header + composer) is already live around it; only this area is pending. */
-function MessagesSkeleton() {
-  const rows = [
-    { me: true, w: 'w-1/3' }, { me: false, w: 'w-3/4' },
-    { me: true, w: 'w-2/5' }, { me: false, w: 'w-2/3' },
-  ]
-  return (
-    <div className="mx-auto flex flex-col gap-2xl px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}
-      role="status" aria-busy="true" >
-        <LoadingStatus what="conversation" />
-      {rows.map((r, i) => (
-        <div key={i} className={`flex flex-col gap-2 ${r.me ? 'items-end' : 'items-start'}`}>
-          <Skeleton className={`h-4 ${r.w} ${r.me ? 'max-w-[70%]' : ''}`} />
-          {!r.me && <><Skeleton className="h-4 w-11/12" /><Skeleton className="h-4 w-4/5" /></>}
-        </div>
-      ))}
-    </div>
-  )
-}
-
 /** Removable attachment cards for large pastes, shown ABOVE the composer. Each
  *  pairs with an inline `[Paste #N]` marker in the prompt (so the position is
  *  visible); ✕ removes both. Click to preview the pasted content. */
@@ -3450,511 +2814,6 @@ function MissingChat({ draft, navigate }: { draft: string; navigate: (p: string,
           onClick: () => navigate(keep ? `chat/new?seed=${encodeURIComponent(keep)}` : 'chat/new', { replace: true }),
         }} />
       <Button variant="ghost" size="sm" onClick={() => navigate('chat/history')}>See all chats</Button>
-    </div>
-  )
-}
-
-/** Rewind divider — shown under a user turn that was
- *  edited-and-replayed. States "N messages kept in history" and discloses the
- *  retained tail read-only. Restoring a tail = forking it into a new session
- *  (restore = fork, never an in-place timeline swap). Shows the most recent
- *  snapshot; earlier ones (repeated rewinds) are reachable via the count. */
-function RewindDivider({ snapshots, canFork, onFork }: {
-  snapshots: NonNullable<ChatTurn['rewound']>
-  canFork: boolean
-  onFork: (snapshotIndex?: number) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const latest = snapshots[snapshots.length - 1]
-  // The retained tail begins with the edited turn's OLD content; count the
-  // messages AFTER it as "kept" (what the user actually rewound past).
-  const kept = Math.max(0, (latest?.messages?.length ?? 0) - 1)
-  return (
-    <div className="mt-2 flex flex-col items-end gap-1.5">
-      <div className="flex items-center gap-2 text-on-surface-low text-[0.75rem]">
-        <Rewind size={12} className="shrink-0" />
-        <span>Rewound from here · {kept} message{kept === 1 ? '' : 's'} kept in history</span>
-        <QuietButton onClick={() => setOpen((o) => !o)} ariaExpanded={open} className="h-6">
-          {open ? 'Hide' : 'View'} <ChevronDown size={11} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
-        </QuietButton>
-      </div>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-            transition={spring.spatialFast}
-            className="w-full max-w-[452px] overflow-hidden rounded-xl border border-outline-variant/50 bg-surface-container/60">
-            <div className="flex items-center justify-between border-b border-outline-variant/40 px-3 py-2">
-              <span className="text-on-surface-low text-[0.6875rem] uppercase tracking-wide">Retained history (read-only)</span>
-              {canFork && (
-                <Button size="sm" variant="ghost" onClick={() => onFork()} className="h-6 px-2 text-[0.75rem]">
-                  <GitBranch size={12} /> Restore as fork
-                </Button>
-              )}
-            </div>
-            <div className="flex flex-col gap-2 px-3 py-2.5">
-              {(latest?.messages ?? []).map((m, mi) => (
-                <div key={mi} className={`text-[0.8125rem] leading-relaxed ${m.role === 'user' ? 'text-on-surface-var' : 'text-on-surface-low'}`}>
-                  <span className="mr-1.5 text-on-surface-low text-[0.6875rem] uppercase tracking-wide">{m.role === 'user' ? 'You' : 'Assistant'}</span>
-                  <span className="whitespace-pre-wrap">{m.content.length > 400 ? m.content.slice(0, 400) + '…' : m.content}</span>
-                </div>
-              ))}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  )
-}
-
-/** Inline editor for a user turn (Edit & resend). Replaces the bubble with a
- *  right-aligned textarea + Cancel/Resend; ⌘↵ submits, Esc cancels.
- *
- *  `replacesLater`: this is an EARLIER turn, so resending replaces every exchange below it.
- *  That is said while the editor is open — beside the button that does it, and on the button
- *  itself — together with where the replaced turns go, because the old editor resent a middle
- *  turn with no warning and the later turns were simply gone. */
-function UserEditor({ initial, onSubmit, onCancel, replacesLater = false, canFork = false, failure = null }: {
-  initial: string; onSubmit: (v: string) => void; onCancel: () => void
-  replacesLater?: boolean; canFork?: boolean
-  /** Why the last Resend did not go through. The editor stays open with the text, and the
-   *  transcript below it is untouched, so the user can try again or cancel. */
-  failure?: string | null
-}) {
-  const [v, setV] = useState(initial)
-  const noticeId = useId()
-  return (
-    <div className="flex flex-col items-end gap-2">
-      <textarea autoFocus value={v} onChange={(e) => setV(e.target.value)} rows={Math.min(10, v.split('\n').length + 1)}
-        aria-label="Edit your message"
-        aria-describedby={replacesLater ? noticeId : undefined}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') { e.preventDefault(); onCancel() }
-          else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSubmit(v) }
-        }}
-        className="w-full resize-none rounded-2xl bg-surface-container px-5 py-4 text-on-surface text-[1.0625rem] leading-relaxed outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
-        style={{ maxWidth: 452 }} />
-      {replacesLater && (
-        <p id={noticeId} data-type="caption" className="flex w-full items-start gap-1.5 text-on-surface-var" style={{ maxWidth: 452 }}>
-          <Rewind size={12} className="mt-0.5 shrink-0" />
-          <span>Resending replaces everything below this message. {replacedTurnsAreKept(canFork)}</span>
-        </p>
-      )}
-      {failure && (
-        <div className="w-full" style={{ maxWidth: 452 }}>
-          <InlineError icon multiline>{failure}</InlineError>
-        </div>
-      )}
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={onCancel} className="px-3 text-on-surface-low">Cancel</Button>
-        <Button size="sm" onClick={() => onSubmit(v)} disabled={!v.trim()} className="px-4"
-          disabledReason={!v.trim() ? 'The message cannot be empty' : undefined}>{replacesLater ? 'Resend & replace' : 'Resend'}</Button>
-      </div>
-    </div>
-  )
-}
-
-/** Select-to-quote — when the user selects text inside the transcript, float a
- *  toolbar (Quote + Copy) near the selection. Quote inserts an
- *  ATTRIBUTED blockquote into the composer (who said it, resolved from the
- *  enclosing turn); Copy copies the plain text. Positioning tracks BOTH mouseup
- *  and `selectionchange` so keyboard/touch selections get the toolbar too (not
- *  only mouse drags). */
-function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
-  scrollRef: React.RefObject<HTMLDivElement | null>
-  onQuote: (text: string, attribution?: string) => void
-  attributionFor: (node: Node | null) => string | undefined
-}) {
-  const [pos, setPos] = useState<{ x: number; y: number; text: string; attribution?: string } | null>(null)
-  const barRef = useRef<HTMLDivElement | null>(null)
-  useEffect(() => {
-    const root = scrollRef.current
-    if (!root) return
-    const recompute = () => {
-      const sel = window.getSelection()
-      const text = sel?.toString().trim() ?? ''
-      if (!text || !sel || sel.rangeCount === 0) { setPos(null); return }
-      const range = sel.getRangeAt(0)
-      // only within the transcript
-      if (!root.contains(range.commonAncestorContainer)) { setPos(null); return }
-      const r = range.getBoundingClientRect()
-      const pr = root.getBoundingClientRect()
-      // The toolbar is position:absolute inside the SCROLLING root, so its
-      // coordinates are content-relative, not viewport-relative. Add scrollLeft/
-      // scrollTop or it drifts far from the selection once the transcript scrolls.
-      setPos({
-        x: r.left - pr.left + root.scrollLeft + r.width / 2,
-        y: r.top - pr.top + root.scrollTop - 8,
-        text,
-        attribution: attributionFor(range.commonAncestorContainer),
-      })
-    }
-    const onUp = (e: MouseEvent) => {
-      // a click ON the toolbar must NOT recompute/clear before its own handler runs.
-      if (barRef.current && e.target instanceof Node && barRef.current.contains(e.target)) return
-      recompute()
-    }
-    // selectionchange fires for keyboard + touch selection too; debounce a frame so
-    // it settles (and never fights the mouseup path). No-selection clears the bar.
-    let raf = 0
-    const onSelChange = () => {
-      cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => {
-        const sel = window.getSelection()
-        if (!sel || !sel.toString().trim()) { setPos(null); return }
-        recompute()
-      })
-    }
-    // clear on a fresh mousedown that ISN'T the toolbar (don't unmount mid-click).
-    const onDown = (e: MouseEvent) => {
-      if (barRef.current && e.target instanceof Node && barRef.current.contains(e.target)) return
-      setPos(null)
-    }
-    document.addEventListener('mouseup', onUp)
-    document.addEventListener('selectionchange', onSelChange)
-    root.addEventListener('mousedown', onDown)
-    return () => {
-      cancelAnimationFrame(raf)
-      document.removeEventListener('mouseup', onUp)
-      document.removeEventListener('selectionchange', onSelChange)
-      root.removeEventListener('mousedown', onDown)
-    }
-  }, [scrollRef, attributionFor])
-  if (!pos) return null
-  const clear = () => { setPos(null); window.getSelection()?.removeAllRanges() }
-  return (
-    <SelectionToolbar ref={barRef} x={pos.x} y={pos.y} actions={[
-      { icon: Quote, label: 'Quote', onPress: () => { onQuote(pos.text, pos.attribution); clear() } },
-      { icon: Clipboard, label: 'Copy', onPress: () => { void copyText(pos.text, 'the selection'); clear() } },
-    ]} />
-  )
-}
-
-/** Render an assistant turn's ordered segments. Legacy `[OPTIONS: …]` markers in
- *  historical messages get stripped from the prose (they are never rendered as
- *  buttons — follow-up chips are the single suggestion surface) and referenced
- *  file paths surface as clickable chips below the prose. */
-function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, onApprove, onAnswerQuestion, onSwitchToAgent, onOpenFile, onSetupModel, onRetry, chatSessionKey, citations, skillsUsed, cutOff, modelSubstitution, servedModel }: {
-  segments: Segment[]; isLast: boolean
-  /** The tool results of the whole chat that show a run's live card, one per run. */
-  liveCards: Set<Segment>
-  messageTs?: string
-  streaming?: boolean
-  onApprove: (id: string, action: ApproveAction) => void
-  onAnswerQuestion: (id: string, reply: QuestionReply) => Promise<unknown>
-  onSwitchToAgent: (continuation: string) => void
-  onOpenFile: (path: string) => void
-  /** The no-model empty-state's CTA — routes to Settings → Models through the hash router. */
-  onSetupModel: () => void
-  /** Send the turn's message again, for a turn that ended on its error without an answer — a
-   *  failure, or a restart that cut it off. Given for the last settled turn only. */
-  onRetry?: () => void
-  chatSessionKey?: string
-  citations?: MemoryCitation[]
-  skillsUsed?: SkillUsed[]
-  /** How the reply did not finish (`meta.finish_reason`): its model's output cap, or an answer
-   *  cut off before the model finished, whose kept part is marked where it stops. */
-  cutOff?: ReplyCut
-  /** "Ran on X instead of Y: …" — another model answered than the one chosen for this chat. */
-  modelSubstitution?: string
-  /** The model that answered this turn and how it was chosen, which the turn's chip names. */
-  servedModel?: ServedModel
-}) {
-  const fullText = segments.filter((s) => s.kind === 'text').map((s) => (s as { text: string }).text).join('\n')
-  // A restricted-mode turn may OFFER a one-click escalation to Agent.
-  const { switchTo } = parseSwitchToAgent(fullText)
-
-  // Transparency signals (what FED the turn / what was LEARNED / telemetry) are
-  // pulled OUT of the inline flow and consolidated into one collapsible ledger at
-  // the turn footer — holistic, non-intrusive, on demand (not three scattered lines).
-  const ledger: { fed?: string; fedNoMemory?: boolean; learned?: string; learnedOrigin?: string; learnedRef?: string; stats?: string } = {}
-  for (const s of segments) {
-    if (s.kind !== 'activity') continue
-    const ak = (s as ActivitySegment).activityKind
-    if (ak === 'context' || ak === 'context_without_memory') {
-      ledger.fed = (s as ActivitySegment).text
-      ledger.fedNoMemory = ak === 'context_without_memory'
-    }
-    // The learned row carries its emitter's `origin` (and a preference's key) too — the
-    // ledger is where the chip lives, so the discriminator has to travel with the text or the
-    // tap has nothing to route on. Read off the SAME segment, so the two can never describe
-    // different events.
-    else if (ak === 'learned') {
-      ledger.learned = (s as ActivitySegment).text
-      ledger.learnedOrigin = (s as ActivitySegment).origin
-      ledger.learnedRef = (s as ActivitySegment).ref
-    }
-    else if (ak === 'stats') ledger.stats = (s as ActivitySegment).text
-  }
-  const hasLedger = Boolean(ledger.fed || ledger.learned || ledger.stats || servedModel)
-  // The last segment the turn shows in its body: the ledger's rows are pulled out into its footer.
-  const inLedger = (s: Segment) => s.kind === 'activity' && LEDGER_ACTIVITY_KINDS.includes((s as ActivitySegment).activityKind || '')
-  const lastShown = [...segments].reverse().find((s) => !inLedger(s))
-  // An answer cut off before the model finished is marked where its kept text stops, above the
-  // error the turn ends on: that text is the turn's last.
-  const cutHere = cutOff === 'incomplete' && !streaming ? [...segments].reverse().find((s) => s.kind === 'text') : undefined
-
-  // Render one segment as its own card/line. Tool/approval/error cards carry their
-  // OWN leading icon + status glyph, so there is no separate timeline dot+rail (the
-  // old dot duplicated each card's ✓ and never centered on the connector). An SDLC
-  // tool result becomes a live progress widget; text renders as prose.
-  const renderItem = (seg: Segment, i: number): React.ReactNode => {
-    if (seg.kind === 'tool') {
-      const t = seg as ToolSegment
-      // A Code project / Goal Loop created or started from chat renders as a live
-      // progress widget (status + stages/sub-goals + activity + cockpit link)
-      // instead of a bare tool log line — once its result has landed with an id.
-      const sdlc = t.done ? sdlcRefFromTool(t.tool, t.output) : null
-      if (sdlc) return <SdlcProgressCard key={seg.id || i} refObj={sdlc} />
-      // A workflow run started or inspected from chat renders as a live progress card for
-      // the same reason: a run is a living thing, not the frozen JSON the tool returned. Once,
-      // where the chat first names it: every status read the agent made after is its tool card.
-      const wf = liveCards.has(seg) ? workflowRefFromTool(t.tool, t.output) : null
-      if (wf) return <WorkflowProgressCard key={seg.id || i} refObj={wf} />
-      // An automation made to run when she runs it ("a button that runs …") is shown with its
-      // Run now, the button she asked for.
-      const manual = t.done && t.ok !== false ? manualAutomationFromTool(t.tool, t.output) : null
-      if (manual) return <ManualAutomationCard key={seg.id || i} refObj={manual} />
-      return <ToolCard key={seg.id || i} seg={t} />
-    }
-    if (seg.kind === 'activity') return <ActivityLine key={i} seg={seg as ActivitySegment} />
-    if (seg.kind === 'thinking') return <ThinkingBlock key={i} text={(seg as ThinkingSegment).text} defaultOpen={streaming} />
-    if (seg.kind === 'error') {
-      const { text, settings } = seg as ErrorSegment
-      // A fresh instance with no model resolves the turn to a WHAT/WHY/FIX
-      // envelope that reads as a stack dump. Reframe THAT case as a calm setup
-      // nudge; every other turn error keeps the plain danger strip.
-      // The notice a turn ENDED on — nothing after it but the footer ledger — is where she reads
-      // that her question went unanswered, so the way to send it again is right there, not only
-      // in the hover row below.
-      const endsTheTurn = seg === lastShown
-      return isNoModelSetupError(text)
-        ? <NoModelSetupState key={i} detail={text} onSetup={onSetupModel} />
-        : (
-          <InlineError key={i} icon multiline className="my-1" onRetry={endsTheTurn ? onRetry : undefined}>
-            {text}
-            {settings && <>{' '}<TextLink href={`#/settings/${settings}`} icon={ArrowRight} iconPosition="trailing" ink="emphasis">Open Settings</TextLink></>}
-          </InlineError>
-        )
-    }
-    if (seg.kind === 'question') {
-      const q = seg as QuestionSegment
-      return <QuestionCard key={q.id} seg={q} onAnswer={onAnswerQuestion} />
-    }
-    if (seg.kind === 'approval') {
-      const ap = seg as ApprovalSegment
-      return ap.queued
-        ? <ApprovalCard key={ap.id || i} seg={ap} answers="once" onAct={answerQueued} />
-        : <ApprovalCard key={ap.id || i} seg={ap} onAct={onApprove} />
-    }
-    if (seg.kind === 'text') {
-      // hide the raw [OPTIONS: …] and [SWITCH_TO_AGENT: …] markers from the prose
-      const body = parseSwitchToAgent(parseOptions(seg.text).body).body
-      if (!body) return null
-      const prose = <Markdown key={i} widgets onFileClick={onOpenFile} chatSessionKey={chatSessionKey} messageTs={messageTs} streaming={streaming} citations={citations}>{body}</Markdown>
-      return seg === cutHere ? <Fragment key={i}>{prose}<ReplyCutNote cut="incomplete" /></Fragment> : prose
-    }
-    return null
-  }
-  const isProcess = (s: Segment) =>
-    s.kind === 'tool' || s.kind === 'error' || s.kind === 'approval' || s.kind === 'question' ||
-    (s.kind === 'activity' && !inLedger(s))
-
-  // Split the turn into the agent's WORK (tool calls, narration, approvals — up to
-  // and including the last process step) and its FINAL ANSWER (trailing text after
-  // the last step). Once the turn is complete the work folds into a compact
-  // "Worked through N steps" disclosure so the user reads the answer first and
-  // opens the intermediate steps only on demand. While streaming, work stays open.
-  const processIdxs = segments.flatMap((s, i) => (isProcess(s) ? [i] : []))
-  const lastProcessIdx = processIdxs.length ? processIdxs[processIdxs.length - 1] : -1
-  const stepCount = processIdxs.length
-  const toolNames = [...new Set(
-    segments.filter((s, i) => i <= lastProcessIdx && s.kind === 'tool').map((s) => (s as ToolSegment).tool),
-  )]
-  const workSegs = lastProcessIdx >= 0 ? segments.slice(0, lastProcessIdx + 1) : []
-  const failedCount = failedStepCount(workSegs)
-  const unaskedCount = unaskedStepCount(workSegs)
-  const finalSegs = (lastProcessIdx >= 0 ? segments.slice(lastProcessIdx + 1) : segments).filter((s) => s.kind === 'text')
-
-  // An SDLC create/start/status segment becomes a LIVE progress card that must stay
-  // visible — never buried inside the collapsed "Worked through N steps" disclosure
-  // (the card is a living, auto-refreshing widget, not a log line). Pull those out of
-  // the work fold + render them at the top level between the work + the final answer.
-  const isSdlc = (s: Segment) => s.kind === 'tool'
-    && !!(s as ToolSegment).done && !!sdlcRefFromTool((s as ToolSegment).tool, (s as ToolSegment).output)
-  // A workflow card is live too, so it gets the same exemption: burying an auto-refreshing
-  // widget inside a collapsed disclosure hides the one thing the user came back to check. So is
-  // an ask still waiting for work the chat started (`waitsPastItsTurn`).
-  const isWorkflow = (s: Segment) => liveCards.has(s)
-  // A question still waiting on her is never folded away either: the agent is halted on it.
-  const waitsForHer = (s: Segment) => s.kind === 'question' && (s as QuestionSegment).answerable && !(s as QuestionSegment).outcome
-  const isLiveCard = (s: Segment) => isSdlc(s) || isWorkflow(s) || waitsPastItsTurn(s) || waitsForHer(s)
-  const sdlcNodes = segments.filter(isLiveCard).map(renderItem).filter(Boolean)
-  // The ledger's rows are said in the footer only. What fed the turn arrives as the turn starts,
-  // inside the work's span, and was drawn there too, live: a line a reload never showed.
-  const workNodes = workSegs.filter((s) => !isLiveCard(s) && !inLedger(s)).map(renderItem).filter(Boolean)
-  const finalNodes = finalSegs.map(renderItem).filter(Boolean)
-  const hasFinal = finalNodes.length > 0
-  // Collapse the work only when the turn is done AND produced a final answer to
-  // focus on; otherwise show it inline (still streaming, or it ended on a step).
-  const collapseWork = !streaming && hasFinal && stepCount > 0
-
-  return (
-    <>
-      {workNodes.length > 0 && (
-        collapseWork
-          ? <AgentWork stepCount={stepCount} toolNames={toolNames} failedCount={failedCount} unaskedCount={unaskedCount}>{workNodes}</AgentWork>
-          : <div className="flex flex-col gap-1">{workNodes}</div>
-      )}
-      {/* Live SDLC progress cards stay at the top level, always visible — never
-          folded into the collapsed work disclosure. */}
-      {sdlcNodes.length > 0 && <div className="flex flex-col gap-1">{sdlcNodes}</div>}
-      {finalNodes}
-      {cutOff === 'length' && !streaming && <ReplyCutNote cut="length" />}
-      {modelSubstitution && !streaming && <ModelSubstitutionNote text={modelSubstitution} />}
-
-      {/* What CAPABILITY fed the turn — a peer of the ledger's "what context fed it",
-          kept as its own always-visible chip rather than a collapsed ledger row: the count is
-          the whole signal, and burying it behind a disclosure would make "which skills am I
-          actually paying for" a thing you have to go looking for. */}
-      {skillsUsed && skillsUsed.length > 0 && <SkillsUsedChip skills={skillsUsed} />}
-
-      {hasLedger && <ContextLedger fed={ledger.fed} fedNoMemory={ledger.fedNoMemory} learned={ledger.learned} learnedOrigin={ledger.learnedOrigin} learnedRef={ledger.learnedRef} stats={ledger.stats} served={servedModel} />}
-
-      {/* Agent-driven one-click escalation: the model proposed a switch out
-          of a restricted mode; the user approves with a single click, which flips
-          the session to Agent AND runs the continuation. Shown on the last turn
-          once it's done (the consent gate that keeps Ask/Plan from self-escalating). */}
-      {isLast && !streaming && switchTo !== null && (
-        <div className="mt-3">
-          <Button variant="primary" size="sm" onClick={() => onSwitchToAgent(switchTo)} className="gap-1.5">
-            <Bot size={15} strokeWidth={2.2} />
-            Switch to Agent &amp; run it
-          </Button>
-        </div>
-      )}
-
-    </>
-  )
-}
-
-/** The agent's intermediate work for a completed turn, folded into one compact
- *  disclosure so the FINAL ANSWER leads and the steps that produced it open only
- *  on demand. Summarizes as "Worked through N steps" + how many of them failed +
- *  the distinct tools used. Collapsed by default; expanding reveals the original
- *  tool/approval/activity cards unchanged. (Replaces the old dot+rail timeline, whose
- *  connector added little once every step was followed by prose and whose dot ✓
- *  duplicated each card's own status glyph.)
- *
- *  The failure count sits before the tool names and never truncates: the reply below
- *  can say the work succeeded when a step did not, and the fold is where that shows. The count
- *  of steps the agent CLI ran without asking her sits beside it for the same reason: folded, the
- *  cards that say so are out of sight. */
-function AgentWork({ stepCount, toolNames, failedCount, unaskedCount, children }: { stepCount: number; toolNames: string[]; failedCount: number; unaskedCount: number; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false)
-  const summary = toolNames.length
-    ? `${toolNames.slice(0, 3).join(', ')}${toolNames.length > 3 ? ` +${toolNames.length - 3} more` : ''}`
-    : ''
-  return (
-    <div className="mb-1.5">
-      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
-        className="group/work flex w-full items-center gap-1.5 rounded-md py-1 text-left text-on-surface-low/85 text-[0.75rem] transition-colors hover:text-on-surface-low">
-        <motion.span animate={{ rotate: open ? 90 : 0 }} transition={spring.spatialFast} className="shrink-0 opacity-60">
-          <ChevronRight size={12} />
-        </motion.span>
-        <Wrench size={12} className="shrink-0 opacity-70" />
-        <span className="shrink-0" style={fvs(500)}>
-          {open ? 'Hide work' : `Worked through ${stepCount} ${stepCount === 1 ? 'step' : 'steps'}`}
-        </span>
-        {!open && failedCount > 0 && (
-          <span className="inline-flex shrink-0 items-center gap-xs text-danger" style={fvs(550)}>
-            · <AlertTriangle size={12} aria-hidden /> {failedCount} failed
-          </span>
-        )}
-        {!open && unaskedCount > 0 && (
-          <span className="inline-flex shrink-0 items-center gap-xs text-warning" style={fvs(550)}>
-            · <ShieldAlert size={12} aria-hidden /> {unaskedCount} ran without asking you
-          </span>
-        )}
-        {!open && summary && <span className="min-w-0 truncate text-on-surface-low/60">· {summary}</span>}
-      </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-            transition={spring.spatialFast} className="overflow-hidden">
-            <div className="mt-1 ml-1.5 flex flex-col gap-1 border-l border-outline-variant/40 pl-3">{children}</div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  )
-}
-
-/** A quiet inline activity line for LIVE progress (status / session / tool steps).
- *  Context-provenance, learning, and telemetry are NOT rendered here — they're
- *  consolidated into the per-turn {@link ContextLedger} footer instead. */
-function ActivityLine({ seg }: { seg: ActivitySegment }) {
-  return (
-    <div className="my-1 flex items-center gap-1.5 text-on-surface-low text-[0.75rem]">
-      <Activity size={12} className="shrink-0 opacity-70" /><span>{seg.text}</span>
-    </div>
-  )
-}
-
-
-/** A reply that did not finish, said at the point it stops: one that reached the model's OUTPUT
- *  cap, or the part of an answer that arrived before it was cut off (the turn's error under it
- *  then says why, with Retry).
- *
- *  Measured on the bundled model: a 320-token cap ended replies mid-sentence and nothing said
- *  so, which reads as the model trailing off — or as the product being broken — rather than as
- *  a limit. The line sits directly under the reply, where the unfinished sentence is. */
-function ReplyCutNote({ cut }: { cut: ReplyCut }) {
-  return (
-    <div className="mt-1.5 mb-1 flex items-center gap-1.5 text-on-surface-low/80 text-[0.75rem]">
-      <Scissors size={11} className="shrink-0 opacity-70" aria-hidden />
-      <span>{cut === 'length' ? "Cut off: this reply reached the model's maximum length." : "Partial: the model's answer was cut off here, before it finished."}</span>
-    </div>
-  )
-}
-
-/** The reply came from another model than the one chosen for it, said under the reply.
- *
- *  An agent's pinned model — or the chat's own pick — could not run, and the chat model answered.
- *  The live line said so before the reply streamed; this is the half that survives a reload, so
- *  an old reply never reads as the chosen model's. The sentence is the server's, word for word. */
-function ModelSubstitutionNote({ text }: { text: string }) {
-  return (
-    <div data-testid="model-substitution-note" className="mt-1.5 mb-1 flex items-start gap-1.5 text-[0.75rem]" style={{ color: 'var(--color-warning)' }}>
-      <Shuffle size={11} className="mt-0.5 shrink-0 opacity-80" aria-hidden />
-      <span>{text}</span>
-    </div>
-  )
-}
-
-/** "used skill trip-research" — the per-turn skill-allocation chip, naming what joined the turn.
- *
- *  Hover carries the skills' full keys in the allocator's own order via `title` — the same
- *  affordance the {@link ContextLedger} trigger beside it uses, so the two footer chips
- *  behave alike instead of introducing a second hover mechanism for one line of text.
- *  `title` on a non-interactive element is a HOVER affordance only, not an accessible
- *  name, so the names are also written into the visible label below (`skillsUsedLabel`)
- *  rather than living solely in the tooltip.
- *
- *  A `reduced` skill is called out two ways rather than one, because a name alone would
- *  present a summary-only load as a full one: the chip appends "· M summarized" so the
- *  distinction survives without hovering, and the hover list marks each such skill by name.
- *  Rendered as a non-interactive element on purpose — there is no per-skill surface to land
- *  on, and a chip that looked like a button but did nothing would be the worse lie. */
-function SkillsUsedChip({ skills }: { skills: SkillUsed[] }) {
-  const reduced = skills.filter((s) => s.state === 'reduced').length
-  return (
-    <div className="mt-2 mb-1 flex items-center gap-1.5 text-on-surface-low/80 text-[0.75rem]"
-      title={skillsUsedTitle(skills)}>
-      <Sparkles size={11} className="shrink-0 opacity-70" />
-      <span>
-        {skillsUsedLabel(skills)}
-        {reduced > 0 && <span className="opacity-80"> · {reduced} summarized</span>}
-      </span>
     </div>
   )
 }
@@ -5030,4 +3889,3 @@ function AutoNudgeMenuItem({ session, onOpen }: { session: string; onOpen: () =>
     </>
   )
 }
-

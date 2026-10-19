@@ -101,6 +101,9 @@ function queuedMessage(id: string, content: string, raw: unknown): QueuedMessage
   const pastes = pastesOf(raw)
   return { id, content: shownText(content, pastes), ...(pastes ? { pastes } : {}) }
 }
+/** What `useChatStream` returns: the open chat as its regions read it. */
+export type ChatStream = ReturnType<typeof useChatStream>
+
 /** Where the stream hands what other regions own (see the note at the top of this file). */
 export interface ChatStreamSinks {
   /** A `routing_suggestion` frame's payload, for ChatPage to hold. */

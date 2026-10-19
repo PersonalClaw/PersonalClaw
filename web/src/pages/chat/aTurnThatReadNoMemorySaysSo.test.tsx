@@ -57,15 +57,16 @@ describe('the fold carries the kind from the live line to the ledger', () => {
     expect(line).toEqual({ kind: 'activity', text: TEMPORARY, activityKind: 'context_without_memory' })
   })
 
-  describe('the call site in ChatPage.tsx', () => {
-    // Read as the other ledger rails read it (`turnTelemetryReader.test.tsx`): the fold lives inside
-    // a page too large to mount here. The path goes through a parameter, so Vite does not take the
-    // `new URL(…, import.meta.url)` for an asset to rewrite.
+  describe('the call site in the transcript', () => {
+    // Read as the other ledger rails read it (`turnTelemetryReader.test.tsx`): the fold lives in the
+    // transcript's assistant turn (`transcript/AssistantSegments.tsx`, moved out of ChatPage.tsx).
+    // The path goes through a parameter, so Vite does not take the `new URL(…, import.meta.url)`
+    // for an asset to rewrite.
     const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
-    const chatPage = read('../ChatPage.tsx')
+    const chatPage = read('./transcript/AssistantSegments.tsx')
 
     it('hands the ledger the kind with the line', () => {
-      expect(chatPage.length).toBeGreaterThan(100_000)
+      expect(chatPage.length).toBeGreaterThan(10_000)
       expect(chatPage).toContain("if (ak === 'context' || ak === 'context_without_memory') {")
       expect(chatPage).toContain("ledger.fedNoMemory = ak === 'context_without_memory'")
       expect(chatPage).toContain('fedNoMemory={ledger.fedNoMemory}')
