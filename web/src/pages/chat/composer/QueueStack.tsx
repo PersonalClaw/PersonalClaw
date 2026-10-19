@@ -38,8 +38,11 @@ export function QueueStack({ items, onCancel, onEdit, onInterrupt, canInterrupt 
   const maxPeek = 3               // cards visibly peeking behind the top
 
   // Raw: the stack's caption header toggles only with two or more queued; QuietButton would fill on hover where it does nothing.
+  // `aria-expanded` only while it is a toggle, and read off `stacked` rather than `expanded`: under
+  // reduced motion the list is always flat, so a collapsed claim there would be false.
   const header = (
     <button type="button" onClick={() => items.length > 1 && setExpanded((e) => !e)}
+      aria-expanded={items.length > 1 ? !stacked : undefined}
       className={`flex items-center gap-1.5 px-1 text-[0.75rem] uppercase tracking-wide text-on-surface-low ${items.length > 1 ? 'hover:text-on-surface-var' : 'cursor-default'}`}>
       <Clock size={11} className="shrink-0" /> {items.length} queued · sent one at a time as each turn finishes
       {items.length > 1 && <ChevronDown size={11} className={`shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />}

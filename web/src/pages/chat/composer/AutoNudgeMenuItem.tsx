@@ -68,7 +68,7 @@ export function AutoNudgeMenuItem({ session, onOpen }: { session: string; onOpen
               <p className="text-[0.8125rem] text-on-surface-low">Disabled on this server (<code className="font-mono">PERSONALCLAW_AUTONUDGE=0</code>).</p>
             ) : (<>
               <p className="text-[0.8125rem] text-on-surface-low">When a turn finishes and you're idle, this message is re-injected into this chat to keep it working on its own.</p>
-              <TextArea value={msg} onChange={setMsg} rows={3} autoFocus size="sm" surface="high"
+              <TextArea value={msg} onChange={setMsg} rows={3} autoFocus size="sm" surface="high" ariaLabel="Auto-nudge message"
                 placeholder="e.g. Continue toward the goal; if done, write a summary and stop." />
               <div className="flex items-center gap-3 text-[0.8125rem] text-on-surface-var">
                 <label className="flex items-center gap-1">Idle
