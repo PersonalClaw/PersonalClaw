@@ -27,10 +27,12 @@ import { confirmForgetPreference } from './forgetPreference'
 import { Button } from '../../ui/Button'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { ListSkeleton, FormSkeleton, InlineLoadError, LoadError, EmptyState } from '../../ui/ListScaffold'
-import { TextInput, Select, ChipInput, NumberField, FieldError, useSyncedDraft } from '../../ui/forms'
+import { TextInput, TextArea, Select, ChipInput, NumberField, FieldError, useSyncedDraft } from '../../ui/forms'
 import { Segmented } from '../../ui/Segmented'
 import { SearchField } from '../../ui/SearchField'
 import { SquareIconButton } from '../../ui/SquareIconButton'
+import { QuietButton } from '../../ui/QuietButton'
+import { Slider } from '../../ui/Slider'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { TextLink } from '../../ui/TextLink'
 import { useQuery, invalidateKeys } from '../../lib/data'
@@ -123,6 +125,7 @@ export function MemoryPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'set
             // 🪤 `role="tab"` is a PROMISE of the tab keyboard model. Roving tabIndex — exactly one tab
             // in the tab order — plus the shared arrow handler above, because announcing tabs without
             // the model is worse than announcing nothing.
+            // Raw: no button primitive takes a tab role or a roving tabIndex.
             <button key={t.id} type="button" role="tab" aria-selected={on} tabIndex={on ? 0 : -1}
               onClick={() => setTab(t.id)}
               data-type="body-s" className="-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 transition-colors"
@@ -600,6 +603,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
               const on = kindFilter === k
               const meta = k === 'all' ? null : STUDIO_KIND_META[k]
               return (
+                // Raw: a 24px counted filter chip; no chip primitive exists, and Segmented is a radio track.
                 <button key={k} type="button" aria-pressed={on} onClick={() => setKindFilter(k)}
                   data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-2 h-6 transition-colors"
                   style={on ? accentChip : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
@@ -636,6 +640,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
             // `focus-visible:-outline-offset-2` draws the focus ring just inside the row. Tabbing to a
             // row the list shows only in part scrolls it until its box meets the list's edge, so a ring
             // drawn outside the box was cut off there, by the list and by the window.
+            // Raw: a full-row clickable list item, which no button primitive draws.
             return (
               <button key={it.uid} type="button" aria-current={on ? 'true' : undefined} onClick={() => setSelUid(it.uid)}
                 className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors focus-visible:-outline-offset-2"
@@ -710,9 +715,11 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
                 </div>
                 <label data-type="caption" className="flex shrink-0 items-center gap-1.5 rounded-pill bg-surface-high/90 px-2.5 py-1 text-on-surface-low backdrop-blur">
                   min conf
-                  <input type="range" min={0} max={1} step={0.05} value={edgeFilters.minConfidence}
-                    onChange={(e) => setEdgeFilters((f) => ({ ...f, minConfidence: Number(e.target.value) }))}
-                    aria-label="Minimum link confidence" className="w-16 accent-[var(--color-primary)]" />
+                  <span className="flex w-16">
+                    <Slider value={edgeFilters.minConfidence} min={0} max={1} step={0.05}
+                      onChange={(n) => setEdgeFilters((f) => ({ ...f, minConfidence: n }))}
+                      ariaLabel="Minimum link confidence" />
+                  </span>
                   <span className="tabular-nums">{edgeFilters.minConfidence.toFixed(2)}</span>
                 </label>
               </>
@@ -722,6 +729,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
         {focusRef && (
           <div data-type="caption" className="absolute right-3 top-3 flex items-center gap-2 rounded-pill bg-surface-high/90 px-2 py-1 backdrop-blur">
             <span className="text-on-surface-low">Focus · hops</span>
+            {/* Raw: a 20px solid-filled digit choice; SquareIconButton is 28px and tints rather than fills. */}
             {[1, 2, 3].map((d) => (
               <button key={d} type="button" onClick={() => setHopDepth(d)}
                 className="grid size-5 place-items-center rounded tabular-nums"
@@ -738,7 +746,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
           <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
             <div className="flex items-center justify-between">
               <span data-type="label-s" className="text-on-surface">{ADD_MODE_TITLE[addMode]}</span>
-              <button type="button" onClick={() => setAddMode(null)} data-type="caption" className="text-on-surface-low hover:text-on-surface">Cancel</button>
+              <QuietButton onClick={() => setAddMode(null)}>Cancel</QuietButton>
             </div>
             {addMode === 'fact' && <AddSemanticForm onDone={(created) => { setAddMode(null); if (created) reloadAll() }} />}
             {addMode === 'lesson' && <AddLessonForm onDone={(created) => { setAddMode(null); if (created) reloadAll() }} />}
@@ -1062,6 +1070,7 @@ export function FactValueEditor({ fact, onSaved, drafts }: {
       </div>
       {editing ? (
         <div className="flex flex-col gap-s">
+          {/* Raw: `TextArea` has no `spellCheck`, which is off here for a JSON value. */}
           <textarea value={draft} onChange={(e) => edit(e.target.value)} rows={asText ? 4 : 8} autoFocus
             spellCheck={asText} aria-label={`Value of ${fact.key}`}
             data-type="caption" className={`w-full resize-y rounded-lg bg-surface-high px-m py-s text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary ${asText ? '' : 'font-mono'}`} />
@@ -1239,6 +1248,7 @@ export function StudioDocEditor({ which, onSaved, drafts }: {
           every agent prompt carries. Every other editor input in this file names itself. */}
       {/* Read-only while a refused save waits for the user's choice: the notice re-applies the
           text it kept, so anything typed meanwhile would be dropped by that save. */}
+      {/* Raw: `TextArea` has neither `readOnly` nor `spellCheck`. */}
       <textarea value={draft} onChange={(e) => edit(e.target.value)} rows={16} spellCheck={false}
         readOnly={held} aria-label={name}
         data-type="caption" className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 font-mono text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
@@ -1334,10 +1344,9 @@ function AddLessonForm({ onDone }: { onDone: (created: boolean) => void }) {
       {/* In a modal with no Field and no visible label — the placeholder was the only cue, and a
           placeholder is not an accessible name. Measured unnamed on the live DOM after clicking
           "Lesson"; a route-only probe never opens this. */}
-      <textarea value={rule} onChange={(e) => setRule(e.target.value)} rows={4} autoFocus
-        aria-label="Lesson rule"
-        placeholder="e.g. Always run the test suite before saying a fix works."
-        data-type="body-s" className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+      <TextArea value={rule} onChange={setRule} rows={4} autoFocus size="sm" surface="high"
+        ariaLabel="Lesson rule"
+        placeholder="e.g. Always run the test suite before saying a fix works." />
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={submit} loading={saving} loadingLabel="Saving…" disabled={!rule.trim() || saving}
           disabledReason={!rule.trim() ? 'Write the lesson first' : undefined}>Save lesson</Button>
@@ -1370,12 +1379,14 @@ function AddSemanticForm({ onDone }: { onDone: (created: boolean) => void }) {
     <div className="mb-3 rounded-lg border border-outline-variant/40 bg-surface p-3">
       {/* Same shape as the Lesson modal: no Field, no label, placeholder-only. Both controls here
           need DISTINCT names — "key" and "value" are meaningless apart from each other. */}
-      <input value={key} onChange={(e) => setKey(e.target.value)} aria-label="Fact key"
-        placeholder="key (e.g. pref.theme, user.timezone)"
-        data-type="body-s" className="mb-2 h-9 w-full rounded-md bg-surface-high px-3 font-mono text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
-      <textarea value={value} onChange={(e) => setValue(e.target.value)} aria-label="Fact value"
-        placeholder="value" rows={2}
-        data-type="body-s" className="mb-2 w-full rounded-md bg-surface-high px-3 py-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+      <div className="mb-2">
+        <TextInput value={key} onChange={setKey} ariaLabel="Fact key" size="md" surface="high" mono
+          placeholder="key (e.g. pref.theme, user.timezone)" />
+      </div>
+      <div className="mb-2">
+        <TextArea value={value} onChange={setValue} ariaLabel="Fact value" size="sm" surface="high"
+          placeholder="value" rows={2} />
+      </div>
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={submit} loading={saving} disabled={saving || !key || !value.trim()}
           disabledReason={!key ? 'Choose a key first' : !value.trim() ? 'Enter a value first' : undefined}>Save</Button>
@@ -1454,10 +1465,9 @@ function AuditRow({ ev, onUndone }: { ev: MemoryEvent; onUndone: () => void }) {
       {ev.undone_at && <span data-type="caption" className="shrink-0 rounded bg-surface-high px-1.5 text-on-surface-low">undone</span>}
       {ev.created_at && <span data-type="caption" className="shrink-0 text-on-surface-low">{fmtDate(ev.created_at)}</span>}
       {canUndo && (
-        <button onClick={undo} disabled={busy} title="Undo this memory change"
-          data-type="caption" className="shrink-0 rounded px-1.5 py-0.5 text-on-surface-low hover:text-primary disabled:opacity-50">
+        <QuietButton onClick={undo} disabled={busy} title="Undo this memory change" className="shrink-0">
           {busy ? '…' : 'undo'}
-        </button>
+        </QuietButton>
       )}
     </div>
   )
@@ -2517,6 +2527,7 @@ function DigestRow({ digest }: { digest: DailyDigest }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="rounded-lg bg-surface-container px-3 py-2">
+      {/* Raw: a full-row disclosure over a multi-line preview, which no button primitive draws. */}
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="w-full text-left">
         <div className="flex items-center gap-2">
           <span data-type="body-s" className="font-mono text-on-surface">{digest.day}</span>

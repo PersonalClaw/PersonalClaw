@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { FieldError, FieldHintProvider, Select } from '../../ui/forms'
+import { FieldError, FieldErrorProvider, FieldHintProvider, Select, TextInput } from '../../ui/forms'
 import { notify } from '../../app/appSdk'
-import { unavailableWhen, BUSY_REASON } from '../../ui/unavailable'
+import { BUSY_REASON } from '../../ui/unavailable'
 import {
   ShieldBan, ScanLine, FileCode2, EyeOff, Plus, X, Lock, Globe, MonitorOff, ShieldCheck, ShieldAlert,
   KeyRound, Undo2,
@@ -18,6 +18,7 @@ import {
   desktopBridge, getLoginItem, requestDesktopCapability, setLoginItem,
 } from '../../lib/desktopBridge'
 import { Button } from '../../ui/Button'
+import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Toggle } from '../../ui/Toggle'
 import { invalidateKeys, useQuery } from '../../lib/data'
 import { rebaseList, type Rebase } from '../../lib/staleWrite'
@@ -951,6 +952,7 @@ function EgressPolicyEditor() {
           hosts={eg.deny_hosts} disabled={busy || guard.conflict !== null}
           onChange={(hosts) => editHosts('deny_hosts', hosts)} />
         <label className="flex items-start gap-2.5 rounded-lg bg-surface-container px-3 py-2.5 cursor-pointer">
+          {/* Raw: `Checkbox` has no `disabled`. */}
           <input type="checkbox" checked={eg.allow_private} disabled={busy || guard.conflict !== null}
             onChange={async (e) => {
               const next = e.target.checked
@@ -1090,6 +1092,7 @@ function HostList({ label, hint, hosts, disabled, onChange }: {
 }) {
   const [draft, setDraft] = useState('')
   const [refused, setRefused] = useState('')
+  const refusedId = useId()
   const add = async () => {
     const h = draft.trim().toLowerCase()
     if (!h) return
@@ -1107,10 +1110,8 @@ function HostList({ label, hint, hosts, disabled, onChange }: {
         {hosts.map((h) => (
           <div key={h} className="flex items-center gap-2 rounded-lg bg-surface-container px-3 py-2">
             <code data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{h}</code>
-            <button type="button" disabled={disabled} onClick={() => onChange(hosts.filter((x) => x !== h))}
-              className="shrink-0 rounded-md p-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface" aria-label={`Remove ${h}`}>
-              <X size={15} />
-            </button>
+            <SquareIconButton icon={X} iconSize={15} label={`Remove ${h}`} disabled={disabled}
+              onClick={() => onChange(hosts.filter((x) => x !== h))} className="shrink-0" />
           </div>
         ))}
         <div className="flex items-center gap-2">
@@ -1118,22 +1119,23 @@ function HostList({ label, hint, hosts, disabled, onChange }: {
               "Denied hosts") and a placeholder is not an accessible name — so both inputs announced
               nothing, and a shared constant would have announced them IDENTICALLY. Confusing the
               allow box for the deny box is a security-relevant mistake. */}
-          <input value={draft} disabled={disabled}
-            aria-label={`Add a host to ${label.toLowerCase()}`}
-            aria-invalid={refused ? true : undefined}
-            onChange={(e) => { setDraft(e.target.value); if (refused) setRefused('') }}
-            onKeyDown={(e) => { if (e.key === 'Enter') add() }}
-            placeholder="e.g. nas.local"
-            data-type="body-s" className="min-w-0 flex-1 rounded-lg bg-surface-container px-3 py-2 text-on-surface outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary" />
-          <button type="button" onClick={add} data-type="body-s"
-            {...unavailableWhen(!draft.trim(), 'Enter a host first', { busy: disabled })}
-            className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-2 text-on-primary disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
+          <div className="min-w-0 flex-1">
+            <FieldErrorProvider value={refused ? refusedId : undefined}>
+              <TextInput value={draft} disabled={disabled} size="md"
+                ariaLabel={`Add a host to ${label.toLowerCase()}`}
+                onChange={(v) => { setDraft(v); if (refused) setRefused('') }}
+                onKeyDown={(e) => { if (e.key === 'Enter') add() }}
+                placeholder="e.g. nas.local" />
+            </FieldErrorProvider>
+          </div>
+          <Button onClick={add} shape="squircle" disabled={disabled || !draft.trim()}
+            disabledReason={!disabled && !draft.trim() ? 'Enter a host first' : undefined}>
             <Plus size={15} /> Add
-          </button>
+          </Button>
         </div>
         {/* `FieldError` rather than a hand-rolled danger line: it carries `role="alert"`, which is the
             difference between "the refusal is on screen" and "the user was told". */}
-        {refused && <FieldError>{refused}</FieldError>}
+        {refused && <FieldError id={refusedId}>{refused}</FieldError>}
       </div>
     </div>
   )
@@ -1254,6 +1256,8 @@ function DeniedCommandsEditor({ builtin, user, baseline, userAdditions, onChange
             {user.map((p) => (
               <div key={p} className="flex items-center gap-2 rounded-lg bg-surface-container px-3 py-2">
                 <code data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{p}</code>
+                {/* Raw: `busy` is shared by every row, so SquareIconButton's `loading` would spin all of
+                    them, and its `disabled` is not for an action in flight. */}
                 <button type="button" disabled={busy} onClick={() => save(() => api.removeDeniedCommand(p))}
                   className="shrink-0 rounded-md p-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface" aria-label={`Remove ${p}`}>
                   <X size={15} />
@@ -1263,19 +1267,18 @@ function DeniedCommandsEditor({ builtin, user, baseline, userAdditions, onChange
             <div className="flex items-center gap-2">
               {/* "Shell denylist" (the Section title) is the context a screen reader needs here — a
                   bare "pattern" box gives no hint that typing in it BLOCKS a command. */}
-              <input
-                value={draft}
-                aria-label="Add a shell denylist pattern (regex)"
-                onChange={(e) => { setDraft(e.target.value); setErr('') }}
-                onKeyDown={(e) => { if (e.key === 'Enter') add() }}
-                placeholder="e.g. my-secret-tool .*"
-                data-type="body-s" className="min-w-0 flex-1 rounded-lg bg-surface-container px-3 py-2 text-on-surface outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary"
-              />
-              <button type="button" onClick={add} data-type="body-s"
-                {...unavailableWhen(!draft.trim(), 'Enter a pattern first', { busy })}
-                className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-2 text-on-primary disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
+              <div className="min-w-0 flex-1">
+                <TextInput value={draft} size="md"
+                  ariaLabel="Add a shell denylist pattern (regex)"
+                  onChange={(v) => { setDraft(v); setErr('') }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') add() }}
+                  placeholder="e.g. my-secret-tool .*" />
+              </div>
+              <Button onClick={add} shape="squircle" loading={busy}
+                disabled={!draft.trim()}
+                disabledReason={!draft.trim() ? 'Enter a pattern first' : undefined}>
                 <Plus size={15} /> Add
-              </button>
+              </Button>
             </div>
             {err && <FieldError>{err}</FieldError>}
           </div>

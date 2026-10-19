@@ -41,11 +41,11 @@ describe('the four panels that had unnamed controls', () => {
   it('SecurityPanel host inputs name themselves from the list they add to', () => {
     // Reverting to a constant (or dropping it) reds this — and a constant would ALSO be wrong,
     // because this component renders twice.
-    expect(code('SecurityPanel.tsx')).toMatch(/aria-label=\{`Add a host to \$\{label\.toLowerCase\(\)\}`\}/)
+    expect(code('SecurityPanel.tsx')).toMatch(/(?:aria-label|ariaLabel)=\{`Add a host to \$\{label\.toLowerCase\(\)\}`\}/)
   })
 
   it('SecurityPanel denylist input says what typing there DOES', () => {
-    expect(code('SecurityPanel.tsx')).toMatch(/aria-label="Add a shell denylist pattern \(regex\)"/)
+    expect(code('SecurityPanel.tsx')).toMatch(/(?:aria-label|ariaLabel)="Add a shell denylist pattern \(regex\)"/)
   })
 
   it('the shared StrListField input names itself from its Field label', () => {
@@ -64,7 +64,7 @@ describe('the four panels that had unnamed controls', () => {
   })
 
   it('VoicePanel vocabulary input is named', () => {
-    expect(code('VoicePanel.tsx')).toMatch(/aria-label="Add a vocabulary term"/)
+    expect(code('VoicePanel.tsx')).toMatch(/(?:aria-label|ariaLabel)="Add a vocabulary term"/)
   })
 
   it('ProjectionRulesPanel names all six controls, scoped per row', () => {
@@ -93,7 +93,7 @@ describe('a component that renders more than once must not carry a constant name
     const uses = [...src.matchAll(/<HostList\s+label="([^"]+)"/g)].map((m) => m[1])
     expect(uses).toEqual(['Allowed hosts', 'Denied hosts'])
     // Belt and braces: no constant aria-label on the input inside a twice-rendered component.
-    expect(/aria-label="Add a host"/.test(src), 'a constant here would announce both identically').toBe(false)
+    expect(/(?:aria-label|ariaLabel)="Add a host"/.test(src), 'a constant here would announce both identically').toBe(false)
   })
 })
 
@@ -116,15 +116,17 @@ describe('what a SOURCE rail can and cannot decide here', () => {
 
   it('no fixed control silently loses its name (the panels driven this cycle)', () => {
     const MUST_KEEP: Array<[string, RegExp]> = [
-      ['SecurityPanel.tsx', /aria-label=\{`Add a host to \$\{label\.toLowerCase\(\)\}`\}/],
-      ['SecurityPanel.tsx', /aria-label="Add a shell denylist pattern \(regex\)"/],
+      // `ariaLabel` is the same name passed through a form-family primitive, which renders it as
+      // `aria-label`: the controls on these three panels moved onto TextInput / TextArea.
+      ['SecurityPanel.tsx', /(?:aria-label|ariaLabel)=\{`Add a host to \$\{label\.toLowerCase\(\)\}`\}/],
+      ['SecurityPanel.tsx', /(?:aria-label|ariaLabel)="Add a shell denylist pattern \(regex\)"/],
       // Scanned in the SHARED module: `StrListField` moved there when External Access became its
       // second call site. Same control, same derived name, one declaration.
       ['settingsUI.tsx', /aria-label=\{`Add to \$\{label\.toLowerCase\(\)\}`\}/],
-      ['VoicePanel.tsx', /aria-label="Add a vocabulary term"/],
-      ['MemoryPanel.tsx', /aria-label="Lesson rule"/],
-      ['MemoryPanel.tsx', /aria-label="Fact key"/],
-      ['MemoryPanel.tsx', /aria-label="Fact value"/],
+      ['VoicePanel.tsx', /(?:aria-label|ariaLabel)="Add a vocabulary term"/],
+      ['MemoryPanel.tsx', /(?:aria-label|ariaLabel)="Lesson rule"/],
+      ['MemoryPanel.tsx', /(?:aria-label|ariaLabel)="Fact key"/],
+      ['MemoryPanel.tsx', /(?:aria-label|ariaLabel)="Fact value"/],
       ['ProjectionRulesPanel.tsx', /aria-label="Rule name"/],
       ['ProjectionRulesPanel.tsx', /aria-label="New rule name"/],
       ['ProjectionRulesPanel.tsx', /aria-label="Match regex for the new rule"/],
