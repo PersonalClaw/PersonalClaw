@@ -212,6 +212,8 @@ changes with the time of the run and not with the tree, so the reader refuses on
 `live = true`. `catalogue.parse_reuse` is the one parser of these values; any other reader
 imports it.
 
+A local run's reuse of a recorded pass is under [Verdict reuse](#verdict-reuse).
+
 ### The tiers
 
 - **merge:** what a pull request into `main` must pass. Its security evidence is the suite's own
@@ -668,6 +670,38 @@ has no command yet; the catalogue's `run-job` and `run` verbs will call it.
 - **Not guarded yet:** a job that names the real home by path, the container or worktree a job
   runs in, and scheduling. A local result never stands in for GitHub's, and no workflow reads what
   it writes.
+
+## Verdict reuse
+
+`tools/ci/verdict_store.py` holds the rules a local run will reuse a job's result by (#3919).
+Nothing consults it until `python -m tools.ci run` and `run-job` do.
+
+- **The key** is a sha256 over every input a job's result depends on: the job id, its entry's
+  text, the catalogue's version, the exact argv, a digest of the selected tests or shards, the
+  commit's tree, each partner repository's commit, each lock file's digest, the toolchain, the OS
+  and architecture, the runner or container, the advisory policy, any other declared input, and
+  the host capabilities. A change to any one is another key. The OS and architecture must be
+  named, so no two platforms share a key; an empty runner means the bare host. An id or digest
+  that is not exactly one (the wrong length, uppercase, a newline after it) is refused.
+- **The class** is the entry's, read by `catalogue.parse_reuse`. A job whose `security` is not
+  `ordinary`, or that is live (`live = true`, or reading a live feed), is read as `never`,
+  whatever it declares. The catalogue has no canary marker, so a canary job is `never` only by
+  its own entry's class.
+- **The store** is `ci-verdicts/` in the clone's common git folder, shared by every worktree of
+  the clone; no other clone's store is read. Its git runs with no `GIT_*` variable, so a
+  `GIT_DIR`, index or configuration a hook exported neither moves the store nor changes what git
+  reports. git still reads the user's own global and system configuration. A local entry never
+  reaches GitHub.
+- **A pass is recorded** only when it needed no rerun and its quarantined-failure list is present
+  and empty, from a checkout that was clean when the run began and is still clean, on the same
+  head and tree, when it is recorded, and only when the entry would be read back. Clean means
+  `git status --porcelain --untracked-files=all` prints nothing, so an untracked file counts. An
+  entry is written to a temporary file, flushed to disk, and then renamed. One that is torn,
+  malformed, of another version, or whose inputs do not hash to its name is a miss, never an
+  error: the job runs.
+- **A dirty run** neither records nor replays: every job runs, and its receipt reads `dirty: true`.
+  The receipt's `dirty` and the replay rule come from one reading of the checkout, taken when the
+  run began. A job whose inputs name another tree than the checkout's runs.
 
 ## The quarantine
 
