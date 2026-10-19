@@ -10,6 +10,7 @@ import { useIdentity } from '../app/identity'
 import { spring } from '../design/motion'
 import { useChatVoice } from './chat/useChatVoice'
 import { useChatComposer } from './chat/composer/useChatComposer'
+import { taskModeFromQuery, useTaskModeInUrl } from './chat/composer/taskModeInUrl'
 import { ChatComposer } from './chat/composer/ChatComposer'
 import { ComposerFold, FOLD_ROOM } from './chat/composer/ComposerFold'
 import { useChatStream } from './chat/useChatStream'
@@ -124,10 +125,18 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // The composer: the draft and what it carries, the selection, Stop, and `send`, which every region
   // sends through (`chat/composer/useChatComposer`).
   const composer = useChatComposer({
-    sessionId, navigate, seed, initialProjectId, initialAgent, pendingRouting, setRoutingSuggestion, setLiveRun, started, stream,
+    sessionId, navigate, seed, initialProjectId, initialAgent, initialTaskMode: taskModeFromQuery(query) ?? 'agent',
+    pendingRouting, setRoutingSuggestion, setLiveRun, started, stream,
     followNewTurn: () => followNewTurn(), oweSpokenReply: (sid) => oweSpokenReply(sid),
   })
   const { adoptDetail, applyTemplate, composerFocused, composerRef, focusComposerSoon, input, memoryMode, notice, quoteToComposer, selection, send, setInput, setSelection } = composer
+  // The task mode in the address (`?mode=`), for what is shown only (`chat/composer/taskModeInUrl`).
+  // A new thread the address moves to another mode is set up as one a link opens: in that mode,
+  // with approval back to Normal.
+  useTaskModeInUrl({
+    query, setQuery, sessionId, taskMode: selection.taskMode, postureKnown: composer.postureKnown,
+    followMode: (taskMode) => setSelection((s) => ({ ...s, taskMode, approval: 'normal' })),
+  })
   // The header's title actions, its context line's project and its cluster's actions
   // (`chat/header/useChatHeader`).
   const header = useChatHeader({ stream, composer })

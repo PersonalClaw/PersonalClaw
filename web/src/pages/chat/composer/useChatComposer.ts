@@ -69,7 +69,7 @@ export function withPrompt(list: RecalledPrompt[], entry: RecalledPrompt): Recal
   return list
 }
 
-export function useChatComposer({ sessionId, navigate, seed, initialProjectId, initialAgent, pendingRouting, setRoutingSuggestion, setLiveRun, started, stream, followNewTurn, oweSpokenReply }: {
+export function useChatComposer({ sessionId, navigate, seed, initialProjectId, initialAgent, initialTaskMode = 'agent', pendingRouting, setRoutingSuggestion, setLiveRun, started, stream, followNewTurn, oweSpokenReply }: {
   sessionId: string | null
   navigate: (p: string, opts?: { replace?: boolean }) => void
   /** The draft a launch pre-fills (`?seed=`). */
@@ -78,6 +78,9 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
   initialProjectId: string
   /** The agent a launch picks (`?agent=`). */
   initialAgent: string
+  /** The task mode a new chat starts in (`?mode=`). Shown only: it reaches the gateway when the
+   *  person sends, as a mode picked on the pill does. An existing chat takes its own. */
+  initialTaskMode?: TaskMode
   /** ChatPage's pending routing suggestion, held above the create-remount. */
   pendingRouting: RoutingSuggestion | null
   setRoutingSuggestion: (s: RoutingSuggestion | null) => void
@@ -200,7 +203,10 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
   // sessions — send #2's turn lands in an orphaned session and is silently lost.
   // Memoizing the promise makes concurrent callers await the SAME creation.
   const ensureInFlightRef = useRef<Promise<string> | null>(null)
-  const [selection, setSelection] = useState<ComposerValue>({ agent: initialAgent, model: 'Auto', approval: 'normal', taskMode: 'agent', reasoning: '' })
+  const [selection, setSelection] = useState<ComposerValue>({ agent: initialAgent, model: 'Auto', approval: 'normal', taskMode: sessionId ? 'agent' : initialTaskMode, reasoning: '' })
+  // Whether the selection shows the chat's own posture: at once on a new chat, and once the first
+  // read is in on an existing one. Until then its task mode is a default, not the chat's.
+  const [postureKnown, setPostureKnown] = useState(!sessionId)
   const replyStyle = useReplyStyle(() => sessionRef.current)
 
   // Restore the composer selection from the resumed session's binding, once both
@@ -1016,6 +1022,7 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
       taskMode: (d.task_mode || 'agent') as TaskMode,
       approval: (d.approval || 'normal') as ApprovalMode,
     }))
+    setPostureKnown(true)
     // Restore the session's memory mode too, so mode-gated affordances (e.g. Fork,
     // which the backend refuses on a non-persistent session) reflect the real
     // posture of a reopened chat instead of the 'persistent' default.
@@ -1024,6 +1031,6 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
   }
 
   return {
-    setRoutingSuggestion, acpFor, activatePlanMode, adoptDetail, applySelection, applyTemplate, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerFocused, composerRef, data, displayCapture, ensureSession, focusComposerSoon, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pasteBlocks, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, quoteToComposer, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, setToast, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads,
+    setRoutingSuggestion, acpFor, activatePlanMode, adoptDetail, applySelection, applyTemplate, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerFocused, composerRef, data, displayCapture, ensureSession, focusComposerSoon, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pasteBlocks, pinScreenFrame, postureKnown, preOptimize, projectId, promptPaletteOpen, quoteToComposer, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, setToast, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads,
   }
 }

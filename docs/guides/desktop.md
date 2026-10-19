@@ -124,8 +124,15 @@ What the dashboard does with the state:
 - **`project`** binds a new thread to that project, as the project's own Chat button does.
 - **`mode`** is read by the page it names, as that page's own address does: Skills opens its
   Browse or Proposals view (`mode=browse`, `mode=proposals`), and the new-loop form opens with
-  Attended on (`personalclaw://loop?mode=attended`). On a thread it is checked and carried in the
-  address, but not read yet: a thread opens in the mode it was left in.
+  Attended on (`personalclaw://loop?mode=attended`). On a thread it is the task mode: `agent`,
+  `ask`, `plan` or `build`. A new thread opens in that mode, which reaches the gateway only when
+  you send, as a mode you pick on the pill does. If the app is already showing a new thread in
+  another mode, the link moves it to the link's mode (Agent, for a link with no `mode`) and puts
+  its approval back to Normal, as on a new thread the link opens, so a link never leaves an
+  auto-approve you picked for another mode; your draft stays. An existing thread keeps the mode it
+  has, and the address is corrected to it, so a link never changes how a chat runs. The address
+  follows the mode as you change it, so a reload or a copied address opens the chat in the mode it
+  was in.
 
 For example:
 
