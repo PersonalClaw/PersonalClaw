@@ -1226,6 +1226,47 @@ to one tree, so a per-test listing would charge one worker's writes to another w
 the real-home guard already fails writes to the real home. The randomized-order leg and the
 bisect tool come later in #3949.
 
+## The release manifest
+
+`tools/ci/release_manifest.py` (#3911) records every artifact a release built and smoked, in one
+manifest, before anything publishes. Nothing calls it yet: the release's build, its approval and
+its publish phase will.
+
+- **What it holds.** Each staged file's sha256 and size, by its path in the staged folder; each
+  image's per-platform digests and its multi-platform index digest, the sha256 of the index bytes
+  the registry stores; the full ref and the commit it was built from; and its own digest, the
+  sha256 of every other field in canonical form (sorted keys, no spaces, UTF-8). The attestation
+  manifests a BuildKit build adds beside each platform's are covered by the index digest, and are
+  not platforms.
+- **What it refuses to stage.** A symlink, a special file, a file or folder it cannot read, an
+  empty folder, a hidden name, and a name with a space or a control character, each by name, never
+  skipped: a release publishes what the folder holds. An index that is not a multi-platform index,
+  that names a platform twice or none, or that spells a platform with anything but lowercase
+  strings, is refused too.
+- **Reading it back.** Every reader names the approved digest. A manifest whose bytes are not
+  canonical, that repeats a key, that does not hash to its own digest, or that is not the approved
+  one is refused.
+- **`python -m tools.ci release-manifest write --staged <folder> --image NAME=INDEX_FILE ... --ref
+  <full ref> --commit <sha> --out <file>`** writes it outside the folder it describes, and prints
+  `digest=` to the step's outputs. Inside is decided by the folder's identity, not the spelling of
+  the path, so neither a symlink into the folder nor a case variant of its name on a disk that
+  ignores case puts the manifest in it.
+- **`verify --manifest <file> --digest <approved> --staged <folder> --image NAME=INDEX_FILE ...`**
+  names every missing, extra and changed file and image, and exits 1 on any.
+- **`compare --manifest <file> --digest <approved> --select <glob> ... --published <file>`** holds
+  an already-published target against the manifest before anything is written to it. The target
+  is a JSON object of what it lists, each object's name (a file's basename, an image's name) to
+  its digest (PyPI's bare hex is read as sha256). An object the selection names and the target
+  lacks is created, an identical one is resumed, and a different one, or one the target holds that
+  the selection does not name, fails with nothing to create or resume. A moving tag (`:latest`,
+  `:X.Y`) names an earlier release on purpose, so the target lists only the digest of the tag that
+  names this release.
+
+Every verb exits 2 on input it cannot rely on (a file it cannot read, JSON it cannot parse, a path
+it cannot write), with no `-h` and no option given twice, as `verdict` does, and runs as `python3
+-I tools/ci/release_manifest.py` from a trusted job's checkout. `tests/test_ci_release_manifest.py`
+holds every refusal to a row naming its reason, beside a control that passes.
+
 ## Supply chain
 
 The actions, images and tools the workflows and Dockerfiles fetch are named exactly, so a run
