@@ -5857,6 +5857,10 @@ export interface PendingApproval {
    *  standing grants answers it (`approval_grants.asked_for_line`): the card shows it and
    *  answers this call alone. "" or absent for your own work. */
   asked_for?: string
+  /** Which second confirmation an Approve asks before the call runs (`approval_confirms.CONFIRMS`:
+   *  `deletes`, `outside_workspace`, `sends`, `spends`, `undeclared`), worked out once where the
+   *  approval was recorded. Decode it with `confirmsOf`: a row without it fails closed. */
+  confirms?: unknown
   /** The store id of the trigger whose run asked (its action's agent), "" for anything else. */
   trigger?: string
   /** That trigger's name, "" when it has none or is gone. */

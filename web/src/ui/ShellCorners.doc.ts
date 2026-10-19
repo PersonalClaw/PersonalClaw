@@ -12,7 +12,7 @@ const docs: UiDoc[] = [
     props: [
       { name: 'collapsed', description: 'Current rail collapsed state — chooses the glyph (PanelLeftOpen vs PanelLeftClose) and the aria/title copy.' },
       { name: 'onToggle', description: 'Fires to flip the rail between collapsed and expanded, or, in focus mode, to leave it.' },
-      { name: 'focusKey', description: "Set while focus mode hides the rail, to focus mode's key as the platform writes it: the tab then reads \"Leave focus mode\", names the key in its title, and is the visible way out of the mode." },
+      { name: 'focusMode', description: "Set while focus mode hides the rail: the tab then reads \"Leave focus mode\", names focus mode's key in its title (else the sidebar's), both read from the keymap, and is the visible way out of the mode." },
     ],
     bestPractices: [
       { guidance: true, description: "This is the single home for the nav collapse toggle — NavRail is collapse-CONTROLLED, so drive NavRail's `collapsed` from the same state you pass here." },
@@ -27,7 +27,7 @@ const docs: UiDoc[] = [
       "The app shell's RIGHT corner — the screen's top-right control cluster (terminal-drawer toggle • content-width pill • notification bell • theme • system health dot) rendered as native shell chrome above any page header. Publishes its measured width to `--shell-corner-r` and height to `--shell-corner-rh`.",
     props: [
       { name: 'terminalOpen', description: 'Whether the terminal drawer is open — drives the toggle glyph highlight + aria/title copy.' },
-      { name: 'onToggleTerminal', description: 'Fires to open/close the terminal drawer (⌘`).' },
+      { name: 'onToggleTerminal', description: "Fires to open/close the terminal drawer; its title names the drawer's keys, read from the keymap." },
       { name: 'navigate', description: 'Router navigation function, passed straight through to the embedded NotificationBell.' },
     ],
     bestPractices: [

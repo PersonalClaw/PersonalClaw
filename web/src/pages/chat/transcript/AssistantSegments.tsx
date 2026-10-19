@@ -39,8 +39,10 @@ export type ApproveAction = 'approved' | 'rejected' | 'trust' | 'trust_agent' | 
 /** Answer an ask raised by work the chat started (`ApprovalSegment.queued`) where it is held, the
  *  approvals queue, by its registry id. Its card offers Allow and Deny alone; anything but an
  *  Allow is a Deny. */
-function answerQueued(id: string, action: ApproveAction) {
-  api.resolveApproval(id, action === 'approved' ? 'approve' : 'reject')
+export function answerQueued(id: string, action: ApproveAction) {
+  // `true` once it landed: the card then sends nothing more for it (`ApprovalChoice.onClick`).
+  return api.resolveApproval(id, action === 'approved' ? 'approve' : 'reject')
+    .then(() => true)
     .catch(reportActionFailure('record your decision'))
 }
 
@@ -54,7 +56,7 @@ export function AssistantSegments({ segments, liveCards, isLast, messageTs, stre
   liveCards: Set<Segment>
   messageTs?: string
   streaming?: boolean
-  onApprove: (id: string, action: ApproveAction) => void
+  onApprove: (id: string, action: ApproveAction) => void | Promise<unknown>
   onAnswerQuestion: (id: string, reply: QuestionReply) => Promise<unknown>
   onSwitchToAgent: (continuation: string) => void
   onOpenFile: (path: string) => void

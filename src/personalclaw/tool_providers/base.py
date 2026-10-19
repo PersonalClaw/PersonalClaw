@@ -56,6 +56,33 @@ TELLS_OWNER_META_KEY = "personalclaw/tells_owner"
 #: never from another server.
 WORK_ASKS_META_KEY = "personalclaw/work_asks"
 
+#: What a call to a tool may do that reaches past this machine and asks a second confirmation
+#: before it runs: it sends something to people other than the owner, or it spends money
+#: (:attr:`ToolDefinition.consequences`).
+SENDS = "sends"
+SPENDS = "spends"
+CONSEQUENCES: tuple[str, ...] = (SENDS, SPENDS)
+
+#: The ``_meta`` key an MCP-shaped tool dict of PersonalClaw's own sets to declare its
+#: :attr:`ToolDefinition.consequences`, as a list of :data:`CONSEQUENCES`.
+CONSEQUENCES_META_KEY = "personalclaw/consequences"
+
+
+def consequences_of(declared: object) -> tuple[str, ...] | None:
+    """The one reading of a declaration of consequences: the kinds it names, in
+    :data:`CONSEQUENCES` order (``()`` for a list that names none), or ``None``.
+
+    STRICT, so it fails closed. Only a list or tuple whose every item is one of
+    :data:`CONSEQUENCES`, spelled exactly, is read. Anything else (a bare string, a case variant,
+    a near-miss, an unknown word, a set) is a declaration this reading cannot follow, and reads as
+    ``None``, which is nothing declared: the call asks the second confirmation."""
+    if not isinstance(declared, (list, tuple)):
+        return None
+    if not all(isinstance(c, str) and c in CONSEQUENCES for c in declared):
+        return None
+    return tuple(c for c in CONSEQUENCES if c in declared)
+
+
 #: The :attr:`ToolResult.metadata` key a failed result keeps its failure's code under
 #: (:attr:`ToolFailure.code`), so the door that answers a call with its ``error`` alone
 #: (``POST /api/tools/invoke``) hands the code on with it.
@@ -158,6 +185,15 @@ class ToolDefinition:
     # taken to do is ``risk_level``, which believes a read-only label only from a server the owner
     # trusts (:func:`risk_from_annotations`).
     annotations: dict[str, Any] = field(default_factory=dict)
+    # What a call may do that reaches past this machine (:data:`CONSEQUENCES`): send something to
+    # other people, or spend money. Each asks a second confirmation before the call runs. ``()``
+    # declares neither. ``None`` declares nothing, and a tool that declares nothing is taken to
+    # be able to do either: every call to it that is not an established read asks the second
+    # confirmation. PersonalClaw's own tools are all classified, so for them ``None`` reads as
+    # ``()``; an MCP server's tool and an app's tool are taken at their word alone. Read strictly
+    # (:func:`consequences_of`): a declaration it cannot follow is none, and asks, whoever ships
+    # the tool.
+    consequences: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         # `==`, not `is`: a constructor may pass the level's string value.

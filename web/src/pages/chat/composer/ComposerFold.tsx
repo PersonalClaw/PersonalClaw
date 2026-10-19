@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react'
 import { PanelBottomOpen } from 'lucide-react'
 import { Button } from '../../../ui/Button'
-import { viewModeKeyLabel } from '../../../app/viewModes'
+import { bindingLabel, heldWithAModifier } from '../../../app/keymap'
 
 // ── Reading mode's fold ───────────────────────────────────────────────────────────────────────
 //
@@ -59,7 +59,7 @@ export function ComposerFold({ folded, onUnfold, composerRef, draft, onType, chi
   useEffect(() => {
     if (!folded) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.defaultPrevented || e.isComposing || heldWithAModifier(e)) return
       if (e.key.length !== 1 || e.key === '/') return
       const target = e.target instanceof HTMLElement ? e.target : null
       if (target?.closest(KEEPS_ITS_KEYS)) return
@@ -80,11 +80,11 @@ export function ComposerFold({ folded, onUnfold, composerRef, draft, onType, chi
       {folded && (
         <span ref={lineRef} className="pointer-events-auto mx-auto flex justify-center" style={{ maxWidth: 'var(--content-width)' }}>
           <Button variant="secondary" size="sm" onClick={() => editorOf(composerRef)?.focus()}
-            title={`Unfold the composer (${viewModeKeyLabel('reading-mode')})`}
+            title={`Unfold the composer (${bindingLabel('reading-mode')})`}
             className="max-w-full shadow-md">
             <PanelBottomOpen size={14} aria-hidden className="shrink-0 text-on-surface-low" />
             <span className="truncate text-on-surface-var">{preview ? `Continue your draft: ${preview}` : 'Write a reply'}</span>
-            <kbd aria-hidden className="rounded-md bg-surface-highest px-1.5 py-0.5 font-mono text-on-surface-var text-[0.75rem]">{viewModeKeyLabel('reading-mode')}</kbd>
+            <kbd aria-hidden className="rounded-md bg-surface-highest px-1.5 py-0.5 font-mono text-on-surface-var text-[0.75rem]">{bindingLabel('reading-mode')}</kbd>
           </Button>
         </span>
       )}

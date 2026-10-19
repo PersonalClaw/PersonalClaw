@@ -46,6 +46,7 @@ from personalclaw.agents.native.owed_reply import OwedReply, answered_row, cappe
 from personalclaw.agents.native.tool_names import name_census
 from personalclaw.agents.native.tools import (
     ARGUMENTS_UNREADABLE,
+    declared_consequences,
     observed,
     read_tool_arguments,
     tool_definitions_to_openai_schema,
@@ -374,6 +375,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         self._tool_builds: frozenset[str] = frozenset()
         self._tool_proposes: frozenset[str] = frozenset()
         self._tool_tells_owner: dict[str, tuple[str, ...]] = {}
+        # What each tool declares a call may do past this machine (`ToolDefinition.consequences`),
+        # with PersonalClaw's own classified: a name missing from the map declares nothing.
+        self._tool_consequences: dict[str, tuple[str, ...]] = {}
         # The turn's ONE stop signal. Not a bool: cancellation has to carry a
         # cause (user vs internal), a live child-process registry a stop can reap, and
         # idempotence — so it is an object, and `self._cancelled` below is a read-only
@@ -540,6 +544,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         self._tool_builds = frozenset(t.name for t in defs if getattr(t, "builds", False))
         self._tool_proposes = frozenset(t.name for t in defs if getattr(t, "proposes", False))
         self._tool_tells_owner = {t.name: tuple(getattr(t, "tells_owner", ()) or ()) for t in defs}
+        self._tool_consequences = declared_consequences(defs, index)
         # Per-turn tool retrieval: a selector over the full catalog. K
         # defaults above the builtin count → behavioral no-op until MCP catalogs
         # grow; selection only changes the schema the model SEES (dispatch via
@@ -1857,6 +1862,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                     tells_owner=self._tells_owner(tool_name, args),
                     annotations=self._annotations_of(tool_name),
                     hooks_asked=self._hook_fire is not None,
+                    consequences=self._tool_consequences.get(tool_name),
                 )
                 decision = await self._approval.wait(request_id, fut)
                 if self._cancelled:

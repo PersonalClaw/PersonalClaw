@@ -52,6 +52,7 @@ const AP: PendingApproval = {
   id: 'ap-1', request_id: 'ap-1', source: 'cron', tool: 'Bash',
   tool_input: 'rm -rf /tmp/scratch', tool_purpose: 'Clear the scratch directory',
   session: 'cron:nightly', ts: Math.round(Date.now() / 1000) - 90,
+  confirms: [],
   session_title: '', agent: '', risk: '', grant_agent: '', source_label: 'trigger “Nightly sweep”',
 }
 
@@ -125,6 +126,29 @@ describe('the companion approvals queue', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Allow Bash' })).toBeTruthy())
   })
 
+  it('asks the second confirmation the row names, and posts only on its confirm', async () => {
+    approvals.mockResolvedValue([{ ...AP, risk: 'destructive', confirms: ['deletes'] }])
+    resolveApproval.mockResolvedValue({ ok: true })
+    render(<CompanionPage {...route} />)
+    const allow = await screen.findByRole('button', { name: 'Allow Bash' })
+    await userEvent.click(allow)
+    await userEvent.click(allow)
+    expect(resolveApproval).not.toHaveBeenCalled()
+    expect(screen.getByText(/It deletes files\./)).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: /Yes, run it/ }))
+    expect(resolveApproval).toHaveBeenCalledTimes(1)
+    expect(resolveApproval).toHaveBeenCalledWith('ap-1', 'approve')
+  })
+
+  it('fails closed on a row that names no confirms: it asks unless the call only reads', async () => {
+    const { confirms: _omitted, ...bare } = AP
+    approvals.mockResolvedValue([{ ...bare, risk: 'caution' }])
+    render(<CompanionPage {...route} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Allow Bash' }))
+    expect(resolveApproval).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /Yes, run it/ })).toBeTruthy()
+  })
+
   it('reject round-trips with the reject action', async () => {
     approvals.mockResolvedValue([AP])
     resolveApproval.mockResolvedValue({ ok: true })
@@ -157,8 +181,11 @@ describe('the companion approvals queue', () => {
       await userEvent.click(await screen.findByRole('button', { name: 'Allow Bash' }))
       await waitFor(() => expect(toasts.join('|')).toContain('gateway unreachable'))
       expect(toasts.join('|')).toContain("Couldn't approve Bash")
-      // The card is still actionable.
+      // The card is still actionable: a second press sends again.
       await waitFor(() => expect(screen.getByRole('button', { name: 'Allow Bash' })).toBeTruthy())
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Allow Bash' })).not.toHaveProperty('disabled', true))
+      await userEvent.click(screen.getByRole('button', { name: 'Allow Bash' }))
+      await waitFor(() => expect(resolveApproval).toHaveBeenCalledTimes(2))
     } finally {
       window.removeEventListener('ne:toast', onToast)
     }

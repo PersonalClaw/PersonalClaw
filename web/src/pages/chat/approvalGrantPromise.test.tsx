@@ -29,7 +29,9 @@ import type { ApprovalSegment } from './chatTypes'
 // the source for a string, which passes with the control deleted.
 
 const seg = (over: Partial<ApprovalSegment> = {}): ApprovalSegment => ({
-  kind: 'approval', id: 'a1', tool: 'bash', ...over,
+  // No second confirmation unless a test names one: these are about the scope picker
+  // (`approvalCardAsksWhatTheRowNames.test.tsx` covers the confirm).
+  kind: 'approval', id: 'a1', tool: 'bash', confirms: [], ...over,
 })
 
 const scopeTab = (label: string) => screen.getByRole('radio', { name: label })
@@ -136,12 +138,16 @@ describe('#506 — risk gates how far the answer may reach', () => {
     expect(scopeTab('This chat')).toBeTruthy()
   })
 
-  it('a destructive call is still approvable with one click at the narrowest scope', () => {
+  it('a destructive call is still approvable at the narrowest scope, after its confirm', () => {
     const onAct = vi.fn()
-    render(<ApprovalCard seg={seg({ risk: 'destructive' })} onAct={onAct} />)
+    render(<ApprovalCard seg={seg({ risk: 'destructive', confirms: ['deletes'] })} onAct={onAct} />)
     // The anti-outage property, stated as a test: the gate never blocks ANSWERING the prompt,
-    // only widening it. A permission surface the user cannot answer is the worse failure.
+    // only widening it. A permission surface the user cannot answer is the worse failure. A delete
+    // asks its second confirmation first, and nothing is sent before it.
     fireEvent.click(allow())
+    expect(onAct).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /Yes, run it/ }))
+    expect(onAct).toHaveBeenCalledTimes(1)
     expect(onAct).toHaveBeenCalledWith('a1', 'approved')
   })
 

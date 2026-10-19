@@ -75,6 +75,7 @@ import { runningState } from '../../test/runState'
 // ── Fixtures ────────────────────────────────────────────────────────────────────────────────
 const approval = (over: Partial<PendingApproval> = {}): PendingApproval => ({
   id: 'appr-1', request_id: 'appr-1', source: 'chat', tool: 'shell.run', session: 'nightly-sweep', ts: 1,
+  confirms: [],
   session_title: '', agent: '', risk: '', grant_agent: '', source_label: 'chat', ...over,
 })
 

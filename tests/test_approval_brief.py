@@ -96,6 +96,11 @@ def _make_gateway():
 
 
 def _event(title: str, **kw) -> LLMEvent:
+    """A call a channel's prompt may answer: one of PersonalClaw's own, classified (it declares
+    neither a send nor spending), unless the test says otherwise. A call that asks a second
+    confirmation is never put to a channel (`test_a_channel_never_answers_a_call_that_asks_twice`).
+    """
+    kw.setdefault("consequences", ())
     return LLMEvent(kind="permission_request", request_id="req1", title=title, **kw)
 
 
@@ -161,20 +166,21 @@ class TestCallSiteCarriesTheBrief:
 
     @pytest.mark.asyncio
     async def test_a_mutating_command_does_not_claim_read_only(self) -> None:
-        """The screening verdict that was left unwired now reaches the brief."""
+        """The screening verdict that was left unwired now reaches the brief. A write inside the
+        folder, since a delete asks once more and is never put to a channel."""
         gateway = _make_gateway()
         event = _event(
             "bash",
             tool_kind="execute",
             risk_level="destructive",
-            tool_input={"command": "rm -rf build"},
+            tool_input={"command": "echo done > notes.txt"},
         )
         assert await _drive(gateway, event) is True
 
         delivered = gateway._channel_delivery.inner.request_approval.call_args.args[0]
         brief = delivered.tool_meta[APPROVAL_BRIEF_META_KEY]
         assert brief["blastRadius"]["readOnly"] is False
-        assert brief["risk"] == "destructive"
+        assert brief["blastRadius"]["writes"] is True
 
     @pytest.mark.asyncio
     async def test_nothing_established_ships_no_blast_radius_at_all(self) -> None:
@@ -209,7 +215,9 @@ class TestCallSiteCarriesTheBrief:
         assert APPROVAL_BRIEF_META_KEY not in kwargs
         # The tool's server labels travel with it, so the registry's radius can show them, and
         # so does who asked for the work when the owner did not, so its card can name them, and
-        # the folder the call runs in, so its card can say when it would delete that folder.
+        # the folder the call runs in, so its card can say when it would delete that folder, and
+        # the second confirmation an Approve asks, worked out here from what the tool declares,
+        # so the registry keeps the decision this callback routed by.
         assert set(kwargs) == {
             "tool_input",
             "tool_purpose",
@@ -220,6 +228,7 @@ class TestCallSiteCarriesTheBrief:
             "annotations",
             "asked_for",
             "cwd",
+            "confirms",
         }
         assert kwargs["asked_for"] == "", "her own background work names nobody"
 

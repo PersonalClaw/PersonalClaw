@@ -350,3 +350,9 @@ class AgentEvent:
     #: back only to a provider that reads it. ``None`` when the provider has none to carry. Last,
     #: so no field moves.
     reasoning: dict[str, Any] | None = None
+    #: On a PERMISSION_REQUEST, what the tool behind the call declares it may do past this machine
+    #: (``ToolDefinition.consequences``), resolved by the runtime: PersonalClaw's own tools are all
+    #: classified, so for one of them nothing declared is ``()``. ``None`` from a tool that declared
+    #: nothing, which every approval surface takes to be able to send or spend
+    #: (``approval_confirms``). Last, so no field moves.
+    consequences: tuple[str, ...] | None = None

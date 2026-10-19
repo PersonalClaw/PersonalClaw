@@ -47,6 +47,8 @@ export function ActionCenter({ navigate }: RouteProps) {
     if (ok) setDone((s) => new Set(s).add(key))
     setBusy((s) => { const n = new Set(s); n.delete(key); return n })
     refreshAll()
+    // Whether it landed: an approval card stays decided on `true` (`ApprovalChoice.onClick`).
+    return ok
   }
 
   // Order by urgency: approvals (a run is blocked on you) first, then inbox

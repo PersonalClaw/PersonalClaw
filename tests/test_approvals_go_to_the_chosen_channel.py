@@ -200,7 +200,9 @@ async def test_by_default_the_first_channel_that_knows_you_asks(tmp_path):
     first, last = _connect(FIRST), _connect(LAST)
     state = _state(tmp_path)
 
-    waiter = asyncio.ensure_future(state.request_approval("ap-1", "cron:nightly", "bash"))
+    waiter = asyncio.ensure_future(
+        state.request_approval("ap-1", "cron:nightly", "bash", confirms=())
+    )
     await _until(lambda: first.prompts, f"{FIRST} asked")
     assert last.prompts == [] and last.sent == []
     state.resolve_approval("ap-1", False, by=YOU)
@@ -213,7 +215,9 @@ async def test_send_approvals_to_asks_only_that_channel(tmp_path):
     _send_approvals_to(LAST)
     state = _state(tmp_path)
 
-    waiter = asyncio.ensure_future(state.request_approval("ap-2", "cron:nightly", "bash"))
+    waiter = asyncio.ensure_future(
+        state.request_approval("ap-2", "cron:nightly", "bash", confirms=())
+    )
     await _until(lambda: last.prompts, f"{LAST} asked")
     assert first.prompts == [] and first.sent == [], "the channel you did not choose stays quiet"
 
@@ -228,7 +232,9 @@ async def test_a_chosen_channel_that_is_not_connected_asks_nobody_else(tmp_path)
     _send_approvals_to("telegram")  # chosen, then its app was turned off
     state = _state(tmp_path)
 
-    waiter = asyncio.ensure_future(state.request_approval("ap-3", "cron:nightly", "bash"))
+    waiter = asyncio.ensure_future(
+        state.request_approval("ap-3", "cron:nightly", "bash", confirms=())
+    )
     await _settle()
     assert first.prompts == [] and first.sent == []
     assert last.prompts == [] and last.sent == []
@@ -249,7 +255,9 @@ async def test_a_chosen_channel_without_buttons_gets_the_link_not_another_channe
     )
     state = _state(tmp_path)
 
-    waiter = asyncio.ensure_future(state.request_approval("ap-4", "cron:nightly", "bash"))
+    waiter = asyncio.ensure_future(
+        state.request_approval("ap-4", "cron:nightly", "bash", confirms=())
+    )
     await _until(lambda: last.sent, f"{LAST} was told")
     assert "https://claw.example/companion?approval=ap-4" in last.sent[0][1]
     assert first.prompts == [] and first.sent == []
@@ -266,7 +274,9 @@ async def test_a_chat_that_started_on_a_channel_is_asked_there_first(tmp_path):
     state = _state(tmp_path)
     chat = a_chat_from_a_channel(state, FIRST)  # what FIRST's inbound door creates
 
-    waiter = asyncio.ensure_future(state.request_approval("ap-5", "chat", "bash", session=chat.key))
+    waiter = asyncio.ensure_future(
+        state.request_approval("ap-5", "chat", "bash", session=chat.key, confirms=())
+    )
     await _until(lambda: first.prompts, f"{FIRST} asked")
     assert last.prompts == [] and last.sent == [], "the setting stood in for the chat's channel"
     key, sessions = first.asked_in[0]
@@ -283,7 +293,9 @@ async def test_an_origin_that_cannot_ask_hands_over_to_send_approvals_to(tmp_pat
     state = _state(tmp_path)
     chat = a_chat_from_a_channel(state, FIRST)
 
-    waiter = asyncio.ensure_future(state.request_approval("ap-6", "chat", "bash", session=chat.key))
+    waiter = asyncio.ensure_future(
+        state.request_approval("ap-6", "chat", "bash", session=chat.key, confirms=())
+    )
     await _until(lambda: last.prompts, f"{LAST} asked")
     assert first.prompts == []
     assert last.asked_in[0] == ("", None), "the setting's channel asks in the owner's DM"

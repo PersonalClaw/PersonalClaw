@@ -5,7 +5,7 @@ import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
 import { Segmented } from '../../ui/Segmented'
 import { Checkbox } from '../../ui/forms'
 import { approvalOutcome } from './approvalOutcome'
-import { establishedFacets, mayDestroy, type BlastRadius } from './approvalMeta'
+import { confirmsOf, establishedFacets, mayDestroy, type BlastRadius } from './approvalMeta'
 import type { ApprovalSegment } from './chatTypes'
 import type { ApprovalDensity } from '../../ui/ApprovalPrompt'
 
@@ -215,7 +215,8 @@ export function ApprovalCard({
   seg, onAct, scopeWords = 'chat', answers = 'scoped', source, sourceHref, subject, busy, density,
 }: {
   seg: ApprovalSegment
-  onAct: (id: string, action: Action) => void
+  /** Returns the request when there is one: until it settles, a key press sends nothing more. */
+  onAct: (id: string, action: Action) => void | Promise<unknown>
   /** The scopes' words: a chat's, or a loop's on the loop's own page. */
   scopeWords?: ScopeWords
   /** `scoped`: the remember-scope picker, for a surface that answers through the asking chat's
@@ -272,7 +273,12 @@ export function ApprovalCard({
   const named = subject || seg.tool
   return (
     <ApprovalPrompt
+      // One prompt per request: a decision it keeps (`ApprovalChoice.onClick`) never carries over to
+      // another request drawn in the same place.
+      key={seg.id}
       density={density}
+      // A segment built without the field (an older build's) fails closed (`confirmsOf`).
+      confirms={seg.confirms ?? confirmsOf(undefined, seg.risk)}
       tool={seg.tool}
       args={seg.input}
       purpose={seg.purpose}
@@ -323,7 +329,7 @@ export function ApprovalCard({
         // and Deny keeps the tinted danger edge it has always had. The accessible name
         // carries the scope, because "Allow" alone does not say how far the answer reaches.
         {
-          key: 'allow', icon: Check, label: 'Allow',
+          key: 'allow', icon: Check, label: 'Allow', approves: true,
           // The SAME promise string the visible line shows, not a second copy of it: a
           // truthful sentence beside an over-claiming accessible name is the same defect for
           // the user who only hears one of them (#541).

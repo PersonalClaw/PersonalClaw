@@ -118,7 +118,9 @@ async def test_an_approval_nobody_answered_is_told_it_expired(tmp_path):
     state = _state(tmp_path)
     state.approval_window_secs = lambda: 0.3  # type: ignore[method-assign]
 
-    waiter = asyncio.ensure_future(state.request_approval("ap-1", "cron:nightly", "bash"))
+    waiter = asyncio.ensure_future(
+        state.request_approval("ap-1", "cron:nightly", "bash", confirms=())
+    )
     await _until(lambda: channel.prompts, "the channel asked")
     assert await asyncio.wait_for(waiter, timeout=5) is False
     await _until(lambda: channel.prompts[0].future.done(), "the prompt was closed")
@@ -130,7 +132,9 @@ async def test_an_approval_whose_work_stopped_is_told_it_was_cancelled(tmp_path)
     channel = _connect()
     state = _state(tmp_path)
 
-    waiter = asyncio.ensure_future(state.request_approval("ap-2", "cron:nightly", "bash"))
+    waiter = asyncio.ensure_future(
+        state.request_approval("ap-2", "cron:nightly", "bash", confirms=())
+    )
     await _until(lambda: channel.prompts, "the channel asked")
     assert state.cancel_approval("ap-2", reason="its run was stopped") is True
     assert await asyncio.wait_for(waiter, timeout=5) is False
@@ -155,6 +159,9 @@ async def test_a_chat_s_stopped_turn_is_told_it_was_cancelled(tmp_path):
         is_read_only=False,
         blast_radius=None,
         grant_agent="",
+        # A call that asks no second confirmation: one that does is never put to a channel
+        # (`test_a_channel_never_answers_a_call_that_asks_twice`).
+        confirms=(),
     )
     await _until(lambda: channel.prompts, "the channel asked")
 
@@ -170,7 +177,9 @@ async def test_an_answer_given_in_the_dashboard_is_told_as_given(tmp_path, appro
     channel = _connect()
     state = _state(tmp_path)
 
-    waiter = asyncio.ensure_future(state.request_approval("ap-3", "cron:nightly", "bash"))
+    waiter = asyncio.ensure_future(
+        state.request_approval("ap-3", "cron:nightly", "bash", confirms=())
+    )
     await _until(lambda: channel.prompts, "the channel asked")
     assert state.resolve_approval("ap-3", approved, by=YOU) is True
     assert await asyncio.wait_for(waiter, timeout=5) is approved
@@ -200,14 +209,17 @@ def _gateway(tmp_path):
 
 
 def _event() -> SimpleNamespace:
+    """A call that asks no second confirmation, so the gateway puts it to the channel: a write
+    inside the folder (a command the screen cannot read, such as `make test`, asks once more)."""
     return SimpleNamespace(
         request_id="req-1",
         title="bash",
         tool_kind="",
-        tool_input='{"command": "make test"}',
-        tool_purpose="run the tests",
+        tool_input='{"command": "echo done > notes.txt"}',
+        tool_purpose="note that the run finished",
         risk_level="",
         tool_meta={},
+        consequences=(),
     )
 
 

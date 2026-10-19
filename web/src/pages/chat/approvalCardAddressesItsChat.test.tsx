@@ -114,6 +114,8 @@ const ASKED_BY_ITS_WORK = {
   source: 'subagent', tool: 'subagent_run', tool_input: '1. Raise the retry ceiling: it may change files',
   tool_purpose: 'Starts 2 tasks at once, and 1 of them may change things, not only read.',
   risk: 'caution', grant_agent: '', agent: '', session_title: 'chat-a', ts: 0,
+  // PersonalClaw's own ask: the registry names no second confirmation for it.
+  confirms: [],
 }
 
 describe('the approval card in the chat it belongs to', () => {

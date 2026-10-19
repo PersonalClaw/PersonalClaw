@@ -703,6 +703,7 @@ class GatewayOrchestrator:
             # owner-response wait; core races it against the dashboard prompt via the
             # on_prompted hook (which hands us the channel's pending future so a dashboard
             # click resolves both).
+            from personalclaw.approval_confirms import call_confirms
             from personalclaw.approval_source import source_label_in
             from personalclaw.channel_delivery import approval_delivery
 
@@ -712,7 +713,21 @@ class GatewayOrchestrator:
                     session_resolver(request_id) if session_resolver else resolved_session
                 )
                 origin = self.dashboard_state.channel_provider_for(parent) if parent else ""
-            asking = approval_delivery(origin)
+            # The second confirmation the call asks (`approval_confirms`), decided once, here, and
+            # kept on the registry's row, which every surface reads. A channel's prompt answers on
+            # one press, so a call that asks one is not put to it: the registry tells the owner on
+            # their channel where to answer it instead (`_approval_on_a_channel`).
+            confirms = call_confirms(
+                getattr(event, "risk_level", "") or "",
+                event.title,
+                event.tool_kind,
+                event.tool_input,
+                cwd=folder,
+                consequences=getattr(event, "consequences", None),
+                tells_owner=bool(getattr(event, "tells_owner", False)),
+                named_files=tuple(getattr(event, "named_files", ()) or ()),
+            )
+            asking = None if confirms else approval_delivery(origin)
             if asking is not None:
                 provider, asker = asking
                 try:
@@ -743,6 +758,7 @@ class GatewayOrchestrator:
                                 tool_kind=event.tool_kind,
                                 annotations=getattr(event, "annotations", None),
                                 asked_for=approval_grants.asked_for_line(someone),
+                                confirms=confirms,
                             )
                         )
 
@@ -825,6 +841,7 @@ class GatewayOrchestrator:
                     tool_kind=event.tool_kind,
                     annotations=getattr(event, "annotations", None),
                     asked_for=approval_grants.asked_for_line(someone),
+                    confirms=confirms,
                 )
                 return self._asked_decision(request_id, answered)
             # Nowhere to ask (no dashboard, no channel): nobody can say yes, so the call does not

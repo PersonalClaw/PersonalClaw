@@ -53,6 +53,7 @@ const PENDING: PendingApproval = {
   id: 'spawn:207dceb3', request_id: 'spawn:207dceb3', source: 'subagent',
   tool: 'subagent_run(Advance one round of deep research)', tool_purpose: '',
   session: 'workflow:df5827ca:sweep', ts: 100, session_title: '', agent: '', risk: '', grant_agent: '',
+  confirms: [],
   source_label: 'workflow “deep-research” · step “sweep”',
 }
 
@@ -105,6 +106,18 @@ describe('Mission Control renders the verbs its header promises', () => {
     await waitFor(() => expect(approveButtons()).toHaveLength(1))
     await userEvent.click(approveButtons()[0])
     expect(resolveApproval).toHaveBeenCalledWith('spawn:207dceb3', 'approve')
+    expect(await screen.findByRole('status')).toHaveTextContent('Approved.')
+  })
+
+  it('a failed answer leaves the card answerable, and a second press sends again', async () => {
+    resolveApproval.mockRejectedValueOnce(new Error('the gateway did not respond')).mockResolvedValue({ ok: true })
+    render(<MissionControl />)
+    await waitFor(() => expect(approveButtons()).toHaveLength(1))
+    await userEvent.click(approveButtons()[0])
+    await waitFor(() => expect(resolveApproval).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(approveButtons()).toHaveLength(1))
+    await userEvent.click(approveButtons()[0])
+    await waitFor(() => expect(resolveApproval).toHaveBeenCalledTimes(2))
     expect(await screen.findByRole('status')).toHaveTextContent('Approved.')
   })
 

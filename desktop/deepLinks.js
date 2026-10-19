@@ -323,4 +323,5 @@ module.exports = {
   makeDeepLinkInbox,
   makeWindowDeepLinkInbox,
   registerDeepLinks,
+  isDashboardPage,
 };

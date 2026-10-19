@@ -312,20 +312,24 @@ export function MissionControl() {
   const resolve = useCallback(
     (cardKey: string, approvalId: string, action: 'approve' | 'reject') => {
       mark(cardKey, { state: 'busy' })
-      api
+      return api
         .resolveApproval(approvalId, action)
+        // `true` once it landed, `false` when it did not: the card stays decided only on `true`
+        // (`ApprovalChoice.onClick`), so a failed answer leaves it answerable.
         .then(() => {
           mark(cardKey, { state: 'done', text: action === 'approve' ? 'Approved.' : 'Denied.' })
           refresh()
+          return true
         })
         .catch((err) => {
           const ended = endedText(err)
           if (ended) {
             mark(cardKey, { state: 'ended', text: ended })
             refresh()
-            return
+            return false
           }
           mark(cardKey, { state: 'failed', text: failureText(`${action} this`, err) })
+          return false
         })
     },
     [mark, refresh],
@@ -448,7 +452,7 @@ function AttentionLaneSection({
   cards: LaneCard[]
   loading: boolean
   outcomes: Record<string, Outcome>
-  onResolve: (cardKey: string, approvalId: string, action: 'approve' | 'reject') => void
+  onResolve: (cardKey: string, approvalId: string, action: 'approve' | 'reject') => void | Promise<unknown>
   onAnswer: (cardKey: string, q: CardQuestion, value: string | boolean) => void
   onProposal: OnProposal
 }) {
@@ -502,7 +506,7 @@ function AttentionCard({
 }: {
   card: LaneCard
   outcome: Outcome | undefined
-  onResolve: (cardKey: string, approvalId: string, action: 'approve' | 'reject') => void
+  onResolve: (cardKey: string, approvalId: string, action: 'approve' | 'reject') => void | Promise<unknown>
   onAnswer: (cardKey: string, q: CardQuestion, value: string | boolean) => void
   onProposal: OnProposal
 }) {

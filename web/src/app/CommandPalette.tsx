@@ -2,13 +2,14 @@ import type { ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState, useId } from 'react'
 import { useFocusTrap } from '../ui/useFocusTrap'
 import { AnimatePresence, motion } from 'framer-motion'
-import { CornerDownLeft, ArrowRight, MessageSquare, Brain, BookOpen, ListChecks } from 'lucide-react'
+import { CornerDownLeft, ArrowRight, MessageSquare, Brain, BookOpen, ListChecks, Keyboard } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { spring } from '../design/motion'
 import { Eyebrow } from '../ui/Eyebrow'
 import { SearchField } from '../ui/SearchField'
 import { CONTENT_SOURCES, MIN_CONTENT_QUERY, SOURCE_LABEL, useContentSearch, type ContentHit, type ContentSource } from './paletteSearch'
 import { PALETTE_SEARCH_LABEL } from './paletteSearchLabel'
+import { KEYMAP, bindingLabel, useKeyBinding, type CommandId } from './keymap'
 
 export interface Command {
   id: string
@@ -17,6 +18,27 @@ export interface Command {
   icon: LucideIcon
   keywords?: string     // extra search terms
   run: () => void
+  /** Listed, never run: why not (a key the focused control handles, a command with nothing to act
+   *  on here). The row shows dimmed with the reason. */
+  disabledReason?: string
+}
+
+/** Every keymap row as a palette command, its keys in its hint, so the palette lists every
+ *  shortcut from the one table. A row the focused control handles (an approval's ⌘Enter) is listed
+ *  with its reason and never runs from here; so is a global row with no runner on this page. */
+export function keymapCommands(runners: Partial<Record<CommandId, () => void>>): Command[] {
+  return KEYMAP.map((row) => {
+    const run = row.scope === 'global' ? runners[row.id] : undefined
+    return {
+      id: `key:${row.id}`,
+      label: row.label,
+      hint: `Action · ${bindingLabel(row.id)}`,
+      icon: Keyboard,
+      keywords: `${row.keywords ?? ''} shortcut key`,
+      run: run ?? (() => {}),
+      ...(run ? {} : { disabledReason: row.disabledReason ?? 'Not available here' }),
+    }
+  })
 }
 
 const SOURCE_ICON: Record<ContentSource, LucideIcon> = {
@@ -51,7 +73,7 @@ export function rankCommands(commands: Command[], q: string): Command[] {
 }
 
 /** One row of the listbox: a command, or something found inside the user's content. */
-type Row = { id: string; label: string; hint?: string; detail?: string; icon: LucideIcon; run: () => void }
+type Row = { id: string; label: string; hint?: string; detail?: string; icon: LucideIcon; run: () => void; disabledReason?: string }
 
 /** ⌘K / Ctrl+K command palette — search + run navigation and actions, and search what is IN the
  *  app: chats, memory, knowledge and tasks (`paletteSearch.ts`). The single keyboard entry point
@@ -65,12 +87,11 @@ export function CommandPalette({ commands, navigate }: { commands: Command[]; na
   const inputRef = useRef<HTMLInputElement>(null)
   const cpId = useId()
 
-  // global ⌘K / Ctrl+K toggle
+  // ⌘K and ⌘⇧P toggle it, through the keymap's one handler.
+  useKeyBinding('palette', () => { setOpen((v) => !v); setQ(''); setActive(0) })
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setOpen((v) => !v); setQ(''); setActive(0) }
-      else if (e.key === 'Escape' && open) setOpen(false)
-    }
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open])
@@ -88,7 +109,7 @@ export function CommandPalette({ commands, navigate }: { commands: Command[]; na
     .map((source) => ({ source, hits: contentHits.filter((h) => h.source === source) }))
     .filter((g) => g.hits.length)
   const rows: Row[] = [
-    ...results.map((c) => ({ id: c.id, label: c.label, hint: c.hint, icon: c.icon, run: c.run })),
+    ...results.map((c) => ({ id: c.id, label: c.label, hint: c.hint, detail: c.disabledReason, icon: c.icon, run: c.run, disabledReason: c.disabledReason })),
     ...groups.flatMap((g) => g.hits.map((h: ContentHit) => ({
       id: h.id, label: h.label, detail: h.detail, icon: SOURCE_ICON[h.source], run: () => navigate(h.path),
     }))),
@@ -110,7 +131,8 @@ export function CommandPalette({ commands, navigate }: { commands: Command[]; na
     el?.scrollIntoView({ block: 'nearest' })
   }, [active])
 
-  const run = (c?: Row) => { if (!c) return; setOpen(false); c.run() }
+  // A dimmed row runs nothing and leaves the palette open: its reason is already on it.
+  const run = (c?: Row) => { if (!c || c.disabledReason) return; setOpen(false); c.run() }
 
   const option = (row: Row, i: number) => (
     <PaletteOption key={row.id} row={row} id={`${cpId}-opt-${i}`} index={i} on={i === active}
@@ -190,7 +212,7 @@ export function CommandPalette({ commands, navigate }: { commands: Command[]; na
             <div data-type="caption" className="flex items-center gap-m border-t border-outline-variant/40 px-l py-s text-on-surface-low">
               <span className="inline-flex items-center gap-xs"><ArrowRight size={11} className="rotate-90" /> navigate</span>
               <span className="inline-flex items-center gap-xs"><CornerDownLeft size={11} /> select</span>
-              <span className="ml-auto inline-flex items-center gap-xs"><kbd className="rounded bg-surface-high px-1 font-mono">⌘K</kbd> toggle</span>
+              <span className="ml-auto inline-flex items-center gap-xs"><kbd className="rounded bg-surface-high px-1 font-mono">{bindingLabel('palette')}</kbd> toggle</span>
             </div>
           </TrappedCard>
         </motion.div>
@@ -206,6 +228,7 @@ function PaletteOption({ row, id, index, on, onHover, onRun }: {
   const Icon = row.icon
   return (
     <button type="button" role="option" aria-selected={on} id={id}
+      aria-disabled={row.disabledReason ? true : undefined}
       data-cmd-idx={index} onMouseEnter={onHover} onClick={onRun}
       // 🔴 INSET RING. These rows are full-width inside the palette card, which is
       // `overflow-hidden rounded-2xl`, so an outward-drawn outline is clipped
@@ -219,7 +242,7 @@ function PaletteOption({ row, id, index, on, onHover, onRun }: {
       // This is the app's primary keyboard surface, which is where a focus indicator
       // matters most.
       className="flex w-full items-center gap-3 px-l py-2.5 text-left focus-visible:-outline-offset-2"
-      style={{ background: on ? 'var(--color-surface-high)' : undefined }}>
+      style={{ background: on ? 'var(--color-surface-high)' : undefined, opacity: row.disabledReason ? 0.6 : undefined }}>
       <Icon size={16} className="shrink-0" style={{ color: on ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-on-surface text-[0.8125rem]">{row.label}</span>

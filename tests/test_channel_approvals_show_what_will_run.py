@@ -139,7 +139,14 @@ async def test_a_channel_is_handed_the_call_the_dashboard_card_shows(tmp_path):
 
     waiter = asyncio.ensure_future(
         state.request_approval(
-            "ap-1", "cron:nightly", "execute_bash", tool_input=CALL, tool_purpose=PURPOSE
+            "ap-1",
+            "cron:nightly",
+            "execute_bash",
+            tool_input=CALL,
+            tool_purpose=PURPOSE,
+            # As a caller that decided it asks nothing more hands it over: a call that asks a
+            # second confirmation is never put to a channel's prompt.
+            confirms=(),
         )
     )
     await _until(lambda: channel.events, "the channel was asked")
@@ -182,7 +189,9 @@ async def test_a_background_shell_write_is_shown_as_the_write_it_is(tmp_path):
     write = {"command": "cd ~ && printf 'hello\\n' > Documents/note.txt"}
 
     waiter = asyncio.ensure_future(
-        state.request_approval("ap-2", "cron:nightly", "execute_bash", tool_input=write)
+        state.request_approval(
+            "ap-2", "cron:nightly", "execute_bash", tool_input=write, confirms=()
+        )
     )
     await _until(lambda: channel.events, "the channel was asked")
     entry = state._pending_approvals["ap-2"]
@@ -237,14 +246,17 @@ async def test_a_subagent_approval_hands_the_channel_its_masked_arguments(tmp_pa
     handle.request_approval = AsyncMock(return_value=True)
     channel_delivery.register(handle, provider=PROVIDER)
     save_credential(owner_id_credential(PROVIDER), "owner-1")
+    # A call the gateway puts to a channel: one that asks no second confirmation (a command the
+    # screen cannot vouch for asks once more, and is never put to a channel's prompt).
+    fetch = {"url": f"https://api.example.test/v1/models?key={SECRET}", "timeout": 30}
     event = LLMEvent(
         kind="permission_request",
         request_id="req-1",
-        title="execute_bash",
-        tool_kind="execute",
-        risk_level="destructive",
-        tool_input=dict(CALL),
+        title="web_fetch",
+        risk_level="caution",
+        tool_input=dict(fetch),
         tool_purpose=PURPOSE,
+        consequences=(),
     )
 
     with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
@@ -253,13 +265,13 @@ async def test_a_subagent_approval_hands_the_channel_its_masked_arguments(tmp_pa
 
     brief = _brief_of(handle.request_approval.call_args.args[0])
     # The dashboard's entry for the same call holds redact_field(tool_input_to_str(raw)).
-    assert brief["input"] == redact_field(tool_input_to_str(CALL))
-    assert '"command": "curl -H' in brief["input"] and '"timeout": 30' in brief["input"]
+    assert brief["input"] == redact_field(tool_input_to_str(fetch))
+    assert '"url": ' in brief["input"] and '"timeout": 30' in brief["input"]
     assert brief["purpose"] == redact_field(PURPOSE)
-    assert brief["summary"] == "Can: runs a command · Risk: Destructive"
+    assert brief["summary"] == "Can: uses the network · Risk: Caution"
     for text in (brief["input"], brief["purpose"]):
         assert SECRET not in text, "a key reached the channel"
-    assert event.tool_input == CALL, "the call itself is untouched"
+    assert event.tool_input == fetch, "the call itself is untouched"
 
 
 # ── the one read a channel makes ───────────────────────────────────────────────────────────

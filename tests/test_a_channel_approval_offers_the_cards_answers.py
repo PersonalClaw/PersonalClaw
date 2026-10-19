@@ -132,6 +132,9 @@ async def _ask(
         blast_radius=None,
         grant_agent="",
         reach=reach,
+        # A call that asks no second confirmation: one that does is never put to a channel
+        # (`test_a_channel_never_answers_a_call_that_asks_twice`).
+        confirms=(),
     )
     return future
 
@@ -189,14 +192,14 @@ async def test_a_call_that_may_destroy_something_is_offered_this_call_alone(tmp_
     """The card withholds its standing answers on a call that may destroy something (one that
     is destructive, or a shell command the screen could not check) until they are unlocked, and
     a prompt has no unlock."""
-    channel = _connect()
+    _connect()
     state = _state(tmp_path)
     chat = a_chat_from_a_channel(state, CHANNEL)
-
-    waiting = await _ask(state, chat, risk=risk)
-    await _until(lambda: channel.prompts, "asked")
-    assert _keys(channel.prompts[0]) == ["approved", "rejected"]
-    waiting.cancel()
+    entry = {"id": chat_approval_id(chat.key, "r-1"), "request_id": "r-1", "session": chat.key}
+    offered = state.channel_answers({**entry, "risk": risk}, in_its_chat=True)
+    assert [a.key for a in offered] == ["approved", "rejected"]
+    # The control: the same row at caution is offered the chat's Trust too.
+    assert "trust" in [a.key for a in state.channel_answers(entry, in_its_chat=True)]
 
 
 @pytest.mark.asyncio
@@ -290,6 +293,8 @@ async def _stream(items):
 
 
 def _permission(request_id: str) -> LLMEvent:
+    """A call whose tool declares neither a send nor spending, so it asks no second
+    confirmation and its channel's prompt answers it."""
     return LLMEvent(
         kind=EVENT_PERMISSION_REQUEST,
         title="mcp/notes/list_directory",
@@ -297,6 +302,7 @@ def _permission(request_id: str) -> LLMEvent:
         request_id=request_id,
         tool_input='{"path": "inbox"}',
         risk_level="caution",
+        consequences=(),
     )
 
 
@@ -380,13 +386,16 @@ async def test_allow_for_this_chat_never_reaches_another_chat(tmp_path):
 
 @pytest.mark.asyncio
 async def test_an_answer_the_prompt_did_not_offer_decides_nothing(tmp_path):
-    """A destructive call's prompt offers Allow once and Deny; a press that names the chat's
-    Trust anyway is not one of them, so the approval waits on, and the chat is not trusted."""
+    """A prompt that offers Allow once and Deny alone (a call off the allowed hosts); a press that
+    names the chat's Trust anyway is not one of them, so the approval waits on, and the chat is
+    not trusted."""
+    from personalclaw.run_bounds import Reach, ask_note
+
     channel = _connect()
     state = _state(tmp_path)
     chat = a_chat_from_a_channel(state, CHANNEL)
 
-    waiting = await _ask(state, chat, risk="destructive")
+    waiting = await _ask(state, chat, reach=ask_note(Reach(hosts=("pkgs.example.com",))))
     await _until(lambda: channel.prompts, "asked")
     channel.prompts[0].future.set_result("trust")
     for _ in range(20):

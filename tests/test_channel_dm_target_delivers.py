@@ -203,7 +203,9 @@ async def test_deny_on_the_channel_denies(tmp_path):
     state = _state(tmp_path)
     _target(nk.APPROVAL)
 
-    waiter = asyncio.ensure_future(state.request_approval("ap-2", "cron:nightly", "bash"))
+    waiter = asyncio.ensure_future(
+        state.request_approval("ap-2", "cron:nightly", "bash", confirms=())
+    )
     await _until(lambda: channel.prompts, "the channel asked")
     channel.prompts[0].future.set_result("rejected")
     assert await asyncio.wait_for(waiter, timeout=5) is False
@@ -215,7 +217,9 @@ async def test_an_answer_in_the_dashboard_closes_the_channel_prompt(tmp_path):
     state = _state(tmp_path)
     _target(nk.APPROVAL)
 
-    waiter = asyncio.ensure_future(state.request_approval("ap-3", "cron:nightly", "bash"))
+    waiter = asyncio.ensure_future(
+        state.request_approval("ap-3", "cron:nightly", "bash", confirms=())
+    )
     await _until(lambda: channel.prompts, "the channel asked")
     assert state.resolve_approval("ap-3", True, by=YOU) is True
     assert await asyncio.wait_for(waiter, timeout=5) is True
@@ -230,7 +234,9 @@ async def test_a_prompt_that_runs_out_on_the_channel_decides_nothing(tmp_path):
     state = _state(tmp_path)
     _target(nk.APPROVAL)
 
-    waiter = asyncio.ensure_future(state.request_approval("ap-4", "cron:nightly", "bash"))
+    waiter = asyncio.ensure_future(
+        state.request_approval("ap-4", "cron:nightly", "bash", confirms=())
+    )
     await _until(lambda: channel.prompts, "the channel asked")
     await _until(lambda: channel.prompts[0].future.cancelled(), "the channel's window closed")
     await _settle()
@@ -249,7 +255,9 @@ async def test_a_channel_with_no_approval_prompt_gets_a_link_instead(tmp_path, m
         channel_messages, "dashboard_link", lambda frag: f"https://claw.example{frag[1:]}"
     )
 
-    waiter = asyncio.ensure_future(state.request_approval("ap-5", "cron:nightly", "bash"))
+    waiter = asyncio.ensure_future(
+        state.request_approval("ap-5", "cron:nightly", "bash", confirms=())
+    )
     await _until(lambda: channel.sent, "the owner was told")
     text = channel.sent[0][1]
     assert "waiting for your approval: bash" in text
@@ -271,7 +279,9 @@ async def test_no_second_prompt_when_the_caller_is_already_asking_on_a_channel(t
     assert channel.prompts == [] and channel.sent == []
 
     # Floor: the same approval without the flag asks.
-    other = asyncio.ensure_future(state.request_approval("ap-7", "cron:nightly", "bash"))
+    other = asyncio.ensure_future(
+        state.request_approval("ap-7", "cron:nightly", "bash", confirms=())
+    )
     await _until(lambda: channel.prompts, "the channel asked")
     for approval_id in ("ap-6", "ap-7"):
         state.resolve_approval(approval_id, False, by=YOU)
@@ -283,7 +293,9 @@ async def test_no_channel_dm_target_no_prompt(tmp_path):
     channel = _connect()
     state = _state(tmp_path)
 
-    waiter = asyncio.ensure_future(state.request_approval("ap-8", "cron:nightly", "bash"))
+    waiter = asyncio.ensure_future(
+        state.request_approval("ap-8", "cron:nightly", "bash", confirms=())
+    )
     await _settle(50)
     assert channel.prompts == [] and channel.sent == []
     state.resolve_approval("ap-8", False, by=YOU)

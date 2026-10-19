@@ -304,6 +304,9 @@ async def test_a_granted_elicitation_surfaces_on_the_existing_approval_path(
         assert row["tool"] == "mcp_elicitation:asker"
         assert row["tool_purpose"] == "Delete the staging database?"
         assert row["source"] == "mcp:asker"
+        # An accept lets the server go on to whatever it asked about, which nothing it declares
+        # says (here, a delete): the card asks once more, as for any tool that declares nothing.
+        assert row["confirms"] == ["undeclared"]
 
         ok, raw = await call
         assert ok, f"the elicitation round trip did not complete: {raw}"

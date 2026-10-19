@@ -39,7 +39,9 @@ export function LoopApprovals({ loopId, className = '' }: { loopId: string; clas
   }, load)
 
   const decide = useCallback((a: PendingApproval, action: Action) => {
-    api.approve(a.session, action, a.request_id)
+    // `true` once it landed: the card then sends nothing more for it (`ApprovalChoice.onClick`).
+    return api.approve(a.session, action, a.request_id)
+      .then(() => true)
       .catch(reportActionFailure('record your decision'))
       .finally(() => { load() })
   }, [load])

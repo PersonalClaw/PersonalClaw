@@ -17,6 +17,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A link that opens a new thread with a prompt puts the prompt in the composer, unsent, also when the app is already showing a new thread, and a link can open a thread's Activity pane or a new thread's Chat history; a link that names an artifact by key is refused, because an artifact opens on its own page.**
 - **Pick a terse or a conversational reply style for a chat from the composer, or for an agent on its form.**
 - **Settings → Agent defaults → Reply style sets the style every agent uses unless the agent or the chat chooses its own, and the composer's style picker says what the next reply carries, with Show what is sent for the exact text.**
+- **⌘Enter approves the approval that has keyboard focus, and a delete, a change outside the chat's folder, a send to other people, spending, or a call to a tool that doesn't say what it does asks once more first; new keys open the palette, sidebar, terminal drawer, chats and what needs you, and the palette lists every key.**
+- **A messaging channel's approval prompt no longer answers a call that asks once more first: the channel says the call is waiting, with the link to answer it where it asks.**
+- **A tool can declare that it sends to other people or spends money (`ToolDefinition.consequences`); until they declare, the tools of `code-review`, `companion`, `design-critique`, `docs-slides`, `issue-radar`, `notes`, `openai-tools`, `ops`, `research-lab`, `spec-builder` and `web-tools` ask the second confirmation on every call that isn't a read.**
 
 ### Fixed
 

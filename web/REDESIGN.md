@@ -215,7 +215,13 @@ overview.
 - Nothing is approved without an explicit key press or click.
 - Decline is an explicit control, with no shortcut of its own.
 - A delete, an overwrite outside the workspace, a send to other people and spending each ask a
-  second confirmation before they run. Every other approval decides on the first ⌘Enter or click.
+  second confirmation before they run. So does a call to a tool that says nothing about what it does
+  (an MCP server's, or an app's that declares nothing), unless the call is an established read.
+  Every other approval decides on the first ⌘Enter or click. Which confirmation a call asks is worked
+  out once, where the approval is recorded, and every surface reads it from the approval
+  (`confirms`); a messaging channel, whose prompt answers on one press, is never asked such a call
+  and links to where it is asked instead. A computer-use approval decides on one press: it relies on
+  computer use's own arming step, not on the second confirmation.
 - No approval key acts from a text field, on a stale request, on a hidden surface or on a card
   without focus. A held or repeated key sends one request.
 - Arrival never moves focus onto an approval action.
@@ -227,6 +233,28 @@ overview.
   accelerator, and in a browser tab the palette is the path.
 - Approval wording doesn't change with the keys. Shortcuts can't be remapped; the push-to-talk chord
   stays the one configurable chord.
+
+**As built**
+
+- The keymap is `web/src/app/keymap.ts`: one row per command (`id`, `label`, `keywords`, `scope`,
+  `chords`, `disabledReason`). `global` rows run through its one handler, from anywhere; `focused`
+  rows (⌘Enter on an approval, ↑ in the composer) are handled by the control that has focus, and the
+  palette lists them dimmed with their reason and never runs them.
+- To add a key: add a row, then give it a runner with `useKeyBinding(id, run)` where the thing it
+  moves lives (no runner where it has nothing to act on: its key is left to the browser, and the
+  palette lists it dimmed). Focus mode (⌘\\) and reading mode (⌘⇧.) are rows like the rest. The
+  palette and the tooltips of the shell's toggles, the folded composer and Allow read the row's keys
+  with `bindingLabel(id)`. A desktop menu sends a row's id, never a key press, to the tab in view
+  (`desktop/goMenu.js`), and only an id in `DESKTOP_COMMANDS`.
+- No other file reads `metaKey`/`ctrlKey` except the ones `everyChordIsOneRegistryRow.test.tsx`
+  lists, and that list only shrinks; a handler that only needs to know a chord is held asks
+  `heldWithAModifier`.
+- An approval's answer is one request: the prompt stays decided once its request landed (the caller
+  resolves `true`), a second press of Allow while the confirmation is asked only asks again, and
+  every choice, Deny included, goes through the same guard.
+- ⌘1 to ⌘9 open the chats in the chat list's order (pinned first, then the most recent) until
+  threads replace the list. ⇧Esc and ⌘⇧E are not bound yet: they wait for the record of what has
+  been seen and for the file tree.
 
 ## 7. Desktop buddy
 

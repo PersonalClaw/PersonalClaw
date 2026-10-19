@@ -124,6 +124,9 @@ async def _ask_in(state, chat, request_id: str = "r-1") -> asyncio.Future:
         is_read_only=False,
         blast_radius=None,
         grant_agent="",
+        # A call that asks no second confirmation: one that does is never put to a channel
+        # (`test_a_channel_never_answers_a_call_that_asks_twice`).
+        confirms=(),
     )
     return future
 
@@ -204,6 +207,7 @@ async def test_a_workflow_steps_approval_names_the_workflow_and_the_step(tmp_pat
             "bash",
             tool_input={"command": "pwd; ls"},
             session=f"workflow:{run.id}:sweep",
+            confirms=(),
         )
     )
     await _until(lambda: "spawn:1" in state._pending_approvals, "the approval was listed")
@@ -262,7 +266,10 @@ async def test_a_workflow_steps_subagent_is_tagged_with_its_step_not_as_a_subage
     ds.channel_provider_for.return_value = ""
     ds.request_approval = AsyncMock(return_value=False)
     orch.dashboard_state = ds
-    event = LLMEvent(kind="permission_request", request_id="spawn:1:call", title="bash")
+    # A call that asks no second confirmation, so the gateway puts it to the channel.
+    event = LLMEvent(
+        kind="permission_request", request_id="spawn:1:call", title="bash", consequences=()
+    )
 
     with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
         approve = orch._interactive_approval(

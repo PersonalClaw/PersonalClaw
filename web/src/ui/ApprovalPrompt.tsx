@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { ShieldQuestion, type LucideIcon } from 'lucide-react'
 import { messageEnter } from '../design/motion'
@@ -6,6 +6,7 @@ import { fvs } from '../design/fontWeight'
 import { clipWords } from '../lib/clipWords'
 import { Button } from './Button'
 import { TextLink } from './TextLink'
+import { bindingLabel, matchBinding } from '../app/keymap'
 
 /** ONE renderer for "the agent is blocked waiting on your permission".
  *
@@ -43,7 +44,15 @@ export interface ApprovalChoice {
    *  the button's name via `aria-label` — NOT via an `sr-only` span, which would be
    *  concatenated into the name alongside the visible verb instead of replacing it. */
   name?: string
-  onClick: () => void
+  /** Send the answer, and return the request: it resolves `true` once the answer landed. Until it
+   *  settles the prompt sends nothing more; once it landed the prompt stays decided while it is on
+   *  the page (the row leaves when its resolved frame or the next read arrives), so a decision is
+   *  one request. Anything else (a rejection, `false`, no promise at all) is an answer that did not
+   *  land, and leaves the prompt answerable. */
+  onClick: () => void | Promise<unknown>
+  /** This choice approves the call: the one ⌘Enter presses, and the one a second confirmation
+   *  holds back. At most one choice per prompt. */
+  approves?: boolean
   /** An answer for THIS prompt is in flight.
    *
    *  Natively `disabled` on purpose (the one class `rawSoftOffContract` leaves native): a
@@ -53,8 +62,40 @@ export interface ApprovalChoice {
   busy?: boolean
 }
 
+/** The second confirmations the approval row names (`approval_confirms.CONFIRMS`), each said as
+ *  what the call would do. */
+export const CONFIRM_WORDS: Record<string, string> = {
+  deletes: 'It deletes files.',
+  outside_workspace: "It changes files outside this chat's folder.",
+  sends: 'It sends something to other people.',
+  spends: 'It spends money.',
+  undeclared: "Its tool doesn't say what it does, so it could delete, change files outside this chat's folder, send to other people or spend money.",
+}
+
+/** The words for *confirms*, one sentence each; an unknown kind is said as the undeclared one. */
+export function confirmSentences(confirms: readonly string[]): string[] {
+  return [...new Set(confirms.map((k) => CONFIRM_WORDS[k] ?? CONFIRM_WORDS.undeclared))]
+}
+
+/** Whether a key pressed on *el* is typed into a text field: an input, a text area or an editor. */
+function typesText(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false
+  if (el.isContentEditable || el.closest('[contenteditable="true"],[role="textbox"]')) return true
+  const tag = el.tagName
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true
+  if (tag !== 'INPUT') return false
+  const type = (el as HTMLInputElement).type
+  return !['button', 'checkbox', 'radio', 'submit', 'reset'].includes(type)
+}
+
+/** Whether *el* is out of sight or out of reach: under a hidden, inert or aria-hidden ancestor. */
+function unseen(el: HTMLElement): boolean {
+  return el.closest('[hidden],[inert],[aria-hidden="true"]') !== null
+}
+
 export function ApprovalPrompt({
   tool, args, purpose, source, sourceHref, badge, meta, scope, choices, density = 'compact', className,
+  confirms = [],
 }: {
   tool: string
   /** The tool's arguments, raw. `compact` cuts them at a word and shows all of them on demand;
@@ -85,11 +126,68 @@ export function ApprovalPrompt({
   choices: ApprovalChoice[]
   density?: ApprovalDensity
   className?: string
+  /** The second confirmations the approval row names (`PendingApproval.confirms`). Non-empty: the
+   *  approving choice first asks once more, saying what the call would do, and sends nothing
+   *  before that confirm. */
+  confirms?: readonly string[]
 }) {
   const roomy = density === 'roomy'
+  const rootRef = useRef<HTMLDivElement>(null)
+  const yesRef = useRef<HTMLButtonElement>(null)
+  // One request per decision, whichever choice it is: set when an answer is sent, and kept once it
+  // landed, so a card still on the page (its row leaves on the resolved frame or the next read)
+  // sends no second request. Cleared only by an answer that did not land.
+  const decided = useRef(false)
+  const [armed, setArmed] = useState(false)
+  const approving = choices.find((c) => c.approves)
+  const asks = confirms.length > 0
+
+  function send(choice: ApprovalChoice) {
+    if (decided.current || choice.busy) return
+    decided.current = true
+    const reopen = () => { decided.current = false }
+    try {
+      Promise.resolve(choice.onClick()).then((landed) => { if (landed !== true) reopen() }, reopen)
+    } catch {
+      reopen()
+    }
+  }
+
+  /** A press of the approving choice. When the row names a second confirmation every press of it,
+   *  the second of a double-click or a held Enter's repeat included, only asks: the confirm alone
+   *  sends. */
+  function approve(choice: ApprovalChoice) {
+    if (asks) { setArmed(true); return }
+    send(choice)
+  }
+
+  // ⌘Enter (Ctrl+Enter elsewhere) approves THIS request, only while focus is inside it: never from
+  // a text field, never on a hidden or detached card, never while its answer is on its way or once
+  // it landed, and a held key sends nothing more. Armed, the key sends only from the confirm
+  // itself, and anywhere else in the card it does nothing. Escape steps back from the confirm and
+  // decides nothing. Enter alone, and every other key, decide nothing here; Enter or Space on a
+  // focused button presses that button, as a click does.
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    const root = rootRef.current
+    if (!root) return
+    if (e.key === 'Escape' && armed) { e.stopPropagation(); setArmed(false); return }
+    if (!approving || !matchBinding(e, 'approve-focused')) return
+    e.preventDefault()
+    e.stopPropagation()
+    // A dialog portalled from inside the card bubbles its keys here through React, from outside
+    // the card on the page: only a key pressed on the card itself counts.
+    if (!(e.target instanceof Node) || !root.contains(e.target)) return
+    if (e.repeat || typesText(e.target) || unseen(root)) return
+    if (armed) {
+      if (e.target === yesRef.current) send(approving)
+      return
+    }
+    approve(approving)
+  }
+
   return (
-    <motion.div variants={messageEnter} initial="initial" animate="animate"
-      role="group" aria-label={`Permission needed to run ${tool}`}
+    <motion.div ref={rootRef} variants={messageEnter} initial="initial" animate="animate"
+      role="group" aria-label={`Permission needed to run ${tool}`} tabIndex={-1} onKeyDown={onKeyDown}
       className={`${roomy ? '' : 'my-1.5 '}overflow-hidden rounded-xl border${className ? ` ${className}` : ''}`}
       style={{ borderRadius: 'var(--radius-md)', borderColor: 'color-mix(in srgb, var(--color-warn) 40%, transparent)', background: 'color-mix(in srgb, var(--color-warn) 8%, transparent)' }}>
       <div className={roomy ? 'flex items-start gap-3 px-l pt-l' : 'flex items-start gap-2 px-3 pt-2.5'}>
@@ -129,8 +227,28 @@ export function ApprovalPrompt({
         </div>
       </div>
       <div className={roomy ? 'flex flex-wrap items-center gap-s px-l py-l' : 'flex flex-wrap items-center gap-1.5 px-3 py-2.5'}>
-        {choices.map((c) => <ApprovalChoiceButton key={c.key} choice={c} roomy={roomy} />)}
+        {choices.map((c) => (
+          // Every choice sends through `send`, so a Deny on its way holds the key too.
+          <ApprovalChoiceButton key={c.key} roomy={roomy}
+            choice={{ ...c, onClick: () => (c.approves ? approve(c) : send(c)) }} />
+        ))}
       </div>
+      {armed && approving && (
+        // The second confirmation: what the call would do, then the confirm and a way back. Nothing
+        // moves focus here, so a held key cannot fall through onto the confirm.
+        <div className={roomy ? 'flex flex-col gap-s px-l pb-l' : 'flex flex-col gap-1.5 px-3 pb-2.5'}>
+          <p role="status" data-type={roomy ? 'body-s' : 'caption'} className="text-on-surface">
+            {confirmSentences(confirms).join(' ')} Run it?
+          </p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <ApprovalChoiceButton roomy={roomy} buttonRef={yesRef}
+              choice={{ ...approving, key: 'confirm', label: 'Yes, run it', name: `Yes, run it: ${approving.name || approving.label}`,
+                onClick: () => send(approving) }} />
+            <ApprovalChoiceButton roomy={roomy}
+              choice={{ key: 'back', label: 'Back', icon: approving.icon, name: 'Back, decide nothing yet (Esc)', onClick: () => setArmed(false) }} />
+          </div>
+        </div>
+      )}
     </motion.div>
   )
 }
@@ -178,16 +296,20 @@ function CompactArgs({ tool, args }: { tool: string; args?: string }) {
  *  it is not this change's job. It lives in `ui/` — the sanctioned home for shared chrome —
  *  so it is one implementation rather than a per-page hand-roll.
  */
-function ApprovalChoiceButton({ choice, roomy }: { choice: ApprovalChoice; roomy: boolean }) {
-  const { icon: Icon, label, tone = 'neutral', name, onClick, busy } = choice
+function ApprovalChoiceButton({ choice, roomy, buttonRef }: {
+  choice: ApprovalChoice; roomy: boolean; buttonRef?: React.Ref<HTMLButtonElement>
+}) {
+  const { icon: Icon, label, tone = 'neutral', name, onClick, busy, approves } = choice
+  // The key is shown where the command is: on the approving choice's tooltip, and only there.
+  const tip = `${name || label}${approves ? ` (${bindingLabel('approve-focused')})` : ''}`
   const palette = tone === 'primary'
     ? { background: 'var(--color-primary)', color: 'var(--color-on-primary)' }
     : tone === 'danger'
       ? { background: 'color-mix(in srgb, var(--color-danger) 14%, transparent)', color: 'var(--color-danger)' }
       : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }
   return (
-    <button type="button" onClick={onClick} disabled={busy} aria-busy={busy || undefined}
-      title={name || label} aria-label={name || undefined}
+    <button ref={buttonRef} type="button" onClick={() => { void onClick() }} disabled={busy} aria-busy={busy || undefined}
+      title={tip} aria-label={name || undefined}
       data-type={roomy ? 'body-m' : 'caption'}
       className={`inline-flex items-center justify-center gap-1 rounded-pill transition-colors disabled:opacity-50 ${roomy ? 'h-11 min-w-[6.5rem] gap-2 px-l' : 'h-7 px-2.5'}`}
       style={palette}>

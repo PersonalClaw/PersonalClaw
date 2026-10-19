@@ -16,11 +16,13 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Callable
 
 from personalclaw import approval_answer, session_keys
 from personalclaw.approval_answer import AnswerRefused, Principal
 from personalclaw.approval_brief import RISK_LABELS, derive_blast_radius
+from personalclaw.approval_confirms import UNDECLARED, call_confirms
 from personalclaw.channel_delivery import APPROVAL_ENDINGS
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
@@ -328,6 +330,10 @@ class DashboardApprovalState:
         annotations: dict[str, Any] | None = None,
         answered_alone: bool = False,
         asked_for: str = "",
+        consequences: tuple[str, ...] | None = None,
+        own: bool = False,
+        tells_owner: bool = False,
+        confirms: Sequence[str] | None = None,
     ) -> bool:
         """Request interactive approval. Returns True if approved, False if rejected/timeout.
 
@@ -355,6 +361,13 @@ class DashboardApprovalState:
 
         ``asked_on_channel`` says the caller is already asking the owner on a chat channel (the
         gateway's race for a background origin), so no channel is asked a second time from here.
+
+        ``confirms`` is the second confirmation the call asks (``approval_confirms``), when the
+        caller already worked it out from the call (the gateway, which decides from it whether a
+        channel may ask); ``None`` works it out here, from what the call's tool declares
+        (``consequences``), whether the tool is one of PersonalClaw's own (``own``) and whether the
+        call only tells the owner something (``tells_owner``). Either way it is decided once and
+        kept on the row, which every surface reads.
 
         ``trigger`` is the store id of the trigger whose run asked (its action's agent), or ``""``.
         It names the asker on every surface, and it is what lets the note an unanswered one leaves
@@ -428,6 +441,23 @@ class DashboardApprovalState:
                 cwd=session_folder(session) if cwd is None else cwd,
             ),
             asked_for=asked_for,
+            # The second confirmation it asks (`approval_confirms`): the caller's, or worked out
+            # here, where `consequences` is what its tool declares and `own` whether the tool is
+            # one of PersonalClaw's, which are classified.
+            confirms=(
+                tuple(confirms)
+                if confirms is not None
+                else call_confirms(
+                    risk_level,
+                    tool,
+                    tool_kind,
+                    tool_input,
+                    cwd=session_folder(session) if cwd is None else cwd,
+                    consequences=consequences,
+                    own=own,
+                    tells_owner=tells_owner,
+                )
+            ),
         )
         if answered_alone:
             self.__dict__.setdefault("_answered_alone", set()).add(approval_id)
@@ -500,6 +530,7 @@ class DashboardApprovalState:
         reach: str = "",
         deny_effect: str = "",
         asked_for: str = "",
+        confirms: Sequence[str] | None = None,
     ) -> None:
         """Publish the approval a chat's runner is about to wait on, under
         :func:`chat_approval_id`.
@@ -514,7 +545,9 @@ class DashboardApprovalState:
         `request_approval` states, kept by the one caller that holds the raw object.
         ``deny_effect`` is what a Deny does when it does more than decline the call
         (``turn_endings.deny_effect``), "" when it declines it. ``asked_for`` names who asked for
-        the turn when the owner did not (``approval_grants.asked_for_line``).
+        the turn when the owner did not (``approval_grants.asked_for_line``). ``confirms`` is the
+        second confirmation the runner worked out for the call (``approval_confirms``); a caller
+        that names none gets the one that fails closed, ``undeclared``.
         """
         entry = self._approval_entry(
             chat_approval_id(session.key, request_id),
@@ -534,6 +567,7 @@ class DashboardApprovalState:
             reach=reach,
             deny_effect=deny_effect,
             asked_for=asked_for,
+            confirms=confirms,
             asked_by=approval_answer.asker_of_chat(
                 f"{DASHBOARD_SESSION_PREFIX}{session.key}", created_by_app=session.created_by_app
             ).label,
@@ -560,6 +594,7 @@ class DashboardApprovalState:
         reach: str = "",
         deny_effect: str = "",
         asked_for: str = "",
+        confirms: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         """The ONE shape a pending approval has, whatever raised it.
 
@@ -613,6 +648,10 @@ class DashboardApprovalState:
             "reach": redact_field(reach),
             "deny_effect": deny_effect,
             "asked_for": redact_field(asked_for),
+            # Which second confirmation an Approve asks before the call runs
+            # (`approval_confirms.CONFIRMS`), worked out once where the call was raised: every
+            # surface asks for the same calls. Fails closed: a row nobody worked it out for asks.
+            "confirms": [UNDECLARED] if confirms is None else list(confirms),
             "trigger": trigger,
             "trigger_name": named,
             "whose_work": whose,
@@ -1182,7 +1221,12 @@ class DashboardApprovalState:
         key, and a button's data has a size cap on some channels. It is handed the entry's brief
         too (``approval_brief.entry_approval_brief``), which is what its prompt shows: the tool,
         its arguments and purpose as this entry holds them for the dashboard's card, what the
-        call can touch, and the answers it offers."""
+        call can touch, and the answers it offers.
+
+        A call whose row names a second confirmation (``confirms``) is never put to a prompt: a
+        prompt answers on one press, which would skip the confirmation every other surface asks.
+        The owner gets the message with the link instead, on the same channels, and answers it
+        where it asks once more (:meth:`_skips_its_confirm` refuses a press that arrives anyway)."""
         import secrets
         from types import SimpleNamespace
 
@@ -1190,6 +1234,9 @@ class DashboardApprovalState:
         from personalclaw.approval_brief import APPROVAL_BRIEF_META_KEY, entry_approval_brief
         from personalclaw.config.credentials import owner_id_for
 
+        if entry.get("confirms"):
+            await self._approval_link_on_a_channel(approval_id, entry, providers)
+            return
         prompts: dict[str, Any] = self.__dict__.setdefault("_channel_prompts", {})
         session = str(entry.get("session") or "")
         origin = self.channel_provider_for(session) if session else ""
@@ -1285,6 +1332,25 @@ class DashboardApprovalState:
             return ONE_CALL_ANSWERS
         return chat_answers(risk=str(entry.get("risk") or ""), reach=str(entry.get("reach") or ""))
 
+    def _skips_its_confirm(self, approval_id: str, by: Principal) -> bool:
+        """Whether an Approve from *by* would skip the second confirmation *approval_id*'s row
+        names (``confirms``): refused and logged, and the approval keeps waiting.
+
+        A channel's prompt answers on one press and asks no confirmation, so a row that names one
+        is never put to it (:meth:`_approval_on_a_channel`). A press from a channel that arrives
+        anyway approves nothing. A Deny is no approval, and answers."""
+        entry = self._pending_approvals.get(approval_id) or {}
+        if by.kind != approval_answer.CHANNEL or not entry.get("confirms"):
+            return False
+        self._log.warning(
+            "approval %s: a press on %s would approve a call that asks once more (%s), which a "
+            "channel's prompt does not ask; nothing was decided",
+            approval_id,
+            by.name or "a channel",
+            ", ".join(str(k) for k in entry["confirms"]),
+        )
+        return True
+
     def answer_on_channel(
         self,
         approval_id: str,
@@ -1316,6 +1382,8 @@ class DashboardApprovalState:
                 approval_id,
                 answer[:40],
             )
+            return False
+        if chosen.ends == "approved" and self._skips_its_confirm(approval_id, by):
             return False
         if chosen != ALLOW_FOR_THIS_CHAT:
             return self.resolve_approval(approval_id, chosen.ends == "approved", by=by)
@@ -1513,7 +1581,8 @@ class DashboardApprovalState:
         Tried on the channels that could not prompt, in the same order (:meth:`_asking_channels`):
         the chat's own channel first, then "Send approvals to" — so the link never lands on a
         channel the owner did not choose, and a chat on a channel hears about its approval
-        there."""
+        there. For a call that asks a second confirmation, which no prompt asks, it says so: it is
+        answered where it asks once more."""
         from personalclaw.channel_delivery import reach_owner
         from personalclaw.dashboard.channel_messages import dashboard_link
 
@@ -1522,6 +1591,8 @@ class DashboardApprovalState:
         link = dashboard_link(f"#/companion?approval={approval_id}")
         text = f"PersonalClaw is waiting for your approval: {what}, from {entry['source_label']}"
         text += f", to {why}" if why else ""
+        if entry.get("confirms"):
+            text += ". It asks you once more before it runs, so it is answered in PersonalClaw"
         text += f". Answer it here: {link}" if link else ". Answer it in PersonalClaw."
         outcome = None
         for provider in providers:
@@ -1566,6 +1637,8 @@ class DashboardApprovalState:
         if self.answer_refusal(approval_id, by):
             return False
         if self.refuse_ended_owner(approval_id):
+            return False
+        if approved and self._skips_its_confirm(approval_id, by):
             return False
         fut = self._approval_futures.get(approval_id)
         if fut and not fut.done():

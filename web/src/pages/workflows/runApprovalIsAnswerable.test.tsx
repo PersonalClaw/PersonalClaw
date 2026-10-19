@@ -35,6 +35,7 @@ const approval = (over: Partial<PendingApproval> = {}): PendingApproval => ({
   tool_purpose: 'Consolidate the recalled material into one article',
   session: 'workflow:11b9a34c:synthesize', ts: 0,
   request_id: 'spawn:b961a327', session_title: '', agent: '', risk: '', grant_agent: '',
+  confirms: [],
   source_label: 'workflow “research” · step “synthesize”', ...over,
 })
 
@@ -65,6 +66,21 @@ describe('a run view can answer the approval its own stage raised', () => {
     const btn = await screen.findByRole('button', { name: /^Allow subagent_run/ })
     await userEvent.click(btn)
     await waitFor(() => expect(resolveApproval).toHaveBeenCalledWith('spawn:b961a327', 'approve'))
+  })
+
+  it('one request per decision: an answered call still listed sends nothing more, a failed one stays answerable', async () => {
+    await mountFor('11b9a34c', [approval()])
+    await userEvent.click(await screen.findByRole('button', { name: /^Allow subagent_run/ }))
+    await waitFor(() => expect(resolveApproval).toHaveBeenCalledTimes(1))
+    await userEvent.click(await screen.findByRole('button', { name: /^Allow subagent_run/ }))
+    expect(resolveApproval).toHaveBeenCalledTimes(1)
+    cleanup()
+    await mountFor('11b9a34c', [approval()])
+    resolveApproval.mockRejectedValueOnce(new Error('the gateway did not respond'))
+    await userEvent.click(await screen.findByRole('button', { name: /^Allow subagent_run/ }))
+    await waitFor(() => expect(resolveApproval).toHaveBeenCalledTimes(1))
+    await userEvent.click(await screen.findByRole('button', { name: /^Allow subagent_run/ }))
+    await waitFor(() => expect(resolveApproval).toHaveBeenCalledTimes(2))
   })
 
   it('Deny resolves it the other way', async () => {

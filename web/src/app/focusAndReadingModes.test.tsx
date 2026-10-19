@@ -264,13 +264,34 @@ describe('reading mode', () => {
     await waitFor(() => expect(folded()).toBe(true))
   })
 
-  it('the palette offers it only where there is a composer to fold', async () => {
+  it('away from a chat the palette lists it dimmed, with why, and runs nothing', async () => {
     renderApp()
     await waitFor(() => expect(rail()).not.toBeNull())
+    const row = await paletteRow(/Reading mode/, 'reading mode')
+    expect(row.getAttribute('aria-disabled')).toBe('true')
+    expect(row.textContent).toContain('Open a chat to fold its composer')
+    fireEvent.keyDown(window, READING_KEY)
+    fireEvent.click(row)
+    expect(screen.getByRole('listbox')).toBeTruthy()
+    expect(composerRegion()).toBeNull()
+  })
+
+  it('the palette lists each mode once, from the keymap', async () => {
+    await openChat()
     fireEvent.keyDown(window, PALETTE_KEY)
     const input = await screen.findByLabelText(PALETTE_SEARCH_LABEL)
-    fireEvent.change(input, { target: { value: 'reading mode' } })
+    fireEvent.change(input, { target: { value: 'mode' } })
     await screen.findByRole('listbox')
-    expect(screen.queryByRole('option', { name: /Reading mode/ })).toBeNull()
+    expect(screen.getAllByRole('option', { name: /Focus mode/ })).toHaveLength(1)
+    expect(screen.getAllByRole('option', { name: /Reading mode/ })).toHaveLength(1)
+  })
+})
+
+describe('the shell\'s own toggles', () => {
+  it('show their keys in their tooltips, as the keymap writes them', async () => {
+    renderApp()
+    await waitFor(() => expect(rail()).not.toBeNull())
+    expect(screen.getByRole('button', { name: 'Collapse sidebar' }).getAttribute('title')).toBe('Collapse sidebar (Ctrl+B)')
+    expect(screen.getByRole('button', { name: 'Open terminal' }).getAttribute('title')).toBe('Open terminal (Ctrl+J or Ctrl+`)')
   })
 })
