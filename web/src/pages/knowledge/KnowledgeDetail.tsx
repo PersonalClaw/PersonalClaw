@@ -5,8 +5,11 @@ import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { useFocusTrap } from '../../ui/useFocusTrap'
 import { investigate } from '../../lib/investigate'
 import { Button } from '../../ui/Button'
+import { IconButton } from '../../ui/IconButton'
+import { MetaChip } from '../../ui/MetaChip'
+import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Markdown } from '../../ui/Markdown'
-import { ChipInput, FieldError } from '../../ui/forms'
+import { Checkbox, ChipInput, FieldError, Select, TextInput } from '../../ui/forms'
 import type { KnowledgeAnnotation, KnowledgeItem, KnowledgeItemEdit, IntentOutcome, IntentOutcomeField, KnowledgeQueueStanding, KnowledgeStaleness } from '../../lib/api'
 import { rebaseText, type Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
@@ -485,11 +488,8 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
     </HeaderActions>
   )
   const wandBtn = aiTitleAvailable ? (
-    <button type="button" onClick={applyAiTitle} aria-label="Use the AI-suggested title"
-      title={`Use AI title: "${full.ai_title}"`}
-      className="grid size-6 shrink-0 place-items-center rounded text-primary/70 hover:bg-surface-high hover:text-primary transition-colors">
-      <Wand2 size={14} />
-    </button>
+    <SquareIconButton icon={Wand2} label="Use the AI-suggested title" title={`Use AI title: "${full.ai_title}"`}
+      onClick={applyAiTitle} className="shrink-0" />
   ) : null
 
   // The dedicated page's header bar is the single home for the title + actions —
@@ -527,7 +527,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
   const reingestApplies = tm.group === 'text' || tm.key === 'bookmark'
   const editBar = reingestApplies ? (
     <label data-type="body-s" className="flex items-center gap-1.5 text-on-surface-var cursor-pointer select-none">
-      <input type="checkbox" checked={reingest} onChange={(e) => setReingest(e.target.checked)} className="size-4 accent-[var(--color-primary)]" />
+      <Checkbox checked={reingest} onChange={setReingest} ariaLabel="Re-process on save" />
       Re-process on save
     </label>
   ) : null
@@ -546,25 +546,24 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
             Reload and reapply puts back. */}
         <HeldChange guard={guard}>
           {titleEditable && (
+            // Raw: the title is edited in place AS the heading (title-l, an underline and no fill); TextInput draws a filled field box.
             <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} autoFocus placeholder="Title"
               className="shrink-0 w-full bg-transparent text-on-surface outline-none border-b border-outline-variant/40 pb-1.5 text-[1.0625rem] focus:border-primary" data-type="title-l" />
           )}
           {draft.item_type === 'gist' && (
             <div className="shrink-0 flex items-center gap-2">
               <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">Language</span>
-              <select value={draft.gist_language || ''} onChange={(e) => setDraft({ ...draft, gist_language: e.target.value })}
-                data-type="body-s" className="h-8 appearance-none rounded-md bg-surface-container px-m text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
-                <option value="">(none)</option>
-                {GIST_LANGUAGES.map((l) => <option key={l} value={l}>{l}</option>)}
-              </select>
+              {/* A plain box so the select keeps its own width: Select fills its parent. */}
+              <div>
+                <Select size="sm" ariaLabel="Language" value={draft.gist_language || ''} onChange={(v) => setDraft({ ...draft, gist_language: v })}
+                  options={[{ value: '', label: '(none)' }, ...GIST_LANGUAGES.map((l) => ({ value: l, label: l }))]} />
+              </div>
             </div>
           )}
           {/* Bookmark → its URL is the editable field (the page is re-scraped on save). */}
           {tm.key === 'bookmark' && (
-            <div className="shrink-0 flex items-center gap-s rounded-md bg-surface-container px-m h-10 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
-              <ExternalLink size={15} className="shrink-0 text-on-surface-low" />
-              <input value={draft.url} onChange={(e) => setDraft({ ...draft, url: e.target.value })} placeholder="https://…"
-                data-type="body-m" className="flex-1 bg-transparent text-on-surface outline-none placeholder:text-on-surface-low" />
+            <div className="shrink-0">
+              <TextInput value={draft.url} onChange={(v) => setDraft({ ...draft, url: v })} placeholder="https://…" leadingIcon={<ExternalLink size={15} />} />
             </div>
           )}
           {/* Tags edited inline, in the same place the preview shows them. */}
@@ -583,6 +582,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
             </div>
           ) : tm.group === 'text' ? (
             <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-container focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
+              {/* Raw: it fills a full-height panel and goes read-only for a locked journal; TextArea has neither a fill-height shape nor `readOnly`. */}
               <textarea value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} readOnly={journalLocked}
                 placeholder="Markdown supported…"
                 data-type="body-s" className={`h-full w-full resize-none bg-transparent px-m py-2 text-on-surface leading-relaxed outline-none ${journalLocked ? 'opacity-60 cursor-not-allowed' : ''}`} />
@@ -690,9 +690,9 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
       {/* Tags row, with the Expand-to-fullscreen control floated to its right edge.
           Always rendered so Expand has a home even for a tag-less item. */}
       <div className="flex shrink-0 items-start gap-s">
-        <div className="flex flex-1 flex-wrap gap-1.5">{(full.tags ?? []).map((t) => onTagClick
-          ? <button key={t} type="button" onClick={() => onTagClick(t)} title={`Find items tagged "${t}"`} data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var transition-colors hover:bg-surface-container hover:text-primary">{t}</button>
-          : <span key={t} data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var">{t}</span>)}</div>
+        <div className="flex flex-1 flex-wrap gap-1.5">{(full.tags ?? []).map((t) => (
+          <MetaChip key={t} label={t} ariaLabel={t} title={onTagClick ? `Find items tagged "${t}"` : undefined} onClick={onTagClick} />
+        ))}</div>
         <ExpandButton onClick={() => setFullscreen({ title: full.title || full.url_title || 'Preview', node: <Preview item={full} tm={tm} fullscreen /> })} />
       </div>
 
@@ -900,10 +900,9 @@ function ProcessingStrip({ status, nodePhases, error, graph, onRetry, retrying, 
   // A Retry re-runs the whole pipeline — offered for a fetch failure (unreachable) or a
   // hard failure, both of which a later attempt may clear.
   const retryBtn = onRetry && (unreachable || status === 'failed') ? (
-    <button type="button" onClick={onRetry} disabled={retrying}
-      data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-var transition-colors hover:text-on-surface disabled:opacity-60">
-      <RefreshCw size={11} className={retrying ? 'animate-spin' : ''} /> {retrying ? 'Retrying…' : 'Retry'}
-    </button>
+    <Button variant="secondary" size="xs" onClick={onRetry} loading={retrying} loadingLabel="Retrying…">
+      <RefreshCw size={11} aria-hidden /> Retry
+    </Button>
   ) : null
 
   // Before the graph shape has loaded, fall back to a bare status pill.
@@ -1207,8 +1206,7 @@ function FullscreenModal({ title, onClose, children }: { title: string; onClose:
     <div ref={trapRef} className="fixed inset-0 z-[var(--z-content)] flex flex-col bg-surface/95 backdrop-blur-sm" onClick={onClose}>
       <div className="flex items-center gap-s border-b border-outline-variant/40 px-l py-3">
         <span data-type="title-m" className="flex-1 truncate text-on-surface" style={fvs(500)}>{title}</span>
-        <button type="button" onClick={onClose} aria-label="Close fullscreen"
-          className="grid size-8 place-items-center rounded-pill text-on-surface-low hover:bg-surface-high hover:text-on-surface"><X size={18} /></button>
+        <IconButton icon={X} label="Close fullscreen" size={32} iconSize={18} onClick={onClose} />
       </div>
       <div className="flex-1 overflow-auto p-l" onClick={(e) => e.stopPropagation()}>
         <div className="mx-auto" style={{ maxWidth: 'var(--content-width, 56rem)' }}>{children}</div>
@@ -1219,10 +1217,5 @@ function FullscreenModal({ title, onClose, children }: { title: string; onClose:
 
 /** Small "expand to full screen" icon button. */
 function ExpandButton({ onClick }: { onClick: () => void }) {
-  return (
-    <button type="button" onClick={onClick} aria-label="Expand to full screen" title="Expand to full screen"
-      className="grid size-6 place-items-center rounded text-on-surface-low hover:bg-surface-high hover:text-on-surface transition-colors">
-      <Maximize2 size={13} />
-    </button>
-  )
+  return <SquareIconButton icon={Maximize2} iconSize={13} label="Expand to full screen" onClick={onClick} />
 }

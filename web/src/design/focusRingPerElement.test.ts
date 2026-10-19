@@ -143,12 +143,6 @@ const INVENTORY: { file: string; anchor: string; ring: RegExp; what: string }[] 
   },
   {
     file: 'pages/knowledge/KnowledgeDetail.tsx',
-    anchor: 'flex-1 bg-transparent text-on-surface outline-none placeholder:text-on-surface-low',
-    ring: CONTAINER_RING,
-    what: 'bookmark URL field (edit)',
-  },
-  {
-    file: 'pages/knowledge/KnowledgeDetail.tsx',
     anchor: 'h-full w-full resize-none bg-transparent px-m py-2',
     ring: CONTAINER_RING,
     what: 'markdown body textarea (edit)',
@@ -183,6 +177,13 @@ const INVENTORY: { file: string; anchor: string; ring: RegExp; what: string }[] 
     ring: ELEMENT_RING,
     what: 'nudge / answer-the-agent composer (autoFocus hid only the arrival, not the return)',
   },
+]
+
+/** Inventory controls that moved onto `ui/forms`' `TextInput`. The primitive draws the box and rings
+ *  the control itself (`INPUT_BASE`), so the call site has no class string left to anchor on: each
+ *  entry pins the call site, and the primitive's ring is asserted with it. */
+const ON_TEXT_INPUT: { file: string; site: RegExp; what: string }[] = [
+  { file: 'pages/knowledge/KnowledgeDetail.tsx', site: /<TextInput value=\{draft\.url\}/, what: 'bookmark URL field (edit)' },
 ]
 
 /** Controls that carry `outline-none` and correctly have NO treatment of their own, because an
@@ -273,6 +274,12 @@ describe('every control that kills its outline carries a replacement ring', () =
         `replacement — keyboard focus lands on them invisibly. Restore the treatment, or move the ` +
         `ring to the container and record that here.`,
     ).toEqual([])
+  })
+
+  it.each(ON_TEXT_INPUT)('$file — $what, on TextInput', ({ file, site }) => {
+    expect(read(file), `${file} no longer renders this field through TextInput`).toMatch(site)
+    expect(read('ui/forms.tsx'), 'TextInput no longer rings the control it draws')
+      .toMatch(new RegExp(`const INPUT_BASE = '[^']*${ELEMENT_RING.source}`))
   })
 
   it('the ancestor-ringed controls still have the ancestor that rings them', () => {
