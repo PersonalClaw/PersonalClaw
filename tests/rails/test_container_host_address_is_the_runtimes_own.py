@@ -7,16 +7,17 @@ resolvable, so a user who followed the hint was sent to a host name that did not
 address that network gives the host, 192.168.5.2, reaches the host's services (loopback-only ones
 included) without any DNS. The hint now names that address for Finch and Lima, and the runtimes'
 own documented names for Docker Desktop and Podman, and ``docs/guides/containers.md`` says the
-same thing.
+same thing. It reads the guide, so it is a rail: it runs once per CI run, in the rails job.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
+import source_index
+from rails_repo import REPO
 
 from personalclaw.providers.failure_copy import CONTAINER_HOST_ADDRESSES, CONTAINER_LOCALHOST_HINT
 
-_GUIDE = Path(__file__).resolve().parents[1] / "docs" / "guides" / "containers.md"
+_GUIDE = REPO / "docs" / "guides" / "containers.md"
 
 
 def _flat(text: str) -> str:
@@ -47,7 +48,7 @@ def test_docker_on_linux_is_told_the_flag_and_the_listen_address() -> None:
 
 
 def test_the_container_guide_gives_each_runtime_the_same_address() -> None:
-    guide = _flat(_GUIDE.read_text(encoding="utf-8"))
+    guide = _flat(source_index.text(_GUIDE))
     for runtime, address in CONTAINER_HOST_ADDRESSES:
         assert f"`{address}` with {runtime}" in guide, (runtime, address)
     assert "--add-host=host.docker.internal:host-gateway" in guide

@@ -626,7 +626,7 @@ def openai_compatible_models_url(
     zero models discovered, silently, for an endpoint serving a textbook OpenAI model list.
     Gemini's OpenAI shim (``…/v1beta/openai``) has the same shape with the version not even
     last, so the test is "does any segment name a version", not "does the last one".
-    (Reserved ``.example`` host by rule — ``tests/test_network_egress_hosts.py`` reads a
+    (Reserved ``.example`` host by rule — ``tests/rails/test_network_egress_hosts_tree.py`` reads a
     routable hostname in shipped source as a DESTINATION, even in a docstring.)
     """
     base = (endpoint or default_base).rstrip("/")

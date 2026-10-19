@@ -2,7 +2,7 @@
 # appears as a literal in shipped PersonalClaw code (core `src/personalclaw/**/*.py` and
 # the SPA `web/src/**/*.{ts,tsx}`) or in a shipped RECORD a fetcher reads its URL from (the
 # bundled-model sign-off's `source_url`, the knowledge-source recipes' `spec`). The sweep
-# test (tests/test_network_egress_hosts.py) fails if a routable host appears that is NOT
+# test (tests/rails/test_network_egress_hosts_tree.py) fails if a routable host appears that is NOT
 # listed here, and fails if a listed host no longer appears (stale entry).
 #
 # THE SECTION IS THE CLAIM, AND IT IS CHECKED. Each entry sits under one of four headers —

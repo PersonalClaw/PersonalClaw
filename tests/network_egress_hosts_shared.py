@@ -1,13 +1,13 @@
-"""What a behaviour module and its source-tree checks share.
+"""What a behaviour module and its source-tree checks share: the host scan and the records.
 
-The behaviour module:
+The behaviour module, which proves the scan's teeth on strings it writes:
 ``tests/test_network_egress_hosts.py``
 
-Its checks:
-``tests/rails/test_network_egress_hosts_tree.py``
+Its checks, which read the census table in ``docs/`` and the tree, once per CI run in the rails
+job: ``tests/rails/test_network_egress_hosts_tree.py``
 
-This module sits beside the suite so that no rail imports a behaviour test
-module.
+This module sits beside the suite so that no rail imports a behaviour test module. It reads no
+``docs/`` file: the census table is the rail's to read.
 """
 
 from __future__ import annotations
@@ -20,9 +20,6 @@ _ROOT = Path(__file__).resolve().parents[1]
 
 
 _CORE = _ROOT / "src" / "personalclaw"
-
-
-_TABLE = _ROOT / "docs" / "architecture" / "network-egress-hosts.txt"
 
 
 _HOST_RE = re.compile(r"https?://([A-Za-z0-9._{}-]+)")
@@ -81,44 +78,6 @@ def hosts_in(text: str) -> set[str]:
             if skip_reason(host) is None:
                 found.add(host)
     return found
-
-
-def _table() -> dict[str, str]:
-    """host -> judgment, from the census table."""
-    out: dict[str, str] = {}
-    for line in _TABLE.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        host, _sep, judgment = line.partition("—")
-        out[host.strip().lower()] = judgment.strip()
-    return out
-
-
-#: The census's sections, by the start of their header text. The section an entry sits under
-#: IS its classification, so it is parsed rather than merely displayed.
-_SECTIONS = (
-    ("Fetched by the product, on its own initiative", "unprompted"),
-    ("Fetched, but only because the user asked", "user"),
-    ("Browser-side", "browser"),
-    ("Never fetched", "never"),
-)
-
-
-def _classes() -> dict[str, str]:
-    """host -> the class of the section it is listed under (``""`` before any header)."""
-    out: dict[str, str] = {}
-    current = ""
-    for line in _TABLE.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line.startswith("# ──"):
-            title = line.strip("# ─")
-            current = next((c for prefix, c in _SECTIONS if title.startswith(prefix)), title)
-            continue
-        if not line or line.startswith("#"):
-            continue
-        out[line.partition("—")[0].strip().lower()] = current
-    return out
 
 
 def _strings(value: object) -> list[str]:

@@ -3,19 +3,21 @@
 ``docs/reference/cli.md`` said "Two fixtures ship" and listed ``empty`` and ``demo-home``,
 while the wheel ships every directory under ``personalclaw/tests_fixtures/`` (the package-data
 glob is ``tests_fixtures/**/*``) and the seeder accepts any of them: ``six-month-home`` was
-seedable and undocumented. The table is read here and held to the directories that ship.
+seedable and undocumented. The table is read here and held to the directories that ship. It
+reads the tree, so it is a rail: it runs once per CI run, in the rails job.
 """
 
 from __future__ import annotations
 
 import re
-from pathlib import Path
+
+import source_index
+from rails_repo import REPO
 
 from personalclaw import seed
 from personalclaw.evals import scenarios
 
-_REPO = Path(__file__).resolve().parents[1]
-_CLI_REFERENCE = _REPO / "docs" / "reference" / "cli.md"
+_CLI_REFERENCE = REPO / "docs" / "reference" / "cli.md"
 _COUNT_WORDS = {2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six"}
 
 
@@ -26,7 +28,7 @@ def _shipped() -> list[str]:
 
 def _documented() -> tuple[str, list[str]]:
     """The count word before the fixture table, and the fixture names its rows give."""
-    text = _CLI_REFERENCE.read_text(encoding="utf-8")
+    text = source_index.text(_CLI_REFERENCE)
     head = re.search(r"^(\w+) fixtures ship:\n", text, re.MULTILINE)
     assert head, "the CLI reference no longer introduces its fixture table"
     rows = []

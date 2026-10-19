@@ -23,7 +23,7 @@ it stayed GREEN while three ranges drifted off their claims, because the one tok
 matched inside the stale range.
 
 Now each citation names a SYMBOL, ``path::Class.method``, the form
-``tests/test_sso_design_note_citations.py`` holds the SSO note to. The table below holds, for
+``tests/rails/test_sso_design_note_citations.py`` holds the SSO note to. The table below holds, for
 each symbol, the exact statements the claim rests on, and the rail requires every one of them
 as a whole line inside that symbol's own source, found by parsing the file. A line shift
 cannot break a citation. A rename or deletion reds it, and so does any edit that changes what

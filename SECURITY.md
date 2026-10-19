@@ -113,7 +113,7 @@ so as of **2026-09-18** they are stated plainly and enforced by CI:
 **These are rails, not just prose.** `tests/rails/test_licence_governance_tree.py` fails CI if a
 licence identifier anywhere in the tree stops saying MIT, if `LICENSE`'s grant text is rewritten (the
 copyright year is excluded, the grant is not), or if a `CLA` /
-`CONTRIBUTOR_LICENSE_AGREEMENT` file appears; `tests/test_network_egress_hosts.py` fails it if
+`CONTRIBUTOR_LICENSE_AGREEMENT` file appears; `tests/rails/test_network_egress_hosts_tree.py` fails it if
 a new outbound host is added. Each of those checks is itself proven to fail on an injected
 violation, so none of them is a green light that never turns red. The census of every place
 this project declares its licence is

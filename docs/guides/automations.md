@@ -502,7 +502,7 @@ export PERSONALCLAW_HOME="$PWD/.dev-home"
 ## If a step does not behave as described
 
 Then either this page or the code is wrong, and that is worth a report — the two are pinned together
-by `tests/test_automation_guide_event_name_matches_code.py`, which fails the build if the event name
+by `tests/rails/test_automation_guide_event_name_matches_code.py`, which fails the build if the event name
 this guide promises stops matching the constant the code sends. That rail only covers the name; the
 behaviour above is what the recipe is for. Please
 [open an issue](https://github.com/PersonalClaw/PersonalClaw/issues) with which numbered step

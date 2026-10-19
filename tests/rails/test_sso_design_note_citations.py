@@ -8,6 +8,7 @@ number goes stale with the next edit above it, and nothing reads a design note, 
 
 So the note now cites ``path::symbol`` — a function, class or constant by name — and this file
 checks each one against the tree. A rename or deletion reds here; a line shift cannot break it.
+It reads the tree, so it is a rail: it runs once per CI run, in the rails job.
 """
 
 from __future__ import annotations
@@ -16,8 +17,17 @@ import ast
 import re
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[1]
+import source_index
+from rails_repo import REPO
+
 NOTE = REPO / "docs" / "architecture" / "sso-oidc-integration.md"
+
+
+def _text(path: Path) -> str:
+    """A file's text: through the suite's source index where it holds the file, else read here
+    (a cited ``desktop/`` or ``tests/`` file, or one a test planted)."""
+    return source_index.text(path) if source_index.holds(path) else path.read_text("utf-8")
+
 
 #: `path::symbol` inside backticks — the one citation form the note uses.
 _CITATION = re.compile(r"`((?:src|web|desktop|docs|tests)/[\w./-]+)::([A-Za-z_][\w.]*)`")
@@ -29,7 +39,7 @@ _LINE_CITATION = re.compile(r"\b[\w./-]+\.(?:py|ts|tsx|js|md):\d+|`:\d+(?:-\d+)?
 
 def _python_names(path: Path) -> set[str]:
     """Every function, class and assigned name in *path*, dotted for members (`Class.method`)."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = ast.parse(_text(path))
     names: set[str] = set()
 
     def visit(node: ast.AST, prefix: str) -> None:
@@ -50,13 +60,13 @@ def _python_names(path: Path) -> set[str]:
 
 
 def _script_names(path: Path) -> set[str]:
-    source = path.read_text(encoding="utf-8")
+    source = _text(path)
     pattern = r"(?:function|const|let|class|interface|type)\s+([A-Za-z_$][\w$]*)"
     return set(re.findall(pattern, source))
 
 
 def _citations() -> list[tuple[str, str]]:
-    return _CITATION.findall(NOTE.read_text(encoding="utf-8"))
+    return _CITATION.findall(_text(NOTE))
 
 
 def test_the_note_cites_code_by_name():
@@ -65,7 +75,7 @@ def test_the_note_cites_code_by_name():
 
 
 def test_the_note_cites_nothing_by_line_number():
-    stale = sorted(set(_LINE_CITATION.findall(NOTE.read_text(encoding="utf-8"))))
+    stale = sorted(set(_LINE_CITATION.findall(_text(NOTE))))
     assert not stale, f"cite the function, class or constant instead: {stale}"
 
 
