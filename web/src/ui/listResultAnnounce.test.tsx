@@ -491,8 +491,9 @@ describe('the hand-laid bars reach the same idiom', () => {
       // status region every other filtered list has. They now announce, and they are gone from here.
       //
       // An exemption's PROOF has to be specific enough to fail when the reason stops holding. `hi` +
-      // arrow handling is that proof for the one file where the claim was true.
-      'pages/code/CodeCockpitPage.tsx': [
+      // arrow handling is that proof for the one file where the claim was true: the cockpit's
+      // quick-open, which moved with its files rail into its own module.
+      'pages/code/cockpit/files/FileFinder.tsx': [
         'a real combobox: focus stays in the field and aria-activedescendant moves',
         /aria-activedescendant|ariaActiveDescendant/,
       ],

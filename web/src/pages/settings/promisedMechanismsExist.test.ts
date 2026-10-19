@@ -265,7 +265,7 @@ describe('the census: every empty-state promise is accounted for', () => {
       // I would have had to invent. These promise a future the USER or a LIVE RUN produces, not a
       // background mechanism that might be descoped:
       'pages/chat/history/ChatHistoryPage.tsx',       // "start a conversation — your sessions will appear": the user's own action makes the row
-      'pages/code/CodeCockpitPage.tsx',               // gated on `running`; the files come from the run in flight, and the panel lists the workspace
+      'pages/code/cockpit/files/WorkspaceTree.tsx',   // the cockpit's tree: gated on `running`; the files come from the run in flight, and the panel lists the workspace
       // "the rail fills as the run works" is the LIVE-RUN class above, and the
       // mechanism is named rather than hoped for — the engine's own `RunJournal.step_completed`
       // appends one ledger event per completed step, and this panel projects exactly that kind
@@ -295,7 +295,7 @@ describe('the census: every empty-state promise is accounted for', () => {
     for (const rel of ['pages/dashboard/widgets/Suggestions.tsx', 'pages/settings/DurabilityPanel.tsx',
       'pages/settings/FeedbackPanel.tsx', 'pages/settings/MemoryPanel.tsx',
       'pages/loops/DesignCockpitPage.tsx', 'pages/settings/settingsWidgets.tsx',
-      'pages/chat/history/ChatHistoryPage.tsx', 'pages/code/CodeCockpitPage.tsx']) {
+      'pages/chat/history/ChatHistoryPage.tsx', 'pages/code/cockpit/files/WorkspaceTree.tsx']) {
       expect(strip(readSource(join(SRC, rel))), `${rel} should still carry a promise`)
         .toMatch(PROMISE)
     }
@@ -306,7 +306,7 @@ describe('the three user-driven promises are what they claim', () => {
   it('the code cockpit only promises files while a run is in flight', () => {
     // The distinction that keeps it out of the "verify the mechanism" bucket: with no run, the copy says
     // files appear "once it runs" — a conditional, not a background job.
-    const ui = web('pages/code/CodeCockpitPage.tsx')
+    const ui = web('pages/code/cockpit/files/WorkspaceTree.tsx')
     expect(ui).toMatch(/running \? 'No files yet — the worker will create them here\.'/)
     expect(ui, 'and the idle case says what has to happen first').toContain("appear here once it runs.")
   })

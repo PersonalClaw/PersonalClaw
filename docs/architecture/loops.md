@@ -712,6 +712,12 @@ redirecting a run-backed loop (`run_id`) to its run page, `#/workflows/runs/<id>
   the worker is writing, played as it lands. `CenterEditor.tsx` draws the tab
   strip and that surface, with the terminal beneath, and `CommitView.tsx` draws
   one commit's diff.
+- **The files rail** — `files/useFilesRail.ts` keeps which of the left rail's
+  tabs is up, the Changes count shown on the Files tab (read only while that
+  tab is up), and ⌘P landing on the Files tab so the finder can take focus.
+  `files/FilesRail.tsx` draws the tabs over `files/FileFinder.tsx` and
+  `files/WorkspaceTree.tsx`, or over `files/ChangesPanel.tsx`: the workspace's
+  changes, its recent commits and the run's merged work.
 
 ## Related docs
 

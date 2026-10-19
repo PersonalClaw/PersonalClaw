@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { fvs, withWeight } from '../../design/fontWeight'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Code2, Play, Pause, Square, Trash2, Loader2, ListChecks, FolderTree,
-  TerminalSquare, X, Send, CircleDot, CheckCircle2, Circle, Wrench, Activity, GitBranch,
+  TerminalSquare, Send, CircleDot, CheckCircle2, Circle, Wrench, Activity,
   ChevronDown, ChevronRight, ChevronLeft, Target, FileCode, HelpCircle, Folder, Repeat, Clock, XCircle, AlertTriangle,
-  PanelLeftClose, PanelRightClose, FilePlus2, FolderPlus, Rocket, Hand, Plus, RotateCcw, FolderKanban, CirclePlay,
+  PanelLeftClose, PanelRightClose, Rocket, Hand, Plus, RotateCcw, FolderKanban, CirclePlay,
 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -17,9 +17,9 @@ import { Eyebrow } from '../../ui/Eyebrow'
 import { IconButton } from '../../ui/IconButton'
 import { LoadError } from '../../ui/ListScaffold'
 import { Centered } from '../../ui/Centered'
-import { confirm, confirmDelete } from '../../ui/dialog'
+import { confirmDelete } from '../../ui/dialog'
 import { confirmStopLoop } from '../loop/stopLoop'
-import { api, type CodeProject, type CodeStage, type CodeFinding, type FsEntry, type TaskItem, type Loop, type LoopMerge } from '../../lib/api'
+import { api, type CodeProject, type CodeStage, type CodeFinding, type TaskItem, type Loop } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
@@ -36,14 +36,11 @@ import { useRunStream } from '../loops/useRunStream'
 import { belongsToLoop } from '../workflows/containerKey'
 import { foldReducer, emptyRunFlags, type RunFlags, type StallInfo } from '../loops/runFold'
 import { phaseKey } from '../loops/loopPhases'
-import { SearchField } from '../../ui/SearchField'
 import { WorkspacePicker } from './WorkspacePicker'
 import { useWorkspaceMissing } from '../../lib/useWorkspaceMissing'
 import { useRuntimeGroups } from '../../lib/agents'
 import { LoopRunsOn } from '../loop/LoopRuntimePill'
 import { runtimeFields, runtimeOf, showRuntime, type LoopRuntime } from '../loop/loopRuntime'
-import { FileTree } from '../files/browse/FileTree'
-import { useDirCache, useGitStatus } from '../files/filesData'
 import { withArticle } from '../../lib/article'
 import { codeDeleteBody } from './codeMeta'
 import { KeptWork } from './KeptWork'
@@ -52,7 +49,7 @@ import { RepromptNotice } from '../loops/RepromptNotice'
 import { useResizablePanel } from '../../ui/useResizablePanel'
 import { CockpitPromptBar } from '../loops/CockpitPromptBar'
 import { LoopApprovals } from '../loops/LoopApprovals'
-import { MergeReview, MergedWork } from './MergeReview'
+import { MergeReview } from './MergeReview'
 import { MergeConflict } from './MergeConflict'
 import { CockpitToast, useOnScreenReport, type CodeToastState } from './CodeToast'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
@@ -60,8 +57,8 @@ import { messageEnter, listItemEnter, stagger, physics } from '../../design/moti
 import { Expandable } from '../../ui/motion'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { CenterEditor } from './cockpit/CenterEditor'
-
-const EMPTY_ARTIFACTS = new Set<string>()
+import { PROJECT_DIR_HIDDEN, PROJECT_DIR_HIDDEN_PREFIXES } from './cockpit/files/WorkspaceTree'
+import { FilesRail } from './cockpit/files/FilesRail'
 
 /** Strip a model-authored stage decoration — '1 — ', 'Stage 2/2 — ', '3: ' — down to
  *  the bare title, case-folded (issue 642). Mirrors the ingest-side canonicalizer in
@@ -1130,192 +1127,6 @@ function CollapsiblePanel({ side, panelKey, def, min, max, icon: Icon, label, ch
   )
 }
 
-// ── left rail: file tree + git changes (Tasks moved to the right panel) ──
-
-function FilesRail({ ws, isProjectDir, running, merges }: { ws: string; isProjectDir: boolean; running: boolean; merges?: LoopMerge[] }) {
-  const [tab, setTab] = useState<'files' | 'changes'>('files')
-  // A light, rail-level git-status read JUST for the Changes-tab count badge — so the
-  // user sees review-worthy changes are waiting while they're on the Files tab (the
-  // ChangesPanel, which owns the full status + history, is unmounted then). A
-  // no-workspace project (engine dir) or a non-repo workspace has no tracked changes,
-  // so skip the fetch there. Refreshes on the same triggers the panels use: a slow
-  // poll while the worker runs + a manual editor save.
-  // Only fetch the badge git-status while the FILES tab is showing (the only time the
-  // badge renders). On the Changes tab the ChangesPanel already fetches the full status,
-  // so a second badge fetch there is pure duplication — gate it to null so the two don't
-  // both spawn a `git status` subprocess every poll. (Skipped too for a no-workspace /
-  // non-repo project, which has no tracked changes.)
-  const gitWs = (isProjectDir || tab !== 'files') ? null : (ws || null)
-  const [badgeNonce, setBadgeNonce] = useState(0)
-  const { statuses: badgeStatuses } = useGitStatus(gitWs, badgeNonce)
-  const changeCount = Object.keys(badgeStatuses).length
-  useVisiblePoll(() => { if (gitWs) setBadgeNonce((n) => n + 1) }, running && gitWs ? 8000 : null)
-  useEffect(() => {
-    const onSaved = () => { if (gitWs) setBadgeNonce((n) => n + 1) }
-    window.addEventListener('ne:code-file-saved', onSaved)
-    return () => window.removeEventListener('ne:code-file-saved', onSaved)
-  }, [gitWs])
-  // ⌘P switches to the Files tab so the finder is visible when the event arrives. The
-  // KEYBIND itself lives at cockpit level (always mounted, so it fires even when this
-  // whole rail is collapsed); here we ensure the Files tab is showing. If we were on the
-  // CHANGES tab, FileFinder isn't mounted yet when this focus-find fires, so its own
-  // listener misses it — re-dispatch on the next tick (after the tab switch mounts it) so
-  // the finder actually focuses. The ref avoids re-dispatching when already on Files
-  // (FileFinder caught the original) → no double-fire.
-  const tabRef = useRef(tab); tabRef.current = tab
-  useEffect(() => {
-    const onFocusFind = () => {
-      if (tabRef.current !== 'files') {
-        setTab('files')
-        setTimeout(() => window.dispatchEvent(new CustomEvent('ne:code-focus-find')), 0)
-      }
-    }
-    window.addEventListener('ne:code-focus-find', onFocusFind)
-    return () => window.removeEventListener('ne:code-focus-find', onFocusFind)
-  }, [])
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center gap-0.5 border-b border-outline-variant/40 px-2 py-1.5">
-        <RailTab icon={FolderTree} label="Files" on={tab === 'files'} onClick={() => setTab('files')} />
-        <RailTab icon={GitBranch} label="Changes" on={tab === 'changes'} onClick={() => setTab('changes')} badge={tab === 'files' ? changeCount : 0} />
-      </div>
-      {/* Find-file-by-name on the Files tab (a real workspace only) — a mini-IDE
-          essential: a brownfield repo can have hundreds of files, and the lazy tree
-          only shows expanded dirs, so scrolling to a file is impractical. Reuses the
-          existing workspace-scoped fuzzy fileSearch endpoint. */}
-      {tab === 'files' && !!ws && <FileFinder ws={ws} />}
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {tab === 'files' ? <WorkspaceTree ws={ws} running={running} isProjectDir={isProjectDir} />
-          : <ChangesPanel ws={ws} running={running} isProjectDir={isProjectDir} merges={merges} />}
-      </div>
-    </div>
-  )
-}
-
-/** Fuzzy find-file-by-name within the workspace, surfaced above the cockpit file tree.
- *  Debounced; a result opens in the center editor via the same event the tree uses. */
-function FileFinder({ ws }: { ws: string }) {
-  const [q, setQ] = useState('')
-  const [results, setResults] = useState<{ path: string; name: string }[]>([])
-  const [open, setOpen] = useState(false)
-  // Keyboard-highlighted result for ↑/↓ navigation (quick-open expectation). Reset to
-  // the top hit on each new result set.
-  const [hi, setHi] = useState(0)
-  // 🔴 THIS WAS A KEYBOARD WIDGET THAT ANNOUNCED NOTHING. Arrow keys moved a purely VISUAL highlight
-  // over the results: no listbox, no options, no `aria-activedescendant`, and nothing said the popover
-  // had opened — the same defect `CommandPalette` used to carry, in the same shape. The
-  // pattern is the app's own (APG combobox): focus stays in the field and a virtual cursor moves, so
-  // the ids below are what assistive tech follows instead of focus.
-  const qoId = useId()
-  // `searching` gates the dropdown's empty state so a slow query doesn't flash a
-  // premature "No files match" over the PRIOR results before the new ones land.
-  const [searching, setSearching] = useState(false)
-  // Debounce + sequence-guard the search so fast typing doesn't apply out-of-order
-  // results (a slow earlier query resolving after a faster later one).
-  const seq = useRef(0)
-  // Every synchronous consequence of a query change happens HERE, in the handlers that change it,
-  // batched into the keystroke's own render; the effect below only runs the debounced search.
-  // `setSearching(true)` used to sit in that effect, where it scheduled a render from inside every
-  // keystroke's commit — the shape that throws React's #185 when keys outrun the renders (the
-  // mechanism: `ui/composer/MarkdownInput`).
-  const changeQuery = (v: string) => {
-    setQ(v)
-    const live = v.trim().length >= 2
-    setSearching(live)
-    if (!live) setResults([])
-    if (!v) setOpen(false)
-  }
-  useEffect(() => {
-    const needle = q.trim()
-    if (needle.length < 2) return
-    const mine = ++seq.current
-    const t = setTimeout(() => {
-      api.fileSearch(needle, ws).then((r) => {
-        if (mine === seq.current) { setResults((r.results || []).map((x) => ({ path: x.path, name: x.name }))); setHi(0); setOpen(true); setSearching(false) }
-      }).catch(() => { if (mine === seq.current) { setResults([]); setSearching(false) } })
-    }, 200)
-    return () => clearTimeout(t)
-  }, [q, ws])
-  const openFile = (r: { path: string; name: string }) => {
-    window.dispatchEvent(new CustomEvent('ne:code-open-file', { detail: { name: r.name, path: r.path, is_dir: false } }))
-    changeQuery('')
-  }
-  // Dismiss the results dropdown on an outside click — else it floats over the tree
-  // after the user clicks away (e.g. to pick a tree file instead) with no way to close
-  // it but Escape/clear. Pointerdown so it closes before the click lands on the tree.
-  const rootRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: PointerEvent) => { if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false) }
-    document.addEventListener('pointerdown', onDown)
-    return () => document.removeEventListener('pointerdown', onDown)
-  }, [open])
-  // ⌘P focus signal from FilesRail — focus + select so the user can immediately type
-  // (or retype over a prior query).
-  const inputRef = useRef<HTMLInputElement>(null)
-  useEffect(() => {
-    const onFocusFind = () => { inputRef.current?.focus(); inputRef.current?.select() }
-    window.addEventListener('ne:code-focus-find', onFocusFind)
-    return () => window.removeEventListener('ne:code-focus-find', onFocusFind)
-  }, [])
-  return (
-    <div ref={rootRef} className="relative shrink-0 border-b border-outline-variant/40 px-2 py-1.5">
-      <div className="flex items-center gap-1.5 rounded-md bg-surface-high px-2 py-1">
-        <SearchField variant="inline" inlineIconSize={13} size="md" inputRef={inputRef} value={q}
-          onChange={changeQuery}
-          onFocus={() => results.length && setOpen(true)}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowDown' && results.length) { e.preventDefault(); setOpen(true); setHi((i) => Math.min(results.length - 1, i + 1)) }
-            else if (e.key === 'ArrowUp' && results.length) { e.preventDefault(); setHi((i) => Math.max(0, i - 1)) }
-            else if (e.key === 'Enter' && results.length) { e.preventDefault(); openFile(results[Math.min(hi, results.length - 1)]) }
-            else if (e.key === 'Escape') { e.preventDefault(); changeQuery('') }
-          }}
-          placeholder="Find file by name…  ⌘P" spellCheck={false} autoCapitalize="off" autoCorrect="off"
-          ariaLabel="Find file by name"
-          ariaHasPopup="listbox" ariaControls={`${qoId}-list`}
-          ariaExpanded={open && q.trim().length >= 2}
-          ariaActiveDescendant={open && results.length ? `${qoId}-opt-${Math.min(hi, results.length - 1)}` : undefined} />
-      </div>
-      {open && q.trim().length >= 2 && (
-        // A listbox is an ARIA input field, so unlike a menu it MUST be named — the exact axe
-        // "serious" finding `ProjectPicker` produced when it declared one namelessly.
-        <div role="listbox" aria-label="Matching files" id={`${qoId}-list`}
-          className="absolute inset-x-2 z-20 mt-1 max-h-[40vh] overflow-y-auto rounded-md border border-outline-variant/50 bg-surface-container shadow-lg">
-          {results.length === 0 ? (
-            // While a query is in flight, show "Searching…" rather than a premature
-            // "No files match" (which would flash over the prior results until the new
-            // ones land + read as a false empty).
-            searching
-              ? <p data-type="caption" className="inline-flex items-center gap-1.5 px-2.5 py-2 text-on-surface-low"><Loader2 size={11} className="animate-spin" /> Searching…</p>
-              : <p data-type="caption" className="px-2.5 py-2 text-on-surface-low">No files match “{q.trim()}”.</p>
-          ) : results.map((r, i) => {
-            // fileSearch returns REALPATH-resolved paths (file_index realpaths the root),
-            // so a naive startsWith(ws) fails on a symlinked workspace root (/tmp vs
-            // /private/tmp on macOS) → it fell back to the bare basename, losing the
-            // subdir context that's the whole point of showing a rel path in quick-open
-            // (two `config.py`s become indistinguishable). Relativize by the workspace's
-            // LAST segment, like the Changes panel + canonPath do.
-            const wsBase = ws.replace(/\/$/, '').split('/').pop() || ''
-            const marker = `/${wsBase}/`
-            const mi = wsBase ? r.path.lastIndexOf(marker) : -1
-            const rel = mi >= 0 ? r.path.slice(mi + marker.length) : (r.path.startsWith(ws) ? r.path.slice(ws.replace(/\/$/, '').length + 1) : r.name)
-            return (
-              <button key={r.path} type="button" role="option" aria-selected={i === hi}
-                id={`${qoId}-opt-${i}`}
-                onClick={() => openFile(r)} onMouseEnter={() => setHi(i)}
-                ref={(el) => { if (i === hi && open) el?.scrollIntoView({ block: 'nearest' }) }}
-                data-type="caption" className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left ${i === hi ? 'bg-surface-high' : 'hover:bg-surface-high'}`}>
-                <FileCode size={11} className="shrink-0 text-on-surface-low" />
-                <span className="min-w-0 truncate text-on-surface-var" title={rel}>{rel}</span>
-              </button>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── right panel: Tasks (agent loop events live IN TASK SCOPE — under each task
 //    card — not a separate global feed) + project-level banners + a steer box. ──
 
@@ -1495,24 +1306,6 @@ function RightPanel({ project, onTasksChanged, tasksNonce, activityBySession, ga
       <ProjectFooter project={project} gateFail={gateFail} stalled={stalled} onNudged={onNudged} onStartNew={onStartNew}
         onAnswerOnScreen={onAnswerOnScreen} answerWanted={answerWanted} onAnswerShown={onAnswerShown} />
     </div>
-  )
-}
-
-function RailTab({ icon: Icon, label, on, onClick, badge }: { icon: typeof ListChecks; label: string; on: boolean; onClick: () => void; badge?: number }) {
-  return (
-    <button type="button" onClick={onClick}
-      data-type="body-s" className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 transition-colors"
-      style={on ? { background: 'var(--color-surface-high)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
-      <Icon size={14} /> {label}
-      {/* Pending-change count — lets the user see review-worthy changes are waiting
-          while they're on another tab (a worker editing files updates this live). */}
-      {!!badge && badge > 0 && (
-        <span data-type="caption" className="ml-0.5 inline-flex min-w-[1.1rem] items-center justify-center rounded-full px-1 tabular-nums"
-          style={{ background: on ? 'var(--color-primary)' : 'color-mix(in srgb, var(--color-primary) 22%, transparent)', color: on ? 'var(--color-on-primary)' : 'var(--color-primary)' }}>
-          {badge > 99 ? '99+' : badge}
-        </span>
-      )}
-    </button>
   )
 }
 
@@ -2191,439 +1984,6 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
           </>
         )}
       </div>
-    </div>
-  )
-}
-
-// Engine bookkeeping that lives in a project's files dir alongside the worker's
-// real deliverables — hidden from the cockpit tree when rooted there, so the user
-// sees what they built (requirements.md etc.), not the plumbing.
-const PROJECT_DIR_HIDDEN = new Set(['brief.md', 'status.json', 'findings', 'verdicts', 'FINDINGS.md', 'guidance.txt', 'questions.json', 'nudges.json', 'STOP', 'plan_session.json', 'plan_steps.json', 'step_artifact.json', 'plan.json'])
-// Dynamically-named engine bookkeeping the exact set above can't enumerate: a
-// per-task steer in parallel mode is written as `guidance_<task_id>.txt`. Hidden
-// by prefix so it doesn't leak into a no-workspace project's file tree.
-const PROJECT_DIR_HIDDEN_PREFIXES = new Set(['guidance_'])
-
-// VCS/build/cache cruft suppressed at EVERY level of the cockpit's mini-IDE tree
-// so the user sees their code, not tool plumbing (VSCode's default files.exclude
-// spirit). Applies in both bound-workspace and project-dir modes.
-const CODE_TREE_NOISE = new Set(['.git', '.hg', '.svn', '__pycache__', '.pytest_cache',
-  '.mypy_cache', '.ruff_cache', '.tox', 'node_modules', '.venv', 'venv', '.DS_Store',
-  '.idea', '.next', '.turbo', '.cache', '.gradle', '__snapshots__', '.terraform'])
-
-/** Workspace file tree rooted at the project's workspace dir, or the project's own
- *  files dir when no workspace is bound (isProjectDir) — in which case engine
- *  bookkeeping files are hidden so only the deliverables show. */
-function WorkspaceTree({ ws, running, isProjectDir }: { ws: string; running: boolean; isProjectDir: boolean }) {
-  const dirs = useDirCache()
-  const [gitNonce, setGitNonce] = useState(0)
-  const { statuses, state: gitState } = useGitStatus(ws || null, gitNonce)
-  // While the worker runs it writes new files across the workspace (root AND
-  // subdirs like src/ tests/); the dir cache + git status would otherwise stay
-  // stale until a manual reload. Slow-poll (visible only): invalidate the whole
-  // loaded subtree (not just the root — else a file the worker drops into an
-  // expanded subdir never appears there) + bump git status so freshly created
-  // files surface with their badge. Files-page-style live refresh.
-  useVisiblePoll(() => {
-    if (ws) { dirs.invalidateSubtree(ws); setGitNonce((n) => n + 1) }
-  }, running && ws ? 8000 : null)
-  // A manual save in the editor → refresh git badges immediately. The poll above only
-  // runs while RUNNING, so on a paused/idle project (where the USER is editing) a save
-  // would otherwise leave the tree's git badges stale until something else triggered it.
-  useEffect(() => {
-    const onSaved = () => { if (ws) { dirs.invalidate(ws); setGitNonce((n) => n + 1) } }
-    window.addEventListener('ne:code-file-saved', onSaved)
-    return () => window.removeEventListener('ne:code-file-saved', onSaved)
-  }, [ws, dirs])
-  // Detect a worker DELETING a tracked file (git status code contains 'D'): play an
-  // autonomous-backspace erase animation of its pre-delete (HEAD) content, once per
-  // path. Only while running; the git original is fetched lazily.
-  const erasedRef = useRef<Set<string>>(new Set())
-  // Deletions present in the FIRST loaded status snapshot are PRE-EXISTING (the worker
-  // removed them in an earlier cycle, before this mount) — they must NOT replay their
-  // erase animation just because the cockpit was reopened on a still-running project
-  // (erasedRef resets on remount, so without this every already-deleted file animates
-  // as if it just happened). Seed them as already-erased on the first load; only a
-  // deletion that appears in a LATER snapshot is genuinely live → animates. Mirrors the
-  // write/diff-reveal path's "seed the baseline on first sight" guard.
-  const eraseSeededRef = useRef(false)
-  useEffect(() => {
-    if (!running || gitState !== 'loaded') return
-    const seeding = !eraseSeededRef.current
-    for (const [path, code] of Object.entries(statuses)) {
-      if (!code.includes('D') || erasedRef.current.has(path)) continue
-      erasedRef.current.add(path)
-      if (seeding) continue  // pre-existing deletion on first load → record, don't animate
-      api.fileGitOriginal(path).then((r) => {
-        if (r?.content?.trim()) {
-          window.dispatchEvent(new CustomEvent('ne:code-erase-file', {
-            detail: { path, name: path.split('/').pop(), text: r.content },
-          }))
-        }
-      }).catch(() => {})
-    }
-    eraseSeededRef.current = true
-  }, [statuses, running, gitState])
-  // Bridge file-open to the center editor via a custom event (kept simple: the
-  // center editor listens for ne:code-open-file). Avoids prop-drilling the tabs.
-  const openFile = useCallback((entry: FsEntry) => {
-    window.dispatchEvent(new CustomEvent('ne:code-open-file', { detail: entry }))
-  }, [])
-  // Track the latest-opened file so the tree auto-expands to reveal it (its own
-  // clicks + the worker's follow-open both flow through ne:code-open-file). This
-  // is what makes a deeply-nested worker-touched file visible in the tree, not
-  // buried in collapsed folders.
-  const [activePath, setActivePath] = useState<string | null>(null)
-  useEffect(() => {
-    const onOpen = (e: Event) => {
-      const d = (e as CustomEvent).detail as { path?: string; is_dir?: boolean } | null
-      if (d?.path && !d.is_dir) setActivePath(d.path)
-    }
-    window.addEventListener('ne:code-open-file', onOpen as EventListener)
-    return () => window.removeEventListener('ne:code-open-file', onOpen as EventListener)
-  }, [])
-  // Inline create-new at the workspace root — the cockpit's mini-IDE equivalent of
-  // the Files page's New file / New folder (the tree itself only renames/deletes).
-  const [creating, setCreating] = useState<'file' | 'dir' | null>(null)
-  const [newName, setNewName] = useState('')
-  const [createErr, setCreateErr] = useState('')
-  // In-flight guard: the create input fires submitCreate on BOTH Enter and onBlur, so
-  // Enter (which can blur) — or any click-away during the async create — would fire a
-  // second fileCreate that hits the just-created name as a 409 "already exists". Ignore
-  // re-entry while a create is in flight (mirrors the acting-guard pattern).
-  const creatingInFlight = useRef(false)
-  // Surface rename/delete failures (permission denied, file vanished mid-op, ws
-  // unmounted) instead of swallowing them as a silent no-op — matches the create
-  // error above + the Files page, which reports "Delete failed: …".
-  const [treeErr, setTreeErr] = useState('')
-  // Delete a tree entry behind a themed confirm (the shared imperative dialog —
-  // never a native, off-theme window.confirm).
-  const doDelete = async (entry: FsEntry) => {
-    if (!(await confirm({
-      title: entry.is_dir ? `Delete folder "${entry.name}"?` : `Delete file "${entry.name}"?`,
-      body: entry.is_dir
-        ? "This deletes the folder and all its contents. This can't be undone."
-        : "This can't be undone.",
-      danger: true, confirmLabel: 'Delete',
-    }))) return
-    setTreeErr('')
-    let ok = false
-    try {
-      await api.fileDelete(entry.path)
-      ok = true
-      // Close any editor tab(s) for the deleted file (or files under a deleted dir) —
-      // ONLY on success. The close was firing unconditionally (before the await settled
-      // its outcome), so a FAILED delete (permission / vanished / 5xx) still closed the
-      // tab for a file that's still on disk, losing the user's open view + any edits.
-      window.dispatchEvent(new CustomEvent('ne:code-close-file', { detail: { path: entry.path } }))
-    }
-    catch (e) { setTreeErr(`Couldn't delete "${entry.name}": ${(e as Error).message || 'unknown error'}`) }
-    // Only refresh the tree/git when something actually changed — a failed delete left
-    // the disk untouched, so re-listing is wasted work (and the entry correctly stays).
-    if (ok) {
-      dirs.invalidate(entry.path.slice(0, entry.path.length - entry.name.length).replace(/\/$/, '') || ws)
-      dirs.invalidate(ws)
-      window.dispatchEvent(new CustomEvent('ne:code-file-saved'))  // refresh git badges + Changes
-    }
-  }
-  const submitCreate = async () => {
-    if (creatingInFlight.current) return
-    const name = newName.trim()
-    if (!name || !creating) { setCreating(null); setNewName(''); setCreateErr(''); return }
-    creatingInFlight.current = true
-    try {
-      const r = await api.fileCreate(ws, name, creating)
-      if (creating === 'file') window.dispatchEvent(new CustomEvent('ne:code-open-file', { detail: { name, path: r.path, is_dir: false } }))
-      setCreating(null); setNewName(''); setCreateErr(''); dirs.invalidate(ws)
-      // Refresh git badges + the Changes tab (a new file is untracked → 'U' badge).
-      window.dispatchEvent(new CustomEvent('ne:code-file-saved'))
-    } catch (e) {
-      // Keep the input open + show why (duplicate name → 409, slash/blocked → 400)
-      // so the user can correct it instead of a silent no-op.
-      const msg = (e as Error).message || 'Could not create'
-      setCreateErr(/already exists/i.test(msg) ? 'A file or folder with that name already exists.'
-        : /invalid name/i.test(msg) ? 'Invalid name — no slashes; pick a different name.'
-        : msg)
-      dirs.invalidate(ws)
-    } finally {
-      creatingInFlight.current = false
-    }
-  }
-  const cancelCreate = () => { setCreating(null); setNewName(''); setCreateErr('') }
-  if (!ws) return <p data-type="body-s" className="px-3 py-6 text-center text-on-surface-low">No files yet for this project.</p>
-  return (
-    <div className="p-1">
-      {/* create-new row: icon buttons reveal an inline name input (Enter creates,
-          Escape cancels). Hidden for a no-workspace project dir (isProjectDir). */}
-      {!isProjectDir && (
-        <div className="flex flex-col gap-1 px-1.5 pb-1">
-         <div className="flex items-center gap-1">
-          {creating ? (
-            <input autoFocus value={newName} onChange={(e) => { setNewName(e.target.value); if (createErr) setCreateErr('') }}
-              onKeyDown={(e) => { if (e.key === 'Enter') submitCreate(); if (e.key === 'Escape') cancelCreate() }}
-              onBlur={() => { if (!createErr) submitCreate() }} placeholder={creating === 'file' ? 'new-file.ext' : 'new-folder'}
-              data-type="body-s" className={`h-7 min-w-0 flex-1 rounded-md bg-surface-high px-2 text-on-surface outline-none focus:ring-2 placeholder:text-on-surface-low ${createErr ? 'focus:ring-danger/50 ring-2 ring-danger/40' : 'focus:ring-primary'}`} />
-          ) : (
-            <>
-              {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
-              <Button variant="ghost" size="xs" title="New file" onClick={() => { setCreating('file'); setNewName('') }}
-                className="gap-1 px-1.5 text-[0.75rem] text-on-surface-low"><FilePlus2 size={13} /> File</Button>
-              <Button variant="ghost" size="xs" title="New folder" onClick={() => { setCreating('dir'); setNewName('') }}
-                className="gap-1 px-1.5 text-[0.75rem] text-on-surface-low"><FolderPlus size={13} /> Folder</Button>
-            </>
-          )}
-         </div>
-         {createErr && <span role="alert" data-type="caption" className="px-0.5 text-danger">{createErr}</span>}
-        </div>
-      )}
-      {/* rename/delete failure — dismissable, sits above the tree (works in both
-          bound-workspace and project-dir modes, where the create row is hidden). */}
-      {treeErr && (
-        <div role="alert" data-type="caption" className="mx-1.5 mb-1 flex items-start gap-1.5 px-0.5 text-danger">
-          <span className="min-w-0 flex-1">{treeErr}</span>
-          <IconButton icon={X} label="Dismiss" onClick={() => setTreeErr('')} size={18} iconSize={11} className="shrink-0" />
-        </div>
-      )}
-      <FileTree dirs={dirs} rootPath={ws} activePath={activePath} gitStatuses={statuses}
-        onOpenFile={openFile} artifactPaths={EMPTY_ARTIFACTS}
-        hideNames={isProjectDir ? PROJECT_DIR_HIDDEN : undefined}
-        hidePrefixes={isProjectDir ? PROJECT_DIR_HIDDEN_PREFIXES : undefined}
-        hideNamesDeep={CODE_TREE_NOISE}
-        emptyLabel={isProjectDir
-          ? (running ? 'No files yet — the worker will create them here.' : 'No files yet — files the worker creates will appear here once it runs.')
-          : 'Empty'}
-        onRename={async (entry, nextName) => {
-          const parent = entry.path.slice(0, entry.path.length - entry.name.length).replace(/\/$/, '')
-          setTreeErr('')
-          try {
-            const dest = parent ? `${parent}/${nextName}` : nextName
-            await api.fileMove(entry.path, dest)
-            // Renaming an OPEN file shouldn't make it vanish from the editor — if it was
-            // a tab, follow it to the new path (preserving active state); if not, this is
-            // a no-op. A folder rename re-roots its open descendants too. (The handler
-            // falls back to closing the stale tab when it can't re-root, never strands one.)
-            window.dispatchEvent(new CustomEvent('ne:code-renamed', { detail: { from: entry.path, to: dest, isDir: !!entry.is_dir } }))
-          }
-          catch (e) {
-            // Friendly copy for the common name-collision case (backend: "destination
-            // already exists") — matches the create row's mapping rather than leaking the
-            // terse server string.
-            const msg = (e as Error).message || 'unknown error'
-            setTreeErr(/already exists/i.test(msg)
-              ? `Couldn't rename "${entry.name}" — a file or folder named "${nextName}" already exists here.`
-              : `Couldn't rename "${entry.name}": ${msg}`)
-          }
-          // Invalidate the renamed item's PARENT (where the entry lived), not just the
-          // workspace root — a rename in a subdir wouldn't refresh there otherwise.
-          dirs.invalidate(parent || ws); dirs.invalidate(ws)
-          window.dispatchEvent(new CustomEvent('ne:code-file-saved'))  // refresh git badges + Changes
-        }}
-        onDelete={(entry) => { void doDelete(entry) }}
-        onUpload={async (dirEntry, files) => {
-          // Surface an upload failure (too large, permission denied, dir gone) in the
-          // same dismissable tree-error line as create/rename/delete — was a silent
-          // no-op (drop files, nothing happens, no reason). fileUpload returns
-          // {ok:false,error} on an HTTP error (doesn't throw) AND can throw on network.
-          if (!files.length) return
-          setTreeErr('')
-          try {
-            const r = await api.fileUpload(dirEntry.path, files)
-            if (!r.ok) setTreeErr(`Couldn't upload to ${dirEntry.name}: ${r.error || 'unknown error'}`)
-          } catch (e) {
-            setTreeErr(`Couldn't upload to ${dirEntry.name}: ${(e as Error).message || 'unknown error'}`)
-          }
-          dirs.invalidate(dirEntry.path); dirs.invalidate(ws)
-          window.dispatchEvent(new CustomEvent('ne:code-file-saved'))  // refresh git badges + Changes
-        }}
-        onCreate={async (dirEntry, name, kind) => {
-          // Create a file/folder INSIDE the right-clicked dir (not just the root) — the
-          // mini-IDE "New file/folder here". Opens a new file in the editor; surfaces
-          // failures (dup/invalid) in the same dismissable tree-error line.
-          setTreeErr('')
-          try {
-            const r = await api.fileCreate(dirEntry.path, name, kind)
-            if (kind === 'file') window.dispatchEvent(new CustomEvent('ne:code-open-file', { detail: { name, path: r.path, is_dir: false } }))
-          } catch (e) {
-            const msg = (e as Error).message || 'unknown error'
-            setTreeErr(/already exists/i.test(msg) ? `"${name}" already exists in ${dirEntry.name}.`
-              : /invalid name/i.test(msg) ? `Invalid name "${name}" — no slashes.` : `Couldn't create "${name}": ${msg}`)
-          }
-          dirs.invalidate(dirEntry.path); dirs.invalidate(ws)
-          window.dispatchEvent(new CustomEvent('ne:code-file-saved'))  // refresh git badges + Changes
-        }} />
-    </div>
-  )
-}
-
-/** Git changes panel — the workspace's branch + changed files, so the human can
- *  review what the agent did. Clicking a file opens it in the editor. Polls on
- *  mount + a manual refresh; git status is keyed by path. */
-function ChangesPanel({ ws, running, isProjectDir = false, merges = [] }: { ws: string; running: boolean; isProjectDir?: boolean; merges?: LoopMerge[] }) {
-  const [nonce, setNonce] = useState(0)
-  // A no-workspace project's "ws" is its engine files dir, which is NOT a git repo,
-  // so git status there is meaningless — running it would render a misleading
-  // "(no branch) · working tree clean". Skip git entirely + say so plainly.
-  const gitWs = isProjectDir ? null : (ws || null)
-  const { branch, statuses, state, repoRoot } = useGitStatus(gitWs, nonce)
-  // While the worker runs it edits files + the supervisor commits each stage; the
-  // status + history would otherwise stay stale until a manual refresh. Slow-poll
-  // (visible only) so the Changes tab tracks the work live, like the file tree.
-  useVisiblePoll(() => { if (gitWs) setNonce((n) => n + 1) }, running && gitWs ? 8000 : null)
-  // A manual editor save → refresh the Changes tab now (the poll only runs while
-  // running; a save on a paused/idle project would otherwise show stale status).
-  useEffect(() => {
-    const onSaved = () => { if (gitWs) setNonce((n) => n + 1) }
-    window.addEventListener('ne:code-file-saved', onSaved)
-    return () => window.removeEventListener('ne:code-file-saved', onSaved)
-  }, [gitWs])
-  // 🔴 A NEGATIVE ABOUT THE ROOT IS NOT A NEGATIVE ABOUT THE WORKSPACE. `repoRoot` is empty
-  // whenever the bound root ITSELF is not a repo — but a project checked out one level down
-  // is the normal layout, and this panel then told the user their work "isn't version-tracked"
-  // when it is (#428). The Files page merely showed nothing; this surface stated the negative.
-  // So on that branch, ask the listing which children ARE repo roots (the flag api_file_list
-  // now returns) and name them instead of denying version control outright. One request, only
-  // on the branch that would otherwise make a false claim.
-  const [nestedRepos, setNestedRepos] = useState<string[]>([])
-  useEffect(() => {
-    if (isProjectDir || !ws || state !== 'loaded' || repoRoot) { setNestedRepos([]); return }
-    let alive = true
-    api.fileList(ws)
-      .then((r) => { if (alive) setNestedRepos((r.entries || []).filter((e) => e.is_dir && e.repo).map((e) => e.name)) })
-      .catch(() => { if (alive) setNestedRepos([]) })
-    return () => { alive = false }
-  }, [ws, state, repoRoot, isProjectDir])
-
-  // The per-stage commit history (the supervisor checkpoints each passed stage)
-  // — a reviewable timeline of what each stage produced.
-  const [commits, setCommits] = useState<{ hash: string; subject: string; relative: string }[]>([])
-  useEffect(() => {
-    if (!gitWs) { setCommits([]); return }
-    let alive = true
-    api.fileGitLog(gitWs, 20).then((r) => { if (alive) setCommits(r.commits || []) }).catch(() => { if (alive) setCommits([]) })
-    return () => { alive = false }
-  }, [gitWs, nonce])
-
-  // A no-workspace (greenfield) project: its files live in the engine dir with no
-  // git, so there's no diff/branch history to show — say so honestly instead of a
-  // misleading "clean working tree".
-  if (isProjectDir) return <p data-type="body-s" className="px-3 py-6 text-center text-on-surface-low">This project has no git workspace — changes aren't version-tracked. Files the worker created are in the Files tab.</p>
-  if (!ws) return <p data-type="body-s" className="px-3 py-6 text-center text-on-surface-low">No workspace directory.</p>
-  // A bound brownfield workspace that ISN'T a git repo (empty repoRoot once loaded):
-  // there's no branch/diff/history to show, and "working tree is clean" would be a
-  // lie (it's just not version-controlled). Say so honestly — distinct from a clean
-  // repo + from a transient read error.
-  if (state === 'loaded' && !repoRoot) {
-    return (
-      <p data-type="body-s" className="px-3 py-6 text-center text-on-surface-low">
-        {nestedRepos.length > 0
-          // Says what is TRUE (the root isn't a repo) and where the version control actually
-          // is, instead of asserting the workspace has none.
-          ? <>The workspace <em>root</em> isn’t a git repository, but {nestedRepos.length === 1 ? 'a repository inside it is' : `${nestedRepos.length} repositories inside it are`}: {nestedRepos.slice(0, 4).join(', ')}{nestedRepos.length > 4 ? ', …' : ''}. Open one in the Files tab to see its branch and changes.</>
-          : <>This workspace isn’t a git repository — changes aren’t version-tracked. Browse the files in the Files tab.</>}
-      </p>
-    )
-  }
-  const entries = Object.entries(statuses)
-  // git status codes → a short, readable label + tone.
-  const label = (code: string): { text: string; color: string } => {
-    const c = code.trim()
-    if (c === '??') return { text: 'new', color: 'var(--color-ok)' }
-    // UNMERGED (conflict) — porcelain XY where either side is 'U', or the AA/DD
-    // double forms. The worker merges parallel task worktrees, so conflicts are a real
-    // state here, and they need RESOLUTION — must not read as a bland "modified".
-    // Checked before the D/A letter rules (DD/AU/UD all contain D or A).
-    if (c.includes('U') || c === 'AA' || c === 'DD') return { text: 'conflict', color: 'var(--color-danger)' }
-    if (c.includes('D')) return { text: 'deleted', color: 'var(--color-danger)' }
-    if (c.includes('A')) return { text: 'added', color: 'var(--color-ok)' }
-    if (c.includes('R')) return { text: 'renamed', color: 'var(--color-primary)' }
-    return { text: 'modified', color: 'var(--color-warn)' }
-  }
-  // git-status keys are absolute paths whose root may differ from `ws` by a
-  // realpath prefix (e.g. /tmp vs /private/tmp on macOS). Relativize by the
-  // workspace's LAST path segment so the display is clean regardless.
-  const wsBase = ws.replace(/\/$/, '').split('/').pop() || ''
-  const rel = (p: string) => {
-    const marker = `/${wsBase}/`
-    const i = wsBase ? p.lastIndexOf(marker) : -1
-    return i >= 0 ? p.slice(i + marker.length) : p
-  }
-  // Open a working-vs-HEAD DIFF (under `ws`, not the git realpath, so the editor's
-  // workspace-scoped guards apply). A modifier-less click reviews the change as a
-  // diff; this is the natural action in the Changes tab.
-  const open = (gitPath: string, code: string) => {
-    const r = rel(gitPath)
-    const path = `${ws.replace(/\/$/, '')}/${r}`
-    // A deleted file has no working copy — tell the diff so it treats the missing
-    // read as expected (all-removed) rather than a load error.
-    const deleted = code.includes('D')
-    window.dispatchEvent(new CustomEvent('ne:code-open-diff', { detail: { name: r.split('/').pop(), path, deleted } }))
-  }
-  return (
-    <div className="flex flex-col">
-      <div data-type="caption" className="flex items-center justify-between gap-2 px-3 py-2 text-on-surface-low">
-        <span className="inline-flex items-center gap-1.5 min-w-0">
-          <GitBranch size={12} className="shrink-0" />
-          <span className="truncate text-on-surface-var">{branch || (state === 'loaded' ? '(no branch)' : '…')}</span>
-        </span>
-        {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
-        <Button variant="ghost" size="xs" onClick={() => setNonce((n) => n + 1)} className="shrink-0 px-1.5 text-[0.75rem] text-on-surface-low">refresh</Button>
-      </div>
-      {/* A merge leaves the tree clean, so what the loop merged is said here, not left to the log. */}
-      <MergedWork merges={merges} />
-      {entries.length === 0 ? (
-        // Distinguish the three empty-map states: a failed/in-flight fetch must NOT
-        // masquerade as a genuinely clean tree (the old bug — all three read "clean").
-        state === 'loading' || state === 'idle' ? (
-          <p data-type="body-s" className="px-3 py-6 text-center text-on-surface-low">Loading changes…</p>
-        ) : state === 'error' ? (
-          <div data-type="body-s" className="flex flex-col items-center gap-2 px-3 py-6 text-center">
-            <span style={{ color: 'var(--color-warn)' }}>Couldn't read git status for this workspace.</span>
-            <Button variant="ghost" size="xs" onClick={() => setNonce((n) => n + 1)}>Retry</Button>
-          </div>
-        ) : (
-          <p data-type="body-s" className="px-3 py-6 text-center text-on-surface-low">No uncommitted changes — the working tree is clean.</p>
-        )
-      ) : (
-        <div className="flex flex-col">
-          {/* count label — at-a-glance magnitude + parity with the "History" label
-              below, and it distinguishes working changes from the commit list. */}
-          <Eyebrow className="px-3 pt-1 pb-1">
-            Changes ({entries.length})
-          </Eyebrow>
-          {entries.map(([path, code]) => {
-            const l = label(code)
-            return (
-              <button key={path} type="button" onClick={() => open(path, code)}
-                data-type="body-s" className="flex items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-surface-high">
-                <span data-type="caption" className="w-[58px] shrink-0" style={{ color: l.color }}>{l.text}</span>
-                <span className="min-w-0 truncate font-mono text-on-surface-var" title={path}>{rel(path)}</span>
-              </button>
-            )
-          })}
-        </div>
-      )}
-      {/* per-stage commit history — the reviewable timeline (supervisor + worker
-          commits). Shown below the working changes. */}
-      {commits.length > 0 && (
-        <div className="mt-1 border-t border-outline-variant/40">
-          <div className="flex items-baseline justify-between gap-2 px-3 pt-2 pb-1">
-            <Eyebrow as="span">History</Eyebrow>
-            {/* The log is capped server-side (20); when we get a full page back there
-                are almost certainly older commits not shown — say so rather than let
-                the list read as the repo's entire history. */}
-            {commits.length >= 20 && <span data-type="caption" className="text-on-surface-low/70">latest 20</span>}
-          </div>
-          {commits.map((c) => (
-            <button key={c.hash} type="button"
-              onClick={() => window.dispatchEvent(new CustomEvent('ne:code-open-commit', { detail: { hash: c.hash, subject: c.subject, path: ws } }))}
-              data-type="body-s" className="flex w-full items-baseline gap-2 px-3 py-1 text-left transition-colors hover:bg-surface-high">
-              <span data-type="caption" className="shrink-0 font-mono text-on-surface-low">{c.hash}</span>
-              <span className="min-w-0 flex-1 truncate text-on-surface-var" title={c.subject}>{c.subject}</span>
-              <span data-type="caption" className="shrink-0 text-on-surface-low">{c.relative}</span>
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   )
 }
