@@ -1009,10 +1009,11 @@ def _restore_personalclaw_logging():
     So the root logger's level and the sinks' level are put back, and every sink ADDED to
     the root during the test is removed and closed — only sinks (``log_sinks``' filter on
     them), never ``caplog``'s own handlers, which pytest attaches and removes itself.
-    Levels are also snapshotted for the whole ``personalclaw.*`` namespace (not a name
-    list — the same reason the registry guards above snapshot rather than enumerate), any
-    descendant created during the test reset to ``NOTSET``, and handlers a test added to
-    the ``personalclaw`` logger itself removed.
+    Each ``personalclaw.*`` logger's level, ``propagate`` and ``disabled`` are also snapshotted
+    (the whole namespace, not a name list — the same reason the registry guards above snapshot
+    rather than enumerate) and put back where they differ, and logging's cache is cleared once
+    after; any descendant created during the test is reset to ``NOTSET``, and handlers a
+    test added to the ``personalclaw`` logger itself removed.
 
     And logging's lock is given back if this thread still holds it once the levels are restored.
     Python 3.12 releases it without a ``finally`` in the cache clear every ``setLevel`` makes
@@ -1035,8 +1036,15 @@ def _restore_personalclaw_logging():
         return out
 
     root = logging.getLogger("personalclaw")
-    levels_before = {name: lg.level for name, lg in _pclaw_loggers().items()}
-    levels_before["personalclaw"] = root.level
+    # Each logger's level, propagate and disabled, put back only where they differ, and the
+    # cache cleared once, after. Restoring every logger with setLevel cleared logging's cache
+    # once per logger, and each clear walks every logger: with every module imported (873
+    # personalclaw loggers of 994) one teardown took about 270 ms, where restoring what changed
+    # takes under 1.
+    state_before = {
+        name: (lg.level, lg.propagate, lg.disabled) for name, lg in _pclaw_loggers().items()
+    }
+    state_before["personalclaw"] = (root.level, root.propagate, root.disabled)
     handlers_before = list(root.handlers)
     top = logging.getLogger()
     top_level_before = top.level
@@ -1047,12 +1055,20 @@ def _restore_personalclaw_logging():
 
     try:
         for name, lg in _pclaw_loggers().items():
-            lg.setLevel(levels_before.get(name, logging.NOTSET))
-        root.setLevel(levels_before["personalclaw"])
+            before = state_before.get(name)
+            if before is None:
+                # Created during the test: its level goes back to NOTSET, as it always has.
+                if lg.level != logging.NOTSET:
+                    lg.level = logging.NOTSET
+                continue
+            if (lg.level, lg.propagate, lg.disabled) != before:
+                lg.level, lg.propagate, lg.disabled = before
         added = [h for h in root.handlers if h not in handlers_before]
         for handler in added:
             root.removeHandler(handler)
         log_sinks.set_level(sinks_level_before)
+        # The root logger's setLevel, which always runs after the restore above, clears logging's
+        # cache, so no logger keeps an answer it cached during the test.
         top.setLevel(top_level_before)
         for handler in list(top.handlers):
             if log_sinks._FILTER in handler.filters and handler not in sinks_before:
