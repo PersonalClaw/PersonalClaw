@@ -4769,6 +4769,10 @@ EVERY_RAIL_LIVES_IN_TESTS_RAILS = Row(
             lambda root: _write(root, "tests/rails/test_behaviour_here.py", _NOT_A_RAIL),
         ),
         Control(
+            "a rail named the other way pytest collects (*_test.py) outside tests/rails fails",
+            lambda root: _write(root, "tests/new_rail_test.py", _A_RAIL),
+        ),
+        Control(
             "a security-marked rail outside tests/rails passes",
             lambda root: _write(
                 root,
@@ -4795,6 +4799,228 @@ EVERY_RAIL_LIVES_IN_TESTS_RAILS = Row(
 )
 
 ROWS = (*ROWS, EVERY_RAIL_LIVES_IN_TESTS_RAILS)
+
+
+# ── Each half of the rails runs once, on its own leg ─────────────────────────────────────────
+#
+# ci.yml's rails job is a matrix with one leg per list in rails_census.HALVES: leg i runs pytest
+# over tests/rails with `--shard-list` naming HALVES[i-1]. `rails check` holds the lists to every
+# rail, each once; this row holds the legs to the lists, so no list runs on two legs and none on
+# no leg. fail-fast is off, so a red half never cancels the other half's run and report, and the
+# step that runs a half has no `if:` of its own, so no leg skips it. The catalogue's rails entry,
+# the one a local run of the tier runs, renders the same list for each of its shards.
+
+_MATRIX_SHARD = re.compile(r"\$\{\{\s*matrix\.shard\s*\}\}")
+
+
+def _shard_lists(args: list[str]) -> list[str]:
+    """Each ``--shard-list`` a pytest command's arguments pass, in either spelling."""
+    found: list[str] = []
+    for n, word in enumerate(args):
+        if word == "--shard-list":
+            found.append(args[n + 1] if n + 1 < len(args) else "")
+        elif word.startswith("--shard-list="):
+            found.append(word.partition("=")[2])
+    return found
+
+
+def _runs_rails(words: list[str]) -> bool:
+    """A root pytest that collects from tests/rails: the folder, or a file or folder in it."""
+    rails = rails_census.RAILS
+    return _root_pytest(words) and any(
+        w.rstrip("/") == rails or w.startswith(rails + "/") for w in _pytest_args(words)
+    )
+
+
+def rails_legs_violations(root: Path) -> list[str]:
+    """Each half runs once, on its own leg: ci.yml's rails matrix is one list of shards, 1 to
+    len(HALVES), with fail-fast off; each leg runs pytest over tests/rails once, with no if: of
+    its own, and its ``--shard-list`` is its half; and the catalogue's rails entry has as many
+    shards, shard i rendering half i."""
+    halves = rails_census.HALVES
+    want = [str(n) for n in range(1, len(halves) + 1)]
+    workflow = yaml.safe_load((root / _CI).read_text(encoding="utf-8")) or {}
+    job = (workflow.get("jobs") or {}).get(catalogue.MERGE_NEEDS_JOB)
+    if not isinstance(job, dict):
+        return [f"ci.yml has no {catalogue.MERGE_NEEDS_JOB} job"]
+    bad: list[str] = []
+    strategy = job.get("strategy") if isinstance(job.get("strategy"), dict) else {}
+    matrix = strategy.get("matrix")
+    legs: list[str] = []
+    if (
+        not isinstance(matrix, dict)
+        or set(matrix) != {"shard"}
+        or not isinstance(matrix["shard"], list)
+    ):
+        bad.append(f"ci.yml's rails matrix is not one list of shards: {matrix!r}")
+    else:
+        legs = [str(v) for v in matrix["shard"]]
+        if sorted(legs) != want:
+            bad.append(
+                f"ci.yml's rails legs are {legs}, and rails_census.HALVES makes them {want}:"
+                " one leg per half, each once"
+            )
+    if strategy.get("fail-fast") is not False:
+        bad.append(
+            "ci.yml's rails job does not set fail-fast: false, so a red half cancels the other"
+            " half's run and its report"
+        )
+    for leg in legs:
+        runs: list[tuple[dict[str, Any], list[str]]] = []
+        for step in job.get("steps") or []:
+            text = _MATRIX_SHARD.sub(lambda _m, leg=leg: leg, str(step.get("run", "")))
+            runs += [
+                (step, _shard_lists(_pytest_args(w))) for w in _commands(text) if _runs_rails(w)
+            ]
+        if len(runs) != 1:
+            bad.append(
+                f"leg {leg} of ci.yml's rails job runs pytest over tests/rails {len(runs)} times"
+            )
+            continue
+        step, lists = runs[0]
+        if leg in want and lists != [halves[int(leg) - 1]]:
+            bad.append(
+                f"leg {leg} of ci.yml's rails job runs {lists or 'every rail'},"
+                f" and its half is {halves[int(leg) - 1]}"
+            )
+        if "if" in step:
+            bad.append(
+                f"leg {leg} of ci.yml's rails job runs its half under if: {step['if']!r},"
+                " so a leg can skip it"
+            )
+    try:
+        entry = catalogue.read(root).job(catalogue.MERGE_NEEDS_JOB)
+    except (OSError, KeyError, catalogue.CatalogueError) as exc:
+        return [*bad, f"{catalogue.CATALOGUE}'s rails entry cannot be read: {exc}"]
+    if entry.shards != len(halves):
+        bad.append(
+            f"rails: shards is {entry.shards}, and rails_census.HALVES names {len(halves)} halves"
+        )
+    for shard in range(1, entry.shards + 1):
+        lists = [
+            listed.replace("{shard}", str(shard))
+            for step in entry.command
+            if _runs_rails(list(step.argv))
+            for listed in _shard_lists(_pytest_args(list(step.argv)))
+        ]
+        if shard <= len(halves) and lists != [halves[shard - 1]]:
+            bad.append(
+                f"rails: shard {shard} of the catalogue's entry runs {lists or 'every rail'},"
+                f" and its half is {halves[shard - 1]}"
+            )
+    return bad
+
+
+def _rails_legs_scaffold(root: Path) -> None:
+    for rel in (_CI, catalogue.CATALOGUE):
+        _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
+
+
+_RAILS_LEGS = "      fail-fast: false\n      matrix:\n        shard: [1, 2]\n"
+_RAILS_HALF_STEP = "      - name: the rails, half ${{ matrix.shard }} of 2 (tests/rails)\n"
+_RAILS_HALF_LIST = "--shard-list tools/ci/rails-half-${{ matrix.shard }}.txt"
+
+EACH_RAILS_HALF_RUNS_ONCE_ON_ITS_OWN_LEG = Row(
+    name="each half of the rails runs once, on its own leg",
+    check=rails_legs_violations,
+    scaffold=_rails_legs_scaffold,
+    controls=(
+        _plant(
+            "a matrix that runs half 1 on both legs fails",
+            _CI,
+            _RAILS_LEGS,
+            _RAILS_LEGS.replace("[1, 2]", "[1, 1]"),
+            expect="ci.yml's rails legs are ['1', '1']",
+        ),
+        _plant(
+            "a matrix with one leg fails",
+            _CI,
+            _RAILS_LEGS,
+            _RAILS_LEGS.replace("[1, 2]", "[1]"),
+            expect="ci.yml's rails legs are ['1']",
+        ),
+        _plant(
+            "a third leg fails",
+            _CI,
+            _RAILS_LEGS,
+            _RAILS_LEGS.replace("[1, 2]", "[1, 2, 3]"),
+            expect="ci.yml's rails legs are ['1', '2', '3']",
+        ),
+        _plant(
+            "a matrix that adds a leg by include fails",
+            _CI,
+            _RAILS_LEGS,
+            _RAILS_LEGS + "        include:\n          - shard: 1\n",
+            expect="ci.yml's rails matrix is not one list of shards",
+        ),
+        _plant(
+            "a leg that reads half 1 whatever its shard fails",
+            _CI,
+            _RAILS_HALF_LIST,
+            "--shard-list tools/ci/rails-half-1.txt",
+            expect="leg 2 of ci.yml's rails job runs ['tools/ci/rails-half-1.txt']",
+        ),
+        _plant(
+            "a leg that runs every rail fails",
+            _CI,
+            _RAILS_HALF_LIST + " ",
+            "",
+            expect="leg 1 of ci.yml's rails job runs every rail",
+        ),
+        _plant(
+            "fail-fast on fails",
+            _CI,
+            _RAILS_LEGS,
+            _RAILS_LEGS.replace("fail-fast: false", "fail-fast: true"),
+            expect="does not set fail-fast: false",
+        ),
+        _plant(
+            "the step that runs a half skipped on one leg fails",
+            _CI,
+            _RAILS_HALF_STEP,
+            _RAILS_HALF_STEP + "        if: ${{ matrix.shard == 1 }}\n",
+            expect="leg 2 of ci.yml's rails job runs its half under if:",
+        ),
+        _plant(
+            "a second run of tests/rails on each leg fails",
+            _CI,
+            _RAILS_HALF_STEP,
+            "      - name: one rail again\n"
+            "        run: uv run pytest -q tests/rails/test_ci_contract.py\n" + _RAILS_HALF_STEP,
+            expect="leg 1 of ci.yml's rails job runs pytest over tests/rails 2 times",
+        ),
+        _plant(
+            "the catalogue's shards reading half 1 fail",
+            catalogue.CATALOGUE,
+            '"--shard-list", "tools/ci/rails-half-{shard}.txt"',
+            '"--shard-list", "tools/ci/rails-half-1.txt"',
+            expect="rails: shard 2 of the catalogue's entry runs ['tools/ci/rails-half-1.txt']",
+        ),
+        _plant(
+            "the catalogue's rails in three shards fail",
+            catalogue.CATALOGUE,
+            "workers = 4\nshards = 2\n",
+            "workers = 4\nshards = 3\n",
+            expect="rails: shards is 3, and rails_census.HALVES names 2 halves",
+        ),
+        _plant(
+            "the legs listed in the other order pass",
+            _CI,
+            _RAILS_LEGS,
+            _RAILS_LEGS.replace("[1, 2]", "[2, 1]"),
+            fails=False,
+        ),
+        _plant(
+            "a list passed as --shard-list=FILE passes",
+            _CI,
+            _RAILS_HALF_LIST,
+            _RAILS_HALF_LIST.replace("--shard-list ", "--shard-list="),
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, EACH_RAILS_HALF_RUNS_ONCE_ON_ITS_OWN_LEG)
 
 
 # ── Every push to main checks the commits it lands, with main's previous check (#3908) ───────
@@ -5419,6 +5645,7 @@ class _Mapped:
 _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "static": _Mapped(("lint", "harness"), ("change", "merge")),
     "rails": _Mapped(("rails",), ("change", "merge"), reuse="tree"),
+    "rails-checks": _Mapped(("rails-checks",), ("change", "merge"), reuse="tree"),
     "python-suite": _Mapped(("test-shard",), ("merge",), security="security"),
     "python-suite-macos": _Mapped(("test-macos",), ("merge",), security="security"),
     "security": _Mapped(("security-corpus",), ("breadth",), security="security"),
@@ -5979,7 +6206,7 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             "        run: uv run python scripts/gate_report.py\n",
             "        run: uv run python scripts/gate_report.py\n"
             "      - name: a new rail\n        run: uv run python scripts/new_rail.py\n",
-            expect="ci.yml job rails runs uv run python scripts/new_rail.py",
+            expect="ci.yml job rails-checks runs uv run python scripts/new_rail.py",
         ),
         _plant(
             "two steps swapped",
@@ -5999,7 +6226,7 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             catalogue.CATALOGUE,
             '  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },\n',
             '  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },\n' * 2,
-            expect="rails: command step 5 repeats command step 4",
+            expect="rails-checks: command step 4 repeats command step 3",
         ),
         _plant(
             "one line held by two entries",
@@ -6015,7 +6242,7 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             "        run: uv run python scripts/gate_report.py\n"
             "      - name: a new gate\n"
             "        run: printf '%s\\n' \"$PWD\" | uv run python scripts/new_gate.py\n",
-            expect="ci.yml job rails runs printf",
+            expect="ci.yml job rails-checks runs printf",
         ),
         _plant(
             "a gate added to an install line",
@@ -6037,7 +6264,7 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             "        run: uv run python -m tools.ci rails check\n",
             "        run: |\n          uv run python -m tools.ci rails check\n"
             "          echo it's checked\n",
-            expect="ci.yml job rails runs \"echo it's checked\" ('every rail lives in"
+            expect="ci.yml job rails-checks runs \"echo it's checked\" ('every rail lives in"
             " tests/rails'), which no argv can be",
         ),
         _plant(
@@ -6184,9 +6411,9 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "reports that are not the ones its steps write",
             catalogue.CATALOGUE,
-            'junit = ["reports/junit-rails.xml", "reports/junit-npm-floors.xml"]',
+            'junit = ["reports/junit-rails-{shard}.xml"]',
             "junit = []",
-            expect="rails: junit lists nothing, and its steps write reports/junit-rails.xml,",
+            expect="rails: junit lists nothing, and its steps write reports/junit-rails-{shard}",
         ),
         _plant(
             "a Python that differs from the job's",
@@ -6205,8 +6432,10 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a job env that differs from the job's",
             catalogue.CATALOGUE,
-            'PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }\njunit = ["reports/junit-rails.xml"',
-            'PERSONALCLAW_TEST_CONTAINER_RUNTIME = "0" }\njunit = ["reports/junit-rails.xml"',
+            'PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }\n'
+            'junit = ["reports/junit-rails-{shard}.xml"',
+            'PERSONALCLAW_TEST_CONTAINER_RUNTIME = "0" }\n'
+            'junit = ["reports/junit-rails-{shard}.xml"',
             expect="rails: env is",
         ),
         _plant(
@@ -6219,9 +6448,9 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a run: line folded over two lines with a backslash still matches",
             _CI,
-            "run: uv run pytest -n 4 --dist worksteal -q tests/rails --junitxml",
+            "run: uv run pytest -n 4 --dist worksteal -q tests/rails --shard-list",
             "run: |\n          uv run pytest -n 4 --dist worksteal -q tests/rails \\\n"
-            "            --junitxml",
+            "            --shard-list",
             fails=False,
         ),
     ),

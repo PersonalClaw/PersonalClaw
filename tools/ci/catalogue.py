@@ -191,6 +191,11 @@ _OVERRIDE_KEYS = frozenset({"paths", "jobs", "whole_tier", "reason"})
 #: The job that holds every rail. A merge tier without it is refused, so no rail is skipped.
 MERGE_NEEDS_JOB = "rails"
 
+#: The job that runs ``rails check``, which holds every rail to exactly one half of a rails job
+#: that runs in halves (``rails_census.half_violations``). A merge tier whose rails run in halves
+#: without it is refused, and every plan holds it, so no rail can sit in neither half unseen.
+RAILS_CHECKS_JOB = "rails-checks"
+
 #: The merge tier's security evidence: the suite's own run of its security-marked modules, on
 #: each platform, each job with the runner family it runs on. A merge tier without either, with
 #: either not security posture, or with either on the other platform, is refused, so neither run
@@ -828,6 +833,11 @@ def validate(catalogue: Catalogue, complete: bool = True) -> list[str]:
         if MERGE_NEEDS_JOB not in merge:
             problems.append(
                 f"the merge tier lacks the {MERGE_NEEDS_JOB} job, so a rail can be skipped"
+            )
+        elif merge[MERGE_NEEDS_JOB].shards > 1 and RAILS_CHECKS_JOB not in merge:
+            problems.append(
+                f"the merge tier runs the {MERGE_NEEDS_JOB} job in halves and lacks"
+                f" {RAILS_CHECKS_JOB}, so a rail can be in neither half unseen"
             )
         for job_id, family in MERGE_SECURITY_JOBS.items():
             suite = merge.get(job_id)

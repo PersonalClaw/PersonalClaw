@@ -195,6 +195,7 @@ def test_each_e2e_exclusion_carries_its_reason_word_for_word() -> None:
 _INPUT_ROWS = {
     "static": ("Makefile", None),
     "rails": ("tests/rails/test_ci_plan_tree.py", None),
+    "rails-checks": ("ASSET_LICENSES.json", None),
     "python-suite": ("src/personalclaw/app.py", None),
     "python-suite-macos": ("src/personalclaw/app.py", None),
     "client": ("packages/personalclaw-client-py/src/x.py", None),
@@ -392,12 +393,20 @@ def test_what_the_planner_cannot_read_plans_the_whole_merge_tier(paths) -> None:
 
 
 def test_no_plan_leaves_out_the_rails_or_a_security_or_live_job() -> None:
+    """The rails and their own check (which holds every rail to one half) are in every plan,
+    with the security and live jobs."""
+    always = (catalogue.MERGE_NEEDS_JOB, catalogue.RAILS_CHECKS_JOB)
     floor = {
-        j.id
-        for j in _CAT.tier("merge")
-        if j.id == catalogue.MERGE_NEEDS_JOB or j.security == "security" or j.live
+        j.id for j in _CAT.tier("merge") if j.id in always or j.security == "security" or j.live
     }
-    assert {"rails", "python-suite", "python-suite-macos", "browse-live", "audit"} <= floor
+    assert {
+        "rails",
+        "rails-checks",
+        "python-suite",
+        "python-suite-macos",
+        "browse-live",
+        "audit",
+    } <= floor
     for path in [*MAY_SKIP_E2E, *MUST_RUN_E2E, *_OVERRIDE_ROWS]:
         assert floor <= set(_plan(path).jobs), path
 

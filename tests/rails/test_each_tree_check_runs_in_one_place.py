@@ -76,7 +76,7 @@ _STRUCTURAL_TREE = _group(_STRUCTURAL, "_src_py_files", "_src_root", "_repo_root
 
 CHECKS: Mapping[str, Check] = {
     "gate-report": Check(
-        owner="ci.yml rails: python scripts/gate_report.py",
+        owner="ci.yml rails-checks: python scripts/gate_report.py",
         entries={(_GATES, "run_all_gates"): ANY, (_GATES, "main"): ANY},
         sources=(
             _group(_CONFIG, "build_baseline"),
@@ -87,17 +87,17 @@ CHECKS: Mapping[str, Check] = {
         ),
     ),
     "inert-surface": Check(
-        owner="ci.yml rails: python scripts/gate_report.py (the inert-surface gate)",
+        owner="ci.yml rails-checks: python scripts/gate_report.py (the inert-surface gate)",
         entries={(_INERT, "build_inventory"): NO_ARGS, (_INERT, "build_baseline"): NO_ARGS},
         sources=(_INERT_TREE,),
     ),
     "docs-lint": Check(
-        owner="ci.yml rails: python scripts/gate_report.py (the docs-lint gate)",
+        owner="ci.yml rails-checks: python scripts/gate_report.py (the docs-lint gate)",
         entries={(_DOCS, "build_inventory"): NO_ARGS, (_DOCS, "build_baseline"): NO_ARGS},
         sources=(_DOCS_TREE,),
     ),
     "structural": Check(
-        owner="ci.yml rails: python scripts/gate_report.py (the three structural gates)",
+        owner="ci.yml rails-checks: python scripts/gate_report.py (the three structural gates)",
         entries={
             (_STRUCTURAL, name): NO_ARGS
             for name in (
@@ -111,7 +111,7 @@ CHECKS: Mapping[str, Check] = {
         sources=(_STRUCTURAL_TREE,),
     ),
     "asset-licences": Check(
-        owner="ci.yml rails: python scripts/check_asset_licenses.py",
+        owner="ci.yml rails-checks: python scripts/check_asset_licenses.py",
         entries={
             (_ASSETS, "violations"): NO_ARGS,
             (_ASSETS, "asset_paths"): NO_ARGS,
@@ -145,6 +145,16 @@ CHECKS: Mapping[str, Check] = {
     "harness-scanner": Check(
         owner="ci.yml rails: tests/rails/test_harness_scanner_tree.py (harness runs scan --diff)",
         entries={("harness.scanner", "scan"): ROOT},
+        sources=(),
+    ),
+    # The census's verdict: every rail in tests/rails, and in exactly one of the rails job's
+    # halves. It reads the tree it is handed, so only the root as its argument is a copy.
+    "rails-census": Check(
+        owner="ci.yml rails-checks: python -m tools.ci rails check",
+        entries={
+            ("tools.ci.rails_census", name): ROOT
+            for name in ("census", "violations", "half_violations")
+        },
         sources=(),
     ),
     "harness": Check(
@@ -286,7 +296,7 @@ KNOWN_FILE_COPIES: frozenset[tuple[str, str]] = frozenset(
         ("ci.yml browse-live", "tests/test_browse_cdp_live.py"),
         ("ci.yml browse-live", "tests/test_browse_safety_script.py"),
         ("ci.yml lint", "tests/test_website_installer.py"),
-        ("ci.yml rails", "tests/test_npm_advisory_floors.py"),
+        ("ci.yml rails-checks", "tests/test_npm_advisory_floors.py"),
         ("ci.yml security-corpus", "tests/security/test_app_data_reads_never_follow_links.py"),
         ("ci.yml security-corpus", "tests/security/test_app_installs_what_was_scanned.py"),
         ("ci.yml security-corpus", "tests/security/test_app_signature.py"),
@@ -714,6 +724,18 @@ def test_planted():
     assert cli.main(["scan"]) == 0
 """
 
+_RAILS_CENSUS = """\
+from pathlib import Path
+
+from tools.ci import rails_census
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def test_planted():
+    assert rails_census.half_violations(REPO) == []
+"""
+
 
 @pytest.mark.parametrize(
     "source, check",
@@ -724,6 +746,7 @@ def test_planted():
         (_HARNESS_SCAN, "harness"),
         (_LICENCE_SWEEP, "licence-sweep"),
         (_SCANNER, "harness-scanner"),
+        (_RAILS_CENSUS, "rails-census"),
     ],
     ids=[
         "a direct call",
@@ -732,6 +755,7 @@ def test_planted():
         "harness scan",
         "the licence sweep on the root",
         "the scanner on the tracked files",
+        "the rails census's halves on the root",
     ],
 )
 def test_a_planted_real_tree_run_is_a_copy(source, check) -> None:
@@ -786,8 +810,16 @@ def test_one_source_left_real_is_still_a_copy() -> None:
         "    assert declaration_sites(tmp_path)\n",
         "from harness import scanner\n\ndef test_planted(tmp_path):\n"
         "    assert scanner.scan([tmp_path / 'a.py'], tmp_path) == []\n",
+        "from tools.ci import rails_census\n\ndef test_planted(tmp_path):\n"
+        "    assert rails_census.half_violations(tmp_path) == []\n",
     ],
-    ids=["scan --diff", "a tree the test names", "a planted licence tree", "a scanner fixture"],
+    ids=[
+        "scan --diff",
+        "a tree the test names",
+        "a planted licence tree",
+        "a scanner fixture",
+        "a planted rails tree",
+    ],
 )
 def test_a_run_on_another_tree_is_not_a_copy(source) -> None:
     assert module_copies("tests/test_planted.py", source) == set()

@@ -12,7 +12,8 @@ A path is known only when an input other than the whole tree (:func:`whole_tree`
 an include selects it, or an exclude leaves it out by name. Neither a step nor an override
 makes a path known, so an override only ever adds and never takes a job out of a plan.
 
-Some jobs are planned whatever the diff: the rails (``catalogue.MERGE_NEEDS_JOB``), every
+Some jobs are planned whatever the diff: the rails (``catalogue.MERGE_NEEDS_JOB``) and their
+own check (``catalogue.RAILS_CHECKS_JOB``, which holds every rail to one half), every
 ``security`` job and every ``live`` one. Each job ``after`` names comes with the job that
 names it.
 
@@ -21,10 +22,12 @@ to leave out), a path no input but the whole tree names, a path that is not a pl
 the repository, a list that cannot be read, and any error inside the planner. A forgotten path
 therefore runs everything, never nothing.
 
-Every plan reports the rails floor: the median minutes of the ``rails`` job over the passing
-CI runs in a folder of telemetry history (``tools/ci/telemetry.py``), or, with ``--repo``, over
-main's newest collected CI runs (:func:`rails_floor_from_ci`); "not measured" when there is
-none, never a guessed number. The floor is a report: nothing it reads changes the jobs.
+Every plan reports the rails floor: the median, over the passing CI runs in a folder of
+telemetry history (``tools/ci/telemetry.py``), or, with ``--repo``, over main's newest collected
+CI runs (:func:`rails_floor_from_ci`), of each run's ``rails`` minutes (the slower of its two
+halves, ``rails (1)`` and ``rails (2)``, or the one job a run before the halves had; a run
+missing a half, or naming one twice, measures nothing); "not measured" when there is none,
+never a guessed number. The floor is a report: nothing it reads changes the jobs.
 
 ``--outputs`` prints the two lines ``ci.yml``'s ``changes`` job publishes, ``full=true|false``
 and ``jobs=<JSON list>``, on stdout, and the plan on stderr.
@@ -54,7 +57,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
 
-from . import catalogue, shards
+from . import catalogue, rails_census, shards
 from .catalogue import Catalogue, Job, Override
 
 #: What :func:`rails_floor` says when no passing rails run is recorded.
@@ -62,6 +65,11 @@ NOT_MEASURED: dict[str, Any] = {"minutes": None, "runs": 0}
 
 #: The workflow and job whose runs the rails floor is measured from.
 FLOOR_WORKFLOW, FLOOR_JOB = "ci.yml", catalogue.MERGE_NEEDS_JOB
+
+#: The rails job's legs as GitHub names them, one per half (``rails_census.HALVES``).
+FLOOR_LEGS: tuple[str, ...] = tuple(
+    f"{FLOOR_JOB} ({n})" for n in range(1, len(rails_census.HALVES) + 1)
+)
 
 _WILD = frozenset("*?[")
 
@@ -367,6 +375,8 @@ def _plan(
     for job in cat.tier(tier):
         if job.id == catalogue.MERGE_NEEDS_JOB:
             add(job.id, "the rails always run")
+        if job.id == catalogue.RAILS_CHECKS_JOB:
+            add(job.id, "the rails' own check always runs")
         if job.security == "security":
             add(job.id, "security posture: never selected out")
         if job.live:
@@ -386,9 +396,34 @@ def _plan(
 # ── the rails floor ──────────────────────────────────────────────────────────────────────────
 
 
+def _is_floor_job(name: object) -> bool:
+    """The rails job, or one of its halves: GitHub names a matrix leg ``rails (1)``."""
+    if not isinstance(name, str):
+        return False
+    if name == FLOOR_JOB:
+        return True
+    head, _, rest = name.partition(" (")
+    return head == FLOOR_JOB and rest.endswith(")") and rest[:-1].isdigit()
+
+
+def _run_minutes(jobs: list[Any]) -> float | None:
+    """One run's rails minutes: the slower of its rails jobs, which is when the rails ended.
+    Its rails jobs are the one ``rails`` job of a run before the halves, or exactly the halves
+    (:data:`FLOOR_LEGS`), each once: a run missing a half, naming one twice or both kinds says
+    nothing, and so does one with any rails job that is not a passing measurement."""
+    legs = [job for job in jobs if isinstance(job, dict) and _is_floor_job(job.get("name"))]
+    names = sorted(str(job["name"]) for job in legs)
+    if names != [FLOOR_JOB] and names != sorted(FLOOR_LEGS):
+        return None
+    measured = [_measured(job) for job in legs]
+    if any(m is None for m in measured):
+        return None
+    return max(m for m in measured if m is not None)
+
+
 def _measured(job: object) -> float | None:
     """A passing rails job's minutes, when they are a measurement: a finite positive number."""
-    if not isinstance(job, dict) or job.get("name") != FLOOR_JOB:
+    if not isinstance(job, dict) or not _is_floor_job(job.get("name")):
         return None
     minutes = job.get("minutes")
     if job.get("conclusion") != "success" or isinstance(minutes, bool):
@@ -403,14 +438,13 @@ FLOOR_RUNS, FLOOR_SECONDS = 3, 60.0
 
 
 def _rails_minutes(head: object) -> float | None:
-    """The passing ``rails`` job's minutes in one history file's run line, when they are a
-    measurement (:func:`_measured`)."""
+    """One history file's run line's rails minutes, when they are a measurement: the slower
+    half, or the one job a run before the halves had (:func:`_run_minutes`)."""
     if not isinstance(head, dict) or head.get("kind") != "run":
         return None
     if head.get("workflow") != FLOOR_WORKFLOW or not isinstance(head.get("jobs"), list):
         return None
-    found = [m for m in map(_measured, head["jobs"]) if m is not None]
-    return found[0] if found else None
+    return _run_minutes(head["jobs"])
 
 
 def _floor(minutes: Sequence[float]) -> dict[str, Any]:
@@ -433,7 +467,9 @@ def rails_floor(folder: Path | None) -> dict[str, Any]:
             continue
         if head.get("workflow") != FLOOR_WORKFLOW or not isinstance(head.get("jobs"), list):
             continue
-        minutes += [m for m in map(_measured, head["jobs"]) if m is not None]
+        run = _run_minutes(head["jobs"])
+        if run is not None:
+            minutes.append(run)
     return _floor(minutes)
 
 
@@ -483,7 +519,7 @@ def rails_floor_from_ci(
     """The rails floor from main's recorded CI runs: the median over the newest
     :data:`FLOOR_RUNS` completed main runs of ``ci.yml`` whose history the collector itself
     uploaded (``shards.TelemetryRecord`` checks who uploaded each archive), counting a red run
-    whose rails job passed and never a cancelled one.
+    whose rails jobs passed and never a cancelled one.
 
     ``text`` and ``binary`` are gh calls that take a ``timeout``. Each is given only what is
     left of :data:`FLOOR_SECONDS`, and none is made once they are spent, so the whole read ends

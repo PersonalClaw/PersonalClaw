@@ -26,6 +26,7 @@
 jobs = [
   "static",
   "rails",
+  "rails-checks",
   "python-suite",
   "python-suite-macos",
   "client",
@@ -69,18 +70,41 @@ id = "rails"
 tiers = ["change", "merge"]
 inputs = [":(glob)**"]
 external_inputs = []
-toolchain = ["uv-sync", "node", "npm-ci"]
+toolchain = ["uv-sync", "node"]
 cache = ["uv", "npm"]
 security = "ordinary"
 python = "3.12.15"
 reuse = "tree"
 timeout_min = 10
 workers = 4
+shards = 2
 needs_node = true
 env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
-junit = ["reports/junit-rails.xml", "reports/junit-npm-floors.xml"]
+junit = ["reports/junit-rails-{shard}.xml"]
 command = [
-  { argv = ["uv", "run", "pytest", "-n", "4", "--dist", "worksteal", "-q", "tests/rails", "--junitxml=reports/junit-rails.xml"] },
+  { argv = ["uv", "run", "pytest", "-n", "4", "--dist", "worksteal", "-q", "tests/rails", "--shard-list", "tools/ci/rails-half-{shard}.txt", "--junitxml=reports/junit-rails-{shard}.xml"] },
+]
+
+# The checks that ran beside the rails before they were halved: the census's own verdict (which
+# also holds every rail to exactly one half), the asset licences, the gate aggregate and the npm
+# advisory floors over the installed tree. Every plan holds it, as it holds the rails, whatever
+# its inputs (catalogue.RAILS_CHECKS_JOB), and a merge tier whose rails run in halves without it
+# is refused.
+[[job]]
+id = "rails-checks"
+tiers = ["change", "merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync", "node", "npm-ci"]
+cache = ["uv", "npm"]
+security = "ordinary"
+python = "3.12.15"
+reuse = "tree"
+timeout_min = 10
+needs_node = true
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-npm-floors.xml"]
+command = [
   { argv = ["uv", "run", "python", "-m", "tools.ci", "rails", "check"] },
   { argv = ["uv", "run", "python", "scripts/check_asset_licenses.py"] },
   { argv = ["uv", "run", "python", "scripts/gate_report.py"] },
