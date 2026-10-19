@@ -741,6 +741,16 @@ and to the job summary, and `--json` writes the figures:
 - **scheduled runs:** from the newest slots file, each workflow's slots that ran, with the median
   lag, and every missed or pending slot as a line of its own.
 
+`tools/ci/parity.py` (`python -m tools.ci parity --history <history-run-attempt.jsonl>`) reads
+one attempt's history, from the `telemetry-history-<run>-<attempt>` artifact, and compares the
+test node ids `test-shard` ran (its `junit-test-shard-*` reports) with those `test-macos` ran
+(`junit-test-macos-*`). A skipped case counts as run on its side, since it was collected there.
+It names every id only one side ran and exits 1 when there is one, and exits 0 when the two sets
+are equal. An id one side ran more than once is named but is no difference. It exits 2 on a file
+it can't read: missing, empty, not JSON lines, another schema or a newer version, a line over
+1 MiB or a whole over 256 MiB, or no report of one side (a push whose tree was already tested
+runs no `test-macos`). It reads only the file it is given, and no workflow runs it yet.
+
 ## Local runs
 
 `python -m tools.ci run-job <id> [--shard i/N]` runs one catalogue job here, and
