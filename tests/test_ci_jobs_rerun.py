@@ -743,12 +743,12 @@ def test_the_weekly_report_counts_a_flake_and_not_a_repeated_failure(tmp_path):
     folder = tmp_path / "history"
     folder.mkdir()
     (folder / "history-7-1.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
-    _, outcomes = report.read(folder)
-    passed = {test: o.passed_on_rerun for (_, test), o in outcomes.items() if o.first == "failed"}
+    tests = report.read(folder).tests
+    passed = {test: f.passed_on_rerun for test, f in tests.items() if f.first_failures}
     assert passed == {
-        "tests.test_flaky::test_fails_then_passes": True,
-        "tests.test_broken.TestBroken::test_fails_twice[a b]": False,
-        "tests.test_broken.TestBroken::test_fails_twice[c]": False,
+        "tests.test_flaky::test_fails_then_passes": 1,
+        "tests.test_broken.TestBroken::test_fails_twice[a b]": 0,
+        "tests.test_broken.TestBroken::test_fails_twice[c]": 0,
     }
 
 

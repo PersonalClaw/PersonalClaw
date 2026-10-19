@@ -855,7 +855,18 @@ the shard planner and the weekly report read it.
 `tools/ci/report.py` (`python -m tools.ci report --history <folder>`) reads only that schema
 and fails (exit 2) on a file in another schema or a newer version, and on a folder that does
 not exist; an empty folder is reported as no history. It prints the same table in a terminal
-and to the job summary, and `--json` writes the figures:
+and to the job summary, and `--json` writes the figures.
+
+It reads 90 days of history, about 860 files of about 49 MB each, without holding any of them:
+first every file's run line, to find the window, then the test lines of the runs inside it, one
+run at a time and one line at a time. A line over 1 MiB, or a file over 256 MiB, fails the
+report; a file outside the window is read for its run line alone. Each run's outcomes are folded
+into each test's figures before the next run is read, and a test's seconds are kept as each
+distinct value with the number of runs that took it, so the percentiles are exact and what a
+test takes grows with how many distinct seconds it records, never with its runs. The reader
+that held every record took 1.1 GB for 4 main-sized runs.
+
+The figures:
 
 - **the window:** the 90 days up to the newest run. While less than 90 days exist, it states the
   exact window it read, and `window.mature` stays false, which keeps the 90-day replay and
@@ -865,6 +876,10 @@ and to the job summary, and `--json` writes the figures:
   the test's runs, rated only from 10 runs up. Two records of one test in one attempt count once.
   A skip or an expected failure is not a run;
 - **durations:** each test's p50 and p99, the 20 slowest, and the week-over-week trend;
+- **the quarantine:** every entry of `tests/quarantine.toml` (`--quarantine` reads another list),
+  with its issue, its assignee, its expiry and the days left, soonest first. On its date an
+  entry has expired, as the suite reads it, and the report flags it. A missing list is an empty
+  quarantine; an entry not in the list's shape fails the report;
 - **scheduled runs:** from the newest slots file, each workflow's slots that ran, with the median
   lag, and every missed or pending slot as a line of its own.
 

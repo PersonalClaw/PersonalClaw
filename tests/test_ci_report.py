@@ -327,3 +327,376 @@ def test_a_slots_file_not_in_the_one_schema_fails_the_report(tmp_path: Path, mon
 def test_a_history_folder_that_does_not_exist_fails_the_report(tmp_path: Path, monkeypatch) -> None:
     code, data, text = _report(tmp_path / "not-downloaded", monkeypatch, tmp_path)
     assert code == 2 and data == {} and text == ""
+
+
+def test_a_bad_line_in_a_history_inside_the_window_fails_the_report(
+    tmp_path: Path, monkeypatch
+) -> None:
+    folder = tmp_path / "h"
+    _write(folder, 1300, 1, 0, {"t::a": ("passed", 1.0)})
+    with (folder / "history-1300-1.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write("{not json\n")
+    code, _, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 2
+
+
+def test_a_history_outside_the_window_is_read_for_its_first_line_alone(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The report reads each file's run line to find the window, and the test lines only of the
+    runs inside it, so a run past the 90 days costs one line, and its test lines are never
+    parsed."""
+    folder = tmp_path / "h"
+    _write(folder, 1400, 1, 0, {"t::a": ("passed", 1.0)})
+    with (folder / "history-1400-1.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write("{not json\n")
+    _write(folder, 1401, 1, 95, {"t::a": ("passed", 2.0)})
+    code, data, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 0
+    assert data["window"]["runs"] == 1 and _rates(data)["t::a"]["p50_seconds"] == 2.0
+
+
+def test_a_history_line_past_the_limit_fails_the_report(tmp_path: Path, monkeypatch) -> None:
+    """A history is read one line at a time, each line within ``MAX_LINE_BYTES``, so no line
+    the report reads can hold more than that in memory."""
+    folder = tmp_path / "h"
+    long = {f: None for f in telemetry.TEST_FIELDS}
+    long.update(kind="test", run_id=1500, attempt=1, test="t::" + "x" * report.MAX_LINE_BYTES)
+    long.update(first_result="passed", seconds=1.0)
+    _write(folder, 1500, 1, 0, {}, extra=[long])
+    code, _, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 2
+
+
+# ── the quarantine's status ───────────────────────────────────────────────────────────────────
+
+
+def _quarantine(path: Path, *entries: dict) -> Path:
+    lines = []
+    for entry in entries:
+        lines.append("[[entry]]")
+        for key, value in entry.items():
+            text = value.isoformat() if isinstance(value, datetime.date) else json.dumps(value)
+            lines.append(f"{key} = {text}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def _entry(nodeid: str, expires: datetime.date, **more: object) -> dict:
+    entry = {
+        "nodeid": nodeid,
+        "issue": 4000,
+        "assignee": "someone",
+        "expires": expires,
+        "reason": "fails one run in five on a slow runner",
+    }
+    entry.update(more)
+    return entry
+
+
+TODAY = datetime.date(2026, 10, 19)
+
+
+def test_the_quarantine_shows_each_entrys_issue_assignee_and_expiry_and_flags_the_expired(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """On its date an entry has expired, as ``tests/quarantine.py`` reads it."""
+    monkeypatch.setattr(report, "today", lambda: TODAY)
+    listed = _quarantine(
+        tmp_path / "quarantine.toml",
+        _entry("tests/test_b.py::test_later", datetime.date(2026, 11, 1), issue=4002),
+        _entry("tests/test_a.py::test_today", TODAY, issue=4001, assignee="other-one"),
+    )
+    (tmp_path / "h").mkdir()
+    code, data, text = _report(tmp_path / "h", monkeypatch, tmp_path, "--quarantine", str(listed))
+    assert code == 0
+    assert data["quarantine"] == [
+        {
+            "nodeid": "tests/test_a.py::test_today",
+            "issue": 4001,
+            "assignee": "other-one",
+            "expires": "2026-10-19",
+            "days_left": 0,
+            "expired": True,
+            "reason": "fails one run in five on a slow runner",
+        },
+        {
+            "nodeid": "tests/test_b.py::test_later",
+            "issue": 4002,
+            "assignee": "someone",
+            "expires": "2026-11-01",
+            "days_left": 13,
+            "expired": False,
+            "reason": "fails one run in five on a slow runner",
+        },
+    ]
+    section = text.split("### Quarantine")[1].split("###")[0]
+    assert "| `tests/test_a.py::test_today` | #4001 | @other-one | **expired 2026-10-19** |" in (
+        section
+    )
+    assert "| `tests/test_b.py::test_later` | #4002 | @someone | 2026-11-01, 13 days left |" in (
+        section
+    )
+
+
+@pytest.mark.parametrize("contents", [None, "# nothing listed\n"], ids=["missing", "empty"])
+def test_an_empty_quarantine_says_so(tmp_path: Path, monkeypatch, contents: str | None) -> None:
+    listed = tmp_path / "quarantine.toml"
+    if contents is not None:
+        listed.write_text(contents, encoding="utf-8")
+    (tmp_path / "h").mkdir()
+    code, data, text = _report(tmp_path / "h", monkeypatch, tmp_path, "--quarantine", str(listed))
+    assert code == 0 and data["quarantine"] == []
+    assert "The quarantine is empty." in text
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {k: v for k, v in _entry("tests/test_a.py::t", TODAY).items() if k != "assignee"},
+        _entry("tests/test_a.py::t", TODAY, owner="someone"),
+        _entry("tests/test_a.py::t", TODAY, issue="4000"),
+        _entry("tests/test_a.py::t", TODAY, issue=True),
+        _entry("tests/test_a.py::t", datetime.datetime(2026, 10, 19, 9, 0)),
+        _entry("tests/test_a.py::t", "2026-10-19"),
+    ],
+    ids=[
+        "no-assignee",
+        "an-unknown-field",
+        "an-issue-as-text",
+        "an-issue-as-a-bool",
+        "a-time",
+        "a-date-as-text",
+    ],
+)
+def test_a_quarantine_entry_not_in_its_shape_fails_the_report(
+    tmp_path: Path, monkeypatch, entry: dict
+) -> None:
+    """The status read from an entry the report does not understand would be a guess."""
+    listed = _quarantine(tmp_path / "quarantine.toml", entry)
+    (tmp_path / "h").mkdir()
+    code, _, _ = _report(tmp_path / "h", monkeypatch, tmp_path, "--quarantine", str(listed))
+    assert code == 2
+
+
+def test_the_report_reads_the_quarantine_this_repository_keeps(tmp_path: Path, monkeypatch) -> None:
+    import quarantine
+
+    assert report.QUARANTINE_FIELDS == quarantine.FIELDS
+    assert report.QUARANTINE == Path(__file__).resolve().parents[1] / quarantine.LIST
+    (tmp_path / "h").mkdir()
+    code, data, _ = _report(tmp_path / "h", monkeypatch, tmp_path)
+    assert code == 0 and len(data["quarantine"]) == len(quarantine.read(Path.cwd())[0])
+
+
+# ── at 90 days' scale: the same figures, read file by file ───────────────────────────────────
+
+
+def _reference(folder: Path) -> dict:
+    """The figures as the report computed them when it held every record in memory, kept here
+    as the oracle the streaming reader must agree with, figure for figure."""
+    import math
+    import statistics
+
+    def at(value: str) -> datetime.datetime:
+        return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+    def percentile(values: list[float], q: float) -> float:
+        ordered = sorted(values)
+        k = (len(ordered) - 1) * q
+        low = math.floor(k)
+        high = min(low + 1, len(ordered) - 1)
+        return ordered[low] + (ordered[high] - ordered[low]) * (k - low)
+
+    runs: dict[int, list] = {}
+    records = []
+    for path in sorted(folder.rglob("history-*.jsonl")):
+        lines = [json.loads(x) for x in path.read_text("utf-8").splitlines() if x.strip()]
+        head = lines[0]
+        run_id, attempt, created = int(head["run_id"]), int(head["attempt"]), at(head["created_at"])
+        known = runs.get(run_id)
+        if known is None or created < known[0]:
+            runs[run_id] = [created, known[1] if known else set()]
+        records += [(run_id, attempt, line) for line in lines[1:]]
+    outcomes: dict[tuple[int, str], list] = {}
+    for run_id, attempt, record in sorted(records, key=lambda r: (r[0], r[1])):
+        test, result = str(record["test"]), str(record["first_result"])
+        runs[run_id][1].add(test)
+        seconds = float(record.get("seconds") or 0.0)
+        found = outcomes.get((run_id, test))
+        if found is None:
+            found = outcomes[(run_id, test)] = [attempt, result, seconds, runs[run_id][0], False]
+        elif found[0] == attempt:
+            if result in report.FAILED and found[1] not in report.FAILED:
+                found[1], found[2] = result, seconds
+            continue
+        elif found[1] in report.FAILED and result == "passed":
+            found[4] = True
+            continue
+        if found[1] in report.FAILED and record.get("rerun_result") == telemetry.FLAKE:
+            found[4] = True
+    newest = max(r[0] for r in runs.values())
+    oldest = min(r[0] for r in runs.values())
+    mature = (newest - oldest) >= datetime.timedelta(days=report.WINDOW_DAYS)
+    kept = {i: r for i, r in runs.items() if r[0] >= newest - datetime.timedelta(days=90)}
+    first = min(r[0] for r in kept.values())
+    window = {
+        "runs": len(kept),
+        "days": report.WINDOW_DAYS if mature else (newest - first).days,
+        "first": first.isoformat(),
+        "last": newest.isoformat(),
+        "mature": mature,
+    }
+    by_test: dict[str, list] = {}
+    for (run_id, test), outcome in outcomes.items():
+        if run_id in kept:
+            by_test.setdefault(test, []).append(outcome)
+    week, before = newest - datetime.timedelta(days=7), newest - datetime.timedelta(days=14)
+    rows = []
+    for test, seen in sorted(by_test.items()):
+        ran = [o for o in seen if o[1] in report.RAN]
+        seconds = [o[2] for o in ran]
+        this_week = [o[2] for o in ran if o[3] > week]
+        last_week = [o[2] for o in ran if before < o[3] <= week]
+        trend = None
+        if this_week and last_week and statistics.median(last_week) > 0:
+            trend = statistics.median(this_week) / statistics.median(last_week) - 1
+        reruns = sum(o[1] in report.FAILED and o[4] for o in ran)
+        rows.append(
+            {
+                "test": test,
+                "runs": len(ran),
+                "first_passes": sum(o[1] == "passed" for o in ran),
+                "first_failures": sum(o[1] in report.FAILED for o in ran),
+                "passed_on_rerun": reruns,
+                "flake_rate": reruns / len(ran) if len(ran) >= report.MIN_RUNS else None,
+                "p50_seconds": percentile(seconds, 0.5) if seconds else None,
+                "p99_seconds": percentile(seconds, 0.99) if seconds else None,
+                "trend": trend,
+            }
+        )
+    timed = [r for r in rows if r["p50_seconds"] is not None]
+    slowest = sorted(timed, key=lambda r: (-r["p50_seconds"], r["test"]))[: report.SLOWEST]
+    latest = max(kept.items(), key=lambda item: (item[1][0], item[0]))[1]
+    return {"window": window, "tests": rows, "slowest": slowest, "suite_size": len(latest[1])}
+
+
+#: Seconds as junit writes them, to the millisecond, a few repeating so medians fall on ties.
+_SECONDS = (0.0, 0.001, 0.002, 0.25, 0.5, 1.0, 1.5, 2.125, 7.0, 31.416)
+_RESULTS = ("passed",) * 6 + ("failed", "error", "skipped", "xfailed")
+
+
+def _random_history(folder: Path, seed: int) -> None:
+    """Runs over 120 days (some past the window), up to three attempts each, a run's attempt
+    split across two folders now and then, records repeated within an attempt, reruns that
+    passed or failed again, and ``rerun_result`` words on the failures."""
+    import random
+
+    rng = random.Random(seed)
+    tests = [f"tests.test_{i % 4}::test_{i}" for i in range(14)]
+    for n in range(rng.randint(12, 40)):
+        run_id, day = 7000 + n, rng.randint(0, 120)
+        for attempt in range(1, rng.randint(1, 3) + 1):
+            extra = []
+            for test in rng.sample(tests, rng.randint(1, len(tests))):
+                for _ in range(rng.choice((1, 1, 1, 2))):
+                    result = rng.choice(_RESULTS)
+                    line = {f: None for f in telemetry.TEST_FIELDS}
+                    line.update(
+                        kind="test",
+                        run_id=run_id,
+                        attempt=attempt,
+                        test=test,
+                        seconds=rng.choice(_SECONDS),
+                        first_result=result,
+                        report=rng.choice(("junit-test-shard-1", "junit-test-macos-1")),
+                    )
+                    if result in report.FAILED and rng.random() < 0.4:
+                        line["rerun_result"] = rng.choice(sorted(telemetry.RERUN_RESULTS))
+                    extra.append(line)
+            where = folder / rng.choice(("a", "b")) if rng.random() < 0.3 else folder
+            later = rng.choice((0, 0, 0, 1))  # an attempt's file may say its run began later
+            _write(where, run_id, attempt, day + later, {}, extra=extra)
+
+
+@pytest.mark.parametrize("seed", range(25))
+def test_the_streaming_reader_gives_the_figures_the_in_memory_one_did(
+    tmp_path: Path, seed: int
+) -> None:
+    folder = tmp_path / "h"
+    _random_history(folder, seed)
+    data = report.figures(report.read(folder), [], [])
+    expected = _reference(folder)
+    assert {k: data[k] for k in expected} == expected
+
+
+#: A real main history's 53,999 tests by how long each took, at 1 in 100: (seconds, tests).
+_SPREAD = ((0.005, 1), (0.05, 388), (0.4, 138), (2.5, 10), (20.0, 3))
+#: A real main run's tests, and the histories 90 days hold (docs/maintainers/ci.md).
+MAIN_RUN_TESTS = 54_000
+RUNS_IN_90_DAYS = 860
+
+
+def _synthetic_window(folder: Path, runs: int) -> int:
+    """``runs`` runs 2.5 hours apart, as 90 days of main runs come, of tests spread as a main
+    run's are, each run's seconds its test's times a factor in [0.8, 1.25], to the millisecond.
+    Returns how many tests a run holds."""
+    import random
+
+    folder.mkdir(parents=True)
+    bases = [seconds for seconds, count in _SPREAD for _ in range(count)]
+    for n in range(runs):
+        rng = random.Random(n)
+        created = (DAY0 + datetime.timedelta(hours=2.5 * n)).isoformat().replace("+00:00", "Z")
+        head = {f: None for f in telemetry.RUN_FIELDS}
+        head.update(kind="run", schema=telemetry.SCHEMA, version=telemetry.VERSION, run_id=n)
+        head.update(attempt=1, created_at=created, jobs=[])
+        with (folder / f"history-{n}-1.jsonl").open("w", encoding="utf-8") as fh:
+            fh.write(json.dumps(head) + "\n")
+            for t, base in enumerate(bases):
+                line = {f: None for f in telemetry.TEST_FIELDS}
+                line.update(kind="test", run_id=n, attempt=1, report="junit-test-shard-1")
+                line.update(test=f"tests.test_m{t % 50}::test_{t}", first_result="passed")
+                line.update(seconds=round(base * rng.uniform(0.8, 1.25), 3))
+                fh.write(json.dumps(line) + "\n")
+    return len(bases)
+
+
+def _peak(read, folder: Path) -> int:
+    import gc
+    import tracemalloc
+
+    gc.collect()
+    tracemalloc.start()
+    try:
+        read(folder)
+        return tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+
+def _per_run(read, windows: dict[int, Path]) -> tuple[list[int], list[float]]:
+    """The reader's peak on each window, and what each added run cost between two windows."""
+    sizes = sorted(windows)
+    peaks = [_peak(read, windows[runs]) for runs in sizes]
+    steps = zip(peaks, peaks[1:], sizes, sizes[1:], strict=False)
+    return peaks, [(b - a) / (m - n) for a, b, n, m in steps]
+
+
+def test_what_each_added_run_costs_the_reader_falls_off_and_90_days_stay_under_512_mb(
+    tmp_path: Path,
+) -> None:
+    """A test's seconds take as many values as it has distinct milliseconds, which stop growing
+    once its runs have covered its spread, so each added run costs less than the one before it.
+    The projection to 90 days is an upper bound: every run after the largest window is charged
+    what the last runs cost, and the whole peak (the history's run list too) grows with the tests.
+    The reading that held every record pays the same for every run, so this would catch it."""
+    sizes = (16, 32, 64, 128, 256)
+    windows = {runs: tmp_path / str(runs) for runs in sizes}
+    tests = {_synthetic_window(folder, runs) for runs, folder in windows.items()}.pop()
+    peaks, per_run = _per_run(report.read, windows)
+    assert per_run[-1] < per_run[0] / 2, f"bytes per added run: {per_run}"
+    projected = (peaks[-1] + per_run[-1] * (RUNS_IN_90_DAYS - sizes[-1])) * MAIN_RUN_TESTS / tests
+    assert projected < 512 * 1024 * 1024, f"{projected / 2**20:.0f} MiB at 90 days"
+    _, held = _per_run(_reference, {runs: windows[runs] for runs in sizes[:3]})
+    assert held[-1] > 0.9 * held[0], f"the oracle's bytes per added run fell off: {held}"
