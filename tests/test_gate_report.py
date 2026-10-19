@@ -26,13 +26,8 @@ import pytest
 from scripts import generate_config_baseline as config_gen
 from scripts import generate_docs_lint_baseline as docs_gen
 from scripts import generate_inert_surface_baseline as inert_gen
+from scripts import generate_structural_baseline as structural_gen
 from scripts.gate_report import GateResult, main, render_report, run_all_gates
-
-#: For a test that runs every gate on the real tree. One of them is the inert-surface census,
-#: which its own tests are allowed 300 s for (tests/test_inert_surface_baseline.py). Under
-#: coverage on the slower CI runners such a test was stopped at the suite's 120 s (2026-10-14) and
-#: took 194 s (2026-10-15).
-_EVERY_REAL_GATE = pytest.mark.timeout(300)
 
 # The three drift/inert gates this module seeds failures for.
 _GATE_NAMES = ["config-baseline", "inert-surface", "docs-lint"]
@@ -104,12 +99,74 @@ def _seed_docs_drift(monkeypatch, tmp_path: Path) -> None:
     )
 
 
-def test_three_independent_failures_all_surface_in_one_run(monkeypatch, tmp_path):
+#: A structural baseline every ratchet's real comparison reads as clean.
+_STRUCTURAL_CLEAN = {
+    structural_gen.RATCHET_SIZE: {
+        "ceiling_lines": 1000,
+        "watch_band_lines": 800,
+        "watch_band_members": [],
+        "over_ceiling": {},
+    },
+    structural_gen.RATCHET_IMPORT_DIRECTION: {"per_file": {}},
+    structural_gen.RATCHET_DUPLICATION: {"per_file": {}},
+}
+
+
+@pytest.fixture
+def gates(monkeypatch, tmp_path):
+    """Every one of the six gates on stubs that pass: a committed baseline and a fresh render or
+    inventory of the test's own, so no gate reads the real tree. The rails job runs the gates on
+    the real tree once (``scripts/gate_report.py``); these tests prove how the aggregate reports
+    them. A seed or a raise a test adds replaces one stub; the real comparisons do the rest."""
+    # A render of the stub's own, so ``_seed_config_drift``'s committed ``[]`` differs from it.
+    render = '[{"path": "stub.field"}]\n'
+    config = tmp_path / "config-baseline.json"
+    config.write_text(render, encoding="utf-8")
+    monkeypatch.setattr(config_gen, "baseline_path", lambda: config)
+    monkeypatch.setattr(config_gen, "build_baseline", lambda: render)
+    empty = _write_json(tmp_path / "empty-baseline.json", {"per_file": {}})
+    monkeypatch.setattr(inert_gen, "baseline_path", lambda: empty)
+    monkeypatch.setattr(inert_gen, "build_inventory", lambda: {"per_file": {}})
+    monkeypatch.setattr(docs_gen, "baseline_path", lambda: empty)
+    monkeypatch.setattr(docs_gen, "build_inventory", lambda: {"per_file": {}})
+    structural = _write_json(tmp_path / "structural-baseline.json", _STRUCTURAL_CLEAN)
+    monkeypatch.setattr(structural_gen, "baseline_path", lambda: structural)
+    monkeypatch.setattr(
+        structural_gen, "build_inventory", lambda: json.loads(json.dumps(_STRUCTURAL_CLEAN))
+    )
+    monkeypatch.setattr(structural_gen, "vacuity_failures", lambda ratchet=None: [])
+
+
+def _seed_structural(monkeypatch, ratchet: str) -> None:
+    """Make one structural ratchet fail by its REAL comparison: the current inventory gains one
+    band entrant, one upward edge or one re-derivation over the clean committed baseline."""
+    current = json.loads(json.dumps(_STRUCTURAL_CLEAN))
+    if ratchet == structural_gen.RATCHET_SIZE:
+        current[ratchet]["watch_band_members"] = ["src/personalclaw/synthetic_giant.py"]
+    elif ratchet == structural_gen.RATCHET_IMPORT_DIRECTION:
+        current[ratchet]["per_file"] = {
+            "src/personalclaw/synthetic_edge.py": {"edges": 1, "violations": ["up:synthetic"]}
+        }
+    else:
+        current[ratchet]["per_file"] = {
+            "src/personalclaw/synthetic_copy.py": {"count": 1, "sites": ["synthetic:site"]}
+        }
+    before = structural_gen.build_inventory
+
+    def seeded():
+        inventory = before()
+        inventory[ratchet] = current[ratchet]
+        return inventory
+
+    monkeypatch.setattr(structural_gen, "build_inventory", seeded)
+
+
+def test_three_independent_failures_all_surface_in_one_run(gates, monkeypatch, tmp_path):
     """The core property: a tree with three independent failures reports all three in one run.
 
     Each gate is seeded to fail independently; ``run_all_gates()`` must return all three as
     ``ok=False`` in a single call — none masked by another's failure — and the aggregate
-    counts three failed gates."""
+    counts three failed gates, while the three it did not seed pass."""
     _seed_config_drift(monkeypatch, tmp_path)
     _seed_inert_drift(monkeypatch, tmp_path)
     _seed_docs_drift(monkeypatch, tmp_path)
@@ -125,45 +182,69 @@ def test_three_independent_failures_all_surface_in_one_run(monkeypatch, tmp_path
     assert "config-baseline.json is stale" in by_name["config-baseline"].failures[0]
     assert any("synthetic.py" in line for line in by_name["inert-surface"].failures)
     assert any("synthetic.md" in line for line in by_name["docs-lint"].failures)
+    assert all(by_name[n].ok for n in structural_gen.RATCHETS), results
 
     assert main() == 1
 
 
-def test_a_raising_gate_is_captured_and_does_not_stop_the_others(monkeypatch):
-    """A gate that RAISES is reported as a failure, and every OTHER gate still runs — the
-    non-short-circuit guarantee, proven in BOTH directions by raising the MIDDLE gate.
+def test_all_six_gates_fail_at_once_and_each_is_reported(gates, monkeypatch, tmp_path, capsys):
+    """No gate masks another: all six seeded at once, all six FAIL in one run and one table."""
+    _seed_config_drift(monkeypatch, tmp_path)
+    _seed_inert_drift(monkeypatch, tmp_path)
+    _seed_docs_drift(monkeypatch, tmp_path)
+    for ratchet in structural_gen.RATCHETS:
+        _seed_structural(monkeypatch, ratchet)
 
-    On a clean tree (Step 4 guarantees the committed baselines are current) the two
-    unpatched gates pass; the assertions below only require that they RAN (present, and their
-    failures, if any, are not the raise-capture text) so the proof does not depend on tree
-    cleanliness."""
+    results = run_all_gates()
 
-    def boom():
+    assert [r.name for r in results] == _ALL_GATE_NAMES
+    assert all(not r.ok and r.failures for r in results), results
+    assert not any("raised" in line for r in results for line in r.failures), results
+    assert main() == 1
+    assert "SUMMARY: 6 of 6 gate(s) FAILED" in capsys.readouterr().out
+
+
+#: How each gate is made to raise: the call its body makes first, replaced by one that raises.
+_RAISERS = {
+    "config-baseline": lambda mp, boom: mp.setattr(config_gen, "build_baseline", boom),
+    "inert-surface": lambda mp, boom: mp.setattr(inert_gen, "build_inventory", boom),
+    "docs-lint": lambda mp, boom: mp.setattr(docs_gen, "build_inventory", boom),
+    **{
+        ratchet: (
+            lambda mp, boom, ratchet=ratchet: mp.setattr(
+                structural_gen,
+                "vacuity_failures",
+                lambda r=None: boom() if r == ratchet else [],
+            )
+        )
+        for ratchet in structural_gen.RATCHETS
+    },
+}
+
+
+@pytest.mark.parametrize("raiser", _ALL_GATE_NAMES)
+def test_a_raising_gate_is_captured_and_does_not_stop_the_others(gates, monkeypatch, raiser):
+    """A gate that RAISES is reported as a failure, and every OTHER gate still runs and passes —
+    the non-short-circuit guarantee, for each of the six gates in turn."""
+
+    def boom(*_args):
         raise RuntimeError("synthetic gate explosion")
 
-    monkeypatch.setattr(inert_gen, "build_inventory", boom)
+    _RAISERS[raiser](monkeypatch, boom)
 
     results = run_all_gates()
     by_name = {r.name: r for r in results}
 
-    # The raiser (middle gate) is captured as a FAIL carrying the exception text.
-    assert by_name["inert-surface"].ok is False
-    assert any("raised RuntimeError" in line for line in by_name["inert-surface"].failures)
-
-    # The gate BEFORE it and the gate AFTER it both still ran (present, and not the raiser).
-    assert by_name["config-baseline"].name == "config-baseline"
-    assert by_name["docs-lint"].name == "docs-lint"
-    for name in _ALL_GATE_NAMES:
-        if name == "inert-surface":
-            continue
-        assert not any("raised" in line for line in by_name[name].failures), by_name[name]
     assert [r.name for r in results] == _ALL_GATE_NAMES
+    assert by_name[raiser].ok is False
+    assert by_name[raiser].failures == ["gate raised RuntimeError: synthetic gate explosion"]
+    for name in _ALL_GATE_NAMES:
+        if name != raiser:
+            assert by_name[name].ok, by_name[name]
 
 
-@_EVERY_REAL_GATE
-def test_all_gates_pass_on_a_clean_tree(capsys):
-    """On the real (clean) tree every gate passes, ``main()`` exits 0, and the table shows one
-    PASS row per registered gate."""
+def test_an_all_pass_run_exits_0_with_every_gate_pass(gates, capsys):
+    """Every gate passes: ``main()`` exits 0, and the table shows one PASS row per gate."""
     assert main() == 0
     out = capsys.readouterr().out
     assert out.count("PASS") == len(_ALL_GATE_NAMES)
@@ -198,20 +279,20 @@ def test_report_renders_every_failure_in_one_table():
     assert "SUMMARY: 3 of 3 gate(s) FAILED, 3 failure(s) total." in report
 
 
-@_EVERY_REAL_GATE
-def test_report_is_deterministic():
+def test_report_is_deterministic(gates, monkeypatch, tmp_path):
     """Same results in → byte-identical report out (fixed columns, pre-sorted lines, no
-    timestamps or absolute paths)."""
-    results = run_all_gates()
-    assert render_report(results) == render_report(results)
+    timestamps or absolute paths), a failing run's included."""
+    _seed_inert_drift(monkeypatch, tmp_path)
+    assert render_report(run_all_gates()) == render_report(run_all_gates())
 
 
-@_EVERY_REAL_GATE
-def test_gateresult_ok_matches_emptiness_of_failures():
+def test_gateresult_ok_matches_emptiness_of_failures(gates, monkeypatch, tmp_path):
     """The one normalized shape: a passing gate carries no failures; a failing gate carries
     at least one. run_all_gates() always returns exactly the registered gates, in order."""
+    _seed_docs_drift(monkeypatch, tmp_path)
     results = run_all_gates()
     assert [r.name for r in results] == _ALL_GATE_NAMES
+    assert any(not r.ok for r in results) and any(r.ok for r in results)
     for r in results:
         assert isinstance(r, GateResult)
         assert r.ok == (not r.failures), r

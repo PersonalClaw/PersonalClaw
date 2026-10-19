@@ -93,11 +93,6 @@ cap = 300
 reason = "the real eval matrix, a spawned child per cell, against a local endpoint"
 
 [[mark]]
-site = "tests/test_gate_report.py::_EVERY_REAL_GATE"
-cap = 300
-reason = "runs every gate on the real tree, the inert-surface census among them: stopped at the default and took 194 s under coverage on CI (2026-10-14/15)"
-
-[[mark]]
 site = "tests/test_inert_surface_baseline.py::test_no_per_file_counter_rose_vs_committed_baseline"
 cap = 300
 reason = "builds the inert-surface census of the whole tree"
@@ -181,11 +176,6 @@ reason = "a mark built as data, to prove the workflow family's hook keeps an exp
 site = "tests/test_sdist_bundles_spa.py::test_a_wheel_rebuilt_from_the_sdist_carries_the_whole_dashboard"
 cap = 180
 reason = "builds an sdist with the real build backend, then a wheel from it"
-
-[[mark]]
-site = "tests/test_structural_baseline.py::test_three_simultaneous_structural_violations_report_as_three"
-cap = 300
-reason = "runs every gate on the real tree, the inert-surface census among them: stopped at the default under coverage on CI (2026-10-14)"
 
 [[mark]]
 site = "tests/test_verify_wheel_contract.py::test_the_inspection_passes_a_real_distribution_and_fails_a_broken_one"

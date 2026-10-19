@@ -6,7 +6,7 @@ call is written, keyed by its file and the scope it sits in.
 
 - a decorator on a test (``tests/test_x.py::test_y``, or ``::TestClass.test_y`` in a class);
 - a module's ``pytestmark`` (``::pytestmark``), or a module-level name a decorator reuses
-  (``::_EVERY_REAL_GATE``);
+  (``::_SHARED``);
 - a conftest hook's ``add_marker(pytest.mark.timeout(...))`` (``::pytest_collection_modifyitems``),
   which caps a whole family at once;
 - a mark built inside a test as data (``::test_...``).

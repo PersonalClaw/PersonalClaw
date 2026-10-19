@@ -256,44 +256,61 @@ def test_forbidden_to_raise_doc_line_is_present():
 # ── Reporting through the aggregate ──────────────────────────────────────────
 
 
-# Every gate runs on the real tree here, the inert-surface census among them, which its own tests
-# are allowed 300 s for: under coverage on the slower CI runners (2026-10-14) this was stopped at
-# the suite's 120 s.
-@pytest.mark.timeout(300)
-def test_three_simultaneous_structural_violations_report_as_three(monkeypatch, tmp_path):
-    """The ratchets report THROUGH the aggregate, so one red does not hide
-    four — proven, not asserted, and registration proven in the same breath (a ratchet that
-    exists only as a pytest test is invisible to ``make gates``).
-
-    Seed ONE violation per structural ratchet at the same time (a file over the ceiling, a new
-    upward import, a new re-derivation) by pointing ``baseline_path`` at a synthetic committed
-    baseline that under-counts all three. The real comparison functions do the work. All three
-    gates must come back FAIL in a SINGLE ``run_all_gates()`` call, and the rendered table must
-    carry all three.
-    """
-    current = gen.build_inventory()
-    understated = json.loads(json.dumps(current))
-
-    # 1. size: drop a member from the committed band population, so the real tree reads as
-    # having gained a giant. A NEW BAND ENTRANT is the violation shape that survives population
-    # counting — "the biggest file gained three lines" deliberately is not one any more.
-    victim_size = sorted(current[gen.RATCHET_SIZE]["watch_band_members"])[0]
-    understated[gen.RATCHET_SIZE]["watch_band_members"] = [
-        m for m in current[gen.RATCHET_SIZE]["watch_band_members"] if m != victim_size
-    ]
-    # 2. import-direction: drop one file's edges to 0 so its real edges read as a rise.
-    victim_import = sorted(current[gen.RATCHET_IMPORT_DIRECTION]["per_file"])[0]
-    understated[gen.RATCHET_IMPORT_DIRECTION]["per_file"][victim_import] = {
-        "edges": 0,
-        "violations": [],
+def _clean_structural() -> dict:
+    """A structural inventory and committed baseline in one: no file over the ceiling, no band
+    member, no upward edge, no re-derivation. Each ratchet's real comparison reads it clean."""
+    return {
+        gen.RATCHET_SIZE: {
+            "ceiling_lines": 1000,
+            "watch_band_lines": 800,
+            "watch_band_members": [],
+            "over_ceiling": {},
+        },
+        gen.RATCHET_IMPORT_DIRECTION: {"per_file": {}},
+        gen.RATCHET_DUPLICATION: {"per_file": {}},
     }
-    # 3. duplication: same shape on the duplicate counter.
-    victim_dup = sorted(current[gen.RATCHET_DUPLICATION]["per_file"])[0]
-    understated[gen.RATCHET_DUPLICATION]["per_file"][victim_dup] = {"count": 0, "sites": []}
 
-    seeded = tmp_path / "structural-baseline.json"
-    seeded.write_text(json.dumps(understated) + "\n", encoding="utf-8")
-    monkeypatch.setattr(gen, "baseline_path", lambda: seeded)
+
+def test_three_simultaneous_structural_violations_report_as_three(monkeypatch, tmp_path):
+    """The ratchets report THROUGH the aggregate, so one red does not hide the others — proven,
+    not asserted, and registration proven in the same breath (a ratchet that exists only as a
+    pytest test is invisible to ``make gates``).
+
+    ONE violation per structural ratchet at the same time (a new band entrant, a new upward
+    import, a new re-derivation) against a clean committed baseline; the real comparison
+    functions do the work. All three gates must come back FAIL in a SINGLE ``run_all_gates()``
+    call, and the rendered table must carry all three. The other three gates and the vacuity
+    check are stubbed to pass: the rails job runs every gate on the real tree once
+    (``scripts/gate_report.py``), and this test is about how the aggregate reports them.
+    """
+    from scripts import generate_config_baseline as config_gen
+    from scripts import generate_docs_lint_baseline as docs_gen
+    from scripts import generate_inert_surface_baseline as inert_gen
+
+    render = '[{"path": "stub.field"}]\n'
+    (tmp_path / "config.json").write_text(render, encoding="utf-8")
+    monkeypatch.setattr(config_gen, "baseline_path", lambda: tmp_path / "config.json")
+    monkeypatch.setattr(config_gen, "build_baseline", lambda: render)
+    (tmp_path / "empty.json").write_text('{"per_file": {}}\n', encoding="utf-8")
+    monkeypatch.setattr(inert_gen, "baseline_path", lambda: tmp_path / "empty.json")
+    monkeypatch.setattr(inert_gen, "build_inventory", lambda: {"per_file": {}})
+    monkeypatch.setattr(docs_gen, "baseline_path", lambda: tmp_path / "empty.json")
+    monkeypatch.setattr(docs_gen, "build_inventory", lambda: {"per_file": {}})
+
+    committed = tmp_path / "structural-baseline.json"
+    committed.write_text(json.dumps(_clean_structural()) + "\n", encoding="utf-8")
+    victim_size = "src/personalclaw/synthetic_giant.py"
+    victim_import = "src/personalclaw/synthetic_edge.py"
+    victim_dup = "src/personalclaw/synthetic_copy.py"
+    current = _clean_structural()
+    current[gen.RATCHET_SIZE]["watch_band_members"] = [victim_size]
+    current[gen.RATCHET_IMPORT_DIRECTION]["per_file"] = {
+        victim_import: {"edges": 1, "violations": ["up:synthetic"]}
+    }
+    current[gen.RATCHET_DUPLICATION]["per_file"] = {victim_dup: {"count": 1, "sites": ["s:1"]}}
+    monkeypatch.setattr(gen, "baseline_path", lambda: committed)
+    monkeypatch.setattr(gen, "build_inventory", lambda: json.loads(json.dumps(current)))
+    monkeypatch.setattr(gen, "vacuity_failures", lambda ratchet=None: [])
 
     results = {r.name: r for r in gate_report.run_all_gates()}
 
@@ -309,9 +326,7 @@ def test_three_simultaneous_structural_violations_report_as_three(monkeypatch, t
     assert any(victim_dup in ln for ln in results[gen.RATCHET_DUPLICATION].failures)
 
     # All three appear in the ONE rendered table — the point of reporting through the
-    # aggregate. (``main()``'s exit code on a failing gate is covered by
-    # ``tests/test_gate_report.py``; re-running the six gates here just to re-prove it would
-    # push this test toward the 120s per-test cap under load.)
+    # aggregate, with the three stubbed gates passing beside them.
     report = gate_report.render_report(list(results.values()))
     for ratchet in gen.RATCHETS:
         assert f"{ratchet} FAIL (" in report
