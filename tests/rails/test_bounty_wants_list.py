@@ -76,11 +76,13 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+import source_index
+from rails_repo import REPO
 
 from personalclaw.apps.manifest import PROVIDER_TYPES
 from personalclaw.cli_app_new import provider_type_rows, provider_types
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = REPO
 _WANTS_LIST = _REPO_ROOT / "docs" / "maintainers" / "app-bounty-wants-list.md"
 
 #: the literal bar: "≥6 `bounty` GitHub issues live (channels + providers +
@@ -196,7 +198,7 @@ def _rows(text: str) -> list[Row]:
 @pytest.fixture(scope="module")
 def wants_text() -> str:
     assert _WANTS_LIST.is_file(), f"missing {_WANTS_LIST}"
-    return _WANTS_LIST.read_text(encoding="utf-8")
+    return source_index.text(_WANTS_LIST)
 
 
 @pytest.fixture(scope="module")
@@ -426,7 +428,7 @@ def test_cited_in_tree_paths_exist(rows: list[Row]) -> None:
         "docs/guides/build-a-channel-app.md",
     ):
         assert (_REPO_ROOT / rel).is_file(), f"wants-list cites missing path {rel}"
-    text = _WANTS_LIST.read_text(encoding="utf-8")
+    text = source_index.text(_WANTS_LIST)
     for rel in (
         "src/personalclaw/cli_app_new.py",
         "src/personalclaw/testing/channel_conformance.py",

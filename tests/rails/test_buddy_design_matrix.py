@@ -44,9 +44,10 @@ from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
+import source_index
 import table_rows
+from rails_repo import REPO
 
-REPO = Path(__file__).resolve().parents[1]
 FOLDER = REPO / "docs" / "design" / "buddy"
 MATRIX_DATA = FOLDER / "interruption-matrix.json"
 MATRIX_TABLE = FOLDER / "interruption-matrix.md"
@@ -305,7 +306,7 @@ def tables(text: str) -> list[Table]:
 
 
 def load_matrix() -> dict[str, Any]:
-    return json.loads(MATRIX_DATA.read_text(encoding="utf-8"))
+    return json.loads(source_index.text(MATRIX_DATA))
 
 
 def all_cells(data: dict[str, Any]) -> dict[tuple[str, str], str]:
@@ -612,7 +613,7 @@ def comparison_problems(texts: dict[str, str]) -> list[str]:
 
 
 def _record_texts() -> dict[str, str]:
-    texts = {name: (FOLDER / name).read_text(encoding="utf-8") for name in RECORD}
+    texts = {name: source_index.text(FOLDER / name) for name in RECORD}
     texts["web/DESIGN.md"] = DESIGN.read_text(encoding="utf-8")
     return texts
 
@@ -633,7 +634,7 @@ def test_the_matrix_is_every_situation_by_every_event() -> None:
 
 
 def test_the_table_says_what_the_data_says_cell_for_cell() -> None:
-    assert table_problems(load_matrix(), MATRIX_TABLE.read_text(encoding="utf-8")) == []
+    assert table_problems(load_matrix(), source_index.text(MATRIX_TABLE)) == []
 
 
 def test_later_work_is_marked_and_no_shipping_cell_names_it() -> None:
@@ -654,8 +655,8 @@ def test_each_later_work_section_opens_with_a_line_naming_its_task() -> None:
 
 
 def test_every_named_timing_has_a_value_a_reader_and_a_reduced_motion_answer() -> None:
-    machine = STATE_MACHINE.read_text(encoding="utf-8")
-    assert timing_problems(machine, MOTION_GUIDE.read_text(encoding="utf-8")) == []
+    machine = source_index.text(STATE_MACHINE)
+    assert timing_problems(machine, source_index.text(MOTION_GUIDE)) == []
 
 
 def test_the_buddy_takes_the_agent_orbs_colour_and_names_none_of_its_own() -> None:
@@ -707,9 +708,9 @@ def _copy_of_the_record(tmp_path: Path, name: str, extra: str) -> Path:
 
 def test_each_check_reports_a_planted_defect(subtests: Any, tmp_path: Path) -> None:
     data = load_matrix()
-    table = MATRIX_TABLE.read_text(encoding="utf-8")
-    machine = STATE_MACHINE.read_text(encoding="utf-8")
-    guide = MOTION_GUIDE.read_text(encoding="utf-8")
+    table = source_index.text(MATRIX_TABLE)
+    machine = source_index.text(STATE_MACHINE)
+    guide = source_index.text(MOTION_GUIDE)
     control = f"| {data['events']['start']} | {data['cells']['compact']['start']} |"
     assert control in table, "the control's row is no longer in the table"
     planted: list[tuple[str, Callable[[], list[str]], str]] = [

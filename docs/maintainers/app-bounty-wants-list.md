@@ -23,7 +23,7 @@ A row is admitted on **one** of exactly two grounds, and the row says which:
 
 Nothing enters because it sounds nice. A row whose type is not in `PROVIDER_TYPES`
 would send a contributor to build an app core cannot install, so
-`tests/test_bounty_wants_list.py` reds if one appears.
+`tests/rails/test_bounty_wants_list.py` reds if one appears.
 
 ### Every measured gap carries its vintage
 
@@ -37,7 +37,7 @@ the population it was counted over is stamped once here:
 **Measurement population:** 64 app bundles (`*/app.json`) in `PersonalClawApps`, plus
 the four exemplar org repos — 68 manifests — measured 2026-09-07 @ f623b66.
 
-`tests/test_bounty_wants_list.py` reds if a measured-gap row has no stamp, if its date
+`tests/rails/test_bounty_wants_list.py` reds if a measured-gap row has no stamp, if its date
 or ref is malformed, or if its stamp disagrees with the population stamp above: a
 partial re-measure cannot leave half the table at one vintage and the header at
 another. What that rail **cannot** do is re-count the apps repo — core CI has no

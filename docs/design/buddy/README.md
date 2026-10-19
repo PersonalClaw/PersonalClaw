@@ -133,7 +133,7 @@ later work below.
 
 Designed here, and not part of v0.3.0: none of it can block the status MVP or Gate D. Each
 later-work section opens with a line naming its task, and the matrix test
-(`tests/test_buddy_design_matrix.py`) fails if a shipping cell names a play reaction, a drop or a
+(`tests/rails/test_buddy_design_matrix.py`) fails if a shipping cell names a play reaction, a drop or a
 quick ask.
 
 - **Play** ([#3894]): [play rules](state-machine.md#play-rules),

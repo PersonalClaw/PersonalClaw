@@ -4,7 +4,7 @@ Every situation the buddy can be in, crossed with every event that can reach it:
 20 events, 280 cells. 224 of them are outcomes and 56 are "cannot occur here", which means the
 event has no source in that situation and the state machine asserts it is never delivered there.
 [`interruption-matrix.json`](interruption-matrix.json) is the same matrix as data, and the state
-machine's tests read it. `tests/test_buddy_design_matrix.py` holds this table and the data to each
+machine's tests read it. `tests/rails/test_buddy_design_matrix.py` holds this table and the data to each
 other cell for cell, so a cell changes in both or the test fails.
 
 ## Reading it
