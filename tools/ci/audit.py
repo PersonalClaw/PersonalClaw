@@ -6,9 +6,11 @@ What is audited is what ships, read from core's locks and never from a fresh res
   the gateway image, the desktop bundle; see ``PYTHON_GRAPHS``), audited by ``pip-audit`` with
   ``--no-deps --disable-pip``, so a lock pinned to an older vulnerable release is reported even
   when a fresh resolution would be clean;
-- the npm graph is the whole root ``package-lock.json`` (``npm audit --package-lock-only``):
+- the npm graphs are the whole root ``package-lock.json`` (``npm audit --package-lock-only``):
   the web, desktop and mobile workspaces, build tools included, since they run in CI and shape
-  the artifacts.
+  the artifacts; and each image's own lock under ``deploy/docker/`` (today the gateway image's
+  agent CLIs), audited from its folder with ``--prefix``, since the image installs it with
+  ``npm ci``. See ``npm_graphs``.
 
 The apps' and the website's locks live in their own repositories, which audit them; the
 images' OS packages need a scanner of their own. Neither is read here.
@@ -75,6 +77,10 @@ FIELDS = ("file", "scope", "reference", "owner", "reason", "expires")
 SCOPES = ("pip-audit", "npm-audit")
 
 BASELINE = Path(__file__).with_name("audit-baseline.toml")
+REPO = Path(__file__).resolve().parents[2]
+#: Where an image keeps the npm lock it installs its tools from (tools/ci/supply_chain.py's
+#: run-install rule holds that each such lock is installed by `npm ci`).
+IMAGE_FOLDER = "deploy/docker"
 
 Runner = Callable[[Sequence[str]], "subprocess.CompletedProcess[str]"]
 
@@ -154,18 +160,18 @@ def pip_findings(graph: str, text: str) -> tuple[list[Finding], list[str]]:
     return findings, skipped
 
 
-def npm_findings(text: str) -> list[Finding]:
-    """The advisories in an ``npm audit --json`` report, once each.
+def npm_findings(text: str, graph: str = "npm", lock: str = "package-lock.json") -> list[Finding]:
+    """The advisories in an ``npm audit --json`` report of *lock*, once each.
 
     npm lists a package that only depends on a vulnerable one as vulnerable too; only the
     entries ``via`` names as an advisory are findings, so each advisory is counted once."""
-    doc = _json(text, "npm audit")
+    doc = _json(text, f"npm audit of {lock}")
     if not isinstance(doc, dict) or "error" in doc:
         detail = doc.get("error") if isinstance(doc, dict) else doc
-        raise ToolFailure(f"npm audit: it reported an error, not an audit ({detail})")
+        raise ToolFailure(f"npm audit of {lock}: it reported an error, not an audit ({detail})")
     vulns, meta = doc.get("vulnerabilities"), doc.get("metadata")
     if not isinstance(vulns, dict) or not isinstance(meta, dict) or "vulnerabilities" not in meta:
-        raise ToolFailure("npm audit: the report has no vulnerabilities or metadata")
+        raise ToolFailure(f"npm audit of {lock}: the report has no vulnerabilities or metadata")
     found: dict[tuple[str, str], Finding] = {}
     for name, vuln in vulns.items():
         for via in vuln.get("via") or [] if isinstance(vuln, dict) else []:
@@ -175,8 +181,8 @@ def npm_findings(text: str) -> list[Finding]:
             advisory = url.rsplit("/", 1)[-1] if url else str(via.get("source", "?"))
             package = str(via.get("name", name))
             found[(package, advisory)] = Finding(
-                "package-lock.json",
-                "npm",
+                lock,
+                graph,
                 package,
                 str(via.get("range", "?")),
                 advisory,
@@ -276,11 +282,29 @@ def audit_python(pip_audit_python: str, work: Path, run: Runner) -> tuple[list[F
     return findings, skipped
 
 
-def audit_npm(run: Runner) -> list[Finding]:
-    proc = run(["npm", "audit", "--package-lock-only", "--json"])
-    if proc.returncode not in (0, 1):
-        raise ToolFailure(f"npm audit exited {proc.returncode}: {_tail(proc)}")
-    return npm_findings(proc.stdout)
+def npm_graphs(root: Path) -> list[tuple[str, str]]:
+    """Each npm graph core ships, as (graph, lock), repository-relative: the root lock, and the
+    lock of each folder under deploy/docker/ that holds an npm manifest or lock. A folder with
+    a manifest and no lock is audited too, so the audit fails on it rather than skipping it."""
+    folders = {
+        path.parent.relative_to(root).as_posix()
+        for name in ("package.json", "package-lock.json")
+        for path in (root / IMAGE_FOLDER).glob(f"**/{name}")
+        if "node_modules" not in path.parts
+    }
+    return [("npm", "package-lock.json")] + [(f, f"{f}/package-lock.json") for f in sorted(folders)]
+
+
+def audit_npm(run: Runner, root: Path) -> list[Finding]:
+    findings: list[Finding] = []
+    for graph, lock in npm_graphs(root):
+        folder = lock.rpartition("/")[0]
+        argv = ["npm", "audit", "--package-lock-only", "--json"]
+        proc = run([*argv, "--prefix", folder] if folder else argv)
+        if proc.returncode not in (0, 1):
+            raise ToolFailure(f"npm audit of {lock} exited {proc.returncode}: {_tail(proc)}")
+        findings += npm_findings(proc.stdout, graph, lock)
+    return findings
 
 
 # ── the report ────────────────────────────────────────────────────────────────────────────────
@@ -321,7 +345,12 @@ def _publish(text: str) -> None:
             fh.write(text)
 
 
-def main(argv: Sequence[str], run: Runner = _run, today: datetime.date | None = None) -> int:
+def main(
+    argv: Sequence[str],
+    run: Runner = _run,
+    today: datetime.date | None = None,
+    root: Path = REPO,
+) -> int:
     parser = argparse.ArgumentParser(prog="python -m tools.ci audit")
     sub = parser.add_subparsers(dest="command", required=True)
     go = sub.add_parser("run", help="audit every graph core ships and judge the findings")
@@ -334,7 +363,7 @@ def main(argv: Sequence[str], run: Runner = _run, today: datetime.date | None = 
         args.work.mkdir(parents=True, exist_ok=True)
         waivers = load_waivers(args.baseline)
         python, skipped = audit_python(args.pip_audit, args.work, run)
-        verdict = judge([*python, *audit_npm(run)], waivers, day)
+        verdict = judge([*python, *audit_npm(run, root)], waivers, day)
     except (ToolFailure, OSError, tomllib.TOMLDecodeError) as err:
         print(f"::error title=the dependency audit did not run::{err}")
         _publish(f"### Dependency audit\n\n**The audit did not run:** {err}\n")

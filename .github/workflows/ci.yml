@@ -1283,12 +1283,13 @@ jobs:
   audit:
     # ── The dependency audit (#3918) ─────────────────────────────────────────────────────────
     # The graphs core ships, read from its locks: each Python graph `uv export --locked` with
-    # the extras its artifact installs, and the whole root package-lock.json, build tools
-    # included (tools/ci/audit.py). It fails on a tool that did not run, on a high or critical
-    # finding no live waiver in tools/ci/audit-baseline.toml covers, and on a waiver that is
-    # expired, too long or stale. Every other finding is listed in the job summary. Gated on
-    # tree-check like every job a tested tree skips; a new advisory on a dependency no pull
-    # request touched stops merging until it is fixed or waived, which is the point.
+    # the extras its artifact installs, the whole root package-lock.json, build tools included,
+    # and each image's own npm lock under deploy/docker/ (tools/ci/audit.py). It fails on a
+    # tool that did not run, on a high or critical finding no live waiver in
+    # tools/ci/audit-baseline.toml covers, and on a waiver that is expired, too long or stale.
+    # Every other finding is listed in the job summary. Gated on tree-check like every job a
+    # tested tree skips; a new advisory on a dependency no pull request touched stops merging
+    # until it is fixed or waived, which is the point.
     needs: [tree-check]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04

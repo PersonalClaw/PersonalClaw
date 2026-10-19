@@ -9,6 +9,7 @@ tests/rails/test_ci_contract.py's, so a row here is held the same way as a row t
 from __future__ import annotations
 
 import datetime
+import json
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ from test_ci_contract import (
     Control,
     Row,
     _plant,
+    _plants,
     _write,
     run_row,
 )
@@ -55,6 +57,33 @@ _UBUNTU_INDEX = "f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f
 _BUILDKIT_AMD64 = "3eea2ed5d1766c44eb4740853abf56ba85ad40b2c8d4a22e047cbacf15f463c8"
 _BUILDKIT_INDEX = "b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c"
 _WEB = "deploy/docker/Dockerfile.web"
+_AGENT_CLIS = "deploy/docker/agent-clis"
+_AGENT_MANIFEST = f"{_AGENT_CLIS}/package.json"
+_AGENT_LOCK = f"{_AGENT_CLIS}/package-lock.json"
+_AGENT_INSTALL = "RUN npm ci --omit=dev --no-fund --no-audit &&"
+_AGENT_COPY = f"COPY {_AGENT_MANIFEST} {_AGENT_LOCK} ./\n"
+_AGENT_SCHEDULE = "    schedule:\n      interval: weekly\n"
+_DOCKER_SMOKE = ".github/workflows/docker-single-container.yml"
+_SMOKE_PATH = (
+    "      # The agent CLIs' lock, which the image installs with npm ci.\n"
+    f"      - {_AGENT_CLIS}/**\n"
+)
+_AGENT_PINS: dict[str, str] = json.loads((REPO / _AGENT_MANIFEST).read_text(encoding="utf-8"))[
+    "dependencies"
+]
+#: A CLI the agent CLIs' lock installs, and the version it pins today, so a Dependabot bump of
+#: the lock leaves every plant below able to find what it edits.
+_CLI = "@openai/codex"
+_CLI_PIN = _AGENT_PINS[_CLI]
+_CLI_MOVED = ".".join([*_CLI_PIN.split(".")[:2], str(int(_CLI_PIN.split(".")[2]) + 1)])
+_LOCKED: dict[str, Any] = json.loads((REPO / _AGENT_LOCK).read_text(encoding="utf-8"))["packages"]
+#: A package the lock holds that the manifest does not name, and one nested under another.
+_TRANSITIVE = next(
+    k
+    for k in sorted(_LOCKED)
+    if k.count("node_modules/") == 1 and k.removeprefix("node_modules/") not in _AGENT_PINS
+)
+_NESTED = next(k for k in sorted(_LOCKED) if k.count("node_modules/") > 1)
 _NODE_INDEX = _NODE_BASE.rsplit(":", 1)[1]
 _NODE_TAG = _NODE_BASE.split("@", 1)[0]
 _PINNED_NODE_BASE = (
@@ -150,6 +179,48 @@ def _exception(reference: str, file: str = ".github/workflows/planted.yml") -> s
         f'\n[[exception]]\nfile = "{file}"\nscope = "run-install"\nreference = "{reference}"\n'
         f'owner = "maintainers"\nreason = "planted"\nexpires = {_days(30)}\n'
     )
+
+
+_WAIVED_STEP = "      - name: Install tools\n        run: pip install ruff\n"
+_WAIVED_REF = "it Install tools: install of ruff names no exact version"
+#: Each field of the planted exception, as its line reads.
+_WAIVED_FIELDS = {
+    "file": 'file = ".github/workflows/planted.yml"\n',
+    "reference": f'reference = "{_WAIVED_REF}"\n',
+    "scope": 'scope = "run-install"\n',
+    "owner": 'owner = "maintainers"\n',
+    "reason": 'reason = "planted"\n',
+    "expires": f"expires = {_days(30)}\n",
+}
+
+
+def _waived(name: str, old: str = "", new: str = "", **kw: Any) -> Control:
+    """A planted unpinned install and the exception that waives it, with *old* in the
+    exception's text edited to *new*. The policy itself holds no exception to edit."""
+    text = _exception(_WAIVED_REF)
+    if old:
+        assert old in text, f"the plant {name!r} found no {old!r} in the planted exception"
+        text = text.replace(old, new, 1)
+    return _together(name, _planted_workflow("", _WAIVED_STEP), _append("", _POLICY, text), **kw)
+
+
+def _json_set(name: str, rel: str, keys: tuple[str, ...], value: object, **kw: Any) -> Control:
+    """Set (or, with *value* None, delete) one key of *rel* read as JSON, making the tables on
+    the way, so the plant edits today's lock by its structure rather than by its text."""
+
+    def plant(root: Path) -> None:
+        data = json.loads((root / rel).read_text(encoding="utf-8"))
+        node = data
+        for key in keys[:-1]:
+            node = node.setdefault(key, {})
+        if value is None:
+            assert keys[-1] in node, f"the plant {name!r} found no {keys} in {rel}"
+            del node[keys[-1]]
+        else:
+            node[keys[-1]] = value
+        _write(root, rel, json.dumps(data, indent=2) + "\n")
+
+    return Control(name, plant, **kw)
 
 
 _LISTED_CHECKOUT = (
@@ -503,12 +574,184 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
                 "    - run: pip install requests\n      shell: bash\n",
                 expect="install of requests names no exact version",
             ),
-            _line(
-                "the agent CLIs once their exception scopes another rule",
-                _POLICY,
-                'scope = "run-install"',
-                'scope = "node-eol"',
-                expect="npm install of",
+            # The gateway image's agent CLIs come from their own lock, and only from it.
+            _plant(
+                "the agent CLIs installed at their newest again",
+                _BACKEND,
+                _AGENT_INSTALL,
+                f"RUN npm install -g --no-fund --no-audit {_CLI} &&",
+                expect=f"npm install of {_CLI} names no exact version",
+            ),
+            # No other install fetches a tool the lock installs, pinned or not, in any spelling.
+            *(
+                _append(
+                    f"a Dockerfile that installs a locked CLI outside the lock, by `{command}`",
+                    "tools/sandbox/Dockerfile",
+                    f"{_PINNED_NODE_BASE}RUN {command} {_CLI}@{_CLI_PIN}\n",
+                    expect=f"a package {_AGENT_LOCK} locks",
+                )
+                for command in ("npm install -g", "npm i -g", "npm add", "/usr/local/bin/npm i -g")
+            ),
+            *(
+                _run_step(f"{command} {_CLI}@{_CLI_PIN}", expect=f"a package {_AGENT_LOCK} locks")
+                for command in ("npm install -g", "npm i -g")
+            ),
+            # A Dockerfile stage installs the lock: it copies the pair in from the build context,
+            # and runs `npm ci` after the copy, in the same stage.
+            _plant(
+                "the agent CLIs' lock installed by no Dockerfile",
+                _BACKEND,
+                _AGENT_INSTALL,
+                "RUN true &&",
+                expect=f"{_AGENT_LOCK} is installed by no Dockerfile stage",
+            ),
+            _plant(
+                "the agent CLIs' lock copied in one stage and installed in the next",
+                _BACKEND,
+                _AGENT_INSTALL,
+                f"FROM base AS planted\n{_AGENT_INSTALL}",
+                expect=f"{_AGENT_LOCK} is installed by no Dockerfile stage",
+            ),
+            _plants(
+                "the agent CLIs' npm ci run before their lock is copied in",
+                _BACKEND,
+                (
+                    (_AGENT_COPY, f"RUN npm ci --omit=dev\n{_AGENT_COPY}"),
+                    (_AGENT_INSTALL, "RUN true &&"),
+                ),
+                expect=f"{_AGENT_LOCK} is installed by no Dockerfile stage",
+            ),
+            _plant(
+                "the agent CLIs' folder copied in whole, then npm ci, passes",
+                _BACKEND,
+                _AGENT_COPY,
+                f"COPY {_AGENT_CLIS}/ ./\n",
+                fails=False,
+            ),
+            _plant(
+                "the agent CLIs' lock copied from another stage, not the build context",
+                _BACKEND,
+                _AGENT_COPY,
+                f"COPY --from=web {_AGENT_COPY.removeprefix('COPY ')}",
+                expect=f"{_AGENT_LOCK} is installed by no Dockerfile stage",
+            ),
+            # npx in a stage runs only what that stage's own `npm ci` installed from a lock it
+            # copied in: the agent CLIs' lock is not the root one.
+            _plant(
+                "npx of a root-lock tool in the stage that installs only the agent CLIs",
+                _BACKEND,
+                "RUN groupadd --gid 10001",
+                "RUN npx vite --version\n\nRUN groupadd --gid 10001",
+                expect="npx vite runs a package that is neither pinned nor installed",
+            ),
+            _plant(
+                "npx of an agent CLI after the stage installs their lock passes",
+                _BACKEND,
+                "RUN groupadd --gid 10001",
+                "RUN npx codex --version\n\nRUN groupadd --gid 10001",
+                fails=False,
+            ),
+            # The manifest pins each tool exactly, under `dependencies` only.
+            *(
+                _json_set(
+                    f"an agent CLI pinned by the range {spec!r}",
+                    _AGENT_MANIFEST,
+                    ("dependencies", _CLI),
+                    spec,
+                    expect="not an exact X.Y.Z",
+                )
+                for spec in (f"^{_CLI_PIN}", f"{_CLI_PIN} - {_CLI_MOVED}")
+            ),
+            *(
+                _json_set(
+                    f"an image manifest that declares {field}",
+                    _AGENT_MANIFEST,
+                    (field, "left-pad"),
+                    "^1.3.0",
+                    expect=f"declares {field}",
+                )
+                for field in ("optionalDependencies", "peerDependencies", "devDependencies")
+            ),
+            _plant(
+                "an image manifest that is not JSON",
+                _AGENT_MANIFEST,
+                "{",
+                "",
+                expect="does not parse as a JSON object",
+            ),
+            _append(
+                "an image manifest that is a JSON list",
+                "deploy/docker/planted/package.json",
+                "[]\n",
+                expect="does not parse as a JSON object",
+            ),
+            # The lock was generated from the manifest: the same names at the same versions in
+            # the manifest, the lock's root and its node_modules entries.
+            _json_set(
+                "an agent CLI's pin moved without the lock",
+                _AGENT_MANIFEST,
+                ("dependencies", _CLI),
+                _CLI_MOVED,
+                expect="was not generated from its package.json",
+            ),
+            _json_set(
+                "the lock's root pinning a CLI by a range",
+                _AGENT_LOCK,
+                ("packages", "", "dependencies", _CLI),
+                f"^{_CLI_PIN}",
+                expect="was not generated from its package.json",
+            ),
+            _json_set(
+                "the lock's root naming a package the manifest does not",
+                _AGENT_LOCK,
+                ("packages", "", "dependencies", "left-pad"),
+                "1.3.0",
+                expect="was not generated from its package.json",
+            ),
+            _json_set(
+                "the lock's root declaring an optional dependency",
+                _AGENT_LOCK,
+                ("packages", "", "optionalDependencies", "left-pad"),
+                "1.3.0",
+                expect="was not generated from its package.json",
+            ),
+            _json_set(
+                "the lock installing another version of a CLI than it pins",
+                _AGENT_LOCK,
+                ("packages", f"node_modules/{_CLI}", "version"),
+                _CLI_MOVED,
+                expect="was not generated from its package.json",
+            ),
+            # Every package it locks, a direct one or one deep in the tree, comes from the npm
+            # registry under a sha512 integrity.
+            _json_set(
+                "a locked CLI with a sha1 integrity",
+                _AGENT_LOCK,
+                ("packages", f"node_modules/{_CLI}", "integrity"),
+                "sha1-" + _LOCKED[f"node_modules/{_CLI}"]["integrity"].removeprefix("sha512-"),
+                expect=f"{_AGENT_LOCK}: node_modules/{_CLI} is locked without a registry URL",
+            ),
+            _json_set(
+                "a transitive locked package with no integrity",
+                _AGENT_LOCK,
+                ("packages", _TRANSITIVE, "integrity"),
+                None,
+                expect=f"{_AGENT_LOCK}: {_TRANSITIVE} is locked without a registry URL",
+            ),
+            _json_set(
+                "a nested locked package fetched from another registry",
+                _AGENT_LOCK,
+                ("packages", _NESTED, "resolved"),
+                _LOCKED[_NESTED]["resolved"].replace(
+                    "https://registry.npmjs.org/", "https://example.com/"
+                ),
+                expect=f"{_AGENT_LOCK}: {_NESTED} is locked without a registry URL",
+            ),
+            _append(
+                "an image manifest with no lock beside it",
+                "deploy/docker/planted/package.json",
+                '{"name": "planted", "private": true, "dependencies": {"left-pad": "1.3.0"}}\n',
+                expect="has no readable package-lock.json",
             ),
             *(
                 _run_step(command, expect="names no exact version")
@@ -636,6 +879,16 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             _run_step("pip install ruff==0.15.0", fails=False),
             _run_step("pip install --require-hashes --no-deps -r requirements.txt", fails=False),
             _run_step("npm ci && npx playwright --version", fails=False),
+            # Only an `npm ci` of the root lock installs what the root lock holds.
+            _run_step(
+                "npm ci --prefix web && npx playwright --version",
+                expect="npx playwright runs a package that is neither pinned nor installed",
+            ),
+            _planted_workflow(
+                "an npm ci run from a subfolder, then npx of a root-lock tool",
+                "      - working-directory: web\n        run: npm ci && npx playwright --version\n",
+                expect="npx playwright runs a package that is neither pinned nor installed",
+            ),
             _run_step(
                 "npx playwright --version",
                 expect="neither pinned nor installed by an `npm ci` earlier in this job",
@@ -645,6 +898,19 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
                 "tools/sandbox/Dockerfile",
                 "FROM scratch\nRUN npx playwright install\n",
                 expect="npx playwright runs a package",
+            ),
+            _append(
+                "a Dockerfile stage whose npm ci installs no lock it copied in",
+                "tools/sandbox/Dockerfile",
+                "FROM scratch\nRUN npm ci && npx playwright --version\n",
+                expect="npx playwright runs a package",
+            ),
+            _append(
+                "a Dockerfile stage that copies the root lock in, then runs npm ci, passes",
+                "tools/sandbox/Dockerfile",
+                "FROM scratch\nCOPY package.json package-lock.json ./\n"
+                "RUN npm ci && npx playwright --version\n",
+                fails=False,
             ),
             _run_step("uv pip install --no-deps dist/*.whl", fails=False),
             _run_step("npm install -g typescript@5.9.3", fails=False),
@@ -977,6 +1243,100 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             ),
             _append("a Dockerfile in a folder nothing watches", "tools/sandbox/Dockerfile", "\n"),
             _plant(
+                "the agent CLIs' lock folder that no npm entry watches",
+                ".github/dependabot.yml",
+                f"    directory: /{_AGENT_CLIS}\n",
+                "    directory: /deploy/compose\n",
+                expect=f"no Dependabot npm entry watches /{_AGENT_CLIS}",
+            ),
+            _together(
+                "the agent CLIs' lock folder that only a docker entry's glob covers",
+                _plant(
+                    "",
+                    ".github/dependabot.yml",
+                    f"    directory: /{_AGENT_CLIS}\n",
+                    "    directory: /deploy/compose\n",
+                ),
+                _plant(
+                    "",
+                    ".github/dependabot.yml",
+                    "    directory: /deploy/docker\n",
+                    "    directories:\n      - /deploy/**\n",
+                ),
+                expect=f"no Dependabot npm entry watches /{_AGENT_CLIS}",
+            ),
+            # The entry that moves the lock waits out a week, and moves every tool as one.
+            _plant(
+                "the agent CLIs' npm entry with no cooldown",
+                ".github/dependabot.yml",
+                f"    directory: /{_AGENT_CLIS}\n{_AGENT_SCHEDULE}    cooldown:\n"
+                "      default-days: 7\n",
+                f"    directory: /{_AGENT_CLIS}\n{_AGENT_SCHEDULE}",
+                expect=f"/{_AGENT_CLIS} waits no cooldown of at least 7 days",
+            ),
+            _plant(
+                "the agent CLIs' npm entry with a three-day cooldown",
+                ".github/dependabot.yml",
+                f"    directory: /{_AGENT_CLIS}\n{_AGENT_SCHEDULE}    cooldown:\n"
+                "      default-days: 7\n",
+                f"    directory: /{_AGENT_CLIS}\n{_AGENT_SCHEDULE}    cooldown:\n"
+                "      default-days: 3\n",
+                expect=f"/{_AGENT_CLIS} waits no cooldown of at least 7 days",
+            ),
+            _plant(
+                "the agent CLIs' npm entry with no group",
+                ".github/dependabot.yml",
+                '    groups:\n      agent-clis:\n        patterns: ["*"]\n',
+                "",
+                expect=f"/{_AGENT_CLIS} does not move every package in one group",
+            ),
+            _plant(
+                "the agent CLIs' npm entry grouping only some packages",
+                ".github/dependabot.yml",
+                '      agent-clis:\n        patterns: ["*"]\n',
+                '      agent-clis:\n        patterns: ["@openai/*"]\n',
+                expect=f"/{_AGENT_CLIS} does not move every package in one group",
+            ),
+            # A Dependabot PR that moves the lock builds and smokes the image that installs it.
+            _plant(
+                "the image smoke not run on a pull request that moves the agent CLIs' lock",
+                _DOCKER_SMOKE,
+                f"  pull_request:\n    paths:\n      - {_BACKEND}\n{_SMOKE_PATH}",
+                f"  pull_request:\n    paths:\n      - {_BACKEND}\n",
+                expect=f"{_DOCKER_SMOKE} runs on a pull_request that changes {_BACKEND} but not "
+                f"on one that changes {_AGENT_LOCK}",
+            ),
+            _plant(
+                "the image smoke not run on a push that moves the agent CLIs' lock",
+                _DOCKER_SMOKE,
+                f"    branches: [main]\n    paths:\n      - {_BACKEND}\n{_SMOKE_PATH}",
+                f"    branches: [main]\n    paths:\n      - {_BACKEND}\n",
+                expect=f"{_DOCKER_SMOKE} runs on a push that changes {_BACKEND} but not on one "
+                f"that changes {_AGENT_LOCK}",
+            ),
+            _plant(
+                "the image smoke taking the agent CLIs' lock back out of its paths",
+                _DOCKER_SMOKE,
+                f"      - {_AGENT_CLIS}/**\n",
+                f"      - {_AGENT_CLIS}/**\n      - '!{_AGENT_LOCK}'\n",
+                expect=f"but not on one that changes {_AGENT_LOCK}",
+            ),
+            _plant(
+                "the image smoke on all of deploy/ but the agent CLIs' lock",
+                _DOCKER_SMOKE,
+                f"  pull_request:\n    paths:\n      - {_BACKEND}\n{_SMOKE_PATH}",
+                f"  pull_request:\n    paths:\n      - deploy/**\n      - '!{_AGENT_CLIS}/**'\n",
+                expect=f"{_DOCKER_SMOKE} runs on a pull_request that changes {_BACKEND} but not "
+                f"on one that changes {_AGENT_LOCK}",
+            ),
+            _plant(
+                "the image smoke listing the agent CLIs' two files passes",
+                _DOCKER_SMOKE,
+                f"      - {_AGENT_CLIS}/**\n",
+                f"      - {_AGENT_MANIFEST}\n      - {_AGENT_LOCK}\n",
+                fails=False,
+            ),
+            _plant(
                 "a base named through an ARG, which Dependabot cannot move",
                 _BACKEND,
                 "FROM mirror.gcr.io/library/" + _PYTHON + " AS base",
@@ -1141,45 +1501,45 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
         "exceptions",
         (),
         (
-            _line("an expired exception", _POLICY, "expires =", f"expires = {_days(-1)}"),
-            _line(
+            _waived(
+                "an expired exception",
+                _WAIVED_FIELDS["expires"],
+                f"expires = {_days(-1)}\n",
+                expect="expired",
+            ),
+            _waived(
                 "an exception more than 30 days out",
-                _POLICY,
-                "expires =",
-                f"expires = {_days(31)}",
+                _WAIVED_FIELDS["expires"],
+                f"expires = {_days(31)}\n",
                 expect="more than 30 days",
             ),
-            _line(
+            _waived(
                 "an exception that matches nothing",
-                _POLICY,
-                'reference = "npm install of',
-                'reference = "nothing"',
+                _WAIVED_FIELDS["reference"],
+                'reference = "nothing"\n',
                 expect="matches nothing",
             ),
             *(
-                _line(f"an exception with no {field}", _POLICY, start, expect=f"missing {field}")
-                for field, start in (
-                    ("file", 'file = "deploy/docker/Dockerfile.backend"'),
-                    ("reference", 'reference = "npm install of'),
-                    ("scope", 'scope = "run-install"'),
-                    ("owner", 'owner = "maintainers"'),
-                    ("reason", 'reason = "The gateway image'),
-                    ("expires", "expires ="),
-                )
+                _waived(f"an exception with no {field}", line, "", expect=f"missing {field}")
+                for field, line in _WAIVED_FIELDS.items()
             ),
-            _line(
+            _waived(
                 "an exception for a rule no exception may waive",
-                _POLICY,
-                'scope = "run-install"',
-                'scope = "least-privilege"',
+                _WAIVED_FIELDS["scope"],
+                'scope = "least-privilege"\n',
                 expect="not a rule an exception may waive",
             ),
-            _line(
+            _waived(
                 "an exception with an unknown field",
-                _POLICY,
-                'owner = "maintainers"',
-                'owner = "maintainers"\nticket = "x"',
+                _WAIVED_FIELDS["owner"],
+                'owner = "maintainers"\nticket = "x"\n',
                 expect="unknown field ticket",
+            ),
+            _waived(
+                "an exception that waives the install under another rule",
+                _WAIVED_FIELDS["scope"],
+                'scope = "node-eol"\n',
+                expect="install of ruff names no exact version",
             ),
             _together(
                 "an exception for one install leaves a second in the same step failing",
@@ -1229,27 +1589,19 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
                 ),
                 fails=False,
             ),
-            _line(
+            _waived(
                 "an exception whose owner is an empty list",
-                _POLICY,
-                'owner = "maintainers"',
-                "owner = []",
+                _WAIVED_FIELDS["owner"],
+                "owner = []\n",
                 expect="missing owner",
             ),
-            _line(
+            _waived(
                 "an exception whose reason is false",
-                _POLICY,
-                'reason = "The gateway image',
-                "reason = false",
+                _WAIVED_FIELDS["reason"],
+                "reason = false\n",
                 expect="missing reason",
             ),
-            _line(
-                "an exception renewed exactly 30 days out passes",
-                _POLICY,
-                "expires =",
-                f"expires = {_days(30)}",
-                fails=False,
-            ),
+            _waived("an exception renewed exactly 30 days out passes", fails=False),
         ),
     ),
     _supply_row(

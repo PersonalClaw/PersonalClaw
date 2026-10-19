@@ -7,8 +7,12 @@ hold to.
 
 from __future__ import annotations
 
+import re
+
 import yaml
 from docker_single_container_shared import _REPO
+
+from tools import docker_single_container_smoke as smoke
 
 _WORKFLOW = _REPO / ".github" / "workflows" / "docker-single-container.yml"
 
@@ -129,6 +133,24 @@ def test_main_runs_both_steps_after_the_dashboard_ones() -> None:
         for node in sorted(ast.walk(main), key=lambda n: (getattr(n, "lineno", 0), 0))
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     ]
-    for step in ("_assert_installed_record", "_assert_download_offer"):
+    for step in (
+        "_assert_installed_record",
+        "_assert_download_offer",
+        "_assert_login_shell_finds_the_agent_clis",
+    ):
         assert step in order, f"main() never runs {step}: {order}"
         assert order.index("_assert_asset") < order.index(step)
+
+
+def test_the_image_links_each_command_its_agent_cli_lock_provides() -> None:
+    """The image links the agent CLIs' commands into /usr/local/bin by name. A Dependabot bump
+    that renames or adds a command moves only the lock, so the link list is held to the commands
+    the lock's own tools declare, and a link whose target is missing fails the build: a
+    dangling one would leave the gateway fetching the newest release with npx at runtime."""
+    dockerfile = (_REPO / "deploy/docker/Dockerfile.backend").read_text(encoding="utf-8")
+    loop = re.search(r"for command in ([^;]*); do(.*?)done", dockerfile, re.S)
+    assert loop, "the image no longer links the agent CLIs' commands"
+    lock = (_REPO / smoke.AGENT_CLIS_LOCK).read_text(encoding="utf-8")
+    assert sorted(loop.group(1).split()) == smoke.agent_commands(lock)
+    body = " ".join(loop.group(2).replace("\\\n", " ").split())
+    assert 'test -x /usr/local/bin/"$command" || exit 1' in body, body

@@ -20,7 +20,11 @@ That is the exact failure this file exists to catch, and why it asserts an asset
   7. a LOGIN shell in the container finds `personalclaw` on PATH, the image's own. The
      dashboard's terminal is a login shell, and a login shell's `/etc/profile` resets PATH
      without the image's environment, so `personalclaw` was "not found" in the terminal while
-     every `docker exec` found it.
+     every `docker exec` found it;
+  8. the same login shell finds each agent CLI the image bundles, at the link the image made in
+     `/usr/local/bin`. A command that does not resolve is not an error the gateway shows: it
+     fetches the newest release with `npx` when it starts that agent, so the pinned lock the
+     image installed would be bypassed without a sign.
 
 **Steps 5 and 6 are the 2026-09-25 release blocker.** The record was a symlink into `docs/`,
 the image copies only `src/`, so the image installed no record: every response 200, no
@@ -98,6 +102,8 @@ _REDACTED = "<redacted>"
 _BUNDLED_MODEL_PROBE = (
     Path(__file__).resolve().parents[1] / "scripts" / "installed_bundled_model_probe.py"
 )
+#: The lock the image installs its agent CLIs from, repository-relative (step 8).
+AGENT_CLIS_LOCK = "deploy/docker/agent-clis/package-lock.json"
 
 
 class Unmeasurable(Exception):
@@ -510,6 +516,34 @@ def _assert_login_shell_finds_personalclaw(name: str) -> None:
     _log(f"OK: a login shell in the container resolves personalclaw to {found}")
 
 
+def agent_commands(lock_text: str) -> list[str]:
+    """Each command the agent CLIs' lock gives the packages its manifest names, sorted: what
+    the image links into /usr/local/bin."""
+    packages = json.loads(lock_text)["packages"]
+    commands: set[str] = set()
+    for package in packages[""].get("dependencies", {}):
+        commands |= set(packages[f"node_modules/{package}"].get("bin") or {})
+    return sorted(commands)
+
+
+def _assert_login_shell_finds_the_agent_clis(name: str, commands: list[str]) -> None:
+    """Step 8: a login shell resolves each bundled agent CLI to the image's own link.
+
+    ``command -v`` skips a link whose target is gone, so a dangling link fails here as a missing
+    one does.
+    """
+    proc = _docker("exec", name, "bash", "-lc", "command -v " + " ".join(commands), check=False)
+    found = proc.stdout.split()
+    want = [f"/usr/local/bin/{command}" for command in commands]
+    if proc.returncode != 0 or found != want:
+        _fail(
+            "a login shell in the image does not find each bundled agent CLI at its link, so "
+            f"the gateway would fetch it with npx: rc={proc.returncode} found={found!r} "
+            f"want={want!r} stderr={redact_secrets(proc.stderr).strip()[-500:]!r}"
+        )
+    _log(f"OK: a login shell in the container resolves {', '.join(commands)} in /usr/local/bin")
+
+
 def _dump_container_logs(name: str) -> None:
     """Print the container's tail for diagnosis, with session tokens redacted.
 
@@ -579,6 +613,8 @@ def main() -> int:
         _assert_installed_record(name)
         _assert_download_offer(base, token)
         _assert_login_shell_finds_personalclaw(name)
+        lock = (Path(__file__).resolve().parents[1] / AGENT_CLIS_LOCK).read_text(encoding="utf-8")
+        _assert_login_shell_finds_the_agent_clis(name, agent_commands(lock))
     except Unmeasurable as exc:
         print(f"UNMEASURABLE: {exc}", file=sys.stderr)
         return 2
@@ -596,7 +632,8 @@ def main() -> int:
     _log("")
     _log("PASS: one `docker run` from README.md reaches a usable dashboard — healthz 200, the")
     _log("      SPA shell, its first bundle served as JavaScript, the installed sign-off record,")
-    _log("      a download offer for the default chat model, and `personalclaw` in a login shell.")
+    _log("      a download offer for the default chat model, and `personalclaw` and each bundled")
+    _log("      agent CLI in a login shell.")
     return 0
 
 

@@ -128,9 +128,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Node and npm where the node image keeps them: /usr/local is on the base's PATH ahead of
-# /usr/bin, and npm's global prefix is the folder above node's, so `npm install -g` below puts
-# the CLIs in /usr/local/lib/node_modules and their commands in /usr/local/bin. npm and npx are
-# links, as in the node image, so npm finds its own modules from the link's target.
+# /usr/bin. npm and npx are links, as in the node image, so npm finds its own modules from the
+# link's target.
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
@@ -142,15 +141,25 @@ RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
 # no cold `npx` fetch on first spawn). These are the canonical @agentclientprotocol
 # adapters (the renamed home of the former @zed-industries/* adapters; both build
 # on @agentclientprotocol/sdk). Private/enterprise ACP runtimes are intentionally
-# NOT bundled (they ship only where their own toolchain is present). `|| true`
-# keeps the image build resilient to a transient registry blip (the bundle's npx
-# fallback still covers a missing adapter at runtime).
-RUN npm install -g --no-fund --no-audit \
-        @agentclientprotocol/claude-agent-acp \
-        @agentclientprotocol/codex-acp \
-        @anthropic-ai/claude-code \
-        @openai/codex \
-    && npm cache clean --force || true
+# NOT bundled (they ship only where their own toolchain is present).
+#
+# The four come from deploy/docker/agent-clis/: its package.json pins each one exactly and its
+# package-lock.json holds every package they pull in, each under a sha512 integrity, so a build
+# installs what the lock recorded and nothing newer. Dependabot's npm entry for that folder
+# moves the lock. `npm ci` fails the build when the registry cannot serve the lock, rather than
+# shipping an image without the CLIs. Each command is linked into /usr/local/bin, where the
+# gateway and a login shell find it on PATH, and a link that does not reach an executable fails
+# the build too: without the command the gateway would fetch the newest release with npx when it
+# starts one. The list is the commands the lock's four packages declare, which
+# tests/rails/test_docker_single_container_tree.py holds it to.
+WORKDIR /opt/agent-clis
+COPY deploy/docker/agent-clis/package.json deploy/docker/agent-clis/package-lock.json ./
+RUN npm ci --omit=dev --no-fund --no-audit && \
+    npm cache clean --force && \
+    for command in claude-agent-acp codex-acp claude codex; do \
+        ln -s /opt/agent-clis/node_modules/.bin/"$command" /usr/local/bin/"$command" && \
+        test -x /usr/local/bin/"$command" || exit 1; \
+    done
 
 RUN groupadd --gid 10001 personalclaw && \
     useradd --uid 10001 --gid 10001 --create-home --shell /bin/false personalclaw

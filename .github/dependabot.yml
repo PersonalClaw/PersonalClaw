@@ -152,6 +152,20 @@ updates:
           - "jsdom"
           - "@testing-library/*"
 
+  # The agent CLIs the gateway image bundles (deploy/docker/Dockerfile.backend), from their own
+  # lock. package.json pins each one exactly and the image runs `npm ci` from the lock beside
+  # it, so this entry is the only thing that moves them: a PR here moves a pin and the lock
+  # together. One group, so the adapters and the CLIs they drive move as one.
+  - package-ecosystem: npm
+    directory: /deploy/docker/agent-clis
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      agent-clis:
+        patterns: ["*"]
+
   # The GitHub Actions the workflows pin (setup-uv, setup-node, publish, buildx, …).
   # The local composite actions' own `uses:` pins are refreshed with the workflows'.
   - package-ecosystem: github-actions

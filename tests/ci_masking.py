@@ -148,12 +148,6 @@ MASKED: tuple[Masked, ...] = (
         "Polls the boot log for a port: no port yet is an empty read, and the loop waits, then "
         "the script fails when none ever appears.",
     ),
-    Masked(
-        "deploy/docker/Dockerfile.backend",
-        "npm cache clean --force || true",
-        "The agent CLIs' best-effort install: a registry blip leaves the image without them, "
-        "and the bundle falls back to npx at runtime. An install, not a check.",
-    ),
 )
 
 TOLERATED: tuple[Tolerated, ...] = (

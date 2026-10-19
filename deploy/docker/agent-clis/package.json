@@ -1,0 +1,11 @@
+{
+  "name": "personalclaw-gateway-agent-clis",
+  "private": true,
+  "description": "The agent CLIs the gateway image bundles, at the exact versions its package-lock.json locks.",
+  "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.93.0",
+    "@agentclientprotocol/codex-acp": "2.2.2",
+    "@anthropic-ai/claude-code": "2.1.303",
+    "@openai/codex": "0.163.0"
+  }
+}

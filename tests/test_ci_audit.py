@@ -74,13 +74,17 @@ class FakeTools:
         *,
         pip: dict | str | None = None,
         npm: dict | str | None = None,
+        image_npm: dict | str | None = None,
         pip_exit: int | None = None,
         npm_exit: int | None = None,
+        image_npm_exit: int | None = None,
         export_exit: int = 0,
     ) -> None:
         self.pip = CLEAN_PIP if pip is None else pip
         self.npm = CLEAN_NPM if npm is None else npm
+        self.image_npm = CLEAN_NPM if image_npm is None else image_npm
         self.pip_exit, self.npm_exit, self.export_exit = pip_exit, npm_exit, export_exit
+        self.image_npm_exit = image_npm_exit
         self.calls: list[list[str]] = []
 
     def __call__(self, argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -102,16 +106,24 @@ class FakeTools:
             code = self.pip_exit if self.pip_exit is not None else int(vulnerable)
             return subprocess.CompletedProcess(argv, code, "", "pip-audit crashed")
         if argv[:2] == ["npm", "audit"]:
-            text = self.npm if isinstance(self.npm, str) else json.dumps(self.npm)
-            found = isinstance(self.npm, dict) and bool(self.npm.get("vulnerabilities"))
-            code = self.npm_exit if self.npm_exit is not None else int(found)
+            # The root lock is audited where the audit runs, an image's lock under --prefix.
+            report, exit_code = (
+                (self.image_npm, self.image_npm_exit)
+                if "--prefix" in argv
+                else (self.npm, self.npm_exit)
+            )
+            text = report if isinstance(report, str) else json.dumps(report)
+            found = isinstance(report, dict) and bool(report.get("vulnerabilities"))
+            code = exit_code if exit_code is not None else int(found)
             return subprocess.CompletedProcess(argv, code, text, "")
         raise AssertionError(f"the audit ran {argv}")
 
 
-def _waiver(reference: str, /, *, scope: str = "npm-audit", days: int = 10, **drop: bool) -> str:
+def _waiver(
+    reference: str, /, *, scope: str = "npm-audit", days: int = 10, file: str = "", **drop: bool
+) -> str:
     fields = {
-        "file": "uv.lock" if scope == "pip-audit" else "package-lock.json",
+        "file": file or ("uv.lock" if scope == "pip-audit" else "package-lock.json"),
         "scope": scope,
         "reference": reference,
         "owner": "maintainers",
@@ -128,7 +140,19 @@ def _run(tmp_path: Path, tools: FakeTools, baseline: str = "", monkeypatch=None)
     path = tmp_path / "audit-baseline.toml"
     path.write_text(baseline, encoding="utf-8")
     argv = ["run", "--pip-audit", "py", "--work", str(tmp_path / "work"), "--baseline", str(path)]
-    return audit.main(argv, run=tools, today=TODAY)
+    return audit.main(argv, run=tools, today=TODAY, root=tmp_path / "tree")
+
+
+#: An image's own npm lock, in the planted tree the audit reads: what that image installs.
+_IMAGE = "deploy/docker/planted"
+
+
+def _image_lock(tmp_path: Path, *, lock: bool = True) -> None:
+    folder = tmp_path / "tree" / _IMAGE
+    folder.mkdir(parents=True)
+    (folder / "package.json").write_text('{"dependencies": {"left-pad": "1.3.0"}}\n')
+    if lock:
+        (folder / "package-lock.json").write_text('{"lockfileVersion": 3, "packages": {}}\n')
 
 
 # ── what is audited ───────────────────────────────────────────────────────────────────────────
@@ -148,6 +172,52 @@ def test_every_shipped_python_graph_is_exported_from_the_lock_and_audited_withou
     assert len(audits) == len(audit.PYTHON_GRAPHS)
     assert all("--no-deps" in c and "--disable-pip" in c for c in audits), audits
     assert ["npm", "audit", "--package-lock-only", "--json"] in tools.calls
+
+
+def test_each_image_lock_is_audited_as_a_graph_of_its_own(tmp_path: Path, _no_summary) -> None:
+    """An image's npm lock under deploy/docker/ ships in that image, so it is audited too, from
+    its own folder, and its finding names that lock, not the root one."""
+    _image_lock(tmp_path)
+    tools = FakeTools(image_npm=_npm(("left-pad", "GHSA-aaaa-bbbb-cccc", "high")))
+    assert _run(tmp_path, tools) == 1
+    assert ["npm", "audit", "--package-lock-only", "--json"] in tools.calls
+    assert ["npm", "audit", "--package-lock-only", "--json", "--prefix", _IMAGE] in tools.calls
+    text = _no_summary.read_text(encoding="utf-8")
+    assert f"| {_IMAGE} | left-pad |" in text and "**fails the run**" in text
+
+
+def test_a_waiver_covers_the_image_lock_it_names_and_no_other(tmp_path: Path) -> None:
+    _image_lock(tmp_path)
+    high = FakeTools(image_npm=_npm(("left-pad", "GHSA-aaaa-bbbb-cccc", "high")))
+    ref = "left-pad GHSA-aaaa-bbbb-cccc"
+    assert _run(tmp_path, high, _waiver(ref, file=f"{_IMAGE}/package-lock.json")) == 0
+    assert _run(tmp_path, high, _waiver(ref)) == 1, "a root-lock waiver is not the image's"
+
+
+@pytest.mark.parametrize(
+    "tools",
+    [
+        pytest.param(
+            FakeTools(image_npm={"error": {"code": "ENOLOCK"}}, image_npm_exit=1), id="errors"
+        ),
+        pytest.param(FakeTools(image_npm="", image_npm_exit=1), id="prints nothing"),
+        pytest.param(FakeTools(image_npm_exit=127), id="does not run"),
+    ],
+)
+def test_an_image_lock_the_audit_cannot_read_fails_the_job(
+    tmp_path: Path, tools: FakeTools, _no_summary
+) -> None:
+    _image_lock(tmp_path)
+    assert _run(tmp_path, tools) == 2
+    assert f"{_IMAGE}/package-lock.json" in _no_summary.read_text(encoding="utf-8")
+
+
+def test_an_image_manifest_with_no_lock_is_audited_so_the_audit_fails(tmp_path: Path) -> None:
+    """A manifest with no lock beside it is not skipped: npm cannot audit it, which fails."""
+    _image_lock(tmp_path, lock=False)
+    tools = FakeTools(image_npm={"error": {"code": "ENOLOCK"}}, image_npm_exit=1)
+    assert _run(tmp_path, tools) == 2
+    assert ["npm", "audit", "--package-lock-only", "--json", "--prefix", _IMAGE] in tools.calls
 
 
 def test_a_lock_pinned_to_a_vulnerable_release_is_reported_and_fails(
