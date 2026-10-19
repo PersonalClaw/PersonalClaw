@@ -91,6 +91,15 @@ describe('a button that reveals content says that it does', () => {
     expect(read('code/CodeCockpitPage.tsx')).toMatch(/aria-expanded=\{showEvidence\}/)
   })
 
+  it("the cockpit's Terminal button is a disclosure, not a setting", () => {
+    // It shows and hides the terminal drawer. `active` keeps its look, and `ariaExpanded` is what a
+    // screen reader hears: `HeaderControl` drops `aria-pressed` once it is passed. This file's
+    // prop-toggle census reads the page as announced only while it holds some `aria-expanded`, and
+    // until this pin that was the finding card's, a different control.
+    expect(read('code/CodeCockpitPage.tsx'))
+      .toMatch(/label=\{showTerm \? 'Hide terminal' : 'Terminal'\} onClick=\{\(\) => setShowTerm\(!showTerm\)\} active=\{showTerm\} ariaExpanded=\{showTerm\}/)
+  })
+
   it('a MODE toggle is not given a disclosure promise', () => {
     // The distinction the census turned up: these two reveal nothing, so `aria-expanded` would be false.
     const diag = read('settings/DiagnosticsPanel.tsx')
