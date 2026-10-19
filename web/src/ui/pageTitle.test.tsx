@@ -175,7 +175,8 @@ describe('every converged destination names itself', () => {
   it('does NOT give a docked panel header an h1', () => {
     // ChatPage's "Chat history" is a SidePanel header. If a future pass converts it, heading
     // navigation gets two competing document titles on one route.
-    const chat = readSource(join(SRC, 'pages/ChatPage.tsx'))
+    // …read with the history page, which moved out of ChatPage to `chat/history/`.
+    const chat = readSource(join(SRC, 'pages/ChatPage.tsx')) + readSource(join(SRC, 'pages/chat/history/ChatHistoryPage.tsx'))
     expect(
       /left=\{<PageTitle[^>]*>Chat history/.test(chat),
       'the Chat history panel header must stay a span — a drawer is not the page',
@@ -225,7 +226,7 @@ describe('an entity is the destination when the URL says so', () => {
     const knowledge = read('pages/knowledge/KnowledgeListPage.tsx')
     expect(knowledge).toMatch(/<PageTitle[\s>]/)
     expect((knowledge.match(/<PageTitle[\s>]/g) ?? []).length, 'one per destination, not one per panel').toBe(1)
-    const chat = read('pages/ChatPage.tsx')
+    const chat = read('pages/ChatPage.tsx') + read('pages/chat/history/ChatHistoryPage.tsx')
     expect(/left=\{<PageTitle[^>]*>Chat history/.test(chat), 'the chat history drawer stays a span').toBe(false)
   })
 

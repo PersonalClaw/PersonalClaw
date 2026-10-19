@@ -87,7 +87,8 @@ describe('IconButton renders the danger tone as a hover tint, not a fill', () =>
 describe('the nine persisted destroys adopted it', () => {
   /** file → the label text that identifies the destructive call site. */
   const ADOPTERS: [string, string][] = [
-    ['pages/ChatPage.tsx', 'Delete chat'],
+    // The history page's row delete, which moved out of ChatPage.
+    ['pages/chat/history/ChatHistoryPage.tsx', 'Delete chat'],
     ['pages/tasks/TaskDetail.tsx', 'Delete comment'],
     ['pages/files/comments/CommentLayer.tsx', 'Remove comment'],
     ['pages/knowledge/ReportsPage.tsx', 'Delete ${report.name}'],
@@ -117,6 +118,9 @@ describe('the nine persisted destroys adopted it', () => {
       'pages/chat/composer/ChatComposer.tsx', 'pages/chat/composer/KnowledgeChips.tsx',
       'pages/chat/composer/QueueStack.tsx', 'pages/chat/composer/PasteCards.tsx',
       'pages/chat/composer/ContextPickers.tsx', 'pages/chat/composer/AutoNudgeMenuItem.tsx',
+      // …and the history page, where its Delete chat moved.
+      'pages/chat/history/ChatHistoryPage.tsx', 'pages/chat/history/TagBoard.tsx', 'pages/chat/history/SessionPeek.tsx',
+      'pages/chat/history/ChatHistorySidePanel.tsx',
     ]) {
       const code = codeOf(rel)
       const tags = [...code.matchAll(/<IconButton[\s\S]{0,420}?\/>/g)].map((m) => m[0])

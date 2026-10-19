@@ -84,11 +84,15 @@ describe('all three call sites share it now', () => {
   })
 
   it('both chat sites use the helper too, so there is one spelling left', () => {
-    const src = read('pages/ChatPage.tsx')
-    expect(src).toContain('.sort((a, b) => sessionRecencyMs(b) - sessionRecencyMs(a))')
-    expect(src).toContain('const recency = sessionRecencyMs')
-    expect(src, 'no hand-rolled Date.parse fallback chain should remain')
-      .not.toMatch(/Date\.parse\(\w+\.last_activity_ts \|\| /)
+    // The recent-chats panel and the history page, which moved out of ChatPage to `chat/history/`.
+    const panel = read('pages/chat/history/ChatHistorySidePanel.tsx')
+    const history = read('pages/chat/history/useChatHistory.ts')
+    expect(panel).toContain('.sort((a, b) => sessionRecencyMs(b) - sessionRecencyMs(a))')
+    expect(history).toContain('const recency = sessionRecencyMs')
+    for (const src of [read('pages/ChatPage.tsx'), panel, history]) {
+      expect(src, 'no hand-rolled Date.parse fallback chain should remain')
+        .not.toMatch(/Date\.parse\(\w+\.last_activity_ts \|\| /)
+    }
   })
 
   it('no `new Date(x ?? y).getTime()` survives anywhere in pages/', () => {

@@ -74,10 +74,17 @@ describe('an adapter hook re-exposes useQuery\'s error', () => {
   // 🪤 `/\berror\b/` WAS NOT ENOUGH — a mutation that returned `error: undefined` kept the word and
   // sailed through. The test has to be that the error is READ from the hook and PASSED ON with a real
   // value; the two hard-coded blanks are the shapes that look compliant and are not.
-  const carriesError = (body: string) =>
-    /const \{[^}]*\berror\b[^}]*\} = useQuery/.test(body)
-    && /return \{[\s\S]*\berror\b/.test(body)
-    && !/\berror:\s*(undefined|null)\b/.test(body)
+  //
+  // A hook over several reads names each one's error (`error: sessionsError`), and carries it when it
+  // returns every one of those names; one it reads and drops still fails here.
+  const carriesError = (body: string) => {
+    if (/\berror:\s*(undefined|null)\b/.test(body)) return false
+    const ret = body.match(/return \{[\s\S]*/)?.[0] ?? ''
+    const reads = [...body.matchAll(/const \{([^}]*)\} = useQuery/g)].map((m) => m[1])
+    const errs = reads.map((d) => d.match(/\berror(?:\s*:\s*(\w+))?/)).filter((m) => m !== null)
+    if (!errs.length) return false
+    return errs.every((m) => new RegExp(`\\b${m![1] ?? 'error'}\\b`).test(ret))
+  }
 
   it('every adapter either returns the error or is named as an exemption', () => {
     const swallowing = hooks

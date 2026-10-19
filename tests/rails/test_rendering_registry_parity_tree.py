@@ -140,8 +140,9 @@ def test_only_a_chat_reply_runs_widgets():
         if n:
             opted_in[str(p.relative_to(_WEB))] = n
     # The reply in the chat's transcript, and the history page's peek at a chat (its saved replies
-    # and the one streaming in): the same three sites since the transcript left ChatPage.tsx.
+    # and the one streaming in): the same three sites since the transcript and the history left
+    # ChatPage.tsx.
     assert opted_in == {
-        "pages/ChatPage.tsx": 2,
+        "pages/chat/history/SessionPeek.tsx": 2,
         "pages/chat/transcript/AssistantSegments.tsx": 1,
     }

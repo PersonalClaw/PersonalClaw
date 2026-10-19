@@ -141,7 +141,8 @@ describe('sessionActivitySeconds — the field choice, in one place', () => {
   })
 
   it('#/chat reads both through lib/epoch, with no local parse left', () => {
-    const src = readSource(join(process.cwd(), 'src/pages/ChatPage.tsx'))
+    // The recent-chats panel, which moved out of ChatPage with the history region.
+    const src = readSource(join(process.cwd(), 'src/pages/chat/history/ChatHistorySidePanel.tsx'))
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     expect(code, 'the label takes the shared field choice').toMatch(/relTimeShort\(sessionActivitySeconds\(s\)\)/)
     expect(code, 'the formatter parses through epochSeconds').toMatch(/const at_s = epochSeconds\(at\)/)

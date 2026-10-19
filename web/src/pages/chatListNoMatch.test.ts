@@ -4,14 +4,15 @@ import { join } from 'node:path'
 
 // ── The chat list's narrowed-to-nothing state names its narrower ───────────
 //
-// Source pins, the tasks list's idiom (noMatchBlame.test.ts): ChatPage's shell is too heavy
+// Source pins, the tasks list's idiom (noMatchBlame.test.ts): the chat history page's shell
+// (`chat/history/ChatHistoryPage.tsx`, rendered inside ChatPage) is too heavy
 // to render for four strings. The state is reachable through three controls (search, tag
 // filter, origin scope) — and through NO control, when every loaded chat is a worker session
 // hidden by the default 'manual' scope. It used to render one sentence for all of them:
 // "No matches / Try a different search or tag filter." — blaming the search at a user who
 // only switched scope, with no way out and no evidence they still have chats.
 
-const src = readFileSync(join(process.cwd(), 'src', 'pages', 'ChatPage.tsx'), 'utf8')
+const src = readFileSync(join(process.cwd(), 'src', 'pages', 'chat', 'history', 'ChatHistoryPage.tsx'), 'utf8')
 
 describe('chat list no-match split', () => {
   it('the blame-everything sentence is gone', () => {

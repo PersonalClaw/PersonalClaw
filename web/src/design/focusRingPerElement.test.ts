@@ -167,7 +167,8 @@ const INVENTORY: { file: string; anchor: string; ring: RegExp; what: string }[] 
   // focus. That is the ambiguity recorded above for `CodePlanReview`'s shared box, and it outranks the
   // transparent-input idiom. Do not "correct" these two to `CONTAINER_RING`.
   {
-    file: 'pages/ChatPage.tsx',
+    // Moved with the chat history page's peek panel.
+    file: 'pages/chat/history/SessionPeek.tsx',
     anchor: 'w-full resize-none bg-transparent px-s py-xs text-on-surface',
     ring: ELEMENT_RING,
     what: 'session-peek quick-reply composer',

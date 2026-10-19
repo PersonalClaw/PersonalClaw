@@ -333,7 +333,8 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     expect(member.length, 'the membership matcher must resolve its own population').toBeGreaterThanOrEqual(6)
     for (const rel of [
       'pages/settings/SearchPanel.tsx',
-      'pages/ChatPage.tsx',
+      // The history page's tag filter, which moved out of ChatPage.
+      'pages/chat/history/ChatHistoryPage.tsx',
       // The composer's knowledge and artifact pickers, which moved out of ChatPage.
       'pages/chat/composer/ContextPickers.tsx',
       'pages/agents/AgentForm.tsx',
@@ -354,7 +355,7 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     const named: [string, RegExp][] = [
       ['pages/settings/SearchPanel.tsx', /role="group" aria-label=\{`\$\{meta\.label\} provider`\}/],
       ['pages/chat/composer/ContextPickers.tsx', /role="group" aria-label="Knowledge to attach"/],
-      ['pages/ChatPage.tsx', /role="group" aria-label="Filter by tag"/],
+      ['pages/chat/history/ChatHistoryPage.tsx', /role="group" aria-label="Filter by tag"/],
       ['pages/agents/AgentForm.tsx', /role="group" aria-label=\{label\}/],
       ['pages/loops/LoopPlanReview.tsx', /role="group" aria-label=\{label\}/],
     ]

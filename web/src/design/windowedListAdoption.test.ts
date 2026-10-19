@@ -65,7 +65,7 @@ describe('windowing adoption ratchet (the window may only spread, never retreat)
     // knowledge items, sessions, runs, inbox, logs — the five long-list surfaces.
     for (const [surface, file] of [
       ['knowledge items', 'pages/knowledge/KnowledgeListPage.tsx'],
-      ['sessions', 'pages/ChatPage.tsx'],
+      ['sessions', 'pages/chat/history/ChatHistoryPage.tsx'],
       ['runs', 'pages/workflows/WorkflowsListPage.tsx'],
       ['inbox', 'pages/inbox/InboxPage.tsx'],
       ['logs', 'pages/settings/DiagnosticsPanel.tsx'],

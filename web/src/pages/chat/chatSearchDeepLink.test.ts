@@ -110,11 +110,13 @@ describe('api.sessionsSearch keeps the source the endpoint reports', () => {
   })
 })
 
-// ── Source-structural pins for the two ChatPage wirings (shell too heavy to mount) ──────
-const src = readFileSync(join(process.cwd(), 'src', 'pages', 'ChatPage.tsx'), 'utf8')
+// ── Source-structural pins for the two chat wirings (shell too heavy to mount) ─────────
 // The find bar is the chat transcript's: its state in `useTranscript`, the bar in `Transcript`.
 const transcript = readFileSync(join(process.cwd(), 'src', 'pages', 'chat', 'transcript', 'useTranscript.ts'), 'utf8')
 const transcriptView = readFileSync(join(process.cwd(), 'src', 'pages', 'chat', 'transcript', 'Transcript.tsx'), 'utf8')
+// The search is the chat history page's: its state in `useChatHistory`, the list in `ChatHistoryPage`.
+const history = readFileSync(join(process.cwd(), 'src', 'pages', 'chat', 'history', 'useChatHistory.ts'), 'utf8')
+const historyView = readFileSync(join(process.cwd(), 'src', 'pages', 'chat', 'history', 'ChatHistoryPage.tsx'), 'utf8')
 
 describe('ChatSession auto-opens the find bar from a ?find deep-link', () => {
   it('reads the find param through the URL-state idiom', () => {
@@ -139,7 +141,7 @@ describe('ChatSession auto-opens the find bar from a ?find deep-link', () => {
 
 describe('the search result Open/Expand threads the query into the chat', () => {
   it('both peek entry points navigate through chatFindPath with the search term', () => {
-    const hits = src.match(/navigate\(chatFindPath\(peekKey, q\)\)/g) ?? []
+    const hits = historyView.match(/navigate\(chatFindPath\(peekKey, q\)\)/g) ?? []
     // The SidePanel onExpand AND SessionPeekBody onOpen — the two ways a result opens.
     expect(hits.length).toBe(2)
   })
@@ -147,14 +149,14 @@ describe('the search result Open/Expand threads the query into the chat', () => 
 
 describe('the client-kept source surfaces in the search UI', () => {
   it('captures the source from the response into state', () => {
-    expect(src).toMatch(/setContentSource\(source \?\? null\)/)
+    expect(history).toMatch(/setContentSource\(source \?\? null\)/)
     // destructures the envelope rather than the old (rows) => that dropped source — and keeps
     // how far the answer reached, which the partial notice below the field says
-    expect(src).toMatch(/api\.sessionsSearch\(query, \{ rest, limit: SEARCH_LIMIT \}\)\.then\(\(\{ sessions: rows, source, searched, complete, index, matched \}\)/)
+    expect(history).toMatch(/api\.sessionsSearch\(query, \{ rest, limit: SEARCH_LIMIT \}\)\.then\(\(\{ sessions: rows, source, searched, complete, index, matched \}\)/)
   })
 
   it('renders the index/scan label as a sanctioned caption (parsed text, not raw HTML)', () => {
-    expect(src).toMatch(/searchSourceLabel\(contentSource\)/)
-    expect(src).toMatch(/data-type="caption"[^>]*>\s*\n\s*\{searchSourceLabel\(contentSource\)\}/)
+    expect(historyView).toMatch(/searchSourceLabel\(contentSource\)/)
+    expect(historyView).toMatch(/data-type="caption"[^>]*>\s*\n\s*\{searchSourceLabel\(contentSource\)\}/)
   })
 })
