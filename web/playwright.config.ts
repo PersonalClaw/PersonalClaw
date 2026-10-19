@@ -196,10 +196,26 @@ const GATEWAY_COMMAND = [
 // `stateful-seed` annotation). It is written back to the environment so every worker this config
 // is re-read in draws the same order.
 //
-// The second pass rides on Playwright's teardown projects, the one way to run a project AFTER
-// another without depending on it passing: each runs once its owner's dependents are done.
-// `chromium` owns `stateful`, `setup` owns `stateful-again-1` and `smoke` owns `stateful-again-2`,
-// which is also the order they run in. A red in a shared spec therefore hides no stateful spec.
+// The three passes run one after another: `stateful`, then `stateful-again-1`, then
+// `stateful-again-2`, each starting only once the one before it has ended. `e2e/assert-one-run.mjs`
+// reads the report's timings and reds a pass that started early.
+//
+// 🪤 TWO SHAPES, ONE ORDER. Playwright allows each only where the other cannot be used.
+//   · A run whose file filter names only the stateful specs (CI's `e2e-stateful` job) chains them
+//     with dependencies: `stateful` on `setup`, `stateful-again-1` on `stateful`, and
+//     `stateful-again-2` on `stateful-again-1`. A red pass skips the passes after it, and the
+//     isolation reporter fails the run, naming each test that did not run.
+//   · A full run cannot: the stateful set must follow `chromium` without depending on it passing,
+//     or a red shared spec would hide every stateful one. That takes a teardown, and Playwright
+//     refuses a dependency on a teardown project. So each pass is the teardown of a project one
+//     level further out: `chromium` owns `stateful`; `setup`, which `chromium` depends on, owns
+//     `stateful-again-1`; and `stateful-anchor`, an empty project `setup` depends on, owns
+//     `stateful-again-2`. A teardown runs once its owner and everything that depends on it,
+//     teardowns included, have ended.
+// No teardown has one of its own: Playwright 1.64 never runs such a teardown and still exits 0,
+// which is how the stateful-only run lost its whole second pass. And `stateful-again-2` is no
+// longer the smoke's teardown, which ran as soon as a worker came free: on a full run it started
+// before the first pass, while the shared specs were still running.
 const SPECS = readdirSync('./e2e').filter((f) => f.endsWith('.spec.ts'))
 const missing = unclassified(SPECS)
 if (missing.length) {
@@ -240,7 +256,7 @@ const STATEFUL_CHAIN = process.env.PW_STATEFUL_CHAIN === '1'
 // A run whose file filter names ONLY stateful specs (`playwright test e2e/staleWrite.spec.ts`) leaves
 // `chromium` with nothing to run, so nothing would pull in `setup`, and every stateful spec would
 // meet the onboarding screen. Then the chain hangs off `setup` instead: `stateful` depends on it, and
-// the second pass follows as teardowns, one after the other.
+// each second-pass project on the pass before it.
 if (process.env.PW_STATEFUL_ONLY === undefined) {
   const filters = fileFilters(process.argv)
   const onlyStateful =
@@ -283,7 +299,7 @@ export default defineConfig({
   // ── Why this is set at all, and why 3 ────────────────────────────────────
   // Unset, playwright runs HALF the logical cores. `ubuntu-latest` on a public
   // repo is 4-core, so CI was silently running 2 workers — and the browser job
-  // (then `e2e-a11y`, now `e2e`) is the binding constraint on this repo's merge rate. Measured 2026-09-18 from
+  // (then `e2e-a11y`, now the `e2e-shard` legs) is the binding constraint on this repo's merge rate. Measured 2026-09-18 from
   // the Actions API across five CONCLUDED runs (35381670780, 35381697823,
   // 35381857440, 35382011453, 35382279089): the job is 23.6–28.7 min while the
   // next-longest job in the whole workflow is `test-shard` at ~9 min, so every
@@ -310,7 +326,8 @@ export default defineConfig({
   // does.
   //
   // This changes concurrency only. Every test still runs, once, asserting
-  // exactly what it asserted before; nothing is sharded, skipped or retimed.
+  // exactly what it asserted before; nothing is skipped or retimed by it. (CI's
+  // legs split the run on their command line, `--shard=N/2`.)
   // Local runs keep playwright's default so a dev machine is not pinned.
   workers: process.env.CI ? 3 : undefined,
   // A retried pass is reported as `flaky` in the JSON and blob reports, never as a plain pass.
@@ -321,8 +338,8 @@ export default defineConfig({
   failOnFlakyTests: !!process.env.CI,
   // The isolation reporter is FIRST: it annotates every test with its isolation mode before the
   // JSON and blob reporters read them, and fails the run when a spec runs where its mode forbids.
-  // The JSON report's path is PLAYWRIGHT_JSON_OUTPUT_NAME; the blob's is blob-report/, which
-  // `merge-reports` reads when the run is sharded.
+  // The JSON report's path is PLAYWRIGHT_JSON_OUTPUT_NAME; the blob's is PLAYWRIGHT_BLOB_OUTPUT_DIR
+  // (blob-report/ unset), which `e2e/merge-legs.mjs` hands `merge-reports` when the run is sharded.
   reporter: process.env.CI
     ? [['./e2e/isolationReporter.ts'], ['github'], ['json'], ['blob'], ['html', { open: 'never' }]]
     : [['./e2e/isolationReporter.ts'], ['list']],
@@ -342,6 +359,10 @@ export default defineConfig({
     storageState: STORAGE_STATE,
   },
   projects: [
+    // A full run's outermost project: it holds no test, and owns the last pass (see above).
+    ...(STATEFUL_CHAIN && !STATEFUL_ONLY
+      ? [{ name: 'stateful-anchor', testMatch: /^$/, teardown: 'stateful-again-2' }]
+      : []),
     // Mints the authenticated session ONCE, then every spec reuses the jar. The
     // setup project must start from an EMPTY jar — an inline state object, not
     // `undefined`: a project `use` of `undefined` does not override the top-level
@@ -350,14 +371,13 @@ export default defineConfig({
       name: 'setup',
       testMatch: /auth\.setup\.ts$/,
       use: { storageState: { cookies: [], origins: [] } },
-      ...(STATEFUL_CHAIN && !STATEFUL_ONLY ? { teardown: 'stateful-again-1' } : {}),
+      ...(STATEFUL_CHAIN && !STATEFUL_ONLY ? { dependencies: ['stateful-anchor'], teardown: 'stateful-again-1' } : {}),
     },
     // The render smoke, first: the built bundle mounts with no gateway behind it.
     {
       name: 'smoke',
       testMatch: /smoke\.spec\.ts$/,
       use: { ...devices['Desktop Chrome'], storageState: { cookies: [], origins: [] } },
-      ...(STATEFUL_CHAIN && !STATEFUL_ONLY ? { teardown: 'stateful-again-2' } : {}),
     },
     {
       name: 'chromium',
@@ -380,7 +400,7 @@ export default defineConfig({
             testMatch: fileMatcher(STATEFUL_SPECS),
             workers: 1,
             fullyParallel: false,
-            ...(STATEFUL_ONLY ? { dependencies: ['setup'], teardown: 'stateful-again-1' } : {}),
+            ...(STATEFUL_ONLY ? { dependencies: ['setup'] } : {}),
           },
           ...SECOND_PASS.map((spec, i) => ({
             name: `stateful-again-${i + 1}`,
@@ -388,7 +408,7 @@ export default defineConfig({
             testMatch: fileMatcher([spec]),
             workers: 1,
             fullyParallel: false,
-            ...(STATEFUL_ONLY && i === 0 ? { teardown: 'stateful-again-2' } : {}),
+            ...(STATEFUL_ONLY ? { dependencies: [i === 0 ? 'stateful' : `stateful-again-${i}`] } : {}),
           })),
         ]
       : []),

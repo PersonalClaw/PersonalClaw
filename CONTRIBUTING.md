@@ -332,8 +332,9 @@ repository-owned pre-push hook (`npm run hooks:install`, one-time) runs the
 whole chain — clean `npm ci` (this is what catches declared-vs-resolved
 lockfile skew), typecheck, vitest, build, stamp, render smoke — automatically whenever
 outgoing commits touch `web/`, `package.json`, or `package-lock.json`, and needs the
-repo's `.venv` to stamp the build. In CI the smoke is the first project of the `e2e`
-job's one Playwright run, against the build the `web` job stamped and uploaded.
+repo's `.venv` to stamp the build. In CI the smoke runs in whichever `e2e-shard` leg
+Playwright's split gives it, against the build the `web` job stamped and uploaded, and the
+`e2e` job judges the report merged from every leg.
 
 "Outgoing commits" means **what your branch adds on top of `main`**, measured
 from the merge-base with `origin/main` — not the range between your branch and

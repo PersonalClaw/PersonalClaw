@@ -42,7 +42,18 @@ The harness builds nothing. It serves the `web/dist` that `make web-build` (or C
 2. **`chromium`** — every spec `isolation.ts` calls *shared*, in parallel against the one gateway and home.
 3. **`stateful`** — the specs `isolation.ts` calls *serial* (`staleWrite`, `deployedArtifacts`: each writes what other specs read), one worker, after the shared project has finished whatever it answered. Then **`stateful-again-1`** and **`stateful-again-2`** run them once more in an order drawn from a seed: `PW_STATEFUL_SEED` when set, so a run can be replayed, otherwise a random one.
 
-Every test in the report carries an `isolation` annotation (its mode and why), every second-pass test a `stateful-seed` annotation, and the run's `metadata` carries the seed and the order. `isolationReporter.ts` fails a run in which a spec runs in a project its mode does not allow, and `playwright.config.ts` refuses to load when a spec has no mode at all; `src/design/e2eIsolation.test.ts` holds both to planted violations. A new spec is classified in `isolation.ts` before it can run.
+Each pass starts only once the one before it has ended. A run that names only the stateful specs chains the passes by dependencies, so a red pass skips the ones after it; a full run makes each pass the teardown of a project further out (`chromium`, `setup`, then the empty `stateful-anchor`), so the stateful set runs whatever the shared specs answered. `playwright.config.ts` says why each shape is the only one Playwright allows where it is used.
+
+Every test in the report carries an `isolation` annotation (its mode and why), every second-pass test a `stateful-seed` annotation, and the run's `metadata` carries the seed and the order. `isolationReporter.ts` fails a run in which a spec runs in a project its mode does not allow, or in which a test never ran (a project it needs failed, or the run stopped first), and `playwright.config.ts` refuses to load when a spec has no mode at all; `src/design/e2eIsolation.test.ts` holds each to a planted violation, the passes' order and a red first pass on the real projects among them. A new spec is classified in `isolation.ts` before it can run.
+
+### On CI: two shards and the stateful run, merged
+
+CI splits that one run over three jobs. Each **`e2e-shard`** leg runs half of `smoke` and `chromium` (`--shard=N/2`, with `PW_STATEFUL_CHAIN=0`, so no stateful project), and **`e2e-stateful`** names the two stateful specs, so it runs `setup`, the first pass and the seeded second pass. Each leaves one blob report. The **`e2e`** job merges them and judges the merged report as one run:
+
+- `merge-legs.mjs` refuses to merge when a leg left no blob (or two), naming the leg: a leg that never ran or never finished is a red, not a smaller report. It writes the seed and order the second pass ran in over the metadata, which Playwright's merge takes from one blob.
+- `assert-no-route-skips.mjs`, as before.
+- `assert-one-run.mjs` holds the merged report to one run: no failure, no pass that took a retry (under CI that fails its leg), and no error outside a test (a leg whose gateway never booted leaves only its error); every test ran (a result that passed, failed or timed out, or a skip the test made itself; an interrupted result is not a run), each leg's auth setup included; every test ran once (the setup aside: each leg runs its own), each where its isolation mode allows, the stateful set and its second pass both there under one seed, and each pass started after the one before it had ended, read from the results' own timings. `src/design/e2eMergedRun.test.ts` plants each way the merged report can be wrong.
+- Last, each leg's own result: `e2e` runs after a red leg too, and a leg can fail where its report shows nothing, so a leg that failed, was cancelled or was skipped is red there as well. `tests/rails/test_e2e_specs_are_executed_tree.py` runs that step on every answer.
 
 ## Commands (run from `web/`)
 

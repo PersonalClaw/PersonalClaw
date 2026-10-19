@@ -93,10 +93,10 @@ const specs = []
 
 if (specs.length === 0) fail('the JSON report contains no specs at all — the run measured nothing')
 
-// The report is the WHOLE run's, every spec in one invocation, and another spec's title may carry
-// a route in parentheses too. The route scans are the UI quality check's alone (#3941:
-// `surfaces.spec.ts` took them over from `a11y.spec.ts`), so only its specs are counted, by the
-// file each spec in Playwright's JSON report names.
+// The report is the WHOLE run's, every leg's merged into one (e2e/merge-legs.mjs), and another
+// spec's title may carry a route in parentheses too. The route scans are the UI quality check's
+// alone (#3941: `surfaces.spec.ts` took them over from `a11y.spec.ts`), so only its specs are
+// counted, by the file each spec in Playwright's JSON report names.
 const SCAN_FILE = 'surfaces.spec.ts'
 const scanSpecs = specs.filter((s) => (s.file ?? '').split('/').pop() === SCAN_FILE)
 if (scanSpecs.length === 0) fail(`the JSON report holds no spec from ${SCAN_FILE} — the UI quality check did not run`)
