@@ -24,7 +24,7 @@ describe('workflow failure toasts carry the error level', () => {
       const src = readFileSync(join(DIR, name), 'utf8')
       for (const m of src.matchAll(/notify\(/g)) {
         // Paren-match the call's argument list, so a comment or a neighbouring call
-        // cannot pad or truncate what we judge (the lesson loadErrorState records).
+        // cannot pad or truncate what we judge (the lesson ui/loadErrorCensus records).
         let i = m.index! + m[0].length
         let depth = 1
         while (i < src.length && depth > 0) {

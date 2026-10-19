@@ -22,7 +22,7 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 // found so far, because the history page's empty state carries an **action** — the false claim
 // arrives with an invitation to act on it.
 //
-// 🔑 THE RAIL IS SCOPED TO THE RESOURCE, NOT THE FILE. `loadErrorState.test.tsx` bars an adopter
+// 🔑 THE RAIL IS SCOPED TO THE RESOURCE, NOT THE FILE. `ui/loadErrorCensus.test.ts` bars an adopter
 // file from swallowing in ANY fetcher, which is right for a list page whose whole job is one
 // resource. `ChatPage.tsx` also reads six unrelated decorations through the same hook
 // (`chat:suggestions`, `chat:starters`, `chat:stream-reveal`, `artifacts:chat-picker`,

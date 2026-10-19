@@ -180,7 +180,7 @@ describe('inbox proposal decision confirms itself (issue 283)', () => {
 // ── Issue 532 row 18: the READ path had the same discrimination to make, and did not make it ──────
 //
 // 🪤 THIS PAIR IS THE ONLY RAIL ROW 18 HAS. The tree-wide swallow census
-// (`ui/loadErrorState.test.tsx` §B) never saw this site: its form was `.catch(() => setGone(true))`,
+// (`ui/loadErrorCensus.test.ts` §B) never saw this site: its form was `.catch(() => setGone(true))`,
 // a setter call with a BOOLEAN argument, and the census counts empty/fabricated values (`[]`, `null`,
 // `{}`, `''`) — `true` is none of those, and `InboxDetail.tsx` is not in that budget at all. So the
 // six budgeted files could all be fixed, every decrement ratcheted, the suite green, and this row

@@ -18,7 +18,7 @@ import { join } from 'node:path'
 // panels render "Couldn't load your inbox settings" + Retry, and the tile says so in one line instead of
 // shimmering.
 //
-// 🪤 The shared `loadErrorState` rail covers the settings copy (it uses the hook, so its `error: loadErr`
+// 🪤 The shared `ui/loadErrorCensus` rail covers the settings copy (it uses the hook, so its `error: loadErr`
 // matches). The DRAWER copy is hand-rolled and captures with `.catch(setLoadErr)`, which that rail's
 // matcher does not recognise — and widening it a FOURTH time to accept a bare setter reference would make
 // it match almost anything. So the drawer is asserted here instead, where the shape can be named exactly.

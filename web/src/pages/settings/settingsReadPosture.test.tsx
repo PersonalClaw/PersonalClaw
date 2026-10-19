@@ -19,7 +19,7 @@ import { join } from 'node:path'
 // `useQuery` computes `status` from `data === undefined && error != null`. With the rejection eaten,
 // `error` stays null and `status` can never be 'error' — so an error branch added on top of the old
 // fetcher would be dead code that every DOM test below would still go green against. This is the
-// same two-layer defect `pages/agents/agentsLoadError.test.ts` records, and the reason its rail
+// same two-layer defect `pages/loadErrorSurfaces.test.tsx` records, and the reason its rail
 // asserts the fetcher as well as the consumer.
 //
 // The split is deliberate and asserted from both sides: the read a claim is made ABOUT must

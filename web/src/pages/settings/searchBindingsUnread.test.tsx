@@ -8,7 +8,7 @@ import { SearchPanel } from './SearchPanel'
 // The bindings read fell back to `{}`, so a failed `GET /api/search/active` made every use case read
 // "none — falls back to General" and offered its providers to pick — as if nothing were bound, which
 // is a claim about the server, and an invitation to "fix" a binding that was never missing. The
-// budget comment in `ui/loadErrorState.test.tsx` recorded it as exactly that claim.
+// budget comment in `ui/loadErrorCensus.test.ts` recorded it as exactly that claim.
 //
 // Same family as the onboarding defect (`app/identityReadFailure.test.tsx`): a failed read became
 // the empty state, and the empty state licensed a write.

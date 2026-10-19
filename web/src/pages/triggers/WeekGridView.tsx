@@ -62,7 +62,7 @@ export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: st
   // The fetcher never swallowed anything — there is no `.catch` — so the rejection did reach
   // the hook; only the call site declined to read it. This is the pattern `TriggersListPage`
   // in this same directory already ships (`loadFailed` → a retryable `LoadError`, pinned by
-  // `triggersLoadError.test.tsx`), so the fix is adoption, not invention.
+  // `pages/loadErrorSurfaces.test.tsx`), so the fix is adoption, not invention.
   const { data: week, error: weekErr, refresh: refreshWeek } = useQuery<WeekProjection>(
     `triggers:week:${start.toISOString().slice(0, 10)}`,
     () => api.triggersWeek(localIso(start), 7, localIso(weekEnd(start))),

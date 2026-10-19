@@ -19,7 +19,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // condition — which this repo forbids, and it would contradict an existing rail that pins the
 // co-location ON PURPOSE:
 //
-//   loadErrorState.test.tsx › "the primitive is exported from the list kit, beside EmptyState"
+//   ui/loadError.test.tsx › "lives in the list kit, beside EmptyState"
 //     "Co-located on purpose: the two are alternative answers to the same condition, and a
 //      surface reaching for one should see the other."
 //
@@ -43,7 +43,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // a confident wrong answer. Auditing the seven for this change found `#/loops` doing exactly
 // that (`.catch(() => [] as GoalLoop[])` in its fetcher → "No loops yet — Start a loop" on a
 // 500). That fix joined the existing family rail rather than growing a second one; see
-// `ui/loadErrorState.test.tsx`'s ADOPTERS entry for `pages/loops/LoopsListPage.tsx`.
+// `ui/loadErrorCensus.test.ts`'s ADOPTERS entry for `pages/loops/LoopsListPage.tsx`.
 
 const SRC = join(process.cwd(), 'src')
 const read = (rel: string) => readSource(join(SRC, rel))
@@ -97,7 +97,7 @@ describe('exactly one general empty-state primitive', () => {
   it('does NOT ship a second one at ui/EmptyState.tsx', () => {
     // The dual path this change could most easily have created. If a future change genuinely wants
     // the primitive in its own file, that is a MOVE — delete it from the kit in the same commit
-    // and update `loadErrorState.test.tsx`'s co-location rail — never an addition beside it.
+    // and update `ui/loadError.test.tsx`'s co-location row — never an addition beside it.
     expect(
       existsSync(join(SRC, 'ui/EmptyState.tsx')),
       'EmptyState lives in the list kit (ui/ListScaffold.tsx); a second file beside it would be two components for one condition',
@@ -411,7 +411,7 @@ describe('on-ramp sweep · the three surfaces this change changed', () => {
     expect(src, 'no swallow may remain on the intents read').not.toMatch(/knowledgeIntents\(\)[\s\S]{0,120}catch\(\(\) =>/)
     // REACHABILITY: the error branch is an early return, so the empty branch is unreachable while
     // it holds. Asserted as an ordering over the two sites rather than as a source-order regex —
-    // the same widening `loadErrorState.test.tsx` had to make three times.
+    // the same widening `ui/loadErrorCensus.test.ts` had to make three times.
     const errAt = src.indexOf('if (intentsErr) return <LoadError what="intents"')
     const emptyAt = src.indexOf('title="No intents yet"')
     expect(errAt, 'the intents error branch must exist').toBeGreaterThan(-1)

@@ -1,103 +1,25 @@
 // @module-tag tree-scan
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { describe, it, expect } from 'vitest'
 import { join } from 'node:path'
-import { LoadError, EmptyState } from './ListScaffold'
 import { stripComments } from '../design/tokenLintRule'
+import { withoutComments } from '../test/domCensus'
+import { importGraph, nearestRoute, reach, routeRoots, type Tree } from '../test/routeTables'
 import { filesUnder, readSource } from '../test/sourceTree'
 
-// ── A failed load is not an empty collection ──────────────────────────────────────────
+// ── Which surfaces say a read failed, read from the tree ────────────────────────────────────────
 //
-// `useQuery` returns `{ data, loading, error, refresh }`. **3 of 106 call
-// sites read `error`.** The other 103 branch on `data === undefined` only, so a failed fetch
-// falls through to the same branch as a genuinely empty result — the user is told "you have
-// none" when the truth is "we could not load it", with no retry and nothing announced.
+// What `LoadError` says is `ui/loadError.test.tsx`'s, and the surfaces that list a collection are
+// driven through both states in `pages/loadErrorSurfaces.test.tsx`. This file reads the source, so
+// a surface nobody has written a test for yet is held to the same contract:
 //
-// Driven, not inferred. Intercepting `/api/projects` with a 500 (and letting boot succeed, so
-// the app does not fall back to onboarding) rendered:
+//   §A  the named adopters branch on the error before their empty state, and no other consumer of
+//       their cache keys swallows it;
+//   §B  no file resolves a rejection into a value the server never sent, beyond its budget;
+//   §D  no `useQuery` call drops its own failure, at the fetcher or at the destructuring;
 //
-//   before:  "No projects yet"   + the New-project CTA, no alert, no retry
-//   after:   alert → heading "Couldn't load your projects"
-//                  → paragraph "probe-induced failure"      ← the server's own message
-//                  → button "Retry"
-//
-// and Retry re-fetches: with the route restored it cleared the alert and rendered 5 rows.
-//
-// 🔑 WHY `role="alert"` HERE AND NOT ON `EmptyState`. A load failure is unrequested bad news
-// that changes what the screen MEANS — it has to interrupt. "You have none" is a normal
-// answer to a normal question, so `EmptyState` deliberately has no live region. Same
-// distinction the toast host draws between assertive errors and polite confirmations.
-//
-// 🪤 ORDER MATTERS AND IS EASY TO GET WRONG. `data === undefined` is true for the loading,
-// error AND empty branches, so the error test must come FIRST or it is unreachable:
-//
-//     {data === undefined && error ? <LoadError … />
-//      : data === undefined      ? <ListSkeleton />
-//      : data.length === 0       ? <EmptyState … />
-//      : rows}
-
-describe('LoadError announces and offers recovery', () => {
-  it('is an alert — a load failure interrupts', () => {
-    const { container } = render(<LoadError what="projects" />)
-    expect(container.querySelector('[role="alert"]'), 'a failed load must be announced').not.toBeNull()
-  })
-
-  it('EmptyState is NOT an alert — "you have none" is a normal answer', () => {
-    // The contrast is the point: if both were alerts, every empty list would interrupt.
-    const { container } = render(<EmptyState title="No projects yet" />)
-    expect(container.querySelector('[role="alert"]')).toBeNull()
-  })
-
-  it("names what failed, so the message isn't generic", () => {
-    render(<LoadError what="projects" />)
-    expect(screen.getByRole('heading', { name: /Couldn't load your projects/ })).toBeTruthy()
-  })
-
-  it("surfaces the server's own message when there is one", () => {
-    // A bare "something went wrong" hides the one detail that helps.
-    render(<LoadError what="projects" error={new Error('gateway timed out')} />)
-    expect(screen.getByText('gateway timed out')).toBeTruthy()
-  })
-
-  it('falls back to a reassuring line when the error has no message', () => {
-    // The reassurance is now noun-free: it used to read "Your ${what} are safe", ungrammatical for
-    // the many SINGULAR nouns callers pass ("Your project are safe"). The headline still names the
-    // thing; the body no longer has to. See loadErrorSentence.test.ts for the tree-wide contract.
-    render(<LoadError what="projects" error={{}} />)
-    expect(screen.getByText(/this is just a load error, and nothing was lost/)).toBeTruthy()
-  })
-
-  it('the fallback reads grammatically for a SINGULAR noun too', () => {
-    // The regression that motivated the rewrite: "project" (singular) must not produce "are safe".
-    render(<LoadError what="project" error={{}} />)
-    expect(screen.getByText(/Couldn't load your project/)).toBeTruthy()
-    expect(screen.queryByText(/are safe/), 'the old plural-only copy is gone').toBeNull()
-  })
-
-  it('offers a retry that re-runs the fetch', () => {
-    const onRetry = vi.fn()
-    render(<LoadError what="projects" error={new Error('x')} onRetry={onRetry} />)
-    fireEvent.click(screen.getByRole('button', { name: /retry/i }))
-    expect(onRetry).toHaveBeenCalledTimes(1)
-  })
-
-  it('omits the retry button when the surface cannot retry', () => {
-    render(<LoadError what="projects" error={new Error('x')} />)
-    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
-  })
-
-  it('hides the decorative icon from assistive tech', () => {
-    // The heading already carries the meaning; an announced glyph is noise.
-    const { container } = render(<LoadError what="projects" />)
-    expect(container.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
-  })
-})
-
-// ── The call-site half ────────────────────────────────────────────────────────────────
-// The primitive existing is not the fix; a surface has to USE it. This pins the two that do,
-// and deliberately does NOT assert the other ~100 — converting them is a per-surface product
-// decision (what the retry re-runs, whether a cached copy should still show), logged as a
-// follow-up rather than swept.
+// then the direct fetches that keep their rejection, the sentence `what` composes, every list
+// destination's adoption, and, rooted at the app's route tables, every page that reads. A
+// surface's own source pins come last: each is a property its driven row cannot reach.
 
 const SRC = join(process.cwd(), 'src')
 // 🪤 A RAIL MEASURES THE PROGRAM, NOT THE EXPLANATION OF IT — and not the code NEAR the program either.
@@ -1322,13 +1244,6 @@ describe('§B no fetcher swallows its own rejection, tree-wide and by COUNT', ()
     expect(ghosts, 'delete these entries').toEqual([])
   })
 
-  it('the primitive is exported from the list kit, beside EmptyState', () => {
-    // Co-located on purpose: the two are alternative answers to the same condition, and a
-    // surface reaching for one should see the other.
-    const kit = readSource(join(SRC, 'ui/ListScaffold.tsx'))
-    expect(kit).toMatch(/export function LoadError\b/)
-    expect(kit).toMatch(/export function EmptyState\b/)
-  })
 
   it('scans real files (not vacuously green)', () => {
     expect(walk(SRC).length, 'the walker must find the tree').toBeGreaterThan(200)
@@ -1698,5 +1613,313 @@ describe('direct fetches keep their rejection too — the 2026-09-05 false-empty
       expect(catchPin.test(src), `${rel}: the catch must record the error, not fold it into an empty value (${catchPin})`).toBe(true)
       expect(src.includes(`<LoadError what="${what}"`), `${rel}: must render <LoadError what="${what}">`).toBe(true)
     }
+  })
+})
+
+// ── LoadError's `what` is interpolated into prose, so it has a grammar ───────────────────────────
+//
+// `<LoadError what={x} />` renders `Couldn't load your {x}`. That is a copy surface wearing a prop:
+// every value has to read as a sentence, and no per-call assertion catches this, because they all
+// match a noun regex. One change shipped `what="the inbox"` with every test green and the screen
+// reading "Couldn't load your the inbox". This reads every value the tree passes instead.
+//
+// The contract (also in the prop's doc comment): no leading article or `your`, and lowercase but
+// for a proper noun. Plurality is NOT required: the body no longer names the noun (`ui/loadError
+// .test.tsx`), so "Couldn't load your project" is right and "Your project are safe" no longer
+// exists to be wrong.
+//
+// Census (dev gateway + a proxy 500-ing only each surface's endpoint):
+//   #/settings/guardrails  "Couldn't load your the autonomy ladder"   → fixed to "autonomy ladder"
+//   #/apps                 "…your the Store catalog"                   → "Store catalog"
+//   #/settings/packs       "…your the pack catalog"                    → "pack catalog"
+
+/** The proper nouns a value may start with. */
+const PROPER_NOUNS = ['Git', 'HuggingFace', 'Store']
+
+/** Every literal and expression value passed to a LoadError `what`, with its file. */
+function whatValues(): { rel: string; value: string }[] {
+  const out: { rel: string; value: string }[] = []
+  for (const abs of filesUnder(SRC, (name) => /\.tsx?$/.test(name) && !name.includes('.test.'))) {
+    const src = readSource(abs)
+    for (const m of src.matchAll(/<LoadError\b[^>]*?\bwhat=(?:"([^"]*)"|\{([^}]*)\})/gs)) {
+      if (m[1] != null) out.push({ rel: rel(abs), value: m[1] })
+      // An expression noun (`collectionTok ? 'a' : 'b'`): each string literal in it.
+      else for (const lit of (m[2] ?? '').matchAll(/'([^']+)'|"([^"]+)"/g)) out.push({ rel: rel(abs), value: lit[1] ?? lit[2] })
+    }
+  }
+  return out
+}
+
+describe("LoadError's what composes a grammatical headline", () => {
+  const values = whatValues()
+
+  it('finds the population: the scan is not vacuous', () => {
+    // 57 call sites when this was written, strings and both arms of every expression. A floor well
+    // under that, so a refactor that renames the component cannot pass an empty census.
+    expect(values.length, 'LoadError what= values across the tree').toBeGreaterThanOrEqual(45)
+  })
+
+  it('no value carries a leading article OR a leading `your`: the headline always renders', () => {
+    // 🪤 `your` WAS THE HOLE, AND THE TEMPLATE ITSELF IS WHAT MAKES IT ONE. The headline is
+    // `Couldn't load your {what}`, so the determiner to worry about is not only the four articles
+    // but anything the template already supplies, and it supplies exactly one: `your`. A value of
+    // `"your edit history"` renders "Couldn't load your your edit history", the same defect as
+    // `"the store catalog"`, missed because the banned words had been written from the one instance
+    // that had occurred rather than from the sentence.
+    //
+    // ⚠️ SCOPED TO `LoadError`, AND THAT IS LOAD-BEARING. `<LoadError\b` does not match
+    // `<InlineLoadError`, and the distinction is real: `InlineLoadError` composes through
+    // `loadErrorMessage`, which emits `Couldn't load {what}.` with no possessive, so `what="your
+    // agents"` is correct there and is in the tree.
+    const leadingDeterminer = /^(the|this|a|an|your)\s/i
+    // A control on the predicate, not just on the population: a negated assertion that cannot match
+    // reads exactly like a clean tree. Every banned word gets a hit, and the near-misses a miss.
+    for (const w of ['the store catalog', 'this prompt', 'a project', 'an agent', 'your edit history']) {
+      expect(leadingDeterminer.test(w), `the predicate must still catch "${w}"`).toBe(true)
+    }
+    for (const w of ['agents', 'theme settings', 'answers', 'anagram list', 'projects']) {
+      expect(leadingDeterminer.test(w), `and must NOT catch "${w}"`).toBe(false)
+    }
+    const bad = values.filter((v) => leadingDeterminer.test(v.value))
+      .map((v) => `${v.rel}: "Couldn't load your ${v.value}"`)
+    expect(bad, `a leading article or possessive makes the headline ungrammatical:\n${bad.join('\n')}`).toEqual([])
+  })
+
+  it('every value is lowercase-leading unless it starts with a proper noun', () => {
+    const properNoun = (v: string) => PROPER_NOUNS.some((n) => v === n || v.startsWith(`${n} `))
+    for (const w of ['Store catalog', 'Git push switch']) expect(properNoun(w), `"${w}" starts with one`).toBe(true)
+    for (const w of ['Stored items', 'Projects', 'SKILLS']) expect(properNoun(w), `"${w}" does not`).toBe(false)
+    const capital = values.filter((v) => /^[A-Z]/.test(v.value) && !properNoun(v.value)).map((v) => `${v.rel}: ${v.value}`)
+    expect(capital, 'a capital here is a proper noun, named above, or a typo').toEqual([])
+  })
+})
+
+// ── The convergence census ──────────────────────────────────────────────────────────────────────
+//
+// A family is only converged if the NEXT surface inherits the form. Every page module that renders
+// the shared `EmptyState` off the shared cache hook must render `LoadError` too.
+describe('every useQuery list destination adopts LoadError', () => {
+  it('has no un-named holdouts', () => {
+    const dir = join(SRC, 'pages')
+    const files = filesUnder(dir, (name) => name.endsWith('.tsx') && !name.includes('.test.'))
+
+    // 🪤 `includes('useQuery(')` MISSED THE GENERIC FORM and the census came back empty: a rail
+    // matching nothing reads exactly like a converged family. `useQuery<T>(…)` is the majority
+    // spelling on these pages, so the hook is matched as a regex, and the floor below is what would
+    // have caught it on the first run.
+    const HOOK = /useQuery(?:<[\s\S]*?>)?\(/
+    const usesHook = files.filter((f) => HOOK.test(readSource(f)))
+    expect(usesHook.length, 'vacuity floor: the hook must be found across the pages tree').toBeGreaterThan(20)
+
+    const holdouts = files.filter((f) => {
+      const src = readSource(f)
+      return src.includes('<EmptyState') && HOOK.test(src) && !src.includes('LoadError')
+    }).map((f) => f.slice(dir.length + 1).replace(/\\/g, '/')).sort()
+
+    // EMPTY is the converged state, not a disabled rail: the floor above keeps it meaningful, and a
+    // new list destination that renders `<EmptyState` off a `useQuery` without `LoadError` reds
+    // here. Two entries graduated before it emptied, and each left a lesson. `tools/ToolsPage.tsx`
+    // was excused because it composes several reads and "partial tolerance is the design", which
+    // held for its peripheral reads and not for the index, the collection itself: an exemption
+    // written for a FILE can be wrong about one read inside it. `triggers/WeekGridView.tsx` was
+    // excused as reading "through useState + try/catch, a different mechanism", and it had neither:
+    // it bound `{ data: week }` off the same hook and declined its `error`. An exemption is prose,
+    // and prose does not fail when the code moves underneath it.
+    expect(holdouts).toEqual([])
+  })
+})
+
+// ── Every page that reads says when a read failed ───────────────────────────────────────────────
+//
+// Every list above is scoped to what someone thought of. This one is rooted at the two tables the
+// app routes by (`test/routeTables.ts`), so a page added after it is in it on the day it is routed.
+//
+//   · A route's OWN modules are the `pages/` modules it reaches in fewer imports than any other
+//     route does: a sub-page owns its panel, and the settings page owns only what no sub-page
+//     reaches first.
+//   · A route READS when one of its own modules calls `useQuery`, or calls an `api` method that
+//     reads (one whose body GETs through the client's `get`). A write is not a read: a page that
+//     only saves has nothing to load.
+//   · A route that reads must SAY when a read failed, in one of its own modules, through one of
+//     the shared ways: `LoadError`, its one-line `InlineLoadError`, or, on the settings hub, a
+//     `BentoCard` handed `failed`.
+//
+// A route that says it another way is named below with the way it does, compared for exact
+// equality: a new route that reads and says nothing reds here, and one of these that adopts a
+// shared way must leave the list.
+
+const SAYS_IT_ANOTHER_WAY: Record<string, string> = {
+  // An alert block of its own (`role="alert"`, the failure's text and a Try again) over the four
+  // lanes, so a failed read is never four empty lanes.
+  'mission-control': 'its attention board states the failure in an alert of its own',
+  // The composer's one read is the workspace a new loop inherits, a prefill left empty for the
+  // user when it cannot be read; the design-system preview says "Could not load the default token
+  // set." in its modal.
+  loop: 'its one read prefills a field, and the token preview says it could not load in a line',
+  // The persistence toggle stays hidden until its config is read, a failed sandbox read leaves the
+  // host as the only tier (the picker hides), and a failed restore opens with no tabs restored:
+  // none of them draws a collection a failure could pass for. Two are in §B's budget.
+  terminal: 'its reads hide a toggle or a picker, or restore no tabs, rather than draw a list',
+  // The machine's strip, shared with the dashboard, says each failed read with `InlineError` and
+  // a retry ("Couldn't read the gateway's status.").
+  'settings/system': "the strip it shares with the dashboard says each failed read with InlineError",
+  // An unread log level selects no level; the live tail says when its stream is disconnected.
+  'settings/diagnostics': 'an unread log level selects none, and the tail says when it is disconnected',
+  // It writes LoadError's headline itself, inside an `InlineError` with a Retry.
+  'settings/tool-output': "it writes LoadError's headline itself, in an InlineError with a Retry",
+}
+
+/** The `api` methods that read: each whose body GETs through the client's `get`. */
+function readMethods(apiText: string): Set<string> {
+  const body = apiText.slice(apiText.indexOf('export const api = {'))
+  const keys = [...body.matchAll(/^ {2}(\w+)\s*[:(]/gm)]
+  const reads = new Set<string>()
+  keys.forEach((key, i) => {
+    const text = body.slice(key.index, keys[i + 1]?.index ?? body.length)
+    if (/(?<![\w.$])get\s*[<(]/.test(text)) reads.add(key[1])
+  })
+  return reads
+}
+
+/** `<LoadError`, `<InlineLoadError`, or a `BentoCard` handed `failed`. */
+const saysAReadFailed = (code: string) =>
+  /<(?:Inline)?LoadError\b/.test(code) || (/<BentoCard\b/.test(code) && /\sfailed=\{/.test(code))
+
+/** Each route's own `pages/` modules that read and that say a read failed, and the routes whose
+ *  own modules read and say nothing. */
+function readingRouteCensus(tree: Tree, src: string) {
+  const reads = readMethods(tree.read(join(src, 'lib', 'api.ts')))
+  const routes = routeRoots(tree, src)
+  const graph = importGraph(tree)
+  const reached = routes.map((r) => ({ route: r.route, reached: reach(graph, r.module) }))
+  const pages = join(src, 'pages') + '/'
+  const own = new Map<string, { reads: string[]; says: string[] }>(routes.map((r) => [r.route, { reads: [], says: [] }]))
+  for (const file of graph.keys()) {
+    if (!file.startsWith(pages)) continue
+    const route = nearestRoute(reached, file)
+    if (!route) continue
+    const code = withoutComments(tree.read(file))
+    const at = file.slice(src.length + 1)
+    const readsHere = /\buseQuery\s*(?:<[^>]*>)?\s*\(/.test(code)
+      || [...code.matchAll(/\bapi\.(\w+)\s*\(/g)].some((m) => reads.has(m[1]))
+    if (readsHere) own.get(route)!.reads.push(at)
+    if (saysAReadFailed(code)) own.get(route)!.says.push(at)
+  }
+  const silent = [...own].filter(([, o]) => o.reads.length && !o.says.length).map(([route]) => route)
+  return { reads, routes, own, silent }
+}
+
+describe('every route that reads says when a read failed', () => {
+  const tree: Tree = { files: filesUnder(SRC), read: readSource }
+
+  it('or is named with the way it does', () => {
+    const { silent } = readingRouteCensus(tree, SRC)
+    expect(silent.sort(), 'give these a shared way to say a read failed').toEqual(Object.keys(SAYS_IT_ANOTHER_WAY).sort())
+  })
+
+  it('read real tables, a real client and real pages', () => {
+    const { reads, routes, own } = readingRouteCensus(tree, SRC)
+    expect(reads.has('agents') && reads.has('toolsIndex'), 'the reads the surfaces table drives').toBe(true)
+    expect(reads.has('updateAgent') || reads.has('createAgent'), 'and no write').toBe(false)
+    expect(reads.size, 'the client reads').toBeGreaterThan(200)
+    expect(routes.length, 'renderPage and SUBPAGES').toBeGreaterThan(60)
+    const reading = [...own.values()].filter((o) => o.reads.length)
+    expect(reading.length, 'routes that read').toBeGreaterThan(50)
+    expect(own.get('agents')?.reads, 'a route owns the adapter its page reads through').toContain('pages/agents/agentsData.ts')
+    expect(own.get('settings')?.says, 'the hub says it through its tiles').toContain('pages/settings/settingsWidgets.tsx')
+  })
+})
+
+describe('a planted page that reads and says nothing is named', () => {
+  const src = '/planted/src'
+  // Double quotes: the census reads either, and these are not this file's own imports.
+  const files: Record<string, string> = {
+    [`${src}/lib/api.ts`]: [
+      'export const api = {',
+      '  things: () => get<Thing[]>("/api/things"),',
+      '  notes: () => get<Note[]>("/api/notes"),',
+      '  saveThing: (t: Thing) => post<{ ok: boolean }>("/api/things", t),',
+      '}',
+    ].join('\n'),
+    [`${src}/app/App.tsx`]: [
+      'import { ThingsPage } from "../pages/things/ThingsPage"',
+      'import { NotesPage } from "../pages/notes/NotesPage"',
+      'import { SaverPage } from "../pages/saver/SaverPage"',
+      'function renderPage(route: string) {',
+      '  switch (route) {',
+      "    case 'things': return <ThingsPage />",
+      "    case 'notes': return <NotesPage />",
+      "    case 'saver': return <SaverPage />",
+      '  }',
+      '}',
+    ].join('\n'),
+    [`${src}/pages/settings/SettingsPage.tsx`]: [
+      'import { HubPanel } from "./HubPanel"',
+      'const SUBPAGES = [',
+      "  { id: 'hub', label: 'Hub', render: () => <HubPanel /> },",
+      ']',
+    ].join('\n'),
+    // Reads through the hook in one module, and says it failed in another it imports.
+    [`${src}/pages/things/ThingsPage.tsx`]: 'import { ThingsList } from "./ThingsList"\nexport function ThingsPage() { return <ThingsList /> }',
+    [`${src}/pages/things/ThingsList.tsx`]: [
+      'import { ThingsFailed } from "./ThingsFailed"',
+      'export function ThingsList() { const { data, error } = useQuery("things", () => api.things()); return error ? <ThingsFailed /> : null }',
+    ].join('\n'),
+    [`${src}/pages/things/ThingsFailed.tsx`]: 'export function ThingsFailed() { return <LoadError what="things" /> }',
+    // Reads directly, and says nothing.
+    [`${src}/pages/notes/NotesPage.tsx`]: 'export function NotesPage() { useEffect(() => { api.notes().then(setNotes) }, []); return null }',
+    // Only writes, so it has nothing to load.
+    [`${src}/pages/saver/SaverPage.tsx`]: 'export function SaverPage() { return <Button onClick={() => api.saveThing(t)} /> }',
+    // The hub reads per tile, and says it on the tile.
+    [`${src}/pages/settings/HubPanel.tsx`]: 'export function HubPanel() { const { status } = useQuery("t", () => api.things()); return <BentoCard title="T" failed={status === "error"} /> }',
+  }
+  const planted: Tree = { files: Object.keys(files), read: (p) => files[p] ?? '' }
+
+  it('names the route by its table entry, and only it', () => {
+    const { silent, own } = readingRouteCensus(planted, src)
+    expect(silent).toEqual(['notes'])
+    expect(own.get('things'), 'a route says it in a module it owns').toEqual({ reads: ['pages/things/ThingsList.tsx'], says: ['pages/things/ThingsFailed.tsx'] })
+    expect(own.get('saver')?.reads, 'a write is not a read').toEqual([])
+    expect(own.get('settings/hub')?.says, "a hub tile's failed counts").toEqual(['pages/settings/HubPanel.tsx'])
+  })
+
+  it('and a route that says it leaves the list', () => {
+    const notes = `${src}/pages/notes/NotesPage.tsx`
+    const fixed: Record<string, string> = { ...files, [notes]: files[notes].replace('return null', 'return <InlineLoadError what="notes" />') }
+    expect(readingRouteCensus({ files: Object.keys(fixed), read: (p) => fixed[p] ?? '' }, src).silent).toEqual([])
+  })
+})
+
+// ── A surface's own source pins ─────────────────────────────────────────────────────────────────
+//
+// What a surface's driven row in `pages/loadErrorSurfaces.test.tsx` cannot reach. `#/tools` reads
+// its index and its peripherals in one fetcher, and its server cards in a read of their own: in the
+// composed fetcher they waited for every server the tool list starts to answer, so a card after
+// Allow kept its old state for as long as a server took to start. The cards' read is tolerant and
+// carries the failure (`failedRead`); a cold failure would read the same without it, because the
+// page turns the hook's error into the same marker, so only the source can say it is there.
+describe('#/tools reads its server cards apart from the tool list', () => {
+  const code = codeOf(join(SRC, 'pages/tools/ToolsPage.tsx'))
+
+  /** The composed fetcher's `Promise.all([...])` list, bracket-matched, not a character window. */
+  const readList = () => {
+    const at = code.indexOf('await Promise.all([')
+    expect(at, 'the composed fetcher must still be here').toBeGreaterThan(-1)
+    let i = code.indexOf('[', at) + 1
+    let depth = 1
+    while (i < code.length && depth > 0) {
+      if (code[i] === '[') depth++
+      else if (code[i] === ']') depth--
+      i++
+    }
+    return code.slice(at, i)
+  }
+
+  it('the server list is not in the composed fetcher, and is still read, tolerantly', () => {
+    expect(readList(), 'the index is in the composed fetcher').toContain('api.toolsIndex()')
+    expect(readList(), 'the server list is not').not.toContain('api.mcpServers()')
+    const at = code.indexOf('api.mcpServers()')
+    expect(at, 'the server list is still read').toBeGreaterThan(-1)
+    expect(code.slice(at, at + 40), 'and stays tolerant, carrying the failure').toMatch(/\.catch\(failedRead\)/)
   })
 })

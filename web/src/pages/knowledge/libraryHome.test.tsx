@@ -88,7 +88,7 @@ describe('the library home tells empty apart from broken', () => {
     // `api.knowledgeLibraryHome` left every DOM test above GREEN, because they mock that method
     // and never reach the swallow. The component cannot tell an empty answer from a swallowed
     // failure — so the absence of the catch is asserted where it lives, from source, exactly as
-    // `ui/loadErrorState` and `pages/listDestinationLoadError` do for the other read paths.
+    // `ui/loadErrorCensus` and `pages/loadErrorSurfaces` do for the other read paths.
     const src = readFileSync(join(process.cwd(), 'src/lib/api.ts'), 'utf8')
     const call = src.match(/knowledgeLibraryHome:[\s\S]*?\n {2}[a-zA-Z]/)
     expect(call, 'could not locate knowledgeLibraryHome in lib/api.ts — the matcher rotted').toBeTruthy()

@@ -152,7 +152,7 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, failed, 
         </div>
         {/* Failure is checked BEFORE loading, and the order is the whole point: `data === undefined`
             satisfies the skeleton branch too, so a failure tested second is a failure never shown —
-            the reachability trap `ui/loadErrorState.test.tsx` was written about. */}
+            the reachability trap `ui/loadErrorCensus.test.ts` was written about. */}
         {failed
           ? <TileLoadError id={failId} title={title} error={error} onRetry={onRetry} />
           : loading

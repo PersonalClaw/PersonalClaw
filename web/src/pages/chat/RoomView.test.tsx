@@ -12,7 +12,7 @@
  *    the reads too), and a room that is gone is an empty state rather than an error.
  *
  * `vi.doMock` + `vi.resetModules()` + a dynamic import of the subject is this repo's shape for
- * mocking `lib/api` (see `triggers/triggersLoadError.test.tsx`).
+ * mocking `lib/api` (see `settings/projectionRulesUnread.test.tsx`).
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
@@ -378,7 +378,7 @@ describe('the states that are not failures', () => {
  *  `agents` is `undefined` both while `/api/agents` is in flight and after it rejected, so the
  *  picker keyed its placeholder off `agents === undefined` and said `Loading…` — forever, for a
  *  request that had already failed. That is the (B) half of the `useQuery` error class:
- *  `ui/loadErrorState.test.tsx`'s `UNBOUND_ERROR_BUDGET` counts exactly this shape, and
+ *  `ui/loadErrorCensus.test.ts`'s `UNBOUND_ERROR_BUDGET` counts exactly this shape, and
  *  `RoomView.tsx` carries no budget entry, so the census's zero default is the rail. */
 describe('the member picker when the agent list cannot be read', () => {
   async function openAddForm() {

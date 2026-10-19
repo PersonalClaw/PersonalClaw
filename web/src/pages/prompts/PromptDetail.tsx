@@ -136,7 +136,7 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
   // Error before skeleton: both branches test `full === undefined`, so the order IS the
   // reachability. `what` names the thing rather than the endpoint, and carries NO LEADING ARTICLE:
   // `LoadError` composes "Couldn't load your ${what}", so "this prompt" renders "your this prompt".
-  // `ui/loadErrorSentence.test.ts` pins that tree-wide and is what caught it here.
+  // `ui/loadErrorCensus.test.ts` pins that tree-wide and is what caught it here.
   if (full === undefined && hydrateErr) {
     return <LoadError what="prompt" error={hydrateErr} onRetry={refetch} />
   }

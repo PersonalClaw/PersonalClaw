@@ -351,7 +351,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
 
       {/* The roots are the page's premise: with none readable there is no tree to browse and no tab
           to pick, so this branch REPLACES the workbench rather than decorating it. Tested before the
-          body for the reason `ui/loadErrorState.test.tsx` states — `roots.length === 0` is true for
+          body for the reason `ui/loadError.test.tsx` states — `roots.length === 0` is true for
           the loading, error AND genuinely-empty cases, so an error branch after it never runs. */}
       {rootsErr && roots.length === 0 ? (
         <LoadError what="file roots" error={rootsErr} onRetry={refreshRoots} />

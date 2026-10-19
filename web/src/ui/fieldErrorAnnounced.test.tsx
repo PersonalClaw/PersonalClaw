@@ -54,7 +54,7 @@ describe('FieldError', () => {
 
   it('agrees with InlineError that a failure is an alert', () => {
     // Two shapes, one contract: the band and the line both interrupt. (EmptyState deliberately
-    // does not — "you have none" is a normal answer, per loadErrorState.test.tsx.)
+    // does not — "you have none" is a normal answer, per ui/loadError.test.tsx.)
     const { container } = render(<InlineError>boom</InlineError>)
     expect(container.querySelector('[role="alert"]')).not.toBeNull()
   })

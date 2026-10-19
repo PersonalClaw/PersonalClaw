@@ -93,7 +93,7 @@ export function RoomView({ roomId, navigate, setQuery }: {
   // 🪤 `error` is BOUND, not dropped. `agents` is only ever `undefined` or a list, and the picker
   // reads `undefined` as "still loading" — so a rejected read left it saying `Loading…` forever,
   // a failure wearing a loading state. Binding the rejection is what lets the picker tell the two
-  // apart. `ui/loadErrorState.test.tsx`'s `UNBOUND_ERROR_BUDGET` is the rail over this class.
+  // apart. `ui/loadErrorCensus.test.ts`'s `UNBOUND_ERROR_BUDGET` is the rail over this class.
   const { data: agentData, error: agentsError, refresh: refreshAgents } =
     useQuery('agents:list', () => api.agents())
 

@@ -8,7 +8,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 // So a failure read as "nothing to import", and a failed server list as "no MCP servers". The
 // gateway now answers the failure as a failure; these pin the page's half. It says what failed, in
 // the gateway's words, and what to do; it offers the read again; and it keeps the rest of the page,
-// because the reads stay tolerated (`toolsIndexLoadError.test.tsx` holds that half).
+// because the reads stay tolerated (`pages/loadErrorSurfaces.test.tsx` holds that half).
 
 const idx = {
   tools: [

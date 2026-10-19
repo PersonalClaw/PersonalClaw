@@ -240,7 +240,7 @@ describe('a config panel does not present fabricated values as saved state', () 
     // assertion would catch both and force this comment to be updated in the same PR; that is a
     // bigger change than this one and it belongs to whoever next touches this rail."* This is that
     // PR, so this is that change — and it is the same correction being made tree-wide in
-    // `ui/loadErrorState.test.tsx` §B, for the same reason, in the same commit.
+    // `ui/loadErrorCensus.test.ts` §B, for the same reason, in the same commit.
     //
     // Two things the new shape fixes, not one:
     //   · a floor could not see an ADDITION — the drift this comment records FOUR separate times;
