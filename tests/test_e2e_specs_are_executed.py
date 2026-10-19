@@ -24,9 +24,9 @@ tells whoever committed it to wire the job. An exemption that cannot expire is h
 temporary decision becomes permanent silently.
 
 Not asserted, because it was checked and is not true: `make gates` is invoked by no workflow,
-but its three gates ARE executed in CI — `test_gate_report.py`'s
-`test_all_gates_pass_on_a_clean_tree` calls `gate_report.main()` and asserts it exits 0, and
-the suite runs on every PR. The target is a convenience wrapper, not an unrun gate.
+but its gates ARE executed in CI — the `rails` job runs `scripts/gate_report.py`, the script the
+target wraps, on the real tree (`tests/rails/test_gate_aggregate_runs_in_ci_tree.py` holds that
+step in place). The target is a convenience wrapper, not an unrun gate.
 """
 
 from __future__ import annotations

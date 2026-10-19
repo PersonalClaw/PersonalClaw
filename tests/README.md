@@ -162,6 +162,13 @@ A rail names the repository from `REPO` in `tests/rails/rails_repo.py`, not from
 of its own file. A rail imports no behaviour test module: a name both need lives in a helper
 module in `tests/`.
 
+A whole-tree check (the six gates `scripts/gate_report.py` aggregates, `harness validate` and
+`harness scan`, the asset-licence census) runs on the real tree in one place: the CI job that
+owns it. The suite tests such a check on stubs or on a small tree of the test's own, never on
+the repository again. `tests/rails/test_each_tree_check_runs_in_one_place.py` fails on a test
+that runs one on the real tree, and on a test file a workflow job runs by name while the shards
+collect it too. Its lists of the copies still there only shrink.
+
 ## Conventions
 
 - A variation earns its own test only by the rule in
