@@ -144,7 +144,7 @@ CHECKS: Mapping[str, Check] = {
         sources=(_group(_LICENCE, "_ROOT") | _group(_LICENCE_TESTS, "_ROOT"),),
     ),
     "harness-scanner": Check(
-        owner="none yet: only the suite scans the whole tree; ci.yml harness runs scan --diff",
+        owner="ci.yml rails: tests/rails/test_harness_scanner_tree.py (harness runs scan --diff)",
         entries={("harness.scanner", "scan"): ROOT},
         sources=(),
     ),
@@ -161,7 +161,6 @@ CHECKS: Mapping[str, Check] = {
 #: the licence sweep, then the scanner's whole-tree scan, which move to tests/rails.
 KNOWN_COPIES: frozenset[tuple[str, str]] = frozenset(
     {
-        ("harness-scanner", "tests/test_harness_scanner.py::test_scanner_clean_on_current_tree"),
         (
             "licence-sweep",
             "tests/test_licence_governance.py::" "test_every_declaration_site_is_in_the_census",
