@@ -1,8 +1,8 @@
 """The verdict store: a job's clean pass, recorded under a key of every input it ran on, so a later
 run of exactly those inputs may stand on it instead of running the job again.
 
-Nothing consults the store yet: ``python -m tools.ci run`` and ``run-job`` will. This module holds
-the rules they will follow.
+``python -m tools.ci run <tier>`` consults it (``tools/ci/jobs.py``); a working-tree run (``make
+check``) and ``run-job`` do not. This module holds the rules the run follows.
 
 **The key.** :func:`key` is the sha256 of the canonical JSON (sorted keys, no spaces, UTF-8) of a
 :class:`KeyInputs`: the job id, the text of its catalogue entry and the catalogue's version, the
@@ -21,11 +21,12 @@ security is anything but ``ordinary``, or when it is live: marked ``live``, or r
 catalogue's live feeds. Live and security evidence is never reused, with no TTL.
 
 **What is recorded.** :meth:`Store.record` records only a pass (``success``) that needed no rerun
-(:attr:`Result.rerun` is ``False``. Nothing feeds the store a ``run-job`` record yet; when one does,
-the record's ``rerun`` of null, which every success carries, is to map to ``False``, and a
-diagnostic rerun is only ever on a red job, which is never recorded) and whose quarantined-failure
-list is present and empty, from a checkout that was clean when the run began and is still clean, on
-the same head and tree, when the pass is recorded. Clean means
+(:attr:`Result.rerun` is ``False``) and whose quarantined-failure list is present and empty, from a
+checkout that was clean when the run began and is still clean, on the same head and tree, when the
+pass is recorded. ``run <tier>`` builds the :class:`Result` from the ``run-job`` records each shard
+of the job left: a ``rerun`` of null, which every success carries, is ``False`` and anything else
+``True`` (a diagnostic rerun is only ever on a red job, which is not recorded at all), and the
+quarantined failures are every record's ``quarantined`` list together. Clean means
 ``git status --porcelain --untracked-files=all`` printed nothing, so an untracked file counts even
 where ``status.showUntrackedFiles`` hides it. The entry goes to a temporary file in the store's own
 folder, is flushed to disk, and only then takes its name, so a half-written entry is never under
@@ -47,8 +48,9 @@ and system git configuration, as the user's git would. A local entry never reach
 **The decision.** :func:`decide` says, per planned job, whether it is reused or run, and why. It
 reads the checkout from the :class:`Start` the run began with, so the receipt's ``dirty`` field and
 the replay rule come from one reading. A dirty run replays nothing and records nothing; every job
-runs. A job whose inputs name another tree than the checkout's runs. The :class:`Receipt` carries
-the run-level ``dirty`` field and each job's decision, class, key inputs and source.
+runs. A job whose inputs name another tree than the checkout's runs. With ``replay`` off
+(``--no-reuse``) every job runs and no entry is read. The :class:`Receipt` carries the run-level
+``dirty`` field and each job's decision, class, key inputs and source.
 
 Standard library only, beside the catalogue and the verdict's result words, so a trusted job can
 run it on the runner image's own ``python3`` before anything is installed.
@@ -69,7 +71,7 @@ from pathlib import Path
 from typing import Any
 
 from .catalogue import LIVE_INPUTS, NEVER, Job, Reuse, parse_reuse
-from .verdict import SUCCESS
+from .verdict import SUCCESS, Reason
 
 __all__ = [
     "VERSION",
@@ -89,6 +91,8 @@ __all__ = [
     "dirty",
     "begin",
     "decide",
+    "never_reason",
+    "judge_reused",
 ]
 
 #: The entry format's version. An entry of another version is a miss; the version is in the key,
@@ -514,7 +518,22 @@ class Receipt:
         return out
 
 
-def _decide(job: Job, inputs: KeyInputs, store: Store, now: float, start: Start) -> Decision:
+def never_reason(job: Job) -> str | None:
+    """Why *job* is never reused, as its receipt says it; None when its class may be reused."""
+    if reuse_class(job) != NEVER:
+        return None
+    if job.security == "security":
+        return "security evidence is never reused"
+    if job.security != "ordinary":
+        return f"its security is {job.security!r}, not ordinary, so it is never reused"
+    if _live(job):
+        return "live evidence is never reused"
+    return "its class is never"
+
+
+def _decide(
+    job: Job, inputs: KeyInputs, store: Store, now: float, start: Start, replay: bool
+) -> Decision:
     reuse = reuse_class(job)
     entry_key = key(inputs)
 
@@ -523,14 +542,11 @@ def _decide(job: Job, inputs: KeyInputs, store: Store, now: float, start: Start)
 
     if start.dirty:
         return run("the run is dirty, so nothing is replayed")
-    if reuse == NEVER:
-        if job.security == "security":
-            return run("security evidence is never reused")
-        if job.security != "ordinary":
-            return run(f"its security is {job.security!r}, not ordinary, so it is never reused")
-        if _live(job):
-            return run("live evidence is never reused")
-        return run("its class is never")
+    never = never_reason(job)
+    if never is not None:
+        return run(never)
+    if not replay:
+        return run("--no-reuse: every job runs, and no recorded pass is read")
     if inputs.tree_oid != start.tree:
         return run("the inputs name another tree than the checkout's")
     entry = store.lookup(entry_key)
@@ -557,9 +573,11 @@ def decide(
     *,
     now: float,
     start: Start,
+    replay: bool = True,
 ) -> Receipt:
     """Decide, per planned job in plan order, whether it is reused or run, from the checkout as
-    *start* read it when the run began.
+    *start* read it when the run began. With *replay* false (``--no-reuse``) every job runs and no
+    entry is read; a job the store never reuses still says why.
 
     Every planned job must have its own inputs: a job keyed on nothing is refused, not run on a
     guess."""
@@ -570,5 +588,55 @@ def decide(
             raise Refused(f"{job.id}: no key inputs for this job")
         if mine.job_id != job.id:
             raise Refused(f"{job.id}: the key inputs are {mine.job_id}'s")
-        decisions.append(_decide(job, mine, store, now, start))
+        decisions.append(_decide(job, mine, store, now, start, replay))
     return Receipt(start.dirty, tuple(decisions))
+
+
+def judge_reused(
+    receipt: Receipt, jobs: Iterable[Job], *, tree: str
+) -> tuple[set[str], list[Reason]]:
+    """Which planned jobs a run's *receipt* lets stand as reused, on the run's *tree*.
+
+    A reused job leaves no job record, so the run's verdict judges it by its decision here.
+    It counts only when the decision says reused, from a clean run, with a source, for a job of
+    the plan the store may reuse, whose inputs are its own, are keyed to the decision's key, and
+    name *tree*. A decision that names another tree or another key reads ``missing``, as a job with
+    no result does. A receipt no run of :func:`decide` writes is refused, never counted: one that
+    says a job the store never reuses (security, live, or class ``never``) was reused, one that
+    reuses in a dirty run or with no source, and one that names a job the plan does not, or twice.
+
+    Returns the ids that count as reused, and a reason per reused job that reads missing."""
+    planned = {job.id: job for job in jobs}
+    seen: set[str] = set()
+    counted: set[str] = set()
+    reasons: list[Reason] = []
+    for decision in receipt.jobs:
+        if decision.id not in planned:
+            raise Refused(f"{decision.id}: the receipt names a job the plan does not")
+        if decision.id in seen:
+            raise Refused(f"{decision.id}: the receipt names the job twice")
+        seen.add(decision.id)
+        if not decision.reused:
+            continue
+        job = planned[decision.id]
+        if reuse_class(job) == NEVER:
+            raise Refused(
+                f"{job.id}: the receipt says it was reused, and a job of class never"
+                f" (security {job.security!r}, live {_live(job)}) is never reused"
+            )
+        if receipt.dirty:
+            raise Refused(f"{job.id}: the receipt reuses it in a dirty run, which replays nothing")
+        if decision.source is None:
+            raise Refused(f"{job.id}: the receipt reuses it from no recorded pass")
+        if decision.inputs.job_id != job.id:
+            raise Refused(f"{job.id}: the reused decision holds {decision.inputs.job_id}'s inputs")
+        if decision.inputs.tree_oid != tree:
+            detail = f"reused from tree {decision.inputs.tree_oid}, and this run is on {tree}"
+            reasons.append(Reason(job.id, "missing", detail))
+            continue
+        if decision.key != key(decision.inputs):
+            detail = "the reused decision's key is not its inputs' key"
+            reasons.append(Reason(job.id, "missing", detail))
+            continue
+        counted.add(job.id)
+    return counted, reasons

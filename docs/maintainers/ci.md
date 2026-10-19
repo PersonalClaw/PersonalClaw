@@ -1051,9 +1051,9 @@ shadow mode, and the recall study.
 ## Local runs
 
 `python -m tools.ci run-job <id> [--shard i/N]` runs one catalogue job here, and
-`python -m tools.ci run <tier> [--changed] [--fail-fast]` runs every job of a tier
+`python -m tools.ci run <tier> [--changed] [--fail-fast] [--no-reuse]` runs every job of a tier
 (`tools/ci/jobs.py`). `make check` is `run change --working-tree` and `make gate` is
-`run merge`.
+`run merge`. A run reuses a job's recorded pass by the rules under "Verdict reuse".
 
 - **CI's commands.** A job's toolchain installs run first, as `ci.yml` runs them, then each step,
   word for word. A step's environment is built from nothing: what a GitHub runner gives every
@@ -1168,8 +1168,52 @@ Each step runs through `tools/ci/run.py`, which runs one command from an empty e
 
 ## Verdict reuse
 
-`tools/ci/verdict_store.py` holds the rules a local run will reuse a job's result by (#3919).
-Nothing consults it until `python -m tools.ci run` and `run-job` do.
+`tools/ci/verdict_store.py` holds the rules a local run reuses a job's result by (#3919), and
+`python -m tools.ci run <tier>` (so `make gate`) follows them:
+
+- **Before any job runs,** the run reads the checkout once and decides every planned job: a
+  `tree` job with a recorded pass of its key, or a `ttl` job with one inside its TTL, is reused
+  and not run; every other job runs. Each reused job prints
+  `reused <id> from <sha>, <age>, <n> skipped`, and each job that runs `ran <id>: <why>` under its
+  result. `<n>` counts the tests the recorded pass skipped, from its JUnit reports: a skipped case
+  counts, an expected failure (`xfail`) and a quarantined case do not.
+- **The receipt** is `reuse-receipt.json` in the run's folder (`.local/run-job/<run>/`, or
+  `--out`): the run's `dirty` field, each planned job's decision, class, key, key inputs, reason,
+  source and a TTL job's age, and, for each job that was not reused, whether its pass was recorded
+  and why not (its class, a dirty run, red, not run here, a rerun, a quarantined failure, a store
+  that cannot be written). When a key cannot be built at all (a checkout or file that cannot be
+  read, a probe the fingerprint cannot name, a `{base}` that names no commit) reuse is off: the
+  receipt also reads `"off": <why>`, still carries `dirty` and a `run` decision per job, every job
+  runs, nothing is recorded, and the run says `reuse is off: <why>` once.
+- **A reused job leaves no job record,** so the run's verdict counts it by its receipt
+  (`verdict_store.judge_reused`): only a reused decision of a job the store may reuse, from a
+  clean run, with a source, on this run's tree and keyed to its own inputs. One for another tree
+  or another key reads `missing`. A receipt that reuses a security, live or `never` job, reuses in
+  a dirty run or from no source, or names a job the plan does not or twice, is refused, and the
+  verdict is red. A green run that reused a job says `### Verdict: green on reuse` and names each
+  reused job, since it did not run on this candidate.
+- **What is recorded:** each job of a reusable class that ran and passed, every shard of it, from
+  the job records it left, with the tests it skipped. A red job, a `never` job, a job that did not
+  run here and any job of a dirty run record nothing. A store that cannot be written records
+  nothing and stops nothing: the run goes on, and the receipt says why.
+- **The key's inputs** as a run reads them: the job as the catalogue was read, the digest of
+  every job's entry, each install, and each step as this run runs it (a local `--workers` in its
+  pytest worker count) with its folder; the placeholders stay unfilled: `{runner_temp}` is this
+  run's own scratch folder, `{shard}` takes each of its values in every run of the job and the
+  shard count is keyed, and `{base}` is keyed as the full id of the commit it names. Then the
+  commit's tree, each partner's head, the digests of `uv.lock` and `package-lock.json`, each
+  toolchain program and each program an install or step starts from the job's `PATH` or by an
+  absolute path (its path and the sha256 of its bytes; nothing is started), the Python it asks
+  for, the OS, the architecture, its container, its env, the worker count its steps get (`auto`
+  read as this machine's CPU count), and the host's capabilities, read with the environment each
+  step gets and a home that is none of the user's. A capability the steps read differently is
+  keyed once per step, as `step <n>: <name>`.
+- **To force a fresh run,** pass `--no-reuse`: every job runs, no recorded pass is read, and each
+  clean pass is still recorded. `make check` (a working-tree run) and `run-job` neither read nor
+  write the store.
+- **What a gate can reuse:** of the merge tier's jobs only `rails`, `rails-checks`, `web-unit` and
+  `web-build` are `tree`. Both suite jobs are security posture, and the others are `never` or
+  live, so a second `make gate` on an unchanged tree still runs every one of those.
 
 - **The key** is a sha256 over every input a job's result depends on: the job id, its entry's
   text, the catalogue's version, the exact argv, a digest of the selected tests or shards, the

@@ -54,9 +54,16 @@ here, when every program its toolchain needs is on ``PATH``; the summary names i
 platform CI runs it on. The mode is refused on GitHub, where the checkout is the commit under
 test.
 
-A local result never stands in for GitHub's: nothing reads these records yet, and reuse of a
-recorded pass is not wired. A local ``--workers N`` replaces the catalogue's worker count, is
-refused on GitHub, and is written in the record.
+**Reuse.** ``run <tier>`` reads the local verdict store (:mod:`tools.ci.verdict_store`) before
+any job runs: a job of a reusable class with a recorded clean pass of its key (this tree, and
+every other input as this run would run the job) is not run, and the run's verdict counts it by
+its receipt, ``reuse-receipt.json``; each other job runs, and a clean pass of a reusable class is
+recorded. ``--no-reuse`` reads no recorded pass and still records. A working-tree run and
+``run-job`` never read or write the store.
+
+A local result never stands in for GitHub's: no workflow reads these records or the store. A
+local ``--workers N`` replaces the catalogue's worker count, is refused on GitHub, is written in
+the record, and is in the key.
 
 Standard library only, like every ``tools/ci`` module.
 """
@@ -64,8 +71,10 @@ Standard library only, like every ``tools/ci`` module.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import platform as host_platform
 import re
 import shlex
 import shutil
@@ -78,7 +87,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import catalogue, plan, run, shards, verdict
+from . import capabilities, catalogue, plan, run, shards, verdict, verdict_store
 from .catalogue import Catalogue, Job, Step
 
 #: What a GitHub-hosted runner gives every step that a step run here gets too: ``CI``, which the
@@ -152,6 +161,9 @@ class Options:
     #: Run on the checkout as it stands, uncommitted changes included: the same steps, no
     #: record, and the steps' result. A local mode only; on GitHub the checkout is a commit.
     working_tree: bool = False
+    #: Read the verdict store and skip a job it holds a clean pass of (``--no-reuse`` turns it
+    #: off: every job runs, and each clean pass is still recorded).
+    reuse: bool = True
 
 
 @dataclass
@@ -167,6 +179,11 @@ class Outcome:
     #: In a working-tree run only: the platform the job runs on in CI, when this machine is of
     #: another family and the job ran here anyway. Never set on a run that records.
     off_platform: str | None = None
+    #: Not run: the verdict store held a clean pass of this job on this tree.
+    reused: bool = False
+    #: The tests its JUnit reports say were skipped, as ``classname::name``: neither an expected
+    #: failure nor a quarantined one. Read only from a job that passed.
+    skipped: list[str] = field(default_factory=list)
 
 
 # ── what a job needs, and whether it can run here ────────────────────────────────────────────
@@ -269,6 +286,13 @@ def _workers(job: Job, options: Options) -> str | None:
     return str(options.workers)
 
 
+def _worker_count(job: Job, options: Options) -> str | None:
+    """The worker count the job's steps get: the local ``--workers`` or the catalogue's, with
+    ``auto`` read as this machine's CPU count."""
+    workers = _workers(job, options)
+    return str(os.cpu_count() or 1) if workers == "auto" else workers
+
+
 def _step_argv(step: Step, job: Job, values: Mapping[str, str], options: Options) -> list[str]:
     """The step's argv as it runs here: its placeholders filled, and a local ``--workers`` in
     each worker count it passes pytest, in each spelling :func:`catalogue.pytest_workers` reads
@@ -309,6 +333,17 @@ def _local_env(job: Job, host: Host) -> dict[str, str]:
         env["npm_config_cache"] = str(cache / "npm")
     if "chromium" in job.toolchain:
         env["PLAYWRIGHT_BROWSERS_PATH"] = str(cache / "ms-playwright")
+    return env
+
+
+def _base_env(job: Job, host: Host, options: Options) -> dict[str, str]:
+    """What every step of *job* gets below its job's own env and its own: the runner's, the
+    workflow's, the local caches (:func:`_local_env`), and the worker count when the job names a
+    variable for it (``workers_env``)."""
+    env = {**RUNNER_ENV, **WORKFLOW_ENV, **_local_env(job, host)}
+    count = _worker_count(job, options)
+    if job.workers_env and count is not None:
+        env[job.workers_env] = count
     return env
 
 
@@ -357,6 +392,21 @@ def _hang_report(host: Host) -> Callable[[int], None]:
             print(f"  {line}", file=sys.stderr)
 
     return report
+
+
+def skipped_tests(path: Path) -> list[str]:
+    """The tests a JUnit report says were skipped: each case pytest recorded as skipped, but for
+    an expected failure (``xfail``) and a quarantined case, which :func:`quarantined_failures`
+    reads."""
+    found = []
+    for case in ET.parse(path).getroot().iter("testcase"):
+        skipped = case.find("skipped")
+        if skipped is None or skipped.get("type") == "pytest.xfail":
+            continue
+        if "quarantine_issue" in {p.get("name") for p in case.iter("property")}:
+            continue
+        found.append(f"{case.get('classname', '')}::{case.get('name', '')}")
+    return found
 
 
 def quarantined_failures(path: Path) -> list[str]:
@@ -778,11 +828,7 @@ def run_one(
         else:
             _offline_plan(job, host, runner_temp)
             plan = "offline"
-    workers = _workers(job, options)
-    base_env = {**RUNNER_ENV, **WORKFLOW_ENV, **_local_env(job, host)}
-    if job.workers_env and workers is not None:
-        count = str(os.cpu_count() or 1) if workers == "auto" else workers
-        base_env[job.workers_env] = count
+    base_env = _base_env(job, host, options)
 
     planned: list[tuple[list[str], str, dict[str, str]]] = [
         (list(INSTALL_ARGV[tool]), "", {}) for tool in job.toolchain if tool in INSTALL_ARGV
@@ -845,6 +891,7 @@ def run_one(
                 interrupted = interrupted or stopped
             break
     quarantined: list[str] = []
+    skipped: list[str] = []
     if code == run.OK:
         for report in job.junit:
             path = host.root / _render(report, values)
@@ -854,11 +901,12 @@ def run_one(
                 continue
             try:
                 quarantined += quarantined_failures(path)
+                skipped += skipped_tests(path)
             except (ET.ParseError, OSError) as exc:
                 reasons.append(f"its junit {report} is unreadable: {exc}")
                 code = run.RED
 
-    outcome = Outcome(key, code, reasons, interrupted=interrupted)
+    outcome = Outcome(key, code, reasons, interrupted=interrupted, skipped=skipped)
     if options.working_tree and off_its_platform(job, host):
         outcome.off_platform = job.platform
         outcome.reasons.append(
@@ -907,6 +955,305 @@ def run_one(
     return outcome
 
 
+# ── reuse: the verdict store ─────────────────────────────────────────────────────────────────
+
+#: The receipt a run writes in its folder: the run's ``dirty`` field, each planned job's reuse
+#: decision and why, and, for each job that was not reused, whether its pass was recorded and why
+#: not. When the store could not be used at all it also says why (``off``), and every job ran.
+RECEIPT = "reuse-receipt.json"
+
+#: The locks every key names, by their path from the root, when the checkout has them.
+LOCKS = ("uv.lock", "package-lock.json")
+
+#: Each placeholder as a key holds it: unfilled. ``{runner_temp}`` is this run's own scratch
+#: folder, which would change every key; ``{shard}`` takes each of its values in every run of the
+#: job, and the shard count is keyed; ``{base}`` names a commit, which the key holds as
+#: ``declared["base"]``.
+_AS_WRITTEN = {name: f"{{{name}}}" for name in catalogue.PLACEHOLDERS}
+
+Fingerprint = Callable[..., Mapping[str, str]]
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _identity(program: str, host: Host, seen: dict[str, str]) -> str:
+    """*program* as a step finds it, a bare name on the job's ``PATH`` and an absolute path as it
+    is: its resolved path and the sha256 of its bytes, or ``absent``. Nothing is started, so no
+    ``--version`` is read. *seen* holds each file already read in this run."""
+    found = program if os.path.isabs(program) else shutil.which(program, path=host.path)
+    if not found or not os.path.isfile(found):
+        return capabilities.ABSENT
+    if found not in seen:
+        seen[found] = capabilities.identity(found)
+    return seen[found]
+
+
+def _toolchain(
+    job: Job, host: Host, steps: Sequence[tuple[str, Sequence[str]]], seen: dict[str, str]
+) -> dict[str, str]:
+    """The Python the job asks for; each program its toolchain names; and each program an install
+    or a step starts (``program:<name>``) by a bare name or an absolute path, which is no file of
+    the tree. A program named by a path in the checkout is the tree's, which the key holds."""
+    out = {"python": job.python or ""}
+    for tool in job.toolchain:
+        program = PROGRAMS.get(tool) or INSTALL_ARGV.get(tool, ("",))[0]
+        if program:
+            out[tool] = _identity(program, host, seen)
+    for _, argv in steps:
+        program = argv[0]
+        if os.path.isabs(program) or "/" not in program:
+            out[f"program:{program}"] = _identity(program, host, seen)
+    return out
+
+
+def _base_commit(host: Host, options: Options) -> str:
+    """The commit a step's ``{base}`` diffs from in this run (``--base``, or the merge-base with
+    ``origin/main``), as its full object id."""
+    base = _base(host, options)
+    if not base.startswith("-"):
+        try:
+            return _git(host, "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}").strip()
+        except Unreadable:
+            pass
+    raise Unreadable(f"the base {base!r} names no commit, so a job that diffs from it is not keyed")
+
+
+def _key_inputs(
+    cat: Catalogue,
+    job: Job,
+    host: Host,
+    tree: str,
+    host_capabilities: Mapping[str, str],
+    options: Options,
+    seen: dict[str, str] | None = None,
+) -> verdict_store.KeyInputs:
+    """Everything *job*'s result on this host depends on, as this run runs it, as the store keys it.
+
+    The entry is the job as the catalogue was read (its ``repr``: every field, its env and
+    steps included), and the catalogue's version the digest of every job's. The argv is each
+    install, and each step as this run runs it, a local ``--workers`` in its pytest worker count,
+    with the folder it runs in; its placeholders stay unfilled (:data:`_AS_WRITTEN`). A sharded
+    job's selection is its shard count: the offline plan splits the tree's own test files, which
+    the tree already keys. The declared inputs are the job's env, the worker count its steps get,
+    and the commit ``{base}`` names when a step diffs from it. Locks, the toolchain and each
+    step's own program, the platform, the container and the host's capabilities complete it."""
+    seen = {} if seen is None else seen
+    steps: list[tuple[str, Sequence[str]]] = [
+        ("", INSTALL_ARGV[tool]) for tool in job.toolchain if tool in INSTALL_ARGV
+    ]
+    steps += [(step.workdir, _step_argv(step, job, _AS_WRITTEN, options)) for step in job.command]
+    locks = {
+        rel: _sha256((host.root / rel).read_bytes()) for rel in LOCKS if (host.root / rel).is_file()
+    }
+    declared = {f"env:{name}": value for name, value in job.env.items()}
+    workers = _worker_count(job, options)
+    if workers is not None:
+        declared["workers"] = workers
+    if any("base" in step.placeholders() for step in job.command):
+        declared["base"] = _base_commit(host, options)
+    return verdict_store.KeyInputs(
+        job_id=job.id,
+        entry_text=repr(job),
+        catalogue_version=_sha256(repr((cat.jobs, cat.merge_jobs)).encode()),
+        argv=tuple((workdir or ".", *argv) for workdir, argv in steps),
+        selection_digest=_sha256(f"{job.id}:shards={job.shards}".encode()),
+        tree_oid=tree,
+        external_revisions=external_revisions([job], host),
+        lock_digests=locks,
+        toolchain=_toolchain(job, host, steps, seen),
+        os=sys.platform,
+        arch=host_platform.machine(),
+        runner=job.container or "",
+        declared=declared,
+        capabilities=dict(host_capabilities),
+    )
+
+
+def _capabilities(
+    job: Job,
+    host: Host,
+    options: Options,
+    fingerprint: Fingerprint,
+    memo: dict[frozenset[tuple[str, str]], dict[str, str]],
+) -> dict[str, str]:
+    """The host's capabilities for *job*, each read with the environment one of its steps gets and
+    a home that is none of the user's (a job's own home is a new scratch folder with nothing in
+    it). One every step reads alike is keyed by its name; one its steps read differently, once per
+    step, as ``step <n>: <name>``. *memo* holds each environment already read in this run."""
+    home = host.root / WORK / "no-home"
+    common = {**_base_env(job, host, options), **job.env}
+    readings = []
+    for environ in [{**common, **step.env} for step in job.command] or [common]:
+        seen = frozenset(environ.items())
+        if seen not in memo:
+            memo[seen] = dict(fingerprint(host.root, path=host.path, environ=environ, home=home))
+        readings.append(memo[seen])
+    out: dict[str, str] = {}
+    for name in sorted(set().union(*readings)):
+        values = [reading.get(name) for reading in readings]
+        if all(value == values[0] for value in values) and values[0] is not None:
+            out[name] = values[0]
+        else:
+            for n, value in enumerate(values, 1):
+                out[f"step {n}: {name}"] = value if value is not None else "(not read)"
+    return out
+
+
+@dataclass
+class _Reuse:
+    """A run's use of the store: the jobs it plans, its start, the receipt decided before any job
+    ran, and what each job that was not reused recorded. ``off`` says why the store is not used
+    at all."""
+
+    jobs: Sequence[Job] = ()
+    start: verdict_store.Start | None = None
+    store: verdict_store.Store | None = None
+    inputs: dict[str, verdict_store.KeyInputs] = field(default_factory=dict)
+    receipt: verdict_store.Receipt | None = None
+    recorded: dict[str, str] = field(default_factory=dict)
+    off: str | None = None
+
+    def reused(self, job_id: str) -> verdict_store.Decision | None:
+        for decision in self.receipt.jobs if self.receipt else ():
+            if decision.id == job_id and decision.reused:
+                return decision
+        return None
+
+    def line(self, job_id: str) -> str | None:
+        """The receipt's line for *job_id* (:meth:`verdict_store.Receipt.lines`), as the run prints
+        it; None when reuse is off."""
+        for decision, text in zip(self.receipt.jobs, self.receipt.lines()) if self.receipt else ():
+            if decision.id == job_id:
+                return text
+        return None
+
+
+def _begin_reuse(
+    cat: Catalogue,
+    jobs: Sequence[Job],
+    host: Host,
+    options: Options,
+    fingerprint: Fingerprint,
+    now: float,
+) -> _Reuse:
+    """Read the checkout once, as the run begins, and decide each planned job from it.
+
+    Whatever keeps a key from being built turns reuse off for the run, with the reason: a checkout
+    or a file that cannot be read, a probe the fingerprint cannot name, a ``{base}`` that names no
+    commit. Every job then runs, and nothing is recorded. With ``--no-reuse`` no recorded pass is
+    read, and each clean pass is still recorded."""
+    try:
+        start = verdict_store.begin(host.root)
+    except OSError as exc:
+        return _Reuse(jobs, off=f"the checkout cannot be read: {exc}")
+    try:
+        if start.tree is None:
+            raise verdict_store.Refused("the checkout's tree cannot be read")
+        store = verdict_store.Store.for_repo(host.root)
+        memo: dict[frozenset[tuple[str, str]], dict[str, str]] = {}
+        seen: dict[str, str] = {}
+        inputs = {}
+        for job in jobs:
+            found = _capabilities(job, host, options, fingerprint, memo)
+            inputs[job.id] = _key_inputs(cat, job, host, start.tree, found, options, seen)
+        receipt = verdict_store.decide(
+            jobs, inputs, store, now=now, start=start, replay=options.reuse
+        )
+    except (verdict_store.Refused, capabilities.Refused, Unreadable, OSError) as exc:
+        return _Reuse(jobs, start, off=str(exc))
+    return _Reuse(jobs, start, store, inputs, receipt)
+
+
+def _record_pass(reuse: _Reuse, job: Job, outcomes: Sequence[Outcome], now: float) -> None:
+    """Record *job*'s pass in the store when its class is one the store reuses and every shard of
+    it ran here, passed and left its record; and say in the receipt what was recorded, or why
+    nothing was. *outcomes* are the job's own, one per shard."""
+    reuse.recorded[job.id] = _recorded(reuse, job, outcomes, now)
+
+
+def _recorded(reuse: _Reuse, job: Job, outcomes: Sequence[Outcome], now: float) -> str:
+    if reuse.store is None or reuse.start is None or reuse.receipt is None:
+        return f"not recorded: reuse is off: {reuse.off}"
+    never = verdict_store.never_reason(job)
+    if never is not None:
+        return f"not recorded: {never}"
+    if reuse.start.dirty:
+        return "not recorded: the checkout was dirty when the run began"
+    if len(outcomes) != job.shards or not all(o.ran for o in outcomes):
+        return "not recorded: " + (
+            "it did not run here" if job.shards == 1 else "not every shard of it ran here"
+        )
+    if any(o.code == run.RED for o in outcomes):
+        return "not recorded: it is red"
+    if any(o.code != run.OK or o.record is None for o in outcomes):
+        return "not recorded: it left no record of a pass"
+    records = [json.loads(o.record.read_text(encoding="utf-8")) for o in outcomes if o.record]
+    heads = {r["head_sha"] for r in records}
+    result = verdict_store.Result(
+        verdict=verdict.SUCCESS if all(r["result"] == verdict.SUCCESS for r in records) else "",
+        sha=heads.pop() if len(heads) == 1 else "",
+        seconds=sum(step["seconds"] for r in records for step in r["steps"]),
+        skipped=tuple(sorted({test for o in outcomes for test in o.skipped})),
+        junit=job.junit[0] if job.junit else "",
+        rerun=any(r["rerun"] is not None for r in records),
+        quarantined=tuple(t for r in records for t in r["quarantined"]),
+    )
+    try:
+        done = reuse.store.record(reuse.start, reuse.inputs[job.id], result, now=now)
+    except OSError as exc:
+        return f"not recorded: the store cannot be written: {exc}"
+    return "recorded" if done.recorded else f"not recorded: {done.reason}"
+
+
+def _write_receipt(work: Path, reuse: _Reuse) -> None:
+    work.mkdir(parents=True, exist_ok=True)
+    if reuse.receipt is None:
+        why = reuse.off or "no receipt"
+        data: dict[str, object] = {
+            "off": why,
+            # A checkout that could not be read is not known to be clean.
+            "dirty": reuse.start.dirty if reuse.start is not None else True,
+            "jobs": [
+                {
+                    "id": job.id,
+                    "decision": "run",
+                    "reuse": str(verdict_store.reuse_class(job)),
+                    "key": None,
+                    "inputs": None,
+                    "reason": f"reuse is off: {why}",
+                    "source": None,
+                    "ttl_age_seconds": None,
+                }
+                for job in reuse.jobs
+            ],
+        }
+    else:
+        data = reuse.receipt.to_json()
+    data["recorded"] = dict(sorted(reuse.recorded.items()))
+    (work / RECEIPT).write_text(json.dumps(data, sort_keys=True, indent=1) + "\n")
+
+
+def _summary(judged: verdict.Verdict, outcomes: Sequence[Outcome]) -> str:
+    """The run's verdict as Markdown: :func:`verdict.summary`'s, except that a green run with a
+    reused job says it is green on reuse and names each one. A reused job did not run on this
+    candidate: it stands on a recorded clean pass of the same tree and inputs."""
+    reused = [o.key for o in outcomes if o.reused]
+    if not judged.green or not reused:
+        return verdict.summary(judged)
+    named = ", ".join(f"`{key}`" for key in reused)
+    stands = f"a recorded clean pass of the same tree and inputs: {named}"
+    if all(o.reused for o in outcomes):
+        said = f"No planned job ran on this candidate: each stands on {stands}."
+    else:
+        said = (
+            "Every planned job that ran passed on this candidate, and each other stands on"
+            f" {stands}."
+        )
+    return f"### Verdict: green on reuse\n\n{said}\n"
+
+
 # ── a tier ───────────────────────────────────────────────────────────────────────────────────
 
 
@@ -949,10 +1296,17 @@ def run_tier(
     changed: bool = False,
     overrides: Sequence[catalogue.Override] = (),
     fail_fast: bool = False,
+    fingerprint: Fingerprint = capabilities.fingerprint,
 ) -> tuple[int, list[Outcome], verdict.Verdict]:
     """Run every job of ``tier`` here, and judge each job's records against the head and the
     partner revisions it reads. ``changed``: only the jobs the diff from the base plans, with
-    the area map's ``overrides``."""
+    the area map's ``overrides``.
+
+    Outside a working-tree run the verdict store is read first (:func:`_begin_reuse`): a job it
+    holds a clean pass of on this tree is not run, and counts by its receipt
+    (:func:`verdict_store.judge_reused`), since it leaves no job record. Each job of a reusable
+    class that passed is recorded. The receipt goes to ``work/`` :data:`RECEIPT`.
+    ``fingerprint`` reads the host's capabilities, for a test to stand in for."""
     jobs = list(cat.tier(tier))
     if not jobs:
         raise Unreadable(f"the {tier} tier has no job in the catalogue, so a run proves nothing")
@@ -965,6 +1319,14 @@ def run_tier(
             print(f"plan: the whole tier: {reason}", file=sys.stderr)
         jobs = [j for j in jobs if j.id in chosen.jobs]
     jobs = ordered(jobs)
+    now = time.time()
+    reuse = (
+        None if options.working_tree else _begin_reuse(cat, jobs, host, options, fingerprint, now)
+    )
+    if reuse is not None and reuse.off is not None:
+        print(
+            f"reuse is off: {reuse.off}; every job runs, and nothing is recorded", file=sys.stderr
+        )
     head, _ = _state(host)
     # What each job's records must name: the head, and the partner revisions that job reads.
     expected = {job.id: verdict.Identity(head, external_revisions([job], host)) for job in jobs}
@@ -983,7 +1345,20 @@ def run_tier(
                     Outcome(key_of(job, shard), run.PARTIAL, ["not run: interrupted"], ran=False)
                 )
                 continue
-            outcomes.append(run_one(cat, job, shard, host, options, work))
+            # Each outcome says its job's receipt line first: reused, or why it ran.
+            line = reuse.line(job.id) if reuse is not None else None
+            if reuse is not None and reuse.reused(job.id) is not None and line is not None:
+                outcomes.append(Outcome(key_of(job, shard), run.OK, [line], reused=True))
+                continue
+            outcome = run_one(cat, job, shard, host, options, work)
+            if line is not None and outcome.ran:
+                outcome.reasons.insert(0, line)
+            outcomes.append(outcome)
+        if reuse is not None and reuse.reused(job.id) is None:
+            own = [o for o in outcomes if o.key in planned[job.id]]
+            _record_pass(reuse, job, own, time.time())
+    if reuse is not None:
+        _write_receipt(work, reuse)
     if options.working_tree:
         # No job left a record, so nothing is judged: the run says what its steps did.
         unjudged = verdict.Reason("", "working tree", "no record was written, so none is judged")
@@ -991,7 +1366,19 @@ def run_tier(
     records = [o.record.read_text(encoding="utf-8") for o in outcomes if o.record is not None]
     results = verdict.from_job_records(records)
     reasons: list[verdict.Reason] = []
+    counted: set[str] = set()
+    if reuse is not None and reuse.receipt is not None and reuse.start is not None:
+        try:
+            counted, stale = verdict_store.judge_reused(
+                reuse.receipt, jobs, tree=str(reuse.start.tree)
+            )
+        except verdict_store.Refused as exc:
+            reasons.append(verdict.Reason("", "reuse refused", str(exc)))
+        else:
+            reasons.extend(stale)
     for job_id, keys in planned.items():
+        if job_id in counted:
+            continue  # reused: judged by its receipt, above
         mine = [r for r in results if r.key in keys]
         reasons.extend(verdict.decide(keys, mine, expected[job_id]).reasons)
     judged = verdict.Verdict(green=not reasons, reasons=tuple(reasons))
@@ -1090,13 +1477,18 @@ def _setup(args: argparse.Namespace) -> tuple[Catalogue, Host, Options, Path]:
         raise Unreadable(
             "--working-tree is a local mode: on GitHub the checkout is the commit under test"
         )
-    options = Options(base=args.base, workers=args.workers, working_tree=args.working_tree)
+    options = Options(
+        base=args.base,
+        workers=args.workers,
+        working_tree=args.working_tree,
+        reuse=not getattr(args, "no_reuse", False),
+    )
     return cat, host, options, work
 
 
 def _say(outcomes: Sequence[Outcome]) -> None:
     for o in outcomes:
-        word = {run.OK: "passed", run.RED: "red"}.get(o.code, "partial")
+        word = "reused" if o.reused else {run.OK: "passed", run.RED: "red"}.get(o.code, "partial")
         print(f"{o.key}: {word}" + (f" (record {o.record})" if o.record else ""))
         for reason in o.reasons:
             print(f"  {reason}")
@@ -1150,13 +1542,18 @@ def run_job_main(argv: list[str]) -> int:
 
 
 def run_main(argv: list[str]) -> int:
-    """``python -m tools.ci run <tier> [--changed] [--fail-fast]``."""
+    """``python -m tools.ci run <tier> [--changed] [--fail-fast] [--no-reuse]``."""
     parser = _parser(
         "run", "Run every job of a tier here, and judge their records (none with --working-tree)."
     )
     parser.add_argument("tier", help=f"one of {', '.join(catalogue.TIERS)}")
     parser.add_argument("--changed", action=_OnceFlag, help="only the jobs the diff touches")
     parser.add_argument("--fail-fast", action=_OnceFlag, help="stop after the first red job")
+    parser.add_argument(
+        "--no-reuse",
+        action=_OnceFlag,
+        help="run every job, reusing no recorded pass; each clean pass is still recorded",
+    )
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -1186,6 +1583,6 @@ def run_main(argv: list[str]) -> int:
     if options.working_tree:
         print("working tree: no record was written, so this run is no evidence for a commit")
     else:
-        print(verdict.summary(judged), end="")
+        print(_summary(judged, outcomes), end="")
     print({run.OK: "ok", run.RED: "red", run.PARTIAL: "partial"}[code])
     return code
