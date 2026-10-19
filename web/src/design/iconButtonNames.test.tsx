@@ -96,8 +96,9 @@ describe('the ChipInput remove button names the chip it removes', () => {
 
 describe('the two singleton icon buttons', () => {
   it('the intent editor close button is named', () => {
+    // It is a `SquareIconButton` now, whose required `label` is its `aria-label`.
     expect(strip(readSource(join(SRC, 'pages/knowledge/KnowledgeListPage.tsx'))))
-      .toMatch(/aria-label="Close the intent editor"/)
+      .toMatch(/<SquareIconButton icon=\{X\}[^>]*\blabel="Close the intent editor"/)
   })
 
   it('the task comment send button is named', () => {
@@ -134,16 +135,18 @@ describe('the rail: no icon-only button ships without a name', () => {
     const all = scanned.flatMap((s) => s.buttons)
     expect(all.length, 'the scanner must find the tree\'s icon-only buttons').toBeGreaterThan(40)
 
-    // It must see the three fixed here, as NAMED.
+    // It must see the three fixed here, as NAMED — the one that is still a raw button, here…
     const named = (rel: string, needle: RegExp) =>
       scanned.find((s) => s.rel === rel)?.buttons.some((b) => b.named && needle.test(b.tag)) ?? false
     expect(named('ui/forms.tsx', /Remove \$\{v\}/)).toBe(true)
-    expect(named('pages/knowledge/KnowledgeListPage.tsx', /Close the intent editor/)).toBe(true)
-    // The third, TaskDetail's `Post comment`, is an `IconButton` now: it left the raw population this
-    // scanner reads, and the primitive's required `label` names it (the singleton test above).
+    // The other two moved onto primitives and so left the raw population this scanner reads:
+    // TaskDetail's `Post comment` is an `IconButton`, KnowledgeListPage's close a `SquareIconButton`.
+    // Their names are pinned at the call sites above, and the primitive's required `label` is what
+    // turns each into an `aria-label`.
     const taskDetail = scanned.find((s) => s.rel === 'pages/tasks/TaskDetail.tsx')
     expect(taskDetail, 'TaskDetail must still be scanned').toBeDefined()
     expect(taskDetail!.buttons.some((b) => /Post comment/.test(b.tag))).toBe(false)
+    expect(strip(readSource(join(SRC, 'ui/SquareIconButton.tsx')))).toMatch(/aria-label=\{label\}/)
 
     // And it must still FLAG the nameless shape, including across an inline arrow handler and with a
     // single-letter icon — the exact two shapes that defeated the earlier version.

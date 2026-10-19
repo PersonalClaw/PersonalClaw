@@ -5,10 +5,12 @@ import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Button } from '../../ui/Button'
+import { MetaChip } from '../../ui/MetaChip'
+import { SquareIconButton } from '../../ui/SquareIconButton'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { DecisionJournal } from './DecisionJournal'
 import { WindowedList } from '../../ui/WindowedList'
-import { Checkbox, FieldError } from '../../ui/forms'
+import { Checkbox, FieldError, TextArea, TextInput } from '../../ui/forms'
 import { Toggle } from '../../ui/Toggle'
 import { TagManager } from './TagManager'
 import { ConflictPanel } from './ConflictPanel'
@@ -103,6 +105,7 @@ function EmbeddingChip({ stats, reindex, starting, onReindex }: {
   if (stale > 0) {
     const one = stale === 1
     return (
+      // Raw: a stat chip (count over caption) matching the inert stat chips beside it; Button is a fixed-height pill, TileButton a bordered card.
       <button type="button" onClick={onReindex} disabled={starting} aria-busy={starting || undefined}
         title={`${stopped}${stale} item${one ? ' holds an embedding' : 's hold embeddings'} ${e.model} did not write — click to re-embed ${one ? 'it' : 'them'} with it (semantic search skips ${one ? 'it' : 'them'} until then)`}
         className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2 transition-colors hover:bg-surface-high disabled:opacity-60">
@@ -114,6 +117,7 @@ function EmbeddingChip({ stats, reindex, starting, onReindex }: {
   }
   if (behind > 0) {
     return (
+      // Raw: the same stat chip as above, for the not-yet-embedded count.
       <button type="button" onClick={onReindex} disabled={starting} aria-busy={starting || undefined}
         title={`${stopped}${behind} item${behind === 1 ? '' : 's'} not yet embedded — click to embed ${behind === 1 ? 'it' : 'them'} (model: ${e.model})`}
         className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2 transition-colors hover:bg-surface-high disabled:opacity-60">
@@ -944,7 +948,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                               {(it.summary || it.content) && <span className="truncate">{it.summary || it.content}</span>}
                             </div>
                           </div>
-                          {(it.tags?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{it.tags!.slice(0, 2).map((t) => <button key={t} type="button" onClick={(e) => { e.stopPropagation(); setTagFilter(t) }} title={`Filter by "${t}"`} data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var transition-colors hover:bg-surface-container hover:text-primary">{t}</button>)}</div>}
+                          {(it.tags?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{it.tags!.slice(0, 2).map((t) => <MetaChip key={t} label={t} ariaLabel={t} title={`Filter by "${t}"`} onClick={setTagFilter} />)}</div>}
                           {it.updated_at && <span data-type="caption" className="hidden sm:block shrink-0 text-on-surface-low">{relTime(it.updated_at)}</span>}
                         </ListRow>
                         </ContextMenu>
@@ -1228,6 +1232,7 @@ function OutcomeCard({ o, onOpenItem }: { o: IntentOutcome; onOpenItem: (id: str
           ))}
         </div>
       )}
+      {/* Raw: it dims to 70, not a primitive's 40 or 50, because its disabled label still carries what happened to the item (`design/disabledDimLevel.test.ts`). */}
       <button type="button" onClick={() => o.item_id && onOpenItem(o.item_id)} disabled={!o.item_id}
         data-type="caption" className="self-start inline-flex items-center gap-1 text-on-surface-low hover:text-primary disabled:hover:text-on-surface-low disabled:opacity-70">
         <FileText size={12} />
@@ -1355,6 +1360,7 @@ function EntityDetail({ name, onOpenItem, onSelectEntity }: { name: string; onOp
           <div data-type="caption" className="text-on-surface-low uppercase tracking-wide">Connected to</div>
           <div className="flex flex-col gap-1">
             {related!.map((r, i) => (
+              // Raw: a full-row list item (glyph, name, relation); no primitive draws a compact row.
               <button key={i} type="button" onClick={() => onSelectEntity?.(r.name)}
                 className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-high">
                 <Network size={13} className="shrink-0 text-primary/70" />
@@ -1387,6 +1393,9 @@ function EntityDetail({ name, onOpenItem, onSelectEntity }: { name: string; onOp
     </div>
   )
 }
+
+/** The skill opt-in's sentence: the checkbox's visible label and, word for word, its accessible name. */
+const PROPOSE_SKILL = 'Offer to build a skill from this intent — adds a “Generate skill” action that distills what it has gathered into a reusable skill.'
 
 /** Natural-language intent composer — the user writes ONE sentence; everything else
  *  (relevance, the fields to extract) is the LLM's job at ingest time. */
@@ -1447,20 +1456,18 @@ export function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIn
         <span data-type="body-m" className="text-on-surface">{isEdit ? 'Edit intent' : 'New intent'}</span>
         {/* Icon-only close: with no name it announced as bare "button". A CONSTANT name is right
             here (one per panel), unlike the per-item buttons this sweep also found. */}
-        <button type="button" aria-label="Close the intent editor" onClick={onClose} className="text-on-surface-low hover:text-on-surface"><X size={16} /></button>
+        <SquareIconButton icon={X} iconSize={16} label="Close the intent editor" onClick={onClose} />
       </div>
       <HeldChange guard={guard}>
         <div className="flex flex-col gap-1.5">
           <label data-type="caption" className="text-on-surface-low uppercase tracking-wide">What do you want to track?</label>
-          <textarea aria-label="What do you want to track?" value={goal} onChange={(e) => setGoal(e.target.value)} rows={4} autoFocus
-            placeholder={'e.g. "anything that could improve my homelab self-hosted setup"'}
-            data-type="body-s" className="rounded-md bg-surface p-3 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary resize-none" />
+          <TextArea ariaLabel="What do you want to track?" value={goal} onChange={setGoal} rows={4} autoFocus size="sm" surface="base"
+            placeholder={'e.g. "anything that could improve my homelab self-hosted setup"'} />
           <p data-type="caption" className="text-on-surface-low">Plain language. As items are saved, PersonalClaw decides what's relevant and pulls out the useful specifics for you — no need to define fields.</p>
         </div>
         <div className="flex flex-col gap-1.5">
           <label data-type="caption" className="text-on-surface-low uppercase tracking-wide">Limit to types (optional)</label>
-          <input aria-label="Limit to types (optional)" value={enabledFor} onChange={(e) => setEnabledFor(e.target.value)} placeholder="comma-separated, blank = all types"
-            data-type="body-s" className="h-9 rounded-md bg-surface px-3 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          <TextInput ariaLabel="Limit to types (optional)" value={enabledFor} onChange={setEnabledFor} placeholder="comma-separated, blank = all types" size="md" surface="base" />
         </div>
         {/* A `Toggle`, not a checkbox: this is the on/off state of something that RUNS, which is
             what the two siblings in this directory use for their own `enabled` column, and it is
@@ -1473,8 +1480,8 @@ export function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIn
           <Toggle on={enabled} size="sm" label="Active" onChange={setEnabled} />
         </div>
         <label data-type="body-s" className="flex items-start gap-2 text-on-surface-var">
-          <input type="checkbox" className="mt-0.5" checked={proposeSkill} onChange={(e) => setProposeSkill(e.target.checked)} />
-          <span>Offer to build a skill from this intent — adds a “Generate skill” action that distills what it has gathered into a reusable skill.</span>
+          <Checkbox checked={proposeSkill} onChange={setProposeSkill} ariaLabel={PROPOSE_SKILL} className="mt-0.5" />
+          <span>{PROPOSE_SKILL}</span>
         </label>
       </HeldChange>
       <StaleWriteNotice guard={guard} what="This intent" />
@@ -1513,6 +1520,7 @@ function FilterChip({ active, onClick, tone, title, children }: { active: boolea
     // a flex item's default `min-width:auto` floors it at its content width, which is what
     // let a 10k-character shelf name render as one pill wider than the viewport (issue 393).
     // Inert for every short chip. `title` surfaces the full text a truncated child hides.
+    // Raw: a type-toned chip carries its hue as an inline style, which no primitive takes.
     <button type="button" onClick={onClick} aria-pressed={active} title={title}
       data-type="body-s" className="inline-flex min-w-0 items-center gap-1 rounded-pill px-m h-8 transition-colors"
       style={active ? selected : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>
