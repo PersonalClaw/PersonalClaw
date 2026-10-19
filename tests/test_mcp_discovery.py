@@ -1010,7 +1010,13 @@ class TestProbeRemoteTimeout:
     @pytest.mark.asyncio
     async def test_probe_remote_timeout_uses_config(self) -> None:
         """A server that never answers says so after ``_get_probe_timeout()``, once its host's
-        name is known to resolve (looked up here without the network)."""
+        name is known to resolve (looked up here without the network).
+
+        The name is looked up twice before the connection is opened: by the egress guard, which
+        the start asks about the server's URL (``net.guard._resolve``), and by the probe once the
+        server has not answered (``mcp_discovery._look_up``). Both are answered here. With only
+        the second patched, the guard looked ``example.com`` up for real within the same 0.2 s,
+        and a runner whose lookup took longer read "Looking up example.com did not finish"."""
         from personalclaw.mcp_discovery import _probe_remote
 
         server = McpServerInfo(name="remote", url="https://example.com/mcp", transport="http")
@@ -1025,6 +1031,7 @@ class TestProbeRemoteTimeout:
         with (
             patch("personalclaw.mcp_discovery._get_probe_timeout", return_value=0.2),
             patch("personalclaw.mcp_discovery._look_up", resolves),
+            patch("personalclaw.net.guard._resolve", lambda host: ["93.184.215.14"]),
             patch("personalclaw.mcp_client.McpServerConn._open_transport", never_answers),
         ):
             started = time.monotonic()
