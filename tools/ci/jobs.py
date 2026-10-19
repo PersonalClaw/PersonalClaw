@@ -798,6 +798,304 @@ def diagnose(
     return {"argv": rerun_argv, "exit": code, "tests": listed}, reasons, interrupted
 
 
+# ── the web runners ────────────────────────────────────────────────────────────────────────
+
+#: The web-unit job's Vitest step, token for token, and the folder Vitest runs in.
+VITEST_STEP = ("npm", "run", "test:web")
+VITEST_ROOT = "web"
+
+#: The JUnit report Vitest writes under CI (``web/vitest.config.ts``), from the repository root.
+#: Its cases' classname is the test file, from :data:`VITEST_ROOT`; their name, the test's full
+#: name (its suites and title joined by `` > ``), which is what ``--testNamePattern`` matches.
+VITEST_JUNIT = "reports/junit-web-unit.xml"
+
+#: The folder Playwright's ``testDir`` names, under :data:`VITEST_ROOT`: its JSON report names
+#: each spec's file from there.
+PLAYWRIGHT_TEST_DIR = "e2e"
+
+#: The Playwright step's start, and the variable naming its JSON report.
+PLAYWRIGHT_STEP = ("npx", "playwright", "test")
+PLAYWRIGHT_REPORT_ENV = "PLAYWRIGHT_JSON_OUTPUT_NAME"
+
+#: The statuses Playwright gives a run of a test that failed: an assertion, or its timeout.
+_PLAYWRIGHT_FAILED = frozenset({"failed", "timedOut"})
+
+_JS_SPECIAL = re.compile(r"[.*+?^${}()|\[\]\\/]")
+
+
+def _js_literal(text: str) -> str:
+    """*text* as a JavaScript regular expression matching it literally (and Python's too)."""
+    return _JS_SPECIAL.sub(lambda m: "\\" + m.group(0), text)
+
+
+def diagnose_vitest(
+    *,
+    root: Path,
+    env: Mapping[str, str],
+    host: Host,
+    scratch: run.Scratch,
+    grace: float,
+    deadline: float,
+    started: float,
+) -> tuple[dict[str, object] | None, list[str], bool]:
+    """Rerun a failed Vitest step's failed tests once, alone, in a new process, to classify each,
+    as :func:`diagnose` does for pytest; the job stays red whatever the rerun shows.
+
+    The failed tests come from the step's JUnit report (:data:`VITEST_JUNIT`), read as XML; a
+    report that is missing, older than the job or unreadable gives no rerun. A case whose
+    classname is no test file under :data:`VITEST_ROOT` is not rerun. The rerun is ``npx vitest
+    run`` in a new process group on one worker (``--maxWorkers=1``, and ``VITEST_MAX_WORKERS=1``),
+    of the failed tests' files only, filtered to their full names, each whole
+    (``--testNamePattern=^(?:…)$``), so a test that passed in the step, its title's namesake in
+    another suite included, is not run again. It has the config's own per-test time budget
+    (nothing sets a time or a retry), inside what is left of the job's time. Its report goes to
+    the job's scratch folder, and is read only when every case it ran is one the step's report
+    failed, named alike: Vitest reports a test of a named file that the filter leaves out as
+    skipped. The files beside the step's report are put back after it."""
+    report = root / VITEST_JUNIT
+    cwd = root / VITEST_ROOT
+    try:
+        if not report.is_file() or report.stat().st_mtime < started:
+            return None, [], False
+        failed_cases = [
+            c for c in ET.parse(report).getroot().iter("testcase") if _case_result(c) == "failed"
+        ]
+    except (ET.ParseError, OSError):
+        return None, [], False
+    if not failed_cases:
+        return None, [], False
+    order: list[str] = []
+    entries: dict[str, dict[str, object]] = {}
+    keys: dict[str, Key] = {}
+    for case in failed_cases:
+        file, name = _key(case)
+        test = f"{VITEST_ROOT}/{file}::{name}"
+        if test in entries or test in keys:
+            continue
+        order.append(test)
+        path = (cwd / file).resolve() if file else cwd
+        if not file or not name or not path.is_file() or not path.is_relative_to(cwd.resolve()):
+            entries[test] = _entry(test, None, NOT_ONE_FILE)
+        else:
+            keys[test] = (file, name)
+    rerun_argv: list[str] | None = None
+    code: int | None = None
+    reasons: list[str] = []
+    interrupted = False
+    work = scratch.tmp / f"rerun-{uuid.uuid4().hex}"
+    kept: dict[str, tuple[int, int]] | None = None
+    left = 0.0
+    if keys:
+        try:
+            kept = _keep(report.parent, work / "kept")
+        except OSError as exc:
+            reasons.append(f"rerun: the step's report folder could not be kept aside: {exc}")
+        left = deadline - time.monotonic()
+    if keys and (kept is None or left <= 0):
+        why = (
+            "the step's report folder could not be kept aside, so it is not rerun"
+            if kept is None
+            else "the job's time ran out before the rerun"
+        )
+        shutil.rmtree(work, ignore_errors=True)
+        for test in keys:
+            entries[test] = _entry(test, None, why)
+    elif kept is not None:
+        out = work / "junit.xml"
+        files = sorted({file for file, _ in keys.values()})
+        names = sorted({_js_literal(name) for _, name in keys.values()})
+        rerun_argv = [
+            "npx",
+            "vitest",
+            "run",
+            "--maxWorkers=1",
+            "--reporter=junit",
+            f"--outputFile={out}",
+            f"--testNamePattern=^(?:{'|'.join(names)})$",
+            *files,
+        ]
+        print(f"rerun, alone, for diagnosis only: {shlex.join(rerun_argv)}", file=sys.stderr)
+        result = run.run_job(
+            rerun_argv,
+            cwd=cwd,
+            scratch=scratch,
+            timeout=left,
+            path=host.path,
+            env={**env, "VITEST_MAX_WORKERS": "1"},
+            grace=grace,
+        )
+        code, interrupted = result.returncode, result.interrupted
+        other = [v for v in result.violations if not v.startswith("the job exited")]
+        reasons += [f"rerun: {v}" for v in other]
+        try:
+            _put_back(report.parent, work / "kept", kept, work / "outputs")
+        except OSError as exc:
+            reasons.append(f"rerun: the step's report folder could not be put back: {exc}")
+        seen: dict[Key, str] | None = None
+        if not out.is_file():
+            reasons.append("rerun: it wrote no report")
+        else:
+            try:
+                seen = _results(out)
+            except (ET.ParseError, OSError) as exc:
+                reasons.append(f"rerun: its report is unreadable: {exc}")
+        failed = set(keys.values())
+        foreign = sorted(
+            k for k, got in (seen or {}).items() if got != "skipped" and k not in failed
+        )
+        if foreign:
+            reasons.append(
+                f"rerun: its report names {'::'.join(foreign[0])}, which the step's report did"
+                " not fail, so it classifies nothing"
+            )
+            seen = None
+        clean = seen is not None and code in (0, 1) and not other and not interrupted
+        for test, key in keys.items():
+            got = (seen or {}).get(key) if clean else None
+            if got == "passed":
+                word, why = verdict.FLAKE, "passed rerun alone in a new process"
+            elif got == "failed":
+                word, why = verdict.REPEATED_FAILURE, "failed again, alone"
+            elif got == "skipped":
+                word, why = None, "skipped on the rerun, so not classified"
+            else:
+                word, why = None, f"the rerun reported nothing for it (exit {code})"
+            entries[test] = _entry(test, word, why)
+    return _finish(report, order, entries, keys, reasons, rerun_argv, code, interrupted)
+
+
+def _finish(
+    report: Path | None,
+    order: Sequence[str],
+    entries: Mapping[str, dict[str, object]],
+    keys: Mapping[str, Key],
+    reasons: list[str],
+    argv: list[str] | None,
+    code: int | None,
+    interrupted: bool,
+) -> tuple[dict[str, object], list[str], bool]:
+    """Mark the step's report (when it has one) and say each classification as a warning."""
+    listed = [entries[t] for t in order]
+    words = {keys[t]: str(entries[t]["rerun_result"]) for t in keys if entries[t]["rerun_result"]}
+    if words and report is not None:
+        try:
+            _mark_report(report, words)
+        except (ET.ParseError, OSError) as exc:
+            reasons.append(f"rerun: the job's report could not be marked: {exc}")
+    for entry in listed:
+        title = entry["rerun_result"] or "never rerun"
+        print(f"::warning title={title}::{entry['test']} ({entry['why']})", flush=True)
+    return {"argv": argv, "exit": code, "tests": listed}, reasons, interrupted
+
+
+def _text(value: object, what: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{what} is not a string")
+    return value
+
+
+def _items(value: object, what: str) -> list[object]:
+    if not isinstance(value, list):
+        raise ValueError(f"{what} is not a list")
+    return value
+
+
+def _object(value: object, what: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{what} is not an object")
+    return value
+
+
+def _playwright_tests(
+    suite: object, titles: tuple[str, ...]
+) -> list[tuple[str, str, str, str, list[str]]]:
+    """Each test of a JSON report's suite, nested ones included: its file, its titles below the
+    file's own suite, its status, its project, and each of its runs' status. A suite, spec, test
+    or run of another shape than Playwright writes raises :class:`ValueError`."""
+    found: list[tuple[str, str, str, str, list[str]]] = []
+    suite = _object(suite, "a suite")
+    for spec in _items(suite.get("specs", []), "a suite's specs"):
+        spec = _object(spec, "a spec")
+        path = " > ".join((*titles, _text(spec.get("title"), "a spec's title")))
+        file = _text(spec.get("file"), "a spec's file")
+        for test in _items(spec.get("tests"), "a spec's tests"):
+            test = _object(test, "a test")
+            runs = [
+                _text(_object(r, "a test's run").get("status"), "a run's status")
+                for r in _items(test.get("results"), "a test's results")
+            ]
+            status = _text(test.get("status"), "a test's status")
+            project = _text(test.get("projectName"), "a test's projectName")
+            found.append((file, path, status, project, runs))
+    for child in _items(suite.get("suites", []), "a suite's suites"):
+        title = _text(_object(child, "a suite").get("title"), "a suite's title")
+        found += _playwright_tests(child, (*titles, title))
+    return found
+
+
+def classify_playwright(
+    argv: Sequence[str],
+    *,
+    root: Path,
+    cwd: Path,
+    env: Mapping[str, str],
+    code: int,
+    started: float,
+) -> tuple[dict[str, object] | None, list[str]]:
+    """Classify a red Playwright step's tests from its JSON report. Playwright's own one retry
+    (``retries: 1`` under CI, a new worker process, the same test timeout) is the rerun, so none
+    is started here: a ``flaky`` test (it failed, then passed on its retry) is a flake, which
+    ``failOnFlakyTests`` makes red; an ``unexpected`` one whose retry failed or timed out too is a
+    repeated failure; one that failed with no retry run, or whose retry ended otherwise (it was
+    interrupted), is not classified. The job stays red either way.
+
+    The report is this run's only when it was written since the job started (*started*): one an
+    earlier run left is never read as this one's. A report that is missing, older than the job,
+    or of another shape than Playwright writes classifies nothing, and says so."""
+    name = env.get(PLAYWRIGHT_REPORT_ENV)
+    report = cwd / name if name else None
+    try:
+        if report is None or not report.is_file():
+            missing = name or "JSON report"
+            return None, [f"rerun: Playwright wrote no {missing}, so nothing is classified"]
+        if report.stat().st_mtime < started:
+            return None, [
+                f"rerun: Playwright wrote no {name} in this run (the one there is older than the"
+                " job), so nothing is classified"
+            ]
+        data = _object(json.loads(report.read_text(encoding="utf-8")), "the report")
+        tests = [
+            t
+            for s in _items(data.get("suites"), "the report's suites")
+            for t in _playwright_tests(s, ())
+        ]
+    except (OSError, ValueError, RecursionError) as exc:
+        return None, [f"rerun: its {name} is unreadable: {exc}"]
+    order: list[str] = []
+    entries: dict[str, dict[str, object]] = {}
+    for file, title, status, project, runs in tests:
+        if status not in ("flaky", "unexpected"):
+            continue
+        rel = Path(os.path.relpath(cwd / PLAYWRIGHT_TEST_DIR / file, root)).as_posix()
+        test_id = f"{rel}::{title} [{project}]"
+        if test_id in entries:
+            continue
+        order.append(test_id)
+        if status == "flaky":
+            word, why = verdict.FLAKE, "passed on Playwright's one retry, in a new worker"
+        elif len(runs) < 2:
+            word, why = None, "failed with no retry run, so not classified"
+        elif runs[-1] in _PLAYWRIGHT_FAILED:
+            word, why = verdict.REPEATED_FAILURE, "failed again on Playwright's one retry"
+        else:
+            word, why = None, f"its retry ended {runs[-1]}, so not classified"
+        entries[test_id] = _entry(test_id, word, why)
+    if not order:
+        return None, []
+    found, reasons, _ = _finish(None, order, entries, {}, [], list(argv), code, False)
+    return found, reasons
+
+
 def _owned_env(job: Job) -> None:
     """Refuse a job whose env, a step's env or ``workers_env`` names a variable the runner owns
     (:func:`tools.ci.run.runner_owns`): the loader refuses one, so only a job built elsewhere
@@ -911,6 +1209,31 @@ def run_one(
                 )
                 reasons.extend(f"step {n}: {m}" for m in more)
                 interrupted = interrupted or stopped
+            # The same for the web runners: Vitest's failed tests are rerun once, alone;
+            # Playwright's are classified from its own one retry. The job stays red.
+            elif result.violations == (f"the job exited {TESTS_FAILED}",):
+                if tuple(argv) == VITEST_STEP and not workdir:
+                    rerun, more, stopped = diagnose_vitest(
+                        root=host.root,
+                        env={**base_env, **env},
+                        host=host,
+                        scratch=scratch,
+                        grace=options.grace,
+                        deadline=deadline,
+                        started=started,
+                    )
+                    reasons.extend(f"step {n}: {m}" for m in more)
+                    interrupted = interrupted or stopped
+                elif tuple(argv[:3]) == PLAYWRIGHT_STEP:
+                    rerun, more = classify_playwright(
+                        argv,
+                        root=host.root,
+                        cwd=host.root / workdir,
+                        env={**base_env, **env},
+                        code=result.returncode,
+                        started=started,
+                    )
+                    reasons.extend(f"step {n}: {m}" for m in more)
             break
     quarantined: list[str] = []
     skipped: list[str] = []

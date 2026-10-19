@@ -304,7 +304,11 @@ export default defineConfig({
   // Local runs keep playwright's default so a dev machine is not pinned.
   workers: process.env.CI ? 3 : undefined,
   // A retried pass is reported as `flaky` in the JSON and blob reports, never as a plain pass.
+  // One retry, in a new worker process, under the same test timeout: it only classifies. Under CI
+  // a test that passes only on its retry fails the run (`failOnFlakyTests`), and `tools/ci
+  // run-job` records it as a flake from the JSON report (tools/ci/jobs.py, classify_playwright).
   retries: process.env.CI ? 1 : 0,
+  failOnFlakyTests: !!process.env.CI,
   // The isolation reporter is FIRST: it annotates every test with its isolation mode before the
   // JSON and blob reporters read them, and fails the run when a spec runs where its mode forbids.
   // The JSON report's path is PLAYWRIGHT_JSON_OUTPUT_NAME; the blob's is blob-report/, which

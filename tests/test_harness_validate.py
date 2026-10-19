@@ -226,9 +226,12 @@ def test_validate_strict_fails_when_no_spec_is_found(
 def _planted_web_checkout(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     """A planted checkout, dirty, with this tree's tools/ci in it (what the web profile runs),
     as the harness's root, and an npm, npx and node on PATH that exit 0 after writing down what
-    they were asked; the checkout, and the file of what was asked."""
+    they were asked; the checkout, and the file of what was asked. ``npm run test:web`` also
+    writes the JUnit report web-unit declares, as Vitest's config does under run-job."""
     import shutil
     import subprocess
+
+    from tools.ci import jobs
 
     root = tmp_path / "tree"
     shutil.copytree(
@@ -244,9 +247,15 @@ def _planted_web_checkout(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     asked = tmp_path / "asked"
+    report = root / jobs.VITEST_JUNIT
+    vitest = (
+        f'if [ "$*" = "{" ".join(jobs.VITEST_STEP[1:])}" ]; then\n'
+        f'  mkdir -p "{report.parent}" && echo "<testsuites/>" > "{report}"\nfi\n'
+    )
     for name in ("npm", "npx", "node"):
         stub = stubs / name
-        stub.write_text(f'#!/bin/sh\necho "{name} $*" >> "{asked}"\nexit 0\n')
+        writes = vitest if name == jobs.VITEST_STEP[0] else ""
+        stub.write_text(f'#!/bin/sh\necho "{name} $*" >> "{asked}"\n{writes}exit 0\n')
         stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{stubs}:{os.environ['PATH']}")
     monkeypatch.setattr(cli, "_repo_root", lambda: root)
