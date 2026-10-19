@@ -11,6 +11,7 @@ const {
   shouldHideOnClose,
   shouldQuitOnAllWindowsClosed,
   makeTrayPresence,
+  trayImageFile,
 } = require("../trayPresence");
 
 /** Flatten a template (including submenus) to every row carrying a click handler. */
@@ -265,7 +266,7 @@ describe("makeTrayPresence", () => {
       TrayCtor: Tray,
       MenuCtor: MenuOk,
       nativeImageMod: nativeImageOk,
-      iconPath: "/icon.png",
+      trayImagePath: "/tray.png",
       actions: { open: () => {} },
     });
     assert.equal(presence.start(), true);
@@ -273,7 +274,60 @@ describe("makeTrayPresence", () => {
     assert.equal(calls.menus.length, 1);
     // Vacuity floor: an empty template would satisfy "a menu was set".
     assert.ok(calls.menus[0].template.length >= 10);
-    assert.deepStrictEqual(calls.icon, { resized: true }, "the icon must be resized for the menu bar");
+  });
+
+  it("loads the menu-bar image it is given, as drawn, and never resizes it", () => {
+    // The menu-bar files are rendered at 18 points (with an @2x beside them), so the tray
+    // takes them as they are. Resizing the 1024 app icon at run time is what the tray did
+    // before they existed.
+    const { Tray, calls } = fakeTray();
+    const loaded = [];
+    let resized = 0;
+    const image = {
+      isEmpty: () => false,
+      resize: () => {
+        resized += 1;
+        return { resized: true };
+      },
+    };
+    const presence = makeTrayPresence({
+      TrayCtor: Tray,
+      MenuCtor: MenuOk,
+      nativeImageMod: {
+        createFromPath: (p) => {
+          loaded.push(p);
+          return image;
+        },
+      },
+      trayImagePath: "/app/trayTemplate.png",
+    });
+    assert.equal(presence.start(), true);
+    assert.deepStrictEqual(loaded, ["/app/trayTemplate.png"]);
+    assert.equal(resized, 0, "the menu-bar image must not be resized");
+    assert.equal(calls.icon, image, "the tray is built from the loaded image itself");
+  });
+
+  it("picks the template image on macOS and the gradient image elsewhere", () => {
+    // `Template` in the name is what makes macOS treat the image as a template image.
+    assert.equal(trayImageFile("darwin"), "trayTemplate.png");
+    assert.equal(trayImageFile("linux"), "tray.png");
+  });
+
+  it("main.js hands the tray the platform's file, never the app icon", () => {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const main = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
+    const site = /makeTrayPresence\(\{[\s\S]*?\n\}\);/.exec(main);
+    assert.ok(site, "the tray wiring site must be findable");
+    assert.match(site[0], /trayImagePath:\s*path\.join\(__dirname,\s*trayImageFile\(process\.platform\)\)/);
+    assert.doesNotMatch(site[0], /icon\.png/);
+  });
+
+  it("with no menu-bar image path there is no tray", () => {
+    const { Tray } = fakeTray();
+    const presence = makeTrayPresence({ TrayCtor: Tray, MenuCtor: MenuOk, nativeImageMod: nativeImageOk });
+    assert.equal(presence.start(), false);
+    assert.equal(presence.available, false);
   });
 
   it("a missing/unreadable icon degrades to no tray — it does not throw", () => {
@@ -283,7 +337,7 @@ describe("makeTrayPresence", () => {
       TrayCtor: Tray,
       MenuCtor: MenuOk,
       nativeImageMod: { createFromPath: () => ({ isEmpty: () => true }) },
-      iconPath: "/missing.png",
+      trayImagePath: "/missing.png",
       log: (m) => logs.push(m),
     });
     assert.equal(presence.start(), false);
@@ -303,14 +357,14 @@ describe("makeTrayPresence", () => {
           throw new Error("bad png");
         },
       },
-      iconPath: "/icon.png",
+      trayImagePath: "/tray.png",
     });
     assert.equal(presence.start(), false);
     assert.equal(presence.available, false);
   });
 
   it("a platform with no Tray implementation degrades to no tray", () => {
-    const presence = makeTrayPresence({ TrayCtor: null, MenuCtor: null, nativeImageMod: nativeImageOk, iconPath: "/i.png" });
+    const presence = makeTrayPresence({ TrayCtor: null, MenuCtor: null, nativeImageMod: nativeImageOk, trayImagePath: "/i.png" });
     assert.equal(presence.start(), false);
     assert.equal(presence.available, false);
   });
@@ -326,7 +380,7 @@ describe("makeTrayPresence", () => {
       TrayCtor: Boom,
       MenuCtor: MenuOk,
       nativeImageMod: nativeImageOk,
-      iconPath: "/i.png",
+      trayImagePath: "/i.png",
       log: (m) => logs.push(m),
     });
     assert.equal(presence.start(), false);
@@ -336,7 +390,7 @@ describe("makeTrayPresence", () => {
 
   it("setPresence re-renders with the new counts, and the title follows", () => {
     const { Tray, calls } = fakeTray();
-    const presence = makeTrayPresence({ TrayCtor: Tray, MenuCtor: MenuOk, nativeImageMod: nativeImageOk, iconPath: "/i.png" });
+    const presence = makeTrayPresence({ TrayCtor: Tray, MenuCtor: MenuOk, nativeImageMod: nativeImageOk, trayImagePath: "/i.png" });
     presence.start();
     presence.setPresence({ approvals: 2, running: [{ id: "l1", label: "L" }], connected: true });
     assert.equal(calls.titles.at(-1), "2");
@@ -346,7 +400,7 @@ describe("makeTrayPresence", () => {
 
   it("setCapturing routes the indicator through the one title writer", () => {
     const { Tray, calls } = fakeTray();
-    const presence = makeTrayPresence({ TrayCtor: Tray, MenuCtor: MenuOk, nativeImageMod: nativeImageOk, iconPath: "/i.png" });
+    const presence = makeTrayPresence({ TrayCtor: Tray, MenuCtor: MenuOk, nativeImageMod: nativeImageOk, trayImagePath: "/i.png" });
     presence.start();
     presence.setPresence({ approvals: 5, connected: true });
     assert.equal(calls.titles.at(-1), "5");
@@ -382,7 +436,7 @@ describe("makeTrayPresence", () => {
       TrayCtor: Dying,
       MenuCtor: MenuOk,
       nativeImageMod: nativeImageOk,
-      iconPath: "/i.png",
+      trayImagePath: "/i.png",
       log: (m) => logs.push(m),
     });
     assert.equal(presence.start(), true);
@@ -391,7 +445,7 @@ describe("makeTrayPresence", () => {
 
   it("destroy() tears the tray down once and flips available", () => {
     const { Tray, calls } = fakeTray();
-    const presence = makeTrayPresence({ TrayCtor: Tray, MenuCtor: MenuOk, nativeImageMod: nativeImageOk, iconPath: "/i.png" });
+    const presence = makeTrayPresence({ TrayCtor: Tray, MenuCtor: MenuOk, nativeImageMod: nativeImageOk, trayImagePath: "/i.png" });
     presence.start();
     presence.destroy();
     presence.destroy();
@@ -406,7 +460,7 @@ describe("makeTrayPresence", () => {
       TrayCtor: Tray,
       MenuCtor: MenuOk,
       nativeImageMod: nativeImageOk,
-      iconPath: "/i.png",
+      trayImagePath: "/i.png",
       actions: { open: () => (opened += 1) },
     });
     presence.start();

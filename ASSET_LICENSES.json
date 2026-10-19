@@ -80,13 +80,17 @@
     },
     {
       "id": "brand-artwork",
-      "source": "Project-authored brand artwork, each file described in docs/brand/README.md: the claw mark (personalclaw-mark.svg and its rasters), the organization avatar, the website card, the web app's claw.svg, and desktop/icon.png, the alpha mask the rasters are regenerated from",
+      "source": "Project-authored brand artwork, each file described in docs/brand/README.md: the claw mark (personalclaw-mark.svg, the same file as the web app's claw.svg), the organization avatar and the website card, plus the mark's rasters that docs/brand/render_marks.mjs renders from claw.svg and records in docs/brand/marks.json: personalclaw-mark.png, the desktop app icon and the desktop menu-bar images",
       "version": "repository-revision",
       "license": "MIT",
       "ownership": "project-owned",
       "required_notice": "LICENSE",
       "files": [
         "desktop/icon.png",
+        "desktop/tray.png",
+        "desktop/tray@2x.png",
+        "desktop/trayTemplate.png",
+        "desktop/trayTemplate@2x.png",
         "docs/brand/avatar.png",
         "docs/brand/personalclaw-mark.png",
         "docs/brand/personalclaw-mark.svg",

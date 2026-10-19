@@ -65,7 +65,11 @@
       "connectDialog.html",
       "preload.js",
       "loading.html",
-      "icon.png"
+      "icon.png",
+      "tray.png",
+      "tray@2x.png",
+      "trayTemplate.png",
+      "trayTemplate@2x.png"
     ],
     "extraResources": [
       {
