@@ -102,6 +102,16 @@ describe('a button that reveals content says that it does', () => {
       .toMatch(/label=\{showTerm \? 'Hide terminal' : 'Terminal'\} onClick=\{\(\) => setShowTerm\(!showTerm\)\} active=\{showTerm\} ariaExpanded=\{showTerm\}/)
   })
 
+  it("the loop cockpit's Details button is a disclosure, not a setting", () => {
+    // The same case as the Terminal button: it shows and hides the Details rail, which renders only
+    // while `railOpen` holds. Pinned on its own tag because the census below cannot tell: its window
+    // reaches back into the Nudge button beside it, whose `ariaExpanded={nudgeOpen}` read as this
+    // toggle's announcement before it had one.
+    const src = read('loops/LoopCockpitPage.tsx')
+    expect(src).toMatch(/label="Details" active=\{railOpen\} ariaExpanded=\{railOpen\} onClick=\{\(\) => \{ setRailOpen\(!railOpen\); setSelected\(null\) \}\}/)
+    expect(src, 'and the rail is gated on that same flag').toMatch(/\{railOpen && \(\s*<SidePanel/)
+  })
+
   it('a MODE toggle is not given a disclosure promise', () => {
     // The distinction the census turned up: these two reveal nothing, so `aria-expanded` would be false.
     const diag = read('settings/DiagnosticsPanel.tsx')
@@ -129,7 +139,14 @@ describe('a button that reveals content says that it does', () => {
   // `aria-expanded` without this census ever counting it. The optional `cond && ` prefix takes that
   // shape in; its class stops at `{`, `}`, `&` and a line break, so the guard cannot run past the
   // handler's own closing brace into the next attribute.
-  const TOGGLE = /onClick=\{\(\) => (?:[^&{}\n]+&& )?set\w+\(\(?\w*\)? ?=> ?!\w+\)|onClick=\{\(\) => (?:[^&{}\n]+&& )?set\w+\(!\w+\)/g
+  //
+  // 🔴 AND A BLOCK BODY HID ANOTHER, the fifth time. The setter still had to follow the arrow, so a
+  // flip written as a statement — `onClick={() => { setRailOpen(!railOpen); setSelected(null) }}`, the
+  // loop cockpit's Details button, which shows and hides its rail — was never counted, and it announced
+  // a pressed toggle where a rail appeared. The optional `{` opener takes that shape in, with any
+  // `;`-ended statements before the flip; their class stops at `{`, `}`, `;` and a line break, so it
+  // cannot leave the block either.
+  const TOGGLE = /onClick=\{\(\) => (?:\{\s*(?:[^{}\n;]+;\s*)*)?(?:[^&{}\n]+&& )?set\w+\(\(?\w*\)? ?=> ?!\w+\)|onClick=\{\(\) => (?:\{\s*(?:[^{}\n;]+;\s*)*)?(?:[^&{}\n]+&& )?set\w+\(!\w+\)/g
 
   it('the old matcher is BLIND to a guarded flip — the gap is structural', () => {
     // Synthetic and exact: the first line is the one that sat outside the census since it was written.
@@ -150,6 +167,31 @@ describe('a button that reveals content says that it does', () => {
     TOGGLE.lastIndex = 0
   })
 
+  it('the guarded matcher is BLIND to a block-bodied flip — the gap is structural', () => {
+    // Synthetic and exact: the first line is the one that sat outside the census since it was written.
+    const GUARDED = /onClick=\{\(\) => (?:[^&{}\n]+&& )?set\w+\(\(?\w*\)? ?=> ?!\w+\)|onClick=\{\(\) => (?:[^&{}\n]+&& )?set\w+\(!\w+\)/
+    const sees = (shape: string) => { TOGGLE.lastIndex = 0; return TOGGLE.test(shape) }
+    for (const shape of [
+      'onClick={() => { setRailOpen(!railOpen); setSelected(null) }}',
+      'onClick={() => { setOpen((v) => !v) }}',
+      'onClick={() => {\n  setOpen(!open)\n}}',
+      'onClick={() => { setSelected(null); setRailOpen(!railOpen) }}',
+      'onClick={() => { !busy && setOpen(!open) }}',
+    ]) {
+      expect(GUARDED.test(shape), `the guarded matcher cannot see ${shape}`).toBe(false)
+      expect(sees(shape), `and this one does: ${shape}`).toBe(true)
+    }
+    // Widened, not changed: the unguarded and guarded flips still match.
+    expect(sees('onClick={() => setOpen((v) => !v)}')).toBe(true)
+    expect(sees('onClick={() => setOpen(!open)}')).toBe(true)
+    expect(sees('onClick={() => items.length > 1 && setExpanded((e) => !e)}')).toBe(true)
+    expect(sees('onClick={() => !busy && setOpen(!open)}')).toBe(true)
+    // A block that sets without flipping is not a toggle, and the block stays inside its own handler.
+    expect(sees('onClick={() => { setOpen(true); setSelected(null) }}')).toBe(false)
+    expect(sees('onClick={() => { run() }} onBlur={() => { reset(); setOpen(!open) }}')).toBe(false)
+    TOGGLE.lastIndex = 0
+  })
+
   it('the census is reproducible — every boolean-toggling button is accounted for', () => {
     // Not vacuous, and the number is the point: if a new toggle appears it must be classified (disclosure
     // → `aria-expanded`, mode → `aria-pressed` or a state-naming label), not left silent by default.
@@ -163,11 +205,14 @@ describe('a button that reveals content says that it does', () => {
       return [...src.matchAll(TOGGLE)].map((m) => src.slice(Math.max(0, m.index! - 200), m.index! + 260))
     })
     // 58 measured when the guard went in: 57 unguarded flips (the tree grew past the 48 this floor once
-    // held, and the floor never followed) plus the queue header. A measured population, so it sits at
+    // held, and the floor never followed) plus the queue header. 59 when the block body went in: the
+    // Details button is the only block-bodied flip in `pages/`. A measured population, so it sits at
     // the measurement.
-    expect(toggles.length, 'the scan must still find the population it was written for').toBeGreaterThanOrEqual(58)
+    expect(toggles.length, 'the scan must still find the population it was written for').toBeGreaterThanOrEqual(59)
     expect(toggles.some((w) => w.includes('items.length > 1 && setExpanded((e) => !e)')),
       'including the guarded flip that widened the matcher').toBe(true)
+    expect(toggles.some((w) => w.includes('{ setRailOpen(!railOpen); setSelected(null) }')),
+      'and the block-bodied flip that widened it again').toBe(true)
     // A primitive takes the state as `ariaExpanded`/`ariaPressed` and renders the same attribute.
     const silent = toggles.filter((w) => !/aria-expanded|aria-pressed|ariaExpanded|ariaPressed/.test(w))
     // A CEILING on the backlog, not a claim that it is empty: 34 measured when it was written, and it may
@@ -176,6 +221,10 @@ describe('a button that reveals content says that it does', () => {
     // toggles were primitives that announce, which the raw-attribute regex could not see. 8 when the
     // guard went in, and the slack of one was closed with it: the ceiling had sat at 9 against a
     // measured 8, and the guarded flip it newly counts already announces, so widening added nothing here.
+    // Still 8 when the block body went in, and that hid a silent toggle rather than proving none: this
+    // window reads 200 characters back, which reaches a neighbouring control's attribute. The Details
+    // button counted as announced because of the Nudge button's `ariaExpanded={nudgeOpen}` beside it,
+    // so it was classified on its own tag (pinned above) and now announces its own rail.
     expect(silent.length, 'measured backlog — classify a new toggle, do not add to this number')
       .toBeLessThanOrEqual(8)
   })
