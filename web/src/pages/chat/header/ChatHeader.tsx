@@ -184,8 +184,11 @@ export function ChatHeader({ header, stream, composer, panes, transcript, starte
           <HeaderControl icon={ListTree} label="Session map" priority="primary"
             ariaExpanded={mapOpen} onClick={() => setMapOpen(!mapOpen)} />
         )}
+        {/* Activity is a disclosure too: it shows and hides the Activity pane, so it keeps
+            `active` for its look and passes `ariaExpanded`, which makes `HeaderControl` drop
+            `aria-pressed`. */}
         {started && (
-          <HeaderControl icon={PanelRight} label="Activity" active={activityOpen} onClick={() => setActivityOpen(!activityOpen)} />
+          <HeaderControl icon={PanelRight} label="Activity" active={activityOpen} ariaExpanded={activityOpen} onClick={() => setActivityOpen(!activityOpen)} />
         )}
         {!started && (
           <HeaderControl icon={History} label="Chat history" active={historyOpen} onClick={() => setHistoryOpen(!historyOpen)} />
