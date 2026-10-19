@@ -32,6 +32,8 @@ _PHRASE_TABLE = Path(duplex.__file__).with_name("phrases.json")
 _PHRASE_CASES = _REPO_ROOT / "web" / "src" / "ui" / "composer" / "duplexPhraseCases.json"
 _DUPLEX_TS = _REPO_ROOT / "web" / "src" / "ui" / "composer" / "duplex.ts"
 _CHAT_PAGE = _REPO_ROOT / "web" / "src" / "pages" / "ChatPage.tsx"
+# The chat's read-aloud, which hands the composer the voice settings hands-free reads.
+_CHAT_VOICE = _REPO_ROOT / "web" / "src" / "pages" / "chat" / "useChatVoice.ts"
 
 
 def _phrase_cases() -> list[dict]:
@@ -202,9 +204,10 @@ def test_the_browser_reads_the_same_table_rather_than_a_second_literal():
     """The browser's fallback lists used to be a hand-copied literal in ChatPage.tsx."""
     ts = _DUPLEX_TS.read_text(encoding="utf-8")
     assert re.search(r"import \w+ from '(\.\./)+src/personalclaw/voice/phrases\.json'", ts)
-    page = _CHAT_PAGE.read_text(encoding="utf-8")
-    for phrase in (*DEFAULT_CONFIRMATION_PHRASES, *DEFAULT_EXIT_PHRASES):
-        assert f"'{phrase}'" not in page, f"ChatPage.tsx carries its own copy of {phrase!r}"
+    for source in (_CHAT_PAGE, _CHAT_VOICE):
+        page = source.read_text(encoding="utf-8")
+        for phrase in (*DEFAULT_CONFIRMATION_PHRASES, *DEFAULT_EXIT_PHRASES):
+            assert f"'{phrase}'" not in page, f"{source.name} carries its own copy of {phrase!r}"
 
 
 @pytest.mark.parametrize("table", [{}, {"confirmation": []}, {"confirmation": ["do it", " "]}])

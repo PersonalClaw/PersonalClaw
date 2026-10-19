@@ -1234,6 +1234,12 @@ change to one region touches that region's files:
   draws the Session Map rail and the scrolling turns; an assistant turn is
   `AssistantSegments.tsx`, with `UserEditor`, `RewindDivider`,
   `SelectionQuote` and `MessagesSkeleton` beside it.
+- **Read-aloud** — `web/src/pages/chat/useChatVoice.ts`. Speak on a reply,
+  "Speak replies aloud" for a reply to a message this tab sent (counted per
+  chat in `repliesToSpeak`, so a chat open in two tabs is read out once), and
+  the audio a reading streams back as `voice_chunk` frames, which the stream
+  hands it. The transcript's Speak buttons, the composer's hands-free mode and
+  its sends use it.
 
 ## Prompt entities
 
