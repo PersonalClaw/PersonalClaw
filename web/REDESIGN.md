@@ -24,6 +24,9 @@ imitates another product, and none brings in another product's assets, code or t
 - [`docs/design/information-architecture.md`](../docs/design/information-architecture.md) owns
   navigation, screen layouts and where each indicator lives.
 - [`docs/design/agent-orb.md`](../docs/design/agent-orb.md) owns the agent orb.
+- [`docs/design/baseline.md`](../docs/design/baseline.md) is every screen's measured "before": its
+  snapshots, figures, density analysis, critique and checklist answers. A redesign PR quotes its
+  screen's section from it.
 - [`docs/design/buddy/`](../docs/design/buddy/README.md) owns the desktop buddy.
 
 ## 2. Review skills, and on what
@@ -251,7 +254,8 @@ Everything else is in [`docs/design/buddy/`](../docs/design/buddy/README.md).
 6. The surface renders each of its states: empty, large, long content, offline, a concurrent or
    expired approval, interrupted, failed and recovered.
 7. One surface per PR. The PR answers §4's checklist, quotes its screen's before figures from the
-   baseline report (#3804), and shows before and after screenshots, light and dark.
+   [baseline report](../docs/design/baseline.md) (#3804), and shows before and after screenshots,
+   light and dark.
 8. Every route and substate it touches round-trips through the URL and browser history.
 9. A motion or backdrop change attaches a browser Performance trace and Electron
    `app.getAppMetrics()` CPU, before and after, with the window idle. With the default identity, the
