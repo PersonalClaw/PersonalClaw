@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 import { readdirSync } from 'node:fs'
 import { SPEC_ISOLATION, STATEFUL_SPECS, seededOrder, unclassified } from './e2e/isolation'
+import { choosePlaces, cleanUpRunAtExit } from './e2e/runPlaces'
 
 // ── Playwright visual-regression + a11y harness ────────────────────────────
 // The SAFETY RAIL for design-system consistency work: every
@@ -30,18 +31,30 @@ import { SPEC_ISOLATION, STATEFUL_SPECS, seededOrder, unclassified } from './e2e
 // visited, and the one test that noticed (`command palette [opened]`) failed on
 // its mounted-ness floor while naming the palette instead of the missing backend.
 
-const PORT = Number(process.env.PW_PORT || 4318)
+// ── Where this run lives: a home and two ports of its own ───────────────────
+// Two runs on one machine must not meet. The runner's first load of this config makes the
+// gateway's home with mkdtemp under the temp dir and picks a free port for each server (bind
+// port 0, read it back), unless PW_PORT / PW_GATEWAY_PORT names one; neither is ever the
+// install's own port. It writes all three to the environment (PW_E2E_HOME, PW_PORT,
+// PW_GATEWAY_PORT), so every worker that loads this config again, every server it starts and
+// every spec reads the same three, and makes nothing. The runner that made the home removes it
+// when the run ends (`e2e/runPlaces.ts`). The gateway port is chosen here, before the gateway
+// starts, so the preview's proxy target is known before the READY line; if something takes the
+// port in between, the gateway fails to bind and auth.setup's shell-mounted assertion fails
+// loudly rather than scanning an empty app.
+const PLACES = await choosePlaces(process.env)
+cleanUpRunAtExit(PLACES)
+const PORT = PLACES.port
 const BASE_URL = process.env.PW_BASE_URL || `http://localhost:${PORT}`
+const GATEWAY_PORT = PLACES.gatewayPort
 
-// The harness's OWN gateway — never the real one on 10000. Fixed (not auto) so
-// the preview proxy target is known before the gateway prints its READY line; if
-// something else squats it, the gateway fails to bind and auth.setup's
-// shell-mounted assertion fails loudly rather than scanning an empty app.
-const GATEWAY_PORT = Number(process.env.PW_GATEWAY_PORT || 10437)
-
-// Where auth.setup.ts writes the authenticated cookie jar. Gitignored (it holds
-// a live owner token for the throwaway gateway).
-const STORAGE_STATE = process.env.STORAGE_STATE || 'e2e/.auth/state.json'
+// Where auth.setup.ts writes the authenticated cookie jar (it reads STORAGE_STATE, which
+// `choosePlaces` sets): inside this run's home, so it holds a live owner token for this run's
+// throwaway gateway only and goes with the home. Two runs never sign each other's specs out.
+const STORAGE_STATE = PLACES.storageState
+// Where this run's specs write their output: a folder of its own under test-results/, which CI
+// uploads. Playwright clears the output folder when a run starts, so it clears only this run's.
+const OUTPUT_DIR = PLACES.outputDir
 
 // ── The scripted provider contract — ONE place to reconcile ─────────────────
 // Read off the committed modules, not guessed: `src/personalclaw/llm/scripted.py`
@@ -56,7 +69,7 @@ const STORAGE_STATE = process.env.STORAGE_STATE || 'e2e/.auth/state.json'
 //   · PERSONALCLAW_HOME must be set and must NOT resolve to the real
 //     ~/.personalclaw — the provider refuses in a real home outright, re-checking
 //     at both __init__ and start(). The gateway boot below already satisfies this
-//     with its $TMPDIR home. Do not drop it.
+//     with this run's own home under the temp dir. Do not drop it.
 //
 // ONE env var, not two. `registry.py` gates REGISTRATION of the `scripted` type and
 // `scripted.py` gates CONSTRUCTION of the provider, and both now read
@@ -95,7 +108,9 @@ export const SCRIPTED = {
 } as const
 
 // An ISOLATED, ONBOARDED gateway, with AUTH LEFT ON.
-//  - PERSONALCLAW_HOME under the OS temp dir, wiped per run. Never ~/.personalclaw.
+//  - PERSONALCLAW_HOME is this run's own home (PW_E2E_HOME, above): made empty for the run
+//    under the OS temp dir, and removed when the run ends. Never ~/.personalclaw, and never a
+//    folder another run could be using.
 //  - PERSONALCLAW_WORKSPACE too, at the home's own `workspace` folder: the default is there
 //    anyway, and naming it keeps the run inside the temp dir whatever that default becomes.
 //  - `dashboard.user_name` pre-seeded into config.json, because `onboarded` is
@@ -114,11 +129,14 @@ export const SCRIPTED = {
 //    first-entry-declaring-the-capability fallback. So there is no `providers[]` entry
 //    and no `active_models.json` pin to write here, and adding either would put a
 //    second, competing entry of the same type in the registry. Nothing is weakened:
-//    the home is still under $TMPDIR, still wiped per run, auth is still on, and
+//    the home is still under the temp dir, still fresh for the run, auth is still on, and
 //    readiness is still the READY line.
 const GATEWAY_COMMAND = [
-  'D="${TMPDIR:-/tmp}"; D="${D%/}/personalclaw-e2e-home"',
-  'rm -rf "$D"; mkdir -p "$D/workspace"',
+  // The run's own home, made by `choosePlaces` and handed over in the environment. Refused if it
+  // is unset or not there, so the gateway can never fall back to another home.
+  'D="$PW_E2E_HOME"',
+  '[ -n "$D" ] && [ -d "$D" ] || { echo "PERSONALCLAW_E2E_FATAL: PW_E2E_HOME names no folder (got \'$D\')" >&2; exit 1; }',
+  'mkdir -p "$D/workspace"',
   // Fail the BOOT, loudly, if the script fixture is missing. The provider does
   // raise ScriptedScriptError on an unreadable path, but that surfaces at
   // CONSTRUCTION — mid-turn, inside a chat request — so without this guard the run
@@ -231,9 +249,15 @@ const FRESHNESS_CHECK =
 
 export default defineConfig({
   testDir: './e2e',
+  outputDir: OUTPUT_DIR,
   metadata: {
     statefulSeed: String(STATEFUL_SEED),
     statefulOrder: SECOND_PASS,
+    // Where this run lived, so a report says which home and ports it used.
+    e2eHome: PLACES.home,
+    previewPort: String(PORT),
+    gatewayPort: String(GATEWAY_PORT),
+    storageState: STORAGE_STATE,
     isolation: Object.fromEntries(Object.entries(SPEC_ISOLATION).map(([spec, { mode }]) => [spec, mode])),
   },
   // Baselines are platform-qualified (see snapshotPathTemplate) so a mac dev
@@ -362,6 +386,7 @@ export default defineConfig({
           // proceed on a bound-but-unauthenticated gateway with no token.
           wait: { stdout: /PERSONALCLAW_READY:.*"token":\s*"(?<pw_token>[^"]+)"/ },
           timeout: 180_000,
+          env: { PW_E2E_HOME: PLACES.home },
         }]),
         {
           // No build: the dist is built and stamped once (`make web-build`, or CI's `web` job),
@@ -373,7 +398,10 @@ export default defineConfig({
           // web/src and starting a static server, which takes seconds; 60s keeps a loaded host
           // from reading as a broken suite without waiting a quarter hour on a hang.
           timeout: 60_000,
-          reuseExistingServer: !process.env.CI,
+          // Never a server this run did not start, unless PW_REUSE_SERVER=1 asks for it (with a
+          // PW_PORT naming that server). Reusing whatever answered on a fixed port once let one
+          // run drive another run's preview, and its gateway, with its own specs.
+          reuseExistingServer: process.env.PW_REUSE_SERVER === '1',
           // vite.config.ts reads PERSONALCLAW_PORT for its /api proxy target.
           env: { PERSONALCLAW_PORT: String(GATEWAY_PORT) },
         },
