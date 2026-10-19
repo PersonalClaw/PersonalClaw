@@ -21,10 +21,14 @@ the composer to show that the agent is at work. With no turn running, nothing on
 - Its colour is `--color-orb-alive`, one of the shared brand and state tokens
   ([`web/DESIGN.md` §2](../../web/DESIGN.md#the-token-layers)): the active scheme's primary, never a
   literal coral, so every scheme and identity recolours it. A still mark where nothing is alive
-  (done) takes `--color-orb-rest`, and each family's colour is `--color-state-<family>`.
-- Its drawing comes from the `thinking-orbs` component (MIT), given a colour prop because that
-  component draws in one colour. Whether it arrives as an npm dependency or a vendored copy is
-  #3807's call; a vendored copy brings its own licence file.
+  (done, error) takes `--color-orb-rest`, and each family's colour is `--color-state-<family>`. The
+  orb reads the token's value again whenever the scheme, the mode or an owner's colour changes.
+- Under a request for more contrast (`prefers-contrast: more`) the dots take the words' ink,
+  `--color-on-surface`, and in forced colours the system's text colour. The badge is ringed, so in
+  forced colours its ring and its glyph stay.
+- Its drawing is the `thinking-orbs` npm package (MIT), a dependency of the web app. Its `color`
+  prop takes the orb token's resolved value, so no copy of it lives in this tree, and its licence
+  ships in the build's third-party notices with every other bundled package's.
 
 ## Phase to state
 
@@ -34,26 +38,33 @@ The exact words and their lengths per surface are #3899's.
 
 | Phase | Meaning | Family | Orb | Status text |
 |---|---|---|---|---|
-| `queued` | accepted, not started yet | active | breathing | the line for `queued` ("waiting to start") |
-| `thinking` | started, no answer yet | active | breathing | Thinking… |
+| `queued` | accepted, not started yet | active | breathing | Waiting to start |
+| `thinking` | started, no answer yet | active | breathing | Thinking |
 | `searching` | searching knowledge, the web or the files | active | searching | the phase's line, such as "Searching your knowledge" |
 | `tool` | running any other tool | active | working | the tool's own label |
 | `planning` | making or revising a plan | active | solving | Planning |
-| `delegating` | handing work to helpers | active | connecting | Delegating |
+| `delegating` | handing work to helpers | active | connecting | the phase's line, such as "Handing off to 2 helpers" |
 | `streaming` | writing its answer | active | composing | Writing |
 | `listening` | push-to-talk capture is live | active | listening | Listening |
-| `approval` | waiting on the owner's yes | waiting | a still frame with a "!" badge in the warn tone | Needs your approval |
-| `input` | waiting on the owner's answer | waiting | a still frame with a "?" badge in the info tone | the line for `input` (the question) |
-| `done` | finished | quiet | a still mark, faded within 300 ms | the turn's ending line |
-| `error` | failed | blocked | a still mark with a badge in the danger tone | the turn's ending line |
+| `retrying` | a retry or a fail-over is pending | active | working | the phase's line |
+| `waiting_model` | held behind other calls on a local model | active | breathing | the phase's line |
+| `approval` | waiting on the owner's yes | waiting | a still frame with a "!" badge in the warn tone | the phase's line, such as "Needs your OK: shell" |
+| `input` | waiting on the owner's answer | waiting | a still frame with a "?" badge in the info tone | the phase's line: the question |
+| `done` | finished | quiet | a still mark in the rest colour, faded within 300 ms | the turn's ending line, such as "Done in 12 seconds" |
+| `error` | failed | blocked | a still mark in the rest colour with a "×" badge in the danger tone | the turn's ending line, such as "Stopped: the reason" |
+| `idle` | nothing queued or running | quiet | no orb | none |
 
-The orb's states inside the active family are variants of one family: the text, not the
-animation, says which phase it is.
+The status text is the gateway's line for the phase (`work_phase`'s `line`). When the line is
+empty it is the phase's own word from the phase contract (`web/src/lib/workPhase.ts`), never a stock
+phrase, so the words name the exact phase with the orb hidden. The orb's states inside the active
+family are variants of one family: the text, not the animation, says which phase it is. The badges
+differ by glyph as well as tone, so no two waiting or failed states are told apart by colour alone.
 
 ## Behaviour
 
-- One animated orb per turn. The status line beside it is static, and it is the turn's
-  `aria-live="polite"` region.
+- One animated orb per turn. The status line beside it is static, and while the turn runs it is
+  the turn's `aria-live="polite"` region. The transcript's own narration says that a turn started
+  and how it ended, so the ending line is shown and not said a second time.
 - The orb appears only after `showDelay` (150 ms) and stays at least `minHold` (300 ms), so a fast
   reply never flashes it. The buddy uses the same pair.
 - Approval, input and error are still frames, so the card that needs the owner holds their
@@ -68,7 +79,11 @@ animation, says which phase it is.
 ## Placement
 
 - **The turn head, 20 px:** at the start of the assistant's reply slot, left of the status line. It
-  stays as the reply's mark while the text streams, and settles to a still mark when the turn ends.
+  stays as the reply's mark while the text streams, and settles to a still mark when the turn ends,
+  then fades, so a finished reply carries no mark and a reloaded chat reads as the live one did.
+  Before the reply's first word it stands where the reply will be, under the owner's message, and
+  it is one element throughout, so the reply's slot appearing under it restarts neither its timing
+  nor its drawing.
 - **The send button:** while a turn runs, it is the Stop control, morphed from the send arrow with
   a thin sweep. It stays the Stop control.
 - **64 px, rarely:** only in empty states, voice mode and the buddy's expanded view.
