@@ -1,9 +1,9 @@
 """Tests for the harness static boundary scanner + diff-aware selection.
 
-The load-bearing test is `test_scanner_clean_on_current_tree`: the scanner must produce
-ZERO error-level findings on the real repo, or it's noise. The rest prove each check
-actually FIRES on a synthetic violation (a check that never fires is worthless) and that
-touched-area → profile forcing works.
+These prove each check actually FIRES on a synthetic violation (a check that never fires is
+worthless) and that touched-area → profile forcing works. That the scanner produces ZERO
+error-level findings on the real repo, or it's noise, is the rail
+``tests/rails/test_harness_scanner_tree.py``, which runs once per CI run in the rails job.
 """
 
 from __future__ import annotations
@@ -30,24 +30,7 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def _tracked_files(root: Path) -> list[Path]:
-    out = subprocess.run(
-        ["git", "ls-files"], cwd=root, capture_output=True, text=True, check=False
-    ).stdout
-    return [root / ln.strip() for ln in out.splitlines() if ln.strip()]
-
-
-# ── The calibration guard ───────────────────────────────────────────────────────
-
-
-def test_scanner_clean_on_current_tree() -> None:
-    """No ERROR-level scanner finding on the real repo. WARNINGs are allowed (advisory)."""
-    root = _repo_root()
-    findings = scanner.scan(_tracked_files(root), root)
-    errors = [f for f in findings if f.level == scanner.ERROR]
-    assert not errors, "scanner has false-positive ERRORs on a clean tree:\n" + "\n".join(
-        f.format(root) for f in errors
-    )
+# ── Every scanner check a rule names exists ─────────────────────────────────────
 
 
 def test_known_checks_matches_seed_rule_scanner_refs() -> None:
