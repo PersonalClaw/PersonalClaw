@@ -331,11 +331,11 @@ def test_a_scaffold_without_an_author_never_names_the_app_as_the_holder(tmp_path
     shipped `Copyright (c) 2026 Channel Null` because of it: a grant naming an artefact,
     which holds no copyright and points at nobody to ask for permission.
 
-    The rule is not re-derived here. ``test_licence_governance`` owns it, and this drives that
+    The rule is not re-derived here. ``licence_governance_shared`` owns it, and this drives that
     rail over the generated bundle — so there is one definition of "the holder is an artefact"
     and the generator is measured against the same one the tree is.
     """
-    import test_licence_governance as governance
+    import licence_governance_shared as governance
 
     # `channel-null` on purpose: the real exemplar, and the case where the display name is
     # DERIVED from the app name rather than passed, which is the harder half to catch.

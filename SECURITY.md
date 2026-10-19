@@ -110,8 +110,8 @@ so as of **2026-09-18** they are stated plainly and enforced by CI:
   GHCR and the GitHub releases page is MIT permanently. A future licence change could apply
   only to new releases; it could not reach the version you already installed and trusted.
 
-**These are rails, not just prose.** `tests/test_licence_governance.py` fails CI if a licence
-identifier anywhere in the tree stops saying MIT, if `LICENSE`'s grant text is rewritten (the
+**These are rails, not just prose.** `tests/rails/test_licence_governance_tree.py` fails CI if a
+licence identifier anywhere in the tree stops saying MIT, if `LICENSE`'s grant text is rewritten (the
 copyright year is excluded, the grant is not), or if a `CLA` /
 `CONTRIBUTOR_LICENSE_AGREEMENT` file appears; `tests/test_network_egress_hosts.py` fails it if
 a new outbound host is added. Each of those checks is itself proven to fail on an injected
