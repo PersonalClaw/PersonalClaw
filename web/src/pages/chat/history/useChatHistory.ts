@@ -4,7 +4,7 @@ import { searchCoverage } from '../searchDeepLink'
 import { confirm, promptInput } from '../../../ui/dialog'
 import { notify } from '../../../app/appSdk'
 import { api, isSwitchedOff, type ChatSessionSummary, type ChatFolder, type ChatTag, type RetagJob, type SessionSearchAnswer } from '../../../lib/api'
-import { useChatSocket, type WsMessage } from '../../../lib/useChatSocket'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../../lib/useChatSocket'
 import { detailKey } from '../useChatStream'
 import { useQuery, invalidateKeys } from '../../../lib/data'
 import { downloadFrom } from '../../../lib/download'
@@ -32,6 +32,9 @@ function applyTagEdit(tags: string[], edit: TagEdit): string[] {
 
 /** The most matches the chat list's content search asks for: the route's ceiling. */
 const SEARCH_LIMIT = 200
+
+/** How long the frames saying the list moved gather before it is read again (`relistSoon`). */
+const RELIST_AFTER_MS = 500
 
 export function useChatHistory({ navigate, query, setQuery }: { navigate: (p: string) => void; query: Record<string, string>; setQuery: RouteProps['setQuery'] }) {
   // Instant-paint cache: sessions revalidate often (in-memory, persist:false);
@@ -176,13 +179,37 @@ export function useChatHistory({ navigate, query, setQuery }: { navigate: (p: st
     // Hydrate mid-job state on mount/reload so the button reflects reality.
     api.retagStatus().then((j) => { if (j && j.status === 'running') setRetag(j) }).catch(() => {})
   }, [])
-  // The socket came back: the job's progress and its end went to nobody while it was down (a
-  // restart ends the job), so its state is read again, and the tags it changed meanwhile with it.
-  const resyncRetag = () => {
+  // ── A row follows its chat. The list is what the route answered when it was read, and a chat
+  // moves on behind it: its turn ends, its count grows, one started in another tab appears. It
+  // read "3 messages · running" for a chat the route already served idle with 7, until reopened.
+  // So the list is read again on the gateway's list push (`sessions`, sent on every change to a
+  // chat it lists), its `history` hint (a turn ended, chats deleted or archived), and a
+  // `work_phase` frame that starts or ends a turn its row does not show; a running turn saying
+  // its phase again is not news to the row. One turn's end says itself in three of those frames,
+  // and many chats at once say it for each, so the first frame schedules one read and the rest
+  // join it. The read is the collection's bust, as `load()`'s is, rather than a refresh: a refresh
+  // would join a request already on the wire, sent before the turn ended.
+  const relistTimer = useRef<number | undefined>(undefined)
+  const relistSoon = () => {
+    if (relistTimer.current !== undefined) return
+    relistTimer.current = window.setTimeout(() => { relistTimer.current = undefined; invalidateKeys('chat:sessions', true) }, RELIST_AFTER_MS)
+  }
+  useEffect(() => () => window.clearTimeout(relistTimer.current), [])
+  const turnMoved = (frame: Record<string, unknown>) => {
+    const s = (sessions ?? []).find((x) => x.key === frame.session)
+    return !!s && !!s.run_state?.turn !== !!frame.turn
+  }
+  // The socket came back: every frame went to nobody while it was down, so the list is read again,
+  // and the retag job's state with the tags it changed meanwhile (a restart ends the job).
+  const resync = () => {
     api.retagStatus().then((j) => { setRetag(j ?? null); retagUpdatedRef.current = j?.updated ?? 0 }).catch(() => {})
     load(); refreshTags()
   }
   useChatSocket((m: WsMessage) => {
+    if (m.type === 'sessions' || refreshKinds(m).includes('history') || (m.type === 'work_phase' && turnMoved(m.data ?? {}))) {
+      relistSoon()
+      return
+    }
     if (m.type !== 'retag_progress' && m.type !== 'retag_done') return
     const job = m.data as unknown as RetagJob
     setRetag(job)
@@ -196,7 +223,7 @@ export function useChatHistory({ navigate, query, setQuery }: { navigate: (p: st
       else if (job.status === 'error') notify(`Re-tagging failed: ${job.error || 'unknown error'}`, 'error')
       else if (job.status === 'cancelled') notify('Re-tagging cancelled', 'info')
     }
-  }, resyncRetag)
+  }, resync)
   async function startRetag() {
     if (retagRunning) { await api.cancelRetag().catch(reportActionFailure('cancel the retag run')); return }
     if (!(await confirm({
