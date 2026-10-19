@@ -5,7 +5,17 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 
-from . import audit, catalogue, rails_census, report, shards, telemetry, variation_census, verdict
+from . import (
+    audit,
+    catalogue,
+    jobs,
+    rails_census,
+    report,
+    shards,
+    telemetry,
+    variation_census,
+    verdict,
+)
 
 
 def _verify_check_run(argv: list[str]) -> int:
@@ -22,6 +32,8 @@ COMMANDS: dict[str, Callable[[list[str]], int]] = {
     "list": catalogue.list_main,
     "rails": rails_census.main,
     "report": report.main,
+    "run": jobs.run_main,
+    "run-job": jobs.run_job_main,
     "shards": shards.main,
     "telemetry": telemetry.main,
     "variation-census": variation_census.main,

@@ -20,6 +20,7 @@ make serve              # dev gateway on 127.0.0.1:10000, state under ./.dev-hom
 
 make lint               # black --check + isort --check + flake8 + mypy — must pass
 make test               # full pytest suite
+make check              # the change tier's CI jobs, run here as CI runs them (make gate: the merge tier)
 npm run typecheck:web && npm run test:web && make web-build   # when web/ changed (from root); web-build stamps the dist
 (cd web && PW_ONLY_SMOKE=1 npx playwright test --project=smoke --no-deps)   # then: mount the BUILT bundle in headless Chromium
 make build              # a distribution: clean, locked SPA, sdist + wheel inspected, rebuilt from the sdist, served
@@ -35,9 +36,12 @@ that is the signature of a version skew, not a real red. `isort 9` reports eight
 tree where the locked `8.0.1` reports none.
 
 Definition of done for any change: `make lint` green · targeted `pytest` green ·
-`make test` green before the final commit · the web gate **including the render
-smoke** when `web/` or the npm manifest/lockfile changed · new behavior has
-tests · docs moved with the change.
+`make test` green before the final commit · `make check` before a commit and
+`make gate` before opening or updating a PR (exit 2 names the jobs this machine
+cannot run, or that left no record because the tree was not committed) · GitHub CI
+on the PR is the gate: a local run never stands in for it · the web gate **including
+the render smoke** when `web/` or the npm manifest/lockfile changed · new behavior
+has tests · docs moved with the change.
 
 **Render smoke is non-negotiable for frontend-affecting pushes.** typecheck,
 vitest (jsdom), and `vite build` can ALL pass while the built bundle crashes at
@@ -202,7 +206,9 @@ them is not ready to execute a task.
   it inline. No new dependencies unless the task names the exact package. No dead
   code, TODO/FIXME, commented-out blocks, or "phase 2" stubs.
 - **Definition of done, every task:** `make lint` · targeted `pytest` · `make
-  test` before the final commit · the web gate incl. render smoke when `web/`
+  test` before the final commit · `make check` before a commit and `make gate`
+  before opening or updating a PR, with GitHub CI on the PR the gate · the web
+  gate incl. render smoke when `web/`
   changed · new behavior has tests (a bug-fix gets a regression test that failed
   before) · docs moved with the change · a headline-only CHANGELOG entry for
   class-B/S · the

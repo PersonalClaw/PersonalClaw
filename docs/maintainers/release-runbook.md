@@ -171,11 +171,15 @@ the diff to the lines that moved: a newer uv may also rewrite the lockfile's `re
 
 ### 3. Run the full local gate
 
-Remote CI is confirmation, not discovery.
+Remote CI is confirmation, not discovery. Run `make check` before a commit and `make gate`
+before opening or updating the PR; GitHub CI on the PR is the gate, and a local run never stands
+in for it.
 
 ```bash
 make lint                       # black, isort, flake8, mypy
 make test                       # the full suite
+make check                      # the change tier's CI jobs, as CI runs them, before a commit
+make gate                       # the merge tier's, before the PR; exit 2 names the jobs this machine cannot run
 npm run typecheck:web && npm run test:web && make web-build   # from the root, never `cd web`; web-build stamps the dist
 (cd web && PW_ONLY_SMOKE=1 npx playwright test --project=smoke --no-deps)   # the built bundle mounts
 make build                      # the distribution, inspected and rebuilt byte-identical from the sdist

@@ -17,6 +17,9 @@ from tools.ci.__main__ import main
 #: The smallest catalogue the rules accept: a merge tier holding the rails job, and the suite on
 #: each platform as its security evidence.
 _MINIMAL = """
+[tier.merge]
+jobs = ["rails", "python-suite", "python-suite-macos"]
+
 [[job]]
 id = "rails"
 tiers = ["change", "merge"]

@@ -9,11 +9,31 @@
 #
 # A step is an argv run from the repository root, or from `workdir` under it, with `env` (its
 # workflow step's own env) set on top of its job's. A value only the runner knows is a
-# placeholder: {runner_temp}, {shard} or {base}.
+# placeholder: {runner_temp}, {shard} or {base}. An install (`uv sync`, `npm ci`, the Playwright
+# browser install) is never a step: it is the job's toolchain, which whatever runs the job
+# installs first, and each job names every install it needs.
 #
 # `inputs` are git pathspecs. Nothing selects jobs by them yet, so an entry whose job ci.yml
 # gates on a classifier (scripts/ci_touches_frontend.py, scripts/ci_touches_sdk.py) declares the
 # whole tree until selection moves here: a wider input runs a job more often, never less.
+
+# The jobs the merge tier must run. Each job whose tiers claim merge is listed here, and only
+# those, so dropping one from the merge tier takes two edits.
+[tier.merge]
+jobs = [
+  "static",
+  "rails",
+  "python-suite",
+  "python-suite-macos",
+  "client",
+  "web-unit",
+  "web-build",
+  "package",
+  "e2e",
+  "browse-live",
+  "apps-contract",
+  "audit",
+]
 
 [[job]]
 id = "static"
@@ -61,7 +81,6 @@ command = [
   { argv = ["uv", "run", "python", "-m", "tools.ci", "rails", "check"] },
   { argv = ["uv", "run", "python", "scripts/check_asset_licenses.py"] },
   { argv = ["uv", "run", "python", "scripts/gate_report.py"] },
-  { argv = ["npm", "ci"] },
   { argv = ["uv", "run", "pytest", "tests/test_npm_advisory_floors.py", "--junitxml=reports/junit-npm-floors.xml"], env = { PERSONALCLAW_REQUIRE_NPM_TREE = "1" } },
 ]
 
@@ -146,8 +165,7 @@ command = [
 
 # The web job's tests, its build, and the wheel built with that build: three entries, one job.
 # ci.yml sets VITEST_MAX_WORKERS to the runner's core count, through GITHUB_ENV, before the
-# vitest steps; a value only the runner knows, it is not a step env here, and whatever runs
-# these steps sets it the same way.
+# vitest steps: workers = "auto", and workers_env names the variable the runner sets to it.
 [[job]]
 id = "web-unit"
 tiers = ["change", "merge"]
@@ -158,9 +176,10 @@ cache = ["npm"]
 security = "ordinary"
 reuse = "tree"
 timeout_min = 45
+workers = "auto"
+workers_env = "VITEST_MAX_WORKERS"
 needs_node = true
 command = [
-  { argv = ["npm", "ci"] },
   { argv = ["npm", "run", "typecheck:web"] },
   { argv = ["npm", "run", "test:web"] },
   { argv = ["npm", "run", "test:desktop"] },
@@ -179,7 +198,6 @@ reuse = "tree"
 timeout_min = 45
 needs_node = true
 command = [
-  { argv = ["npm", "ci"] },
   { argv = ["npm", "run", "build"] },
   { argv = ["python3", "scripts/check_asset_licenses.py", "--built-web"] },
   { argv = ["python3", "scripts/spa_dist_freshness.py", "stamp"] },
@@ -216,8 +234,6 @@ needs_node = true
 needs_browser = true
 after = ["web-build"]
 command = [
-  { argv = ["npm", "ci"] },
-  { argv = ["npx", "playwright", "install", "--with-deps", "chromium"] },
   { argv = ["npx", "playwright", "test", "--grep-invert", "@visual"], workdir = "web", env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report.json" } },
   { argv = ["node", "e2e/assert-no-route-skips.mjs", "e2e-report.json"], workdir = "web" },
 ]

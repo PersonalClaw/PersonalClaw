@@ -27,7 +27,11 @@ python -m pytest --lf -v
 
 CI's gate is `.github/workflows/ci.yml`: its `lint` job runs `make lint` (black,
 isort, flake8 and mypy), and its `test-shard` and `test-macos` jobs run the suite.
-Locally, `make lint` and `make test` run the same checks.
+Locally, `make lint` and `make test` run the same checks. `make check` and
+`make gate` run the change and merge tiers' jobs from `tools/ci/catalogue.toml`
+the way CI runs them (`python -m tools.ci run-job <id>` runs one); a job this
+machine cannot run, such as the other platform's suite, is named and the run
+exits 2 (see "Local runs" in `docs/maintainers/ci.md`).
 
 ## What the suite downloads
 

@@ -33,7 +33,7 @@ WEB_DIR         := web
 DESKTOP_DIR     := desktop
 PYI_BUNDLE_DIR  := dist/personalclaw-backend
 
-.PHONY: help format lock lint test test-e2e test-visual build clean harness-validate gates \
+.PHONY: help format lock lint test check gate test-e2e test-visual build clean harness-validate gates \
         asset-licenses asset-licenses-built \
         mutation-check bundled-model sdk-snapshot apps-contract \
         serve serve-lan serve-fresh serve-web \
@@ -95,6 +95,15 @@ lint:
 # evidence of your own diff — see #684 before assuming it is.
 test:
 	$(PYTHON) -m pytest -n auto --dist worksteal
+
+## check: run the change tier's catalogue jobs here, as CI runs them (tools/ci/catalogue.toml)
+## gate: run the merge tier's catalogue jobs here. Exit 0 every planned job ran here and passed,
+## 1 one ran and failed, 2 one could not run on this machine (named in the summary)
+check:
+	$(PYTHON) -m tools.ci run change
+
+gate:
+	$(PYTHON) -m tools.ci run merge
 
 ## test-e2e: run the BROWSER gate against an isolated gateway (axe-per-route a11y, PWA,
 ## visual regression, one real end-to-end chat turn). Deliberately NOT part of `make test`:
