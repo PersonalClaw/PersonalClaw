@@ -278,7 +278,16 @@ async def _world(
 
 
 async def _listed(w: World, name: str) -> dict:
-    """The row the Tools page shows for *name*: what "Try it" sends back."""
+    """The row the Tools page shows for *name*: what "Try it" sends back.
+
+    The page lists each server within ``_MCP_LIST_TIMEOUT_SECS`` and leaves off one whose
+    connection is still starting, to list it on a later read. So the server's connection is
+    started first, within the client's own connect timeout (``McpServerConn.ensure_started``),
+    and the page is read once: what it lists is then what a user sees once the server is up,
+    not how fast this machine started it (a cold start on a loaded runner took over 5 s)."""
+    conn = mcp_client.get_mcp_client_registry().get(SERVER)
+    assert conn is not None, f"precondition: {SERVER} is configured in mcp.json"
+    assert await conn.ensure_started(), f"precondition: {SERVER} did not start: {conn.error}"
     resp = await w.http.get("/api/tools")
     assert resp.status == 200
     rows = [t for t in (await resp.json())["tools"] if t["name"] == name]
@@ -402,6 +411,21 @@ async def test_try_it_resolves_the_tool_by_name_not_by_the_server_label(
 
         assert (status, body.get("output")) == (200, "hello claw"), body
         assert w.mcp_invoked == [f"mcp/{SERVER}/hello"]
+
+
+@pytest.mark.asyncio
+async def test_the_page_is_read_once_the_servers_connection_has_started(
+    fixture_server, tmp_path, monkeypatch
+):
+    """🔴 Red before: a server whose connection was still starting when the page listed it was
+    left off the page (it lists each server within ``_MCP_LIST_TIMEOUT_SECS`` and skips one that
+    misses it, to be listed on a later read). A test that read the page once, on a cold start,
+    then found no row. Here the page's budget is a twentieth of a second, which no cold start
+    meets: the row is there only because the connection has finished starting first."""
+    monkeypatch.setattr("personalclaw.dashboard.handlers.tools._MCP_LIST_TIMEOUT_SECS", 0.05)
+    async with _world(fixture_server, tmp_path, monkeypatch) as w:
+        row = await _listed(w, f"mcp/{SERVER}/hello")
+        assert row["provider"] == SERVER
 
 
 @pytest.mark.asyncio
