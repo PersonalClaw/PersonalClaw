@@ -6,7 +6,8 @@ beyond typing a message: taking a wrong turn back, spinning the same conversatio
 directions, having a plan approved before anything runs, letting a queued message cut in,
 finding something you said hours ago, quoting it, following a suggestion, controlling how
 text appears, and putting a piece of your screen into the conversation. It ends with how
-replies are written, which model answers a turn, and what gets recorded.
+replies are written, giving the window to what you are reading, which model answers a turn, and
+what gets recorded.
 
 Everything here works in a browser tab. Where a mechanic needs a platform capability that
 your browser does not have, the control is **hidden** rather than shown and made to fail —
@@ -501,6 +502,30 @@ nothing for it.
 one bounded section, and the platform's safety rules are sent right after it on every styled
 turn, so no style can have the last word. A style whose text opens or closes a style section
 of its own is not sent, and the turn goes without it.
+
+---
+
+## Focus mode and reading mode
+
+**Where:** `⌘\` for focus mode and `⌘⇧.` for reading mode (`Ctrl+\` and `Ctrl+Shift+.` on
+Windows/Linux), or the command palette (`⌘K`), where both are listed with their keys.
+
+**Focus mode** hides the sidebar and closes the side pane, so the conversation takes the window.
+It works on every page, and it stays on until you leave it, across a reload too. Something that
+needs a pane still opens it: click a file in an answer and the file opens beside the chat, and
+only that pane opens, since in focus mode opening one pane closes another. Leave with the same
+key, the palette, or the sidebar's toggle at the top left, which reads **Leave focus mode**, and
+the sidebar and the panes you had open come back. On a phone the sidebar is already a drawer, so
+focus mode only closes the side pane.
+
+**Reading mode** folds the composer while you read a long answer, and the transcript takes the
+column's whole height. The composer folds to one line at the bottom, **Write a reply**, or
+**Continue your draft** with the start of what you had typed. It comes back on the key, on that
+line, when anything puts focus in it (`Tab`, `/`, a follow-up suggestion, a quote), or when you
+start typing, and what you type lands at the end of your draft. Nothing in the composer is lost
+while it is folded. Moving to another chat or page unfolds it.
+
+With both on, the conversation takes about 90% of the window.
 
 ---
 

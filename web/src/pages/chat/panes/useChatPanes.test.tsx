@@ -34,26 +34,32 @@ const CARDS: SubagentCard[] = [
   { id: 'c', task: 'step', agent: 'coder', run: 'run-1', done: false },
 ]
 
-/** The page around the controller: a URL that holds the flags, and the stream's state it reads. */
-function mount() {
+/** The page around the controller: a URL that holds the flags, the stream's state it reads, and the
+ *  shell's focus mode. Every write to the URL is counted, so a test can say one was never made. */
+function mount(initial: Record<string, string> = {}, initialFocus = false) {
+  const writes: Record<string, string | null | undefined>[] = []
   const hook = renderHook(() => {
-    const [query, setQ] = useState<Record<string, string>>({})
-    const setQuery: RouteProps['setQuery'] = (patch) => setQ((prev) => {
-      const next = { ...prev }
-      for (const [k, v] of Object.entries(patch)) { if (v == null) delete next[k]; else next[k] = v }
-      return next
-    })
+    const [query, setQ] = useState<Record<string, string>>(initial)
+    const [focus, setFocus] = useState(initialFocus)
+    const setQuery: RouteProps['setQuery'] = (patch) => {
+      writes.push(patch)
+      setQ((prev) => {
+        const next = { ...prev }
+        for (const [k, v] of Object.entries(patch)) { if (v == null) delete next[k]; else next[k] = v }
+        return next
+      })
+    }
     const [subagents, setSubagents] = useState<SubagentCard[]>(CARDS)
     const [sideMsgs, setSideMsgs] = useState<SideMsg[]>([])
     const [sideBusy, setSideBusy] = useState(false)
     const sideOpenedRef = useRef(false)
     const p = useChatPanes({
-      query, setQuery,
+      query, setQuery, focus,
       stream: { sessionRef: { current: SESSION }, turns: TURNS, setSubagents, sideBusy, setSideBusy, setSideMsgs, sideOpenedRef },
     })
-    return { p, query, subagents, sideMsgs, sideBusy }
+    return { p, query, subagents, sideMsgs, sideBusy, setFocus }
   })
-  return hook
+  return Object.assign(hook, { writes })
 }
 
 beforeEach(async () => {
@@ -89,6 +95,66 @@ describe('useChatPanes keeps each panel on the URL', () => {
     const { result } = mount()
     expect(result.current.p.activity.files.map((f) => f.path)).toEqual(['src/fetch.py'])
     expect(result.current.p.activity.links.map((l) => l.label)).toEqual(['docs.example.com'])
+  })
+})
+
+// ── Focus mode ──────────────────────────────────────────────────────────────────────────────────
+//
+// Focus mode gives the window to the work: entering it closes the panes beside the chat, and leaving
+// it opens again the ones it closed. While it is on, a pane opens only when something asks for it,
+// and only that pane: asking for one closes the other.
+
+describe('useChatPanes honours focus mode', () => {
+  it('entering it closes the open panes, and leaving it opens them again', () => {
+    const { result } = mount({ activity: '1', file: 'src/fetch.py' })
+    act(() => result.current.setFocus(true))
+    expect(result.current.query.activity).toBeUndefined()
+    expect(result.current.query.file).toBeUndefined()
+    expect(result.current.p.activityOpen).toBe(false)
+    expect(result.current.p.openFile).toBeNull()
+    act(() => result.current.setFocus(false))
+    expect(result.current.query.activity).toBe('1')
+    expect(result.current.query.file).toBe('src/fetch.py')
+  })
+
+  it('in it, asking for a pane opens only that one', () => {
+    const { result } = mount({}, true)
+    act(() => result.current.p.setActivityOpen(true))
+    expect(result.current.query.activity).toBe('1')
+    act(() => result.current.p.setOpenFile('src/fetch.py'))
+    expect(result.current.query.file).toBe('src/fetch.py')
+    expect(result.current.query.activity).toBeUndefined()
+    act(() => result.current.p.setActivityOpen(true))
+    expect(result.current.query.activity).toBe('1')
+    expect(result.current.query.file).toBeUndefined()
+  })
+
+  it('a pane opened in it stays when it ends, beside the ones it closed', () => {
+    const { result } = mount({ activity: '1' })
+    act(() => result.current.setFocus(true))
+    act(() => result.current.p.setOpenFile('src/fetch.py'))
+    act(() => result.current.setFocus(false))
+    expect(result.current.query.file).toBe('src/fetch.py')
+    expect(result.current.query.activity).toBe('1')
+  })
+
+  it('outside it, two panes still open side by side', () => {
+    const { result } = mount({ activity: '1' })
+    act(() => result.current.p.setOpenFile('src/fetch.py'))
+    expect(result.current.query.activity).toBe('1')
+    expect(result.current.query.file).toBe('src/fetch.py')
+  })
+
+  it('with nothing open, entering and leaving it writes nothing to the address', () => {
+    const hook = mount()
+    act(() => hook.result.current.setFocus(true))
+    act(() => hook.result.current.setFocus(false))
+    expect(hook.writes).toEqual([])
+  })
+
+  it('a chat opened in it keeps the pane its address names', () => {
+    const { result } = mount({ file: 'src/fetch.py' }, true)
+    expect(result.current.p.openFile).toBe('src/fetch.py')
   })
 })
 

@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Focus mode (⌘\) hides the sidebar and side pane; reading mode (⌘⇧.) folds the composer.**
 - **A small orb at the head of each reply shows what the agent is doing, and goes still when it needs you.**
 - **`personalclaw://` links open the desktop app on one of its pages, from a browser, another app or Terminal; a link only opens a page and never sends, approves or runs anything.**
 - **A link that opens a new thread with a prompt puts the prompt in the composer, unsent, also when the app is already showing a new thread, and a link can open a thread's Activity pane or a new thread's Chat history; a link that names an artifact by key is refused, because an artifact opens on its own page.**

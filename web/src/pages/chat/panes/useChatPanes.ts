@@ -3,7 +3,8 @@ import { reportActionFailure } from '../../../app/reportingWrite'
 import { onToolResultFull } from '../toolResultBridge'
 import { deriveActivity } from '../chatTypes'
 import { api } from '../../../lib/api'
-import { useQueryFlag, useQueryParam, type RouteProps } from '../../../app/useQueryState'
+import { useQueryParam, type RouteProps } from '../../../app/useQueryState'
+import { useIsMobile } from '../../../app/useIsMobile'
 import type { ChatStream } from '../useChatStream'
 
 // ── The chat's docked panes ────────────────────────────────────────────────────────────────────
@@ -13,19 +14,53 @@ import type { ChatStream } from '../useChatStream'
 // (`?file`); the new chat's history panel (`?history`); and a tool's full result (`?result`),
 // fetched when a card asks for it. Each rides the URL, so Back closes it and a reload reopens it.
 // `ChatPanes.tsx` draws them.
+//
+// Focus mode (`app/viewModes.tsx`) gives the window to the transcript: entering it closes the docked
+// panes, and leaving it opens again the ones it closed. While it is on, a pane opens only when
+// something asks for it, and only that pane, since asking for one closes the others. A chat opened
+// in focus mode keeps the pane its address names: the address is an ask too.
 
-export function useChatPanes({ query, setQuery, stream }: {
+/** The panes docked beside the chat on every form, by their URL key. */
+const DOCKED_PANES = ['activity', 'history', 'file']
+
+export function useChatPanes({ query, setQuery, stream, focus = false }: {
   query: Record<string, string>
   setQuery: RouteProps['setQuery']
   stream: Pick<ChatStream, 'sessionRef' | 'turns' | 'setSubagents' | 'sideBusy' | 'setSideBusy' | 'setSideMsgs' | 'sideOpenedRef'>
+  focus?: boolean
 }) {
   const { sessionRef, turns, setSubagents, sideBusy, setSideBusy, setSideMsgs, sideOpenedRef } = stream
+  // The docked panes' URL keys. The Session Map is a pane only on a phone, where it is a drawer; on
+  // a pointer device it is the transcript's own gutter rail, which costs the transcript nothing.
+  const isMobile = useIsMobile()
+  const paneKeys = isMobile ? [...DOCKED_PANES, 'map'] : DOCKED_PANES
+  /** In focus mode, the patch that opens one pane closes the others. */
+  const alone = (key: string): Record<string, null> =>
+    focus ? Object.fromEntries(paneKeys.filter((k) => k !== key).map((k) => [k, null])) : {}
+  const closedByFocus = useRef<Record<string, string> | null>(null)
+  const focusWas = useRef(focus)
+  useEffect(() => {
+    if (focus === focusWas.current) return
+    focusWas.current = focus
+    if (focus) {
+      const open = Object.fromEntries(paneKeys.filter((k) => query[k]).map((k) => [k, query[k]]))
+      closedByFocus.current = open
+      if (Object.keys(open).length) setQuery(Object.fromEntries(Object.keys(open).map((k) => [k, null])), { replace: true })
+      return
+    }
+    const closed = closedByFocus.current ?? {}
+    closedByFocus.current = null
+    const reopen = Object.fromEntries(Object.entries(closed).filter(([k]) => !query[k]))
+    if (Object.keys(reopen).length) setQuery(reopen, { replace: true })
+  }, [focus]) // eslint-disable-line react-hooks/exhaustive-deps
   // activity panel (Stage 5) — Index/Files/Links, chat-only, toggled from header.
   // URL-backed (?activity=1, push → Back closes it; refresh restores it).
-  const [activityOpen, setActivityOpen] = useQueryFlag(query, setQuery, 'activity')
+  const activityOpen = query.activity === '1'
+  const setActivityOpen = (on: boolean) => setQuery({ ...(on ? alone('activity') : {}), activity: on ? '1' : null })
   // New-chat page: a right-docked chat-history panel (the shared SidePanel), toggled
   // from the header. URL-bound (?history=1) so Back closes it + refresh restores it.
-  const [historyOpen, setHistoryOpen] = useQueryFlag(query, setQuery, 'history')
+  const historyOpen = query.history === '1'
+  const setHistoryOpen = (on: boolean) => setQuery({ ...(on ? alone('history') : {}), history: on ? '1' : null })
   // "Show full result": the full raw of a projected tool
   // result, fetched on demand from the per-session store + shown in a modal. The
   // OPEN state is the URL (?result=<rawRef>, push); the fetched body + the tool
@@ -36,9 +71,8 @@ export function useChatPanes({ query, setQuery, stream }: {
 
   // The docked open-file peek panel. URL-backed (?file=<path>, push → Back closes;
   // refresh/deep-link reopens the same file beside the transcript).
-  const [openFileRaw, setOpenFileRaw] = useQueryParam(query, setQuery, 'file', '')
-  const openFile = openFileRaw || null
-  const setOpenFile = (p: string | null) => setOpenFileRaw(p || '')
+  const openFile = query.file || null
+  const setOpenFile = (p: string | null) => setQuery({ ...(p ? alone('file') : {}), file: p || null })
 
   // "Show full result": a tool card asked to reveal the
   // full raw of a projected result → the modal is URL-backed (?result=<rawRef>,

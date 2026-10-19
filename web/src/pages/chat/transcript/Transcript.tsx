@@ -106,7 +106,10 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
           )}
         </AnimatePresence>
         <SelectionQuote scrollRef={scrollRef} onQuote={quoteToComposer} attributionFor={attributionForNode} />
-        <div className="mx-auto flex flex-col gap-2xl px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+        {/* `--composer-fold-room`: reading mode's folded composer floats over the transcript's end,
+            so the end makes room for it (`composer/ComposerFold`). */}
+        <div className="mx-auto flex flex-col gap-2xl px-l py-2xl"
+          style={{ maxWidth: 'var(--content-width)', paddingBottom: 'calc(var(--spacing-2xl) + var(--composer-fold-room, 0px))' }}>
           {withTurnHead(turns.map((turn, i) => {
             const isLast = i === turns.length - 1
             const turnTextOf = (t: ChatTurn) => t.segments.map((s) => (s.kind === 'text' ? s.text : '')).join('')

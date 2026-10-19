@@ -3,7 +3,7 @@ import { MotionConfig, motion } from 'framer-motion'
 import { ease, duration } from '../design/motion'
 import { armCueAudio } from '../design/soundCues'
 import { installPushCuePlayback } from './pushCuePlayback'
-import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, Radar, Settings, Smartphone, Sparkles, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
+import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, Focus, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, PanelBottomClose, Radar, Settings, Smartphone, Sparkles, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
 import { IncidentBanner } from './IncidentBanner'
@@ -42,6 +42,7 @@ import { resolveAppIcon } from '../pages/apps/appIcon'
 import { useWidgetActionLauncher } from '../ui/widget/useWidgetActionBridge'
 import { getNavApps, onNavAppsChange } from '../pages/apps/navApps'
 import { isDisclosed, undisclosedCount, useNavDisclosure } from './navDisclosure'
+import { ViewModesProvider, useViewModeKeys, useViewModeState, viewModeCommand, viewModeKeyLabel } from './viewModes'
 import type { AppSummary } from '../lib/api'
 
 // Heavier / less-frequently-first-viewed pages are code-split so the initial
@@ -271,7 +272,20 @@ function AppInner() {
   // Effective collapse: on mobile the rail is collapsed unless the drawer is open;
   // on desktop it follows the persisted user preference.
   const railCollapsed = isMobile ? !mobileNavOpen : navCollapsed
-  const toggleNav = () => { if (isMobile) setMobileNavOpen((v) => !v); else setNavCollapsed((v) => !v) }
+  // Focus mode and reading mode (`viewModes.tsx`). Focus mode hides the rail on a desktop; a phone's
+  // rail is a drawer that costs the page nothing, so there it only closes the side pane. While the
+  // rail is hidden, the sidebar's control is the way out of focus mode, and the rail comes back as
+  // it was.
+  const viewModes = useViewModeState()
+  const { focus, setFocus, setReading } = viewModes
+  const railHidden = focus && !isMobile
+  const toggleNav = () => { if (isMobile) setMobileNavOpen((v) => !v); else if (railHidden) setFocus(false); else setNavCollapsed((v) => !v) }
+  // Reading mode belongs to the chat on screen, so a move to another page or chat ends it, and its
+  // key and palette row are there only while a chat is.
+  useEffect(() => { setReading(false) }, [route, sub, setReading])
+  const readsAChat = activeChatSession !== ''
+  const toggleFocus = () => setFocus((v) => !v)
+  const toggleReading = () => setReading((v) => !v)
   // A nav selection on mobile closes the overlay drawer (tap-through-to-collapse).
   const onNavSelect = (id: string) => { navigate(id); if (isMobile) setMobileNavOpen(false) }
   // Close the drawer if the viewport grows back to desktop while it was open.
@@ -547,6 +561,8 @@ function AppInner() {
   // hook order is stable across renders (React #310).
   const embedRef = useRef(query.embed === '1')
   if (query.embed === '1') embedRef.current = true
+  // The two modes' keys, for the shell's own pages: an embedded page has no shell for them to change.
+  useViewModeKeys(embedRef.current ? {} : { 'focus-mode': toggleFocus, 'reading-mode': readsAChat ? toggleReading : undefined })
 
   // Wait for the server identity before deciding — don't flash onboarding. `PageFallback` rather
   // than a bare spinner, so a Retry below is followed by an announced "Loading", not by silence.
@@ -735,24 +751,28 @@ function AppInner() {
     { id: 'go:notifications', label: 'Notifications', hint: 'Go to', icon: Bell, keywords: 'alerts feed', run: () => navigate('notifications') },
     { id: 'go:discover', label: 'Discover', hint: 'Go to', icon: Compass, keywords: 'tips tour learn features guide', run: () => navigate('discover') },
     { id: 'act:terminal-drawer', label: 'Toggle terminal drawer', hint: 'Action · ⌘`', icon: Terminal, keywords: 'shell pty console', run: () => setTermDrawer((v) => !v) },
+    viewModeCommand('focus-mode', Focus, toggleFocus),
+    ...(readsAChat ? [viewModeCommand('reading-mode', PanelBottomClose, toggleReading)] : []),
     { id: 'act:settings', label: 'Open Settings', hint: 'Action', icon: Settings, run: () => navigate('settings') },
   ]
   return (
     <div className="flex h-full" style={{ background: 'var(--color-canvas)' }}>
       {/* The rail sits in a boundary, as each corner control does in ShellCorners: one that throws
           leaves a notice in its place, and the page beside it and ⌘K keep working. */}
-      <WidgetBoundary what="the navigation" compact className="m-s self-start">
-        <NavRail items={railItems} activeId={active} onSelect={onNavSelect} collapsed={railCollapsed}
-          overlay={isMobile} overlayOpen={isMobile && mobileNavOpen} onScrimClick={() => setMobileNavOpen(false)}
-          disclosure={{
-            expanded: navMode === 'expert',
-            moreCount,
-            onToggle: () => setNavMode(navMode === 'expert' ? 'starter' : 'expert'),
-          }} />
-      </WidgetBoundary>
+      {!railHidden && (
+        <WidgetBoundary what="the navigation" compact className="m-s self-start">
+          <NavRail items={railItems} activeId={active} onSelect={onNavSelect} collapsed={railCollapsed}
+            overlay={isMobile} overlayOpen={isMobile && mobileNavOpen} onScrimClick={() => setMobileNavOpen(false)}
+            disclosure={{
+              expanded: navMode === 'expert',
+              moreCount,
+              onToggle: () => setNavMode(navMode === 'expert' ? 'starter' : 'expert'),
+            }} />
+        </WidgetBoundary>
+      )}
       <main className="relative flex-1 min-w-0">
         {/* App-shell corner regions — float above page content, not a header row */}
-        <ShellCornerLeft collapsed={railCollapsed} onToggle={toggleNav} />
+        <ShellCornerLeft collapsed={railCollapsed} onToggle={toggleNav} focusKey={railHidden ? viewModeKeyLabel('focus-mode') : undefined} />
         <ShellCornerRight terminalOpen={termDrawer} onToggleTerminal={() => setTermDrawer((v) => !v)} navigate={navigate} />
         {/* Guardrails incident banner — spans the content area on every page while
             incident mode is active. Renders nothing otherwise. */}
@@ -788,7 +808,7 @@ function AppInner() {
             transition={{ duration: duration.medium, ease: ease.emphasizedDecel }}
           >
             <Suspense fallback={<PageFallback />}>
-              {renderPage(rendered, { sub, navigate, navEpoch, query, setQuery })}
+              <ViewModesProvider value={viewModes}>{renderPage(rendered, { sub, navigate, navEpoch, query, setQuery })}</ViewModesProvider>
             </Suspense>
           </motion.div>
         </ErrorBoundary>

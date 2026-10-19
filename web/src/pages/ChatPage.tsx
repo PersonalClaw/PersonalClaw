@@ -11,6 +11,7 @@ import { spring } from '../design/motion'
 import { useChatVoice } from './chat/useChatVoice'
 import { useChatComposer } from './chat/composer/useChatComposer'
 import { ChatComposer } from './chat/composer/ChatComposer'
+import { ComposerFold, FOLD_ROOM } from './chat/composer/ComposerFold'
 import { useChatStream } from './chat/useChatStream'
 import { useTranscript } from './chat/transcript/useTranscript'
 import { Transcript } from './chat/transcript/Transcript'
@@ -24,6 +25,7 @@ import { ChatHeader } from './chat/header/ChatHeader'
 import { ChatHero } from './chat/hero/ChatHero'
 import { MissingChat } from './chat/MissingChat'
 import { type RouteProps } from '../app/useQueryState'
+import { useViewModes } from '../app/viewModes'
 
 /** Chat routing — the nav target (#/chat) lands on the HISTORY list by default;
  *  #/chat/new is a fresh NEW chat (reachable via "New chat" on the history page
@@ -129,8 +131,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // The header's title actions, its context line's project and its cluster's actions
   // (`chat/header/useChatHeader`).
   const header = useChatHeader({ stream, composer })
+  // Focus mode and reading mode, the shell's (`app/viewModes`): focus mode closes the docked panes
+  // and opens only the one asked for; reading mode folds the composer once there is something to read.
+  const { focus, reading, setReading } = useViewModes()
   // The panels docked beside the chat and a tool's full result (`chat/panes/useChatPanes`).
-  const panes = useChatPanes({ query, setQuery, stream })
+  const panes = useChatPanes({ query, setQuery, stream, focus })
   const { setOpenFile } = panes
   // The transcript's view and its turns' actions (`chat/transcript/useTranscript`).
   const transcript = useTranscript({
@@ -138,6 +143,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     agent: selection.agent, send,
   })
   const { followNewTurn, scrolledUp, endRef, isMobile, mapOpen } = transcript
+  // A chat with nothing to read yet has nothing to fold: its composer is the page.
+  const folded = reading && started && !loadingHistory
+  useEffect(() => { if (reading && !started) setReading(false) }, [reading, started, setReading])
 
   // Read-aloud: Speak, "Speak replies aloud" and the audio a reading streams (`chat/useChatVoice`).
   const { voiceCfg, speakingTurn, speak, replyFinished, oweSpokenReply, enqueueAudio, readingRef } = useChatVoice({ sessionRef, turns, notice })
@@ -174,7 +182,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             leave the composer focusable and trade one serious violation for `aria-hidden-focus`.
             The header control that closes the drawer lives ABOVE this row, so the user is never
             shut out. */}
-        <div className="relative flex min-w-0 flex-1 flex-col" inert={mapOpen && isMobile && started}>
+        <div className="relative flex min-w-0 flex-1 flex-col" inert={mapOpen && isMobile && started}
+          style={folded ? { '--composer-fold-room': FOLD_ROOM } as React.CSSProperties : undefined}>
           {/* The composer's light, staged in THIS column rather than the page: its box is
               the stage `DotGlow` fades the halo out inside of, so a docked panel beside the
               column (Activity, file peek, chat history, the mobile map drawer — all opaque
@@ -201,7 +210,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               <Transcript transcript={transcript} stream={stream} sessionId={sessionId} memoryMode={memoryMode} navigate={navigate}
                 onOpenFile={setOpenFile} onQuote={quoteToComposer} onPickFollowup={(t) => { setInput(t); focusComposerSoon() }}
                 send={send} speak={speak} speakingTurn={speakingTurn} />
-              <div className="relative shrink-0 px-l pb-l">
+              {/* Folded (reading mode), this region floats over the end of the transcript, which then
+                  takes the column's whole height; its controls are the only part that takes a click. */}
+              <div className={folded ? 'pointer-events-none absolute inset-x-0 bottom-0 z-20 px-l pb-l pt-8' : 'relative shrink-0 px-l pb-l'}>
                 {/* reconnecting cue — the WS dropped; state will re-sync on
                     reconnect, but tell the user the link is down. */}
                 <AnimatePresence>
@@ -217,13 +228,16 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                 {/* return-to-newest — the SESSION MAP's control, rendered here
                     rather than defined here: the map owns the one back-to-newest affordance in the
                     app, so the rail and the coarse-pointer drawer cannot each grow their own. */}
-                <SessionMapReturnLatest
-                  scrolledUp={scrolledUp}
-                  onReturnToLatest={() => scrollToLatest(endRef.current)}
-                />
-                <div className="mx-auto flex flex-col items-center" style={{ maxWidth: 'var(--content-width)' }}>
+                <span className="pointer-events-auto">
+                  <SessionMapReturnLatest
+                    scrolledUp={scrolledUp}
+                    onReturnToLatest={() => scrollToLatest(endRef.current)}
+                  />
+                </span>
+                <ComposerFold folded={folded} onUnfold={() => setReading(false)} composerRef={composerRef} draft={input}
+                  onType={(key) => setInput((prev) => prev + key)}>
                   {stage}
-                </div>
+                </ComposerFold>
               </div>
             </>
           )}
