@@ -141,7 +141,8 @@ describe('THE RATCHET: no surface writes to the clipboard directly', () => {
 })
 
 describe('the site that claimed success now gates on the result', () => {
-  const code = readSource(join(process.cwd(), 'src/pages/ChatPage.tsx'))
+  // `copyLink` moved with the chat's header to its controller.
+  const code = readSource(join(process.cwd(), 'src/pages/chat/header/useChatHeader.ts'))
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
   it('copyLink only says "copied" when the write landed', () => {

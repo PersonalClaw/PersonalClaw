@@ -12,7 +12,7 @@ import { join } from 'node:path'
 // FIXED — someone clicked, so a failure is theirs to know about:
 //   LoopComposer      `fileUpload`          attached design files silently dropped; the design pass
 //                                           then runs from the URL and prompt alone
-//   ChatPage          `renameSession`       optimistic title; reverts on next load
+//   useChatHeader     `renameSession`       optimistic title; reverts on next load
 //   useChatHistory    `setSessionLifecycle` optimistic row move; `load()` snaps it back
 //   useChatHistory    `createChatFolder`    a name typed into a dialog, no folder appears
 //   AgentsListPage    `setDefaultAgent`     the default silently stays where it was
@@ -45,7 +45,8 @@ const strip = (s: string) =>
 /** file → [the write, the phrase its message must contain] */
 const FIXED: Array<[string, string, string]> = [
   ['pages/loop/LoopComposer.tsx', 'fileUpload', 'upload '],
-  ['pages/ChatPage.tsx', 'renameSession', 'rename this chat'],
+  // The chat header's rename, which moved out of ChatPage.
+  ['pages/chat/header/useChatHeader.ts', 'renameSession', 'rename this chat'],
   // The history page's two, which moved out of ChatPage.
   ['pages/chat/history/useChatHistory.ts', 'setSessionLifecycle', 'this chat'],
   ['pages/chat/history/useChatHistory.ts', 'createChatFolder', 'create the folder'],
@@ -156,8 +157,9 @@ describe('a user-initiated write that fails tells the user', () => {
 
   it('the optimistic rename reports rather than reverting', () => {
     // Same decision as `selectionPersistReported`: tell, do not fight input the user may still be editing.
-    const chat = strip(F('pages/ChatPage.tsx'))
+    const chat = strip(F('pages/chat/header/useChatHeader.ts'))
     const at = chat.indexOf('api.renameSession(')
+    expect(at, 'the rename must be found').toBeGreaterThan(-1)
     const around = chat.slice(Math.max(0, at - 200), at + 200)
     expect(around, 'the optimistic set stays').toContain('setTitle(v)')
     expect(around, 'and no revert was added').not.toMatch(/setTitle\(title\)|setTitle\(prev/)

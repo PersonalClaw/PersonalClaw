@@ -119,9 +119,12 @@ describe('a selection that fails to persist tells the user', () => {
   })
 
   it('notify is the file’s own idiom, not a new import — the convergence claim', () => {
-    expect(SRC).toMatch(/import \{ notify \} from '\.\.\/app\/appSdk'/)
-    const uses = (CODE.match(/notify\(/g) || []).length
-    expect(uses, 'ChatPage already reported failures this way').toBeGreaterThan(5)
+    // The chat page reported its failures through `notify` before this reporter joined it. Its regions
+    // carry that idiom now, the composer that holds the reporter among them.
+    const regions = ['composer/useChatComposer.ts', 'header/useChatHeader.ts', 'history/useChatHistory.ts', 'transcript/useTranscript.ts']
+      .map((f) => strip(readFileSync(join(process.cwd(), 'src/pages/chat', f), 'utf8'))).join('\n')
+    const uses = (regions.match(/notify\(/g) || []).length
+    expect(uses, 'the chat page already reported failures this way').toBeGreaterThan(5)
     expect(COMPOSER_SRC, 'the composer reports through the same notify').toMatch(/import \{ notify \} from '\.\.\/\.\.\/\.\.\/app\/appSdk'/)
   })
 })

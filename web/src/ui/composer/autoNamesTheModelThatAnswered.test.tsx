@@ -102,10 +102,9 @@ describe('a reload reads the served model back from the turn it was recorded on'
 })
 
 // The live half is folded inside the chat's stream (`chat/useChatStream.ts`, which owns the socket
-// and is not mountable here) and handed on by `ChatPage.tsx`, so it is asserted as source, in the
-// attribute form the page writes it.
+// and is not mountable here) and handed on by the chat's regions (its composer, transcript and
+// header), so it is asserted as source, in the attribute form they write it.
 describe('the chat page hands the served model and the chain to both readers', () => {
-  const page = readFileSync(join(__dirname, '../../pages/ChatPage.tsx'), 'utf8')
   const stream = readFileSync(join(__dirname, '../../pages/chat/useChatStream.ts'), 'utf8')
 
   it("the live stats frame sets the turn's served model", () => {
@@ -126,6 +125,8 @@ describe('the chat page hands the served model and the chain to both readers', (
 
   it('the chain is read from session detail and from setting the working directory', () => {
     expect(stream).toContain("setAutoChain(d.auto_chain ?? '')")
-    expect(page).toContain("if (typeof r.auto_chain === 'string') setAutoChain(r.auto_chain)")
+    // Setting the working directory is the chat header's action (`chat/header/useChatHeader.ts`).
+    const header = readFileSync(join(__dirname, '../../pages/chat/header/useChatHeader.ts'), 'utf8')
+    expect(header).toContain("if (typeof r.auto_chain === 'string') setAutoChain(r.auto_chain)")
   })
 })
