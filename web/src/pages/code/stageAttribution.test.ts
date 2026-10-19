@@ -32,7 +32,8 @@ describe('normalizeStageLabel (issue 642)', () => {
 
 describe('the matcher uses the normalized fallback (wiring pin)', () => {
   it('stageTasksFor falls back to normalizeStageLabel on both title and stage id', () => {
-    const src = readFileSync(join(process.cwd(), 'src/pages/code/CodeCockpitPage.tsx'), 'utf8')
+    // The matcher moved with the cockpit's Tasks panel into its controller.
+    const src = readFileSync(join(process.cwd(), 'src/pages/code/cockpit/useRightPanel.ts'), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/.*$/gm, '')
     const fn = src.slice(src.indexOf('const stageTasksFor'), src.indexOf('for (const f of'))
