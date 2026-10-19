@@ -705,6 +705,13 @@ redirecting a run-backed loop (`run_id`) to its run page, `#/workflows/runs/<id>
   command on its own session once that session takes input.
   `BottomTerminal.tsx` draws the drawer under the editor, hidden rather than
   unmounted so the shell and its scrollback survive a toggle.
+- **The editor** — `useCenterEditor.ts` keeps the workspace's file tabs and
+  their unsaved drafts, saves on ⌘S and closes a dirty tab only once asked,
+  follows a renamed or deleted file, shows a re-open chip for a collapsed side
+  panel, and holds what takes the editor's place: a diff, a commit, or a file
+  the worker is writing, played as it lands. `CenterEditor.tsx` draws the tab
+  strip and that surface, with the terminal beneath, and `CommitView.tsx` draws
+  one commit's diff.
 
 ## Related docs
 

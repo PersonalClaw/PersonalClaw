@@ -57,7 +57,8 @@ describe('useFileTabs.close reports consent so hosts can purge exactly then', ()
 describe('the two hosts wire the cache and its lifecycle (source-level)', () => {
   const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
   const files = strip(readFileSync(resolve(__dirname, '../FilesSection.tsx'), 'utf8'))
-  const cockpit = strip(readFileSync(resolve(__dirname, '../../code/CodeCockpitPage.tsx'), 'utf8'))
+  // The cockpit's editor keeps its tabs and drafts in its own controller.
+  const cockpit = strip(readFileSync(resolve(__dirname, '../../code/cockpit/useCenterEditor.ts'), 'utf8'))
 
   it('FilesSection owns a store, passes it to FileViewer, and purges on a consented close', () => {
     // Entries are `DraftEntry` — the draft AND the revisioned copy it was edited against.
