@@ -18,6 +18,7 @@ import { opensDuringSetup } from './onboarding/openDuringSetup'
 import { onSetupRerun } from './onboarding/rerun'
 import { ProductTour } from './onboarding/ProductTour'
 import { useHashRoute } from './useHashRoute'
+import { linkStatePatch, showsNewThread, withLinkState } from './linkState'
 import { useIsMobile } from './useIsMobile'
 import type { RouteProps } from './useQueryState'
 import { ErrorBoundary, WidgetBoundary } from './ErrorBoundary'
@@ -215,7 +216,21 @@ export function App() {
 
 function AppInner() {
   // The Dashboard is the home: the app lands on the at-a-glance home (nav #0).
-  const { route, sub, navEpoch, navigate, query, setQuery } = useHashRoute('dashboard')
+  const { route, sub, navEpoch, navigate, query: addressQuery, setQuery } = useHashRoute('dashboard')
+  // A link's own words for chat state (`prompt`, `pane`) read as the chat's keys from the first
+  // render, so a new thread mounts with its draft; the effect then writes them into the address, in
+  // place. A new thread reads its draft only as it mounts, so when the link reaches a window that
+  // was already showing one, the rewrite remounts it (as `navigate` does) and its composer takes
+  // the draft the address now names, in place of the one it held.
+  const linkPatch = linkStatePatch(route, sub, addressQuery)
+  const query = linkPatch ? withLinkState(addressQuery, linkPatch) : addressQuery
+  const linkPatchKey = linkPatch ? JSON.stringify(linkPatch) : ''
+  const onNewThread = showsNewThread(route, sub)
+  const wasOnNewThread = useRef(false)
+  useEffect(() => {
+    if (linkPatch) setQuery(linkPatch, { replace: true, remount: 'seed' in linkPatch && wasOnNewThread.current })
+  }, [route, sub, linkPatchKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { wasOnNewThread.current = onNewThread })
   // Out-of-context approval nudges: toast when a tool-approval (e.g. a subagent's)
   // is raised for a chat the user isn't currently viewing. The active chat key is
   // `sub` on the chat route (excluding the new/history list routes AND the room

@@ -65,7 +65,7 @@ const LIMITS = Object.freeze({
   segments: 4,
   /** One decoded segment. */
   segment: 128,
-  /** An id-shaped value (project, artifact). */
+  /** An id-shaped value (project). An artifact is a page of its own, `artifacts/<slug>`. */
   id: 128,
   /** A word-shaped value (mode, pane). */
   word: 32,
@@ -100,7 +100,6 @@ const PARAMETERS = [
   ["project", (v) => v.length <= LIMITS.id && ID.test(v)],
   ["mode", (v) => v.length <= LIMITS.word && WORD.test(v)],
   ["pane", (v) => v.length <= LIMITS.word && WORD.test(v)],
-  ["artifact", (v) => v.length <= LIMITS.id && ID.test(v)],
   ["file", (v) => v.length <= LIMITS.file && !UNSAFE_PATH.test(v) && isRelativePath(v)],
   ["prompt", (v) => v.length <= LIMITS.prompt && !UNSAFE_TEXT.test(v)],
 ];
