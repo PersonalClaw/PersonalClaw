@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { join, relative } from 'node:path'
 import { SCHEMES } from '../../design/schemes'
+import { tokenValue } from '../../design/tokenSheet'
 import { weightStroke, weightWidth } from './KnowledgeGraph'
 import { filesUnder, readSource } from '../../test/sourceTree'
 
@@ -32,7 +33,6 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 // pass the number and fail the meaning.
 
 const SRC = readSource(join(process.cwd(), 'src/pages/knowledge/KnowledgeGraph.tsx'))
-const TOKENS = readSource(join(process.cwd(), 'src/design/tokens.css'))
 
 /** WCAG 2.1 relative luminance + ratio, over sRGB hex. */
 function luminance(hex: string): number {
@@ -56,11 +56,9 @@ function over(fg: string, alpha: number, bg: string): string {
 
 /** Read a token's value out of tokens.css for one mode, so a retint cannot drift this guard. */
 function token(name: string, mode: 'dark' | 'light'): string {
-  // tokens.css declares dark under `:root` and light under a `[data-mode="light"]`-ish block; take
-  // the first declaration for dark and the last for light.
-  const all = [...TOKENS.matchAll(new RegExp(`${name}\\s*:\\s*(#[0-9a-fA-F]{6})`, 'g'))].map((m) => m[1])
-  expect(all.length, `${name} is declared in tokens.css`).toBeGreaterThanOrEqual(2)
-  return mode === 'dark' ? all[0] : all[all.length - 1]
+  // The base sheet's value for the mode: `@theme` for dark, `.light` for light, each `var()` followed
+  // to the palette (`design/tokenSheet.ts`).
+  return tokenValue(name, mode)
 }
 
 const MIN = 3 // SC 1.4.11
@@ -326,8 +324,10 @@ describe('every file that renders graph marks is under the contrast rail', () =>
   it('every boundary token is declared in tokens.css, so a typo cannot pass unmeasured', () => {
     for (const f of census) {
       for (const name of strokeTokens(f)) {
-        const all = [...TOKENS.matchAll(new RegExp(`${name}\\s*:\\s*(#[0-9a-fA-F]{6})`, 'g'))]
-        expect(all.length, `${name} (used in ${f}) is declared for both modes in tokens.css`).toBeGreaterThanOrEqual(2)
+        for (const mode of ['dark', 'light'] as const) {
+          expect(() => tokenValue(name, mode), `${name} (used in ${f}) resolves in ${mode}`).not.toThrow()
+          expect(tokenValue(name, mode), `${name} (used in ${f}) is a hex in ${mode}`).toMatch(/^#[0-9a-fA-F]{6}$/)
+        }
       }
     }
   })

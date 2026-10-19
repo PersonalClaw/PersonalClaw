@@ -1,0 +1,46 @@
+/* Rose. Generated from design/schemes.ts by `npm run generate:schemes`. Edit the table, not this file. */
+:root[data-theme="rose"] {
+  /* layer 1: the steps the base sheet does not have */
+  --blue-492: #4350c6;
+  --blue-705: #8496ff;
+  --pink-251: #3f0a22;
+  --pink-326: #5a1638;
+  --pink-471: #a50b55;
+  --pink-501: #b6005a;
+  --pink-575: #b0567e;
+  --pink-608: #d8407e;
+  --pink-614: #c2607e;
+  --pink-754: #ff7eb0;
+  --pink-822: #ffa6c8;
+  --pink-841: #ffb0cf;
+  --pink-928: #ffdcec;
+  --violet-585: #8b5cd8;
+  --violet-759: #c597ff;
+  /* layer 2, dark */
+  --color-primary: var(--pink-754);
+  --color-primary-emphasis: var(--pink-841);
+  --color-on-primary: var(--pink-251);
+  --color-primary-container: var(--pink-326);
+  --color-secondary: var(--violet-759);
+  --color-info: var(--blue-705);
+  --grad-1: var(--pink-575);
+  --grad-2: var(--pink-754);
+  --grad-3: var(--pink-841);
+  --grad-4: var(--violet-759);
+  --glow-a: var(--pink-754);
+  --glow-b: var(--pink-822);
+}
+:root.light[data-theme="rose"] {
+  --color-primary: var(--pink-501);
+  --color-primary-emphasis: var(--pink-471);
+  --color-on-primary: var(--gray-1000);
+  --color-primary-container: var(--pink-928);
+  --color-secondary: var(--violet-585);
+  --color-info: var(--blue-492);
+  --grad-1: var(--pink-575);
+  --grad-2: var(--pink-501);
+  --grad-3: var(--pink-614);
+  --grad-4: var(--violet-759);
+  --glow-a: var(--pink-608);
+  --glow-b: var(--pink-614);
+}

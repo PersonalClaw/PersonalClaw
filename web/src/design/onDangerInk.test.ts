@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { loadTokenSheets, tokenValue, type Mode } from './tokenSheet'
 
 // ── The two themes need OPPOSITE inks on a solid danger fill ─────────────────
 //
@@ -27,19 +28,16 @@ import { join } from 'node:path'
 // the numbers here rather than recomputing them keeps this test about the contract.
 
 const WEB = process.cwd()
-const tokens = () => readFileSync(join(WEB, 'src/design/tokens.css'), 'utf8')
 
-/** The value of `prop` inside a given block of the token file. */
-function valueIn(block: string, prop: string): string | null {
-  const m = block.match(new RegExp(`${prop}:\\s*([^;]+);`))
-  return m ? m[1].trim() : null
+/** The value `prop` resolves to in a mode — the declaration followed through its `var()` to the
+ *  palette — or null where that mode's block does not declare it. `blocks()` names the two modes. */
+function valueIn(mode: Mode, prop: string): string | null {
+  const sheets = loadTokenSheets()
+  const own = (mode === 'dark' ? sheets.base : sheets.light).some((d) => d.name === prop)
+  return own ? tokenValue(prop, mode) : null
 }
-/** Split tokens.css into the `@theme` (dark default) and `.light` blocks. */
-function blocks(): { dark: string; light: string } {
-  const src = tokens()
-  const lightAt = src.search(/\.light\s*\{/)
-  if (lightAt < 0) throw new Error('could not locate the .light block in tokens.css')
-  return { dark: src.slice(0, lightAt), light: src.slice(lightAt) }
+function blocks(): { dark: Mode; light: Mode } {
+  return { dark: 'dark', light: 'light' }
 }
 
 describe('--color-on-danger', () => {

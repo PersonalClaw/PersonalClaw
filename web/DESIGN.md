@@ -183,6 +183,22 @@ A restrained dark neutral ramp with a single committed coral accent and a warm g
 
 The desktop buddy keeps the One Voice Rule and the Glow-Is-Alive Rule (§4): its orb takes coral only while an agent is alive and draws no glow, and the semantic colours reach it only as a badge or a wash, never as the whole orb ([`docs/design/buddy/character.md`](../docs/design/buddy/character.md#constraints)).
 
+### The token layers
+
+Every colour reaches a component through four layers, so a scheme, an identity or the light mode recolours the whole app by reassigning tokens rather than by rules of its own.
+
+1. **Palette** (layer 1): raw values, named by what they are: `--<hue>-<step>`, where the step is the colour's OKLCH lightness × 1000. `--gray-0` is black and `--gray-1000` white. The steps are the contrast-tuned values the app ships, so a scale is sparse; no step is invented to fill a gap. Declared in `tokens.css`'s `:root`; the naming is `src/design/palette.ts`.
+2. **Semantic** (layer 2): `--color-*` (surfaces, ink, outline, primary and its pairings, the status tones), the brand gradient (`--grad-*`, `--glow-*`) and the ring highlight, written only in terms of layer 1, or as an alias of another layer-2 token. Tailwind's colour utilities (`bg-surface-low`, `text-on-surface`) are generated from these names.
+3. **Editor**: the colours the code editor and the terminal take, named after their own theme keys. (Arrives with the editor adapter.)
+4. **Component**: a token composed from layer 2 for one component: the composer ring's stops, the glass material, the lift and composer-focus shadows. Never reassigned per mode or per scheme; it follows because what it is made of does.
+
+Rules:
+
+- **Dark is the default and light is a reassignment.** `.light` re-points layer 2 onto light palette steps and does nothing else. Elevation shadows sit outside the colour layers and keep a light reassignment of their own, since their alpha differs per mode as well as their colour.
+- **A scheme is one small override sheet.** `src/design/schemes/<id>.css` sets layers 1 and 2 only: the palette steps the base sheet lacks, then the scheme's semantic tokens for dark and for light. The sheets are generated from `schemes.ts` (`npm run generate:schemes`), which stays the one input the contrast rails read. `data-theme` on `<html>` picks the active sheet. An identity carries no colour (§7), so its sheet is its base scheme's.
+- **Only the owner's own colours ride inline.** A saved theme or an unsaved edit is written on `<html>` over the base sheet; a curated scheme and the default are pure stylesheet.
+- **No component reads layer 1.** Components read layers 2 to 4; `src/design/` is the only place a palette token is named (`design/tokenLint.test.ts`).
+
 ## 3. Typography
 
 **Display/Body Font:** DM Sans (variable, 100–1000; system-ui fallback)

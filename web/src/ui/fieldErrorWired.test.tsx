@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, fireEvent, render } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { useEffect, useState, type ReactElement } from 'react'
+import { tokenValue } from '../design/tokenSheet'
 import { Checkbox, ChipInput, DateInput, Field, FieldError, FieldErrorProvider, NumberField, Select, TextArea, TextInput } from './forms'
 
 // ── AN ERROR BELONGS TO ITS CONTROL ─────────────────────────────────────────────────────────
@@ -273,23 +272,17 @@ describe('acceptance matrix', () => {
   })
 
   it('high contrast: the error tone reads at AA on every surface a Field sits on, in both modes', () => {
-    const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
-    const light = css.slice(css.indexOf('\n.light {'))
-    const dark = css.slice(0, css.indexOf('\n.light {'))
-    const token = (block: string, name: string) => {
-      const m = block.match(new RegExp(`--color-${name}:\\s*(#[0-9a-fA-F]{6})\\b`))
-      if (!m) throw new Error(`--color-${name} not found`)
-      return m[1]
-    }
+    // The value each mode paints, as the sheets resolve it (`design/tokenSheet.ts`).
+    const token = (mode: 'dark' | 'light', name: string) => tokenValue(`--color-${name}`, mode)
     const lum = (hex: string) => {
       const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
       return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
     }
     const ratio = (a: string, b: string) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05) }
-    for (const [mode, block] of [['dark', dark], ['light', light]] as const) {
-      const danger = token(block, 'danger')
+    for (const mode of ['dark', 'light'] as const) {
+      const danger = token(mode, 'danger')
       for (const surface of ['surface', 'surface-container', 'surface-high']) {
-        expect(ratio(danger, token(block, surface)), `${mode} danger on ${surface}`).toBeGreaterThanOrEqual(4.5)
+        expect(ratio(danger, token(mode, surface)), `${mode} danger on ${surface}`).toBeGreaterThanOrEqual(4.5)
       }
     }
     // And the error is never the hint in a different colour: its own element, its own words, and

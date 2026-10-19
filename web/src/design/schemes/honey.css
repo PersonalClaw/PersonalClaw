@@ -1,0 +1,45 @@
+/* Honey. Generated from design/schemes.ts by `npm run generate:schemes`. Edit the table, not this file. */
+:root[data-theme="honey"] {
+  /* layer 1: the steps the base sheet does not have */
+  --amber-284: #3a2504;
+  --amber-358: #523611;
+  --amber-475: #834e00;
+  --amber-495: #885500;
+  --amber-639: #b0832f;
+  --amber-646: #c17d18;
+  --amber-731: #d89a4a;
+  --amber-787: #f2a93b;
+  --amber-869: #ffca7a;
+  --amber-942: #ffe9c2;
+  --blue-482: #0057c2;
+  --blue-699: #50a1fa;
+  --red-576: #c2503a;
+  --red-695: #e8785a;
+  /* layer 2, dark */
+  --color-primary: var(--amber-787);
+  --color-primary-emphasis: var(--amber-869);
+  --color-on-primary: var(--amber-284);
+  --color-primary-container: var(--amber-358);
+  --color-secondary: var(--red-695);
+  --color-info: var(--blue-699);
+  --grad-1: var(--amber-639);
+  --grad-2: var(--amber-787);
+  --grad-3: var(--amber-869);
+  --grad-4: var(--red-695);
+  --glow-a: var(--amber-787);
+  --glow-b: var(--amber-869);
+}
+:root.light[data-theme="honey"] {
+  --color-primary: var(--amber-495);
+  --color-primary-emphasis: var(--amber-475);
+  --color-on-primary: var(--gray-1000);
+  --color-primary-container: var(--amber-942);
+  --color-secondary: var(--red-576);
+  --color-info: var(--blue-482);
+  --grad-1: var(--amber-639);
+  --grad-2: var(--amber-495);
+  --grad-3: var(--amber-731);
+  --grad-4: var(--red-695);
+  --glow-a: var(--amber-646);
+  --glow-b: var(--amber-731);
+}

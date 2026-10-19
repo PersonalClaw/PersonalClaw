@@ -9,6 +9,7 @@
     "typecheck:web": "npm run typecheck --workspace=web",
     "test:web": "npm run test --workspace=web",
     "audit:consistency": "npm run audit:consistency --workspace=web",
+    "generate:schemes": "npm run generate:schemes --workspace=web",
     "test:desktop": "npm run test --workspace=desktop",
     "test:mobile": "npm run test --workspace=mobile",
     "validate:apps": "node scripts/app_ui_validate.mjs",

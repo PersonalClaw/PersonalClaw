@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { join, relative } from 'node:path'
 import { lineViolations, stripComments } from './tokenLintRule'
+import { PALETTE_FAMILIES } from './palette'
 import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Token-lint ─────────────────────────────────────────────────────────────
@@ -155,3 +156,45 @@ describe('token-lint: design-system adherence', () => {
     expect(stale, `These files are clean/gone — remove from the allowlist:\n${stale.join('\n')}`).toEqual([])
   })
 })
+
+// ── Layering (#3809): no component reads the raw palette ───────────────────
+// `web/DESIGN.md` §2, "The token layers": components read layers 2 to 4. A palette token
+// (`--gray-916`) names a value, not a meaning, so a component that reads one stops following the
+// mode (a palette step never changes with it) and the scheme (a sheet re-points the semantic token,
+// not the step). design/ is exempt for the same reason as above: it DEFINES the palette.
+// Bounded on both sides so Tailwind's own `--color-gray-200` is not a palette read.
+const PALETTE_READ = new RegExp(`(?:^|[^\\w-])--(?:${PALETTE_FAMILIES.join('|')})-\\d{1,4}(?![\\w-])`)
+
+function paletteReads(file: string): string[] {
+  const text = readSource(file)
+  const lines = text.split('\n')
+  const code = /\.css$/.test(file) ? text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' ')).split('\n') : stripComments(text).code
+  return code.flatMap((c, i) => (PALETTE_READ.test(c) ? [`${i + 1}: ${lines[i].trim().slice(0, 80)}`] : []))
+}
+
+describe('token-lint: no component reads a palette-layer token', () => {
+  const files = filesUnder(SRC, (entry, p) => {
+    const rel = relative(SRC, p).replace(/\\/g, '/')
+    return !rel.startsWith('design/') && /\.(tsx?|css)$/.test(entry) && !/\.test\.tsx?$/.test(entry)
+  })
+
+  it('the rule catches every shape a component could read one in, and nothing else', () => {
+    for (const hit of ["style={{ color: 'var(--gray-916)' }}", 'className="bg-(--red-709)"', "el.style.setProperty('--blue-702', x)", '  --x: var(--teal-785);']) {
+      expect(PALETTE_READ.test(hit), hit).toBe(true)
+    }
+    for (const miss of ['var(--color-gray-200)', 'var(--color-primary)', '--gray-916-ish', 'text-gray-500', '--grayish-10']) {
+      expect(PALETTE_READ.test(miss), miss).toBe(false)
+    }
+  })
+
+  it('no file under web/src outside design/ reads one', () => {
+    expect(files.length).toBeGreaterThan(100)
+    const offenders: Record<string, string[]> = {}
+    for (const f of files) {
+      const hits = paletteReads(f)
+      if (hits.length) offenders[relative(SRC, f).replace(/\\/g, '/')] = hits
+    }
+    expect(offenders, `A component read the raw palette; read the semantic token (--color-*) instead:\n${JSON.stringify(offenders, null, 2)}`).toEqual({})
+  })
+})
+
