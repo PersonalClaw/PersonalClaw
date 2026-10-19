@@ -16,6 +16,7 @@ helper named is this file's own invention.
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
@@ -365,3 +366,158 @@ def test_a_core_whose_git_would_name_the_machines_helper_stops_the_run(tmp_path)
     assert "core's git would sign a test in with the machine's own credential helper" in said
     assert "(pc-fixture-machine-helper)" in said
     assert " passed" not in said, "a test ran after the check said to stop"
+
+
+# ── the real home is the user database's, never $HOME ───────────────────────────────────────
+
+
+#: Loads the suite's git guard in a child whose user database names ``PC_PLANTED_REAL_HOME``, and
+#: prints what it guards beside what a guard built from ``$HOME``, as it was before, guards, and
+#: why each refuses a git run with this ``$HOME``.
+_LOAD_BESIDE_THE_OLD_GUARD = """\
+import json, os, pwd, sys
+
+_real = pwd.getpwuid
+
+
+def _planted(uid):
+    fields = list(_real(uid))
+    fields[5] = os.environ["PC_PLANTED_REAL_HOME"]
+    return pwd.struct_passwd(fields)
+
+
+pwd.getpwuid = _planted
+sys.path.insert(0, sys.argv[1])
+import git_helper_guard
+from personalclaw.sdk.testing import GitGuard
+
+try:
+    def folders(guard):
+        return [guard.real_home, guard.real_xdg, sorted(guard.real_global)]
+
+    argv = ["git", "ls-remote", "https://example.invalid/r.git"]
+    env = {"GIT_CONFIG_NOSYSTEM": "1", "HOME": os.environ["HOME"]}
+    before = os.path.realpath(os.path.expanduser("~"))
+    old = GitGuard(real_home=before)
+    now = git_helper_guard.GUARD
+    print(json.dumps({
+        "now": [git_helper_guard.REAL_HOME, folders(now), now.refusal(argv, env)],
+        "before": [before, folders(old), old.refusal(argv, env)],
+    }))
+finally:
+    git_helper_guard.close()
+"""
+
+
+def _child_env(tmp_path, home: Path | str, planted: Path | str) -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "GIT_CONFIG"))}
+    env.update(
+        HOME=str(home),
+        PC_PLANTED_REAL_HOME=str(planted),
+        PERSONALCLAW_HOME=str(tmp_path / "pclaw-home"),
+    )
+    return env
+
+
+#: The ways a ``$HOME`` can name the folder the user database names as the real home.
+_SPELLINGS = [
+    "as the user database does",
+    "with a slash",
+    "by a link",
+    "by a link, and the user database by another",
+    "in another letter case",
+]
+
+
+def _the_real_home_spelled(tmp_path: Path, spelling: str) -> tuple[str, str]:
+    """A ``$HOME`` and a user database entry under *tmp_path* that name the same folder, the
+    ``$HOME`` spelled as *spelling* says. Skips a spelling this file system can't give."""
+    real = tmp_path / "real-home"
+    real.mkdir()
+    if spelling == "as the user database does":
+        return str(real), str(real)
+    if spelling == "with a slash":
+        return str(real) + os.sep, str(real)
+    if spelling == "by a link":
+        (tmp_path / "home-link").symlink_to(real)
+        return str(tmp_path / "home-link"), str(real)
+    if spelling == "by a link, and the user database by another":
+        (tmp_path / "home-link").symlink_to(real)
+        (tmp_path / "entry-link").symlink_to(real)
+        return str(tmp_path / "home-link"), str(tmp_path / "entry-link")
+    assert spelling == "in another letter case", spelling
+    other = tmp_path / "REAL-HOME"
+    if not (other.exists() and os.path.samefile(other, real)):
+        pytest.skip("this file system tells letter case apart, so no other case names the home")
+    return str(other), str(real)
+
+
+@pytest.mark.parametrize("spelling", _SPELLINGS)
+def test_where_HOME_is_the_real_home_the_git_guard_watches_what_it_did_before(tmp_path, spelling):
+    """Unchanged where it already worked: a run whose ``$HOME`` names the real home, however it
+    spells it, guards the folders it guarded when it took them from ``$HOME``, and refuses a git
+    that would read that home's global git file as it did."""
+    home, entry = _the_real_home_spelled(tmp_path, spelling)
+    ran = subprocess.run(
+        [sys.executable, "-c", _LOAD_BESIDE_THE_OLD_GUARD, str(ROOT / "tests")],
+        cwd=tmp_path,
+        env=_child_env(tmp_path, home, entry),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    said = json.loads(ran.stdout)
+    assert said["now"] == said["before"]
+    assert said["now"][2].startswith("reads the global git configuration of whoever runs the tests")
+
+
+_LOAD_UNDER_A_SCRATCH_HOME = """\
+import os, pwd, sys
+
+_real = pwd.getpwuid
+
+
+def _planted(uid):
+    fields = list(_real(uid))
+    fields[5] = os.environ["PC_PLANTED_REAL_HOME"]
+    return pwd.struct_passwd(fields)
+
+
+pwd.getpwuid = _planted
+sys.path.insert(0, sys.argv[1])
+import git_helper_guard
+
+try:
+    env = {"GIT_CONFIG_NOSYSTEM": "1", "HOME": os.environ["PC_PLANTED_REAL_HOME"]}
+    print(git_helper_guard.REAL_HOME)
+    argv = ["git", "ls-remote", "https://example.invalid/r.git"]
+    print(git_helper_guard.GUARD.refusal(argv, env))
+finally:
+    git_helper_guard.close()
+"""
+
+
+def test_a_run_started_with_a_scratch_HOME_still_guards_the_real_homes_git_file(tmp_path):
+    """A run whose ``$HOME`` is a scratch folder (a job ``tools/ci/run.py`` starts) loads the guard
+    with the planted real home the user database names, so a git that would read that home's
+    global file is refused, not the scratch home's."""
+    real = tmp_path / "real-home"
+    real.mkdir()
+    scratch_home = tmp_path / "scratch-home"
+    scratch_home.mkdir()
+    ran = subprocess.run(
+        [sys.executable, "-c", _LOAD_UNDER_A_SCRATCH_HOME, str(ROOT / "tests")],
+        cwd=tmp_path,
+        env=_child_env(tmp_path, scratch_home, real),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    home, why = ran.stdout.splitlines()
+    assert home == os.path.realpath(real)
+    assert why == (
+        "reads the global git configuration of whoever runs the tests "
+        f"({os.path.join(str(real), '.gitconfig')})"
+    )

@@ -29,11 +29,15 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import real_home_guard
+
 from personalclaw.sdk.testing import neutral_git_env, refuse_git_helpers
 
-#: The home of whoever runs the tests, read before any test can point ``HOME`` elsewhere: its
-#: ``~/.gitconfig`` is theirs.
-REAL_HOME = os.path.realpath(os.path.expanduser("~"))
+#: The home of whoever runs the tests, from the user database and never from ``$HOME``, so a run
+#: started with a scratch ``$HOME`` still guards the real one: its ``~/.gitconfig`` is theirs. It is
+#: the real-home guard's own home, spelled as ``$HOME`` spells it when ``$HOME`` names that folder,
+#: since this guard too compares a git's ``HOME`` with it by its resolved spelling.
+REAL_HOME = os.path.realpath(real_home_guard.REAL_HOME.parent)
 
 #: Where each test's own global git file is, one per test, made by git on the first write.
 BASE = Path(tempfile.mkdtemp(prefix="pclaw-tests-git-"))

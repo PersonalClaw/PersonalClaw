@@ -627,6 +627,11 @@ def _setup(args: argparse.Namespace) -> tuple[Catalogue, Host, Options, Path]:
         raise Unreadable("--workers is a whole number from 1")
     if args.workers is not None and host.on_github:
         raise Unreadable("--workers is a local override; on GitHub the catalogue's count runs")
+    try:
+        # Each step asks too (run.run_job); asked here first, so no step is announced in vain.
+        run.real_home()
+    except RuntimeError as exc:
+        raise Unreadable(str(exc)) from None
     work = args.out or root / WORK / f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
     return cat, host, Options(base=args.base, workers=args.workers), work
 

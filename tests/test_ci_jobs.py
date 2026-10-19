@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import pwd
 import re
 import shutil
 import subprocess
@@ -36,6 +37,20 @@ _IDENTITY = {
 #: Variables a platform's process start adds to the environment it is given (macOS's text
 #: encoding), which no runner sets.
 _PLATFORM_ADDED = frozenset({"__CF_USER_TEXT_ENCODING"})
+
+
+@pytest.fixture(autouse=True)
+def _the_user_database_names_a_planted_home(tmp_path, monkeypatch):
+    """The user database names a home under the test's own folder, never made, so the runner's
+    real-home check (``run.real_home``) never looks at the real one."""
+    entry = pwd.getpwuid
+
+    def planted(uid: int):
+        fields = list(entry(uid))
+        fields[5] = str(tmp_path / "the-real-home")
+        return pwd.struct_passwd(fields)
+
+    monkeypatch.setattr(pwd, "getpwuid", planted)
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -862,6 +877,41 @@ def test_input_it_cannot_run_exits_partial_and_says_why(argv, why, tmp_path, cap
     out = tmp_path / "out"
     assert main([*argv, "--catalogue", str(planted), "--out", str(out)]) == run.PARTIAL
     assert why in capsys.readouterr().err
+    assert not out.exists(), "nothing ran"
+
+
+@pytest.mark.parametrize("command", [["run-job", "plain"], ["run", "change"]])
+@pytest.mark.parametrize("entry", [None, ""], ids=["no entry", "an empty home"])
+def test_an_account_whose_user_database_names_no_home_runs_no_job_and_exits_partial(
+    command, entry, tmp_path, monkeypatch, capsys
+):
+    """The runner can't tell where the real home is, so no job can run here: that is said in one
+    line and exits 2, before any step is announced or any scratch folder made."""
+    from tools.ci.__main__ import main
+
+    def no_entry(uid: int):
+        raise KeyError(f"getpwuid(): uid not found: {uid}")
+
+    if entry is None:
+        monkeypatch.setattr(pwd, "getpwuid", no_entry)
+    else:
+        named = pwd.getpwuid
+
+        def empty(uid: int):
+            fields = list(named(uid))
+            fields[5] = entry
+            return pwd.struct_passwd(fields)
+
+        monkeypatch.setattr(pwd, "getpwuid", empty)
+    monkeypatch.chdir(tmp_path)  # a runner that took a relative home as it stands looks here
+    planted = tmp_path / "catalogue.toml"
+    planted.write_text(_PLANTED, encoding="utf-8")
+    out = tmp_path / "out"
+    assert main([*command, "--catalogue", str(planted), "--out", str(out)]) == run.PARTIAL
+    err = capsys.readouterr().err
+    why = "has no entry in the user database" if entry is None else "names '' as user id"
+    assert f"{command[0]}: " in err and why in err and "runs no job" in err, err
+    assert "step 1" not in err, err
     assert not out.exists(), "nothing ran"
 
 

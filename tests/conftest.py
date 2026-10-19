@@ -145,13 +145,18 @@ _CREDENTIALS = importlib.import_module("personalclaw.config.credentials")
 _LET_THE_KEYCHAIN_BACK_IN = _CREDENTIALS.keychain_off()
 
 
+#: ``Path.home()`` as the run started, before any test could repoint it. The real-home guard
+#: takes the real home from the user database instead, so the two differ when the run starts with
+#: a ``$HOME`` of its own (a job ``tools/ci/run.py`` starts); a test chose a home when it moved
+#: away from THIS one.
+_STARTING_HOME = Path.home()
+
+
 def _caller_chose_a_home() -> bool:
     """Whether the home was chosen explicitly: ``$PERSONALCLAW_HOME`` set (to anything, the
     real home included), or ``$HOME``/``Path.home()`` repointed. Only an UNCHOSEN home is
     redirected — see ``_isolate_real_home_writers`` for why an explicit choice passes through."""
-    return (
-        bool(os.environ.get("PERSONALCLAW_HOME")) or Path.home() != real_home_guard.REAL_HOME.parent
-    )
+    return bool(os.environ.get("PERSONALCLAW_HOME")) or Path.home() != _STARTING_HOME
 
 
 #: Numbers each test's home within this process's own temporary folder (an xdist worker has one
