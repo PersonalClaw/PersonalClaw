@@ -621,6 +621,40 @@ change.
 - **Not yet recorded:** `rerun_result` and `quarantined` are #3947's, `cache_hits` is #3909's,
   and `worker` and `position` are #3949's. No API reports them, so they are null, never guessed.
 
+## Local runs
+
+`tools/ci/run.py` runs one CI job on a maintainer's machine from an empty environment (#3920). It
+has no command yet; the catalogue's `run-job` and `run` verbs will call it.
+
+- **A folder of its own.** Each job gets a new scratch folder, which only its owner can open, with
+  its own home, PersonalClaw home and temporary folder. A folder that already exists is refused,
+  so no earlier job's home or record is reused.
+- **An environment built from nothing.** The job sees only its `PATH`, the scratch `HOME`,
+  `PERSONALCLAW_HOME` and `TMPDIR`, a fixed locale (`LANG` and `LC_ALL` are `C.UTF-8`), git's
+  variables, and what the job declares. No token, ssh agent or `GIT_DIR` of the caller's reaches
+  it. A declared variable that would replace one the runner sets, the locale among them, or any
+  `GIT_CONFIG*` one, is refused.
+- **A git of its own.** git reads no system file, and its global file is the scratch one. An empty
+  `credential.helper` on git's command line clears every helper a file names, so no helper of the
+  caller's or of any file runs. The helper git does run first is a tripwire. It answers nothing,
+  records only what git asked for (the action, protocol and host), never the rest of the request,
+  and each request it records fails the run, even when a helper the job names on its own git
+  command line answers after it. A job that sets git's command-line configuration of its own
+  replaces the tripwire: inside a pytest job the suite's conftest does that, and there the suite's
+  git guard covers git instead.
+- **Exit codes.** 0 is OK. 1 is red: a non-zero exit, a timeout, or a credential git asked for,
+  which stays red even when the run is interrupted. 2 is partial: a SIGINT or SIGTERM the runner
+  gets from before the job starts until its group is gone, and the run is never 0. The runner
+  takes those signals on the main thread only, so it refuses to start a job on any other.
+- **Stopping a job.** A timeout or a signal sends SIGTERM to the job's whole process group, then
+  SIGKILL once every process of the group has exited or 5 seconds have passed, whichever is
+  first. A signal the runner gets meanwhile, other than the one that began the stop, cuts the 5
+  seconds short. When a job ends on its own, whatever is left of its group gets SIGKILL, so no
+  process of the group outlives the run.
+- **Not guarded yet:** a job that names the real home by path, the container or worktree a job
+  runs in, and scheduling. A local result never stands in for GitHub's, and no workflow reads what
+  it writes.
+
 ## Supply chain
 
 The actions, images and tools the workflows and Dockerfiles fetch are named exactly, so a run

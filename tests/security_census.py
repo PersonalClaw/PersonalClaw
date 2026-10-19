@@ -120,6 +120,10 @@ NAMED_MODULES: dict[str, str] = {
     "tests/test_credential_backend.py": "a fail or null keychain is refused; the file stays 0600",
     "tests/test_credential_store.py": "a key another record owns is refused before it is read",
     "tests/test_one_credential_store.py": "a workflow step naming another record's key is refused",
+    "tests/test_ci_run.py": (
+        "a CI job runs with a home, a temp folder and a git of its own; a credential its git "
+        "asks for fails the run"
+    ),
 }
 
 
