@@ -23,15 +23,20 @@ whatever ``:latest`` resolves to while reporting on the commit under review.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
-from docker_single_container_shared import _REPO
+from aiohttp import web
+from aiohttp.test_utils import make_mocked_request
+from docker_single_container_shared import _REPO, get_handler
+from table_rows import row
 
 from personalclaw.dashboard.handlers.core import _UNBUNDLED_PAGE
 from tools import docker_single_container_smoke as smoke
@@ -673,6 +678,202 @@ def test_the_offer_step_accepts_an_offer(monkeypatch: pytest.MonkeyPatch) -> Non
     assert calls == [("http://127.0.0.1:1/api/onboarding", _SYNTHETIC_TOKEN)]
 
 
+# ---------------------------------------------------------------------------
+# Step 9: seven API endpoints answer, signed in, with the JSON their handlers answer
+# ---------------------------------------------------------------------------
+
+
+#: What each endpoint's handler answers on a fresh volume, trimmed to the keys step 9 reads and a
+#: neighbour or two.
+_GOOD_BODIES: dict[str, object] = {
+    "/api/system": {"hostname": "smoke", "version": "0.0.0", "cpu_count": 2},
+    "/api/auth-status": {"mode": "local_token", "bind_host": "0.0.0.0", "valid": True},
+    "/api/providers": {"providers": [{"name": "personalclaw-filesystem", "enabled": True}]},
+    "/api/models/active": {"use_cases": {"chat": []}, "revisions": {"chat": "r0"}},
+    "/api/security/credentials": {"backend": "file", "pending": 0, "verified": True},
+    "/api/sessions": {"sessions": [], "total": 0, "has_more": False},
+    "/api/agents": {"agents": [], "default_agent": "default"},
+}
+
+
+def _json_answers(**overrides: tuple[int, str, str]) -> dict[str, tuple[int, str, str]]:
+    """Every endpoint the step reads answering its good body, except those in *overrides*."""
+    routes = {
+        path: (200, "application/json; charset=utf-8", json.dumps(_GOOD_BODIES[path]))
+        for path in smoke._API_ENDPOINTS
+    }
+    routes.update(overrides)
+    return routes
+
+
+#: Stands for the endpoint's own good body in a row below, so that row breaks one check only.
+_ITS_BODY = "<the endpoint's good body>"
+
+
+#: What a broken endpoint answers, each with the text its failure must quote. A route that is gone
+#: answers 404 signed in, and a refusal signed in is a failure: the check before this step counted
+#: the tokenless 401 or 403 as an answer, and so passed two routes that no longer existed. Each
+#: content-type row serves the endpoint's good body, so only the content-type check can refuse it;
+#: each parse row serves a JSON content type, so only the parse can.
+_BROKEN_ANSWERS: dict[str, tuple[tuple[int, str, str], str]] = {
+    "an error": ((500, "application/json", '{"error": "boom"}'), "boom"),
+    "a route that is gone": (
+        (404, "application/json", '{"error": {"code": "not_found"}}'),
+        "not_found",
+    ),
+    "a refusal signed in, 401": (
+        (401, "application/json", '{"error": {"code": "unauthorized"}}'),
+        "unauthorized",
+    ),
+    "a refusal signed in, 403": (
+        (403, "application/json", '{"error": {"code": "forbidden"}}'),
+        "forbidden",
+    ),
+    "a page": ((200, "text/html; charset=utf-8", "<!doctype html>"), "<!doctype html>"),
+    "its JSON under a page's content type": (
+        (200, "text/html; charset=utf-8", _ITS_BODY),
+        "content-type 'text/html; charset=utf-8'",
+    ),
+    "its JSON under text/plain": ((200, "text/plain", _ITS_BODY), "content-type 'text/plain'"),
+    "its JSON under no content type": ((200, "", _ITS_BODY), "content-type ''"),
+    "a page under a JSON content type": (
+        (200, "application/json", "<!doctype html>"),
+        "is not JSON",
+    ),
+    "an empty body": ((200, "application/json", ""), "is not JSON"),
+    "an error quoting a sign-in link": (
+        (500, "text/plain", f"see http://localhost:10000?token={_SYNTHETIC_TOKEN}"),
+        "?token=<redacted>",
+    ),
+    "null": ((200, "application/json", "null"), "not the shape its handler answers"),
+    "an empty array": ((200, "application/json", "[]"), "not the shape its handler answers"),
+    "an empty object": ((200, "application/json", "{}"), "not the shape its handler answers"),
+    "the not_found envelope at 200": (
+        (200, "application/json", '{"error": {"code": "not_found"}}'),
+        "not the shape its handler answers",
+    ),
+}
+
+
+def test_the_api_step_refuses_any_endpoint_that_does_not_answer_its_json(
+    subtests: object, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert len(smoke._API_ENDPOINTS) == 7, "an endpoint was dropped from step 9"
+    assert len(_BROKEN_ANSWERS) == 15, "a broken answer was dropped from the table"
+    rows = [(path, kind) for path in smoke._API_ENDPOINTS for kind in _BROKEN_ANSWERS]
+    assert len(rows) == 105, "a row was dropped"
+    for path, kind in rows:
+        with row(subtests, endpoint=path, answer=kind):
+            (status, ctype, body), quoted = _BROKEN_ANSWERS[kind]
+            if body == _ITS_BODY:
+                body = json.dumps(_GOOD_BODIES[path])
+            _fake_http(monkeypatch, _json_answers(**{path: (status, ctype, body)}))
+            capsys.readouterr()
+            with pytest.raises(SystemExit) as excinfo:
+                smoke._assert_api_endpoints("http://127.0.0.1:1", _SYNTHETIC_TOKEN)
+            assert excinfo.value.code == 1, f"{path} answering {kind} passed"
+            failure = capsys.readouterr().err
+            assert path in failure and quoted in failure, failure
+            # The excerpt goes to a public log: a token in the body reaches it redacted.
+            assert _SYNTHETIC_TOKEN not in failure, failure
+
+
+#: A value no failure may print: the shape check names keys and kinds only.
+_A_VALUE = "a-value-never-printed"
+
+
+#: Each endpoint answering 200 JSON with the one thing step 9 reads about it broken, and the text
+#: its failure must quote: the key or the kind, never a value.
+_WRONG_SHAPES: dict[str, tuple[object, str]] = {
+    "/api/system": ({"hostname": _A_VALUE, "cpu_count": 2}, "no `version`"),
+    "/api/auth-status": ({"mode": _A_VALUE, "valid": False}, "`valid` is a boolean, want true"),
+    "/api/providers": (
+        {"providers": [], "error": _A_VALUE},
+        "`providers` is an empty array, want an array that lists something",
+    ),
+    "/api/models/active": ({"use_cases": [_A_VALUE]}, "`use_cases` is an array, want an object"),
+    "/api/security/credentials": (
+        {"backend": _A_VALUE, "pending_keys": [_A_VALUE]},
+        "no `verified`",
+    ),
+    "/api/sessions": ({"sessions": {"key": _A_VALUE}}, "`sessions` is an object, want an array"),
+    "/api/agents": ({"agents": _A_VALUE}, "`agents` is a string, want an array"),
+}
+
+
+def test_the_api_step_refuses_each_endpoint_answering_another_shape_and_prints_no_value(
+    subtests: object, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Any JSON responder answers 200 with JSON, so each endpoint's shape is checked: its kind and
+    the keys step 9 reads. `/api/auth-status` answers `valid: true` only to a request the sign-in
+    let through. The failure names the key, so a credential-store answer prints none of its own."""
+    assert set(_WRONG_SHAPES) == set(smoke._API_ENDPOINTS), "an endpoint has no wrong-shape row"
+    for path, (body, quoted) in _WRONG_SHAPES.items():
+        with row(subtests, endpoint=path):
+            answer = (200, "application/json", json.dumps(body))
+            _fake_http(monkeypatch, _json_answers(**{path: answer}))
+            capsys.readouterr()
+            with pytest.raises(SystemExit) as excinfo:
+                smoke._assert_api_endpoints("http://127.0.0.1:1", _SYNTHETIC_TOKEN)
+            assert excinfo.value.code == 1, f"{path} answering {body!r} passed"
+            failure = capsys.readouterr().err
+            assert path in failure and quoted in failure, failure
+            assert _A_VALUE not in failure, failure
+
+
+def test_each_shape_is_what_its_handler_answers_on_a_fresh_home(
+    subtests: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The other direction. The shapes are read off the handlers by hand, and a shape a handler
+    does not answer fails every release with nothing on the PR to say so. So the handler the
+    gateway's router serves at each path answers here, on this test's own fresh home, and its
+    answer must be the shape.
+
+    Three stand-ins keep it inside this process. The metrics probes (`ps`, `netstat`) answer the
+    static half they start from, which carries the version. The provider registry is a fresh one
+    with nothing installed, which the platform's own tools are listed beside. The conversation log
+    is a real one with no conversations in it.
+    """
+    from personalclaw.dashboard import handlers_system
+    from personalclaw.history import ConversationLog
+    from personalclaw.providers import routes as provider_routes
+    from personalclaw.providers.registry import ProviderRegistry
+
+    monkeypatch.setattr(
+        handlers_system,
+        "_collect_system_metrics",
+        lambda: dict(handlers_system._get_static_system_info()),
+    )
+    monkeypatch.setattr(handlers_system, "_metrics_cache", {})
+    monkeypatch.setattr(provider_routes, "get_provider_registry", ProviderRegistry)
+    app = web.Application()
+    app["state"] = SimpleNamespace(conversation_log=ConversationLog(base_dir=tmp_path / "chats"))
+
+    assert len(smoke._API_ENDPOINTS) == 7, "an endpoint was dropped from step 9"
+    for path, wants in smoke._API_ENDPOINTS.items():
+        with row(subtests, endpoint=path):
+            handler = get_handler(path)
+            assert handler is not None, f"the gateway serves no GET {path}"
+            response = asyncio.run(handler(make_mocked_request("GET", path, app=app)))
+            assert response.status == 200, f"{path} answered {response.status}"
+            failure = smoke.shape_failure(json.loads(response.body), wants)
+            assert failure == "", f"{path} answers JSON that is {failure}"
+
+
+def test_the_api_step_reads_every_endpoint_signed_in(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert set(_GOOD_BODIES) == set(smoke._API_ENDPOINTS)
+    calls: list[tuple[str, str]] = []
+    _fake_http(monkeypatch, _json_answers(), calls)
+    smoke._assert_api_endpoints("http://127.0.0.1:1", _SYNTHETIC_TOKEN)
+    assert calls == [
+        (f"http://127.0.0.1:1{path}", _SYNTHETIC_TOKEN) for path in smoke._API_ENDPOINTS
+    ]
+    out = capsys.readouterr().out
+    assert all(f"OK: {path} → 200 JSON" in out for path in smoke._API_ENDPOINTS), out
+
+
 def test_the_teardown_stops_the_container_before_removing_it(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -701,7 +902,12 @@ def test_the_teardown_stops_the_container_before_removing_it(
         "run",
         lambda argv, **kw: subprocess.CompletedProcess(argv, 0, stdout="", stderr=""),
     )
-    for step in ("_await_healthz", "_assert_asset", "_assert_download_offer"):
+    for step in (
+        "_await_healthz",
+        "_assert_asset",
+        "_assert_download_offer",
+        "_assert_api_endpoints",
+    ):
         monkeypatch.setattr(smoke, step, lambda *a, **k: None)
     monkeypatch.setattr(smoke, "_mint_token", lambda name: _SYNTHETIC_TOKEN)
     monkeypatch.setattr(smoke, "_assert_shell", lambda base, token: "/assets/x.js")

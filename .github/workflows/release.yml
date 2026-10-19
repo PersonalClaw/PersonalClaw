@@ -298,7 +298,8 @@ jobs:
     # green. It then asks the image's INSTALLED package for the default chat model's sign-off
     # record and requires `/api/onboarding` to offer the download: the image once shipped
     # without that record behind all-200 responses, and the wheel gate, which read the record
-    # from the repository, could not see it. Exit 1 = the image is broken; exit 2
+    # from the repository, could not see it. Last, signed in, seven API endpoints must answer
+    # 200 with the JSON their handlers answer. Exit 1 = the image is broken; exit 2
     # = the run could not measure, which is never a pass.
     #
     # amd64 ONLY, stated rather than implied: this boots a real gateway, and arm64 under QEMU

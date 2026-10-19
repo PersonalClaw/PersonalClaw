@@ -25,6 +25,8 @@ That is the exact failure this file exists to catch, and why it asserts an asset
      `/usr/local/bin`. A command that does not resolve is not an error the gateway shows: it
      fetches the newest release with `npx` when it starts that agent, so the pinned lock the
      image installed would be bypassed without a sign.
+  9. signed in, each of the seven API endpoints in :data:`_API_ENDPOINTS` answers 200 with JSON
+     of the shape its handler answers, on the fresh volume.
 
 **Steps 5 and 6 are the 2026-09-25 release blocker.** The record was a symlink into `docs/`,
 the image copies only `src/`, so the image installed no record: every response 200, no
@@ -84,8 +86,9 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import NoReturn
+from typing import NamedTuple, NoReturn
 
 _BOOT_TIMEOUT_S = 180.0
 _HTTP_TIMEOUT_S = 15.0
@@ -544,6 +547,105 @@ def _assert_login_shell_finds_the_agent_clis(name: str, commands: list[str]) -> 
     _log(f"OK: a login shell in the container resolves {', '.join(commands)} in /usr/local/bin")
 
 
+class _Want(NamedTuple):
+    """What one key of an endpoint's body must hold: the words a failure says, and the check."""
+
+    words: str
+    holds: Callable[[object], bool]
+
+
+_AN_OBJECT = _Want("an object", lambda value: isinstance(value, dict))
+_AN_ARRAY = _Want("an array", lambda value: isinstance(value, list))
+_A_LISTING = _Want(
+    "an array that lists something", lambda value: isinstance(value, list) and bool(value)
+)
+_A_STRING = _Want("a string", lambda value: isinstance(value, str))
+_A_BOOLEAN = _Want("a boolean", lambda value: isinstance(value, bool))
+_TRUE = _Want("true", lambda value: value is True)
+
+
+#: Seven of the gateway's read-only API surfaces, each asked signed in on the fresh volume (step 9),
+#: with what its handler's JSON object carries. They are what the deployment check this step
+#: replaced read, its two removed routes swapped for their successors: `/api/use-cases` for
+#: `/api/models/active` (the use-case chains), `/api/credentials` for `/api/security/credentials`.
+#: `tests/rails/test_docker_single_container_tree.py` holds each to a GET route the gateway serves,
+#: and `tests/test_docker_single_container.py` holds each shape to what its handler answers.
+#:
+#: Keys and kinds only, so a failure names what is wrong and prints no value of the body.
+_API_ENDPOINTS: dict[str, dict[str, _Want]] = {
+    # dashboard/handlers_system.py: api_system.
+    "/api/system": {"version": _A_STRING},
+    # api_auth_status, beside it: `valid` is true for a request the sign-in let through.
+    "/api/auth-status": {"valid": _TRUE},
+    # providers/routes.py: handle_list_extensions, which always lists the platform's own tools.
+    "/api/providers": {"providers": _A_LISTING},
+    # dashboard/handlers/model_registry.py: api_models_active.
+    "/api/models/active": {"use_cases": _AN_OBJECT},
+    # dashboard/handlers/security_credentials.py: where secrets are stored, names and counts only.
+    "/api/security/credentials": {"backend": _A_STRING, "verified": _A_BOOLEAN},
+    # dashboard/handlers/sessions.py: api_sessions.
+    "/api/sessions": {"sessions": _AN_ARRAY},
+    # dashboard/handlers/agents.py: api_personalclaw_agents.
+    "/api/agents": {"agents": _AN_ARRAY},
+}
+
+
+def _json_kind(value: object) -> str:
+    """What kind of JSON value *value* is, in words that carry no part of it."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "a boolean"
+    if isinstance(value, (int, float)):
+        return "a number"
+    if isinstance(value, str):
+        return "a string"
+    if isinstance(value, list):
+        return "an array" if value else "an empty array"
+    return "an object"
+
+
+def shape_failure(body: object, wants: dict[str, _Want]) -> str:
+    """How *body* is not the object *wants* describes, or ``""`` when it is."""
+    if not isinstance(body, dict):
+        return f"{_json_kind(body)}, want an object"
+    for key, want in wants.items():
+        if key not in body:
+            return f"no `{key}`"
+        if not want.holds(body[key]):
+            return f"`{key}` is {_json_kind(body[key])}, want {want.words}"
+    return ""
+
+
+def _assert_api_endpoints(base: str, token: str) -> None:
+    """Step 9: signed in, every endpoint in :data:`_API_ENDPOINTS` answers 200 JSON of its shape.
+
+    Signed in, a 401 or 403 is a failure and not an answer: the check this step replaced counted
+    the tokenless refusal as one, and so passed two routes that had been removed. A removed route
+    answers 404 here. Nor is a 200 enough: a proxy or a fallback in front of the API can answer 200
+    with a page, and any JSON responder answers 200 with JSON. So the content type, the parse and
+    the shape are each checked, and each failure quotes the body redacted, except the shape's,
+    which names keys and kinds only.
+    """
+    for path, wants in _API_ENDPOINTS.items():
+        status, ctype, body = _get(f"{base}{path}", token=token)
+        excerpt = redact_secrets(body)[:300]
+        if status != 200:
+            _fail(f"{path} returned {status} (want 200 JSON) — body: {excerpt!r}")
+        if "json" not in ctype.lower():
+            _fail(
+                f"{path} returned 200 with content-type {ctype!r} (want JSON) — body: {excerpt!r}"
+            )
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            _fail(f"{path} returned 200 {ctype!r} that is not JSON — body: {excerpt!r}")
+        failure = shape_failure(payload, wants)
+        if failure:
+            _fail(f"{path} returned 200 JSON that is not the shape its handler answers: {failure}")
+        _log(f"OK: {path} → 200 JSON")
+
+
 def _dump_container_logs(name: str) -> None:
     """Print the container's tail for diagnosis, with session tokens redacted.
 
@@ -615,6 +717,7 @@ def main() -> int:
         _assert_login_shell_finds_personalclaw(name)
         lock = (Path(__file__).resolve().parents[1] / AGENT_CLIS_LOCK).read_text(encoding="utf-8")
         _assert_login_shell_finds_the_agent_clis(name, agent_commands(lock))
+        _assert_api_endpoints(base, token)
     except Unmeasurable as exc:
         print(f"UNMEASURABLE: {exc}", file=sys.stderr)
         return 2
@@ -632,8 +735,8 @@ def main() -> int:
     _log("")
     _log("PASS: one `docker run` from README.md reaches a usable dashboard — healthz 200, the")
     _log("      SPA shell, its first bundle served as JavaScript, the installed sign-off record,")
-    _log("      a download offer for the default chat model, and `personalclaw` and each bundled")
-    _log("      agent CLI in a login shell.")
+    _log("      a download offer for the default chat model, `personalclaw` and each bundled")
+    _log("      agent CLI in a login shell, and seven API endpoints signed in.")
     return 0
 
 

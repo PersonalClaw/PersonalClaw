@@ -9,17 +9,20 @@ Three things are asserted, and the third is the one that decays if nobody watche
    apps repo actually runs (``.github/workflows/ci.yml``): ``manifest-validate`` (core's
    own parser + round-trip stability), ``tests`` (``python -m pytest <dir>``), and
    ``boundary`` (non-test app code imports core only via ``personalclaw.sdk.*``).
-3. **The scaffold survives contact with the platform.** Each type is installed from local
-   source into an isolated home and enabled, then the provider registry is asked whether
-   the provider actually registered — the leg that catches a stub core accepts at parse
-   time and rejects at register time (``duty_gate`` was exactly that).
+3. **The scaffold survives contact with the platform.** Every type is loaded the way an
+   install loads it, and the provider registry is asked whether the provider actually
+   registered — the leg that catches a stub core accepts at parse time and rejects at
+   register time (``duty_gate`` was exactly that). The install itself takes no branch on a
+   provider's type, so it runs whole for two types: one declaring a Python dependency, one
+   declaring none.
 
-Vacuity floor: the per-type loop is parametrized from the runtime type list, and
+Vacuity floor: the per-type loops are parametrized from the runtime type list, the per-type
+registration table asserts its row count against ``PROVIDER_TYPES``, and
 ``test_the_type_list_is_not_empty`` pins that list to ``PROVIDER_TYPES``. A loop over zero
 types is the false-green this file exists to make impossible.
 
-Everything is generated under ``tmp_path``; the install leg patches ``config_dir`` so
-nothing touches the real home or the apps repo.
+Everything is generated under ``tmp_path``; the install and registration legs patch
+``config_dir`` so nothing touches the real home or the apps repo.
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from table_rows import row
 
 import personalclaw
 from personalclaw.apps.manifest import PROVIDER_TYPES, AppManifest
@@ -255,6 +259,10 @@ def test_generated_app_passes_the_apps_repo_checks(provider_type: str, tmp_path:
     _check_no_credentials(app)
 
 
+#: The type whose first commit is checked. The ignore file is one file for every type
+#: (``cli_app_new._GITIGNORE``), so one type's commit proves it for all of them.
+_RESIDUE_TYPE = "tool"
+
 #: What a test run, a virtualenv, a UI build, a coverage run and an editor leave behind in an
 #: app's directory. None of it is the app, and every one of these has been committed by hand.
 _RESIDUE = (
@@ -270,10 +278,7 @@ _RESIDUE = (
 )
 
 
-@pytest.mark.parametrize("provider_type", ALL_TYPES)
-def test_a_scaffolded_app_commits_none_of_its_build_or_test_residue(
-    provider_type: str, tmp_path: Path
-) -> None:
+def test_a_scaffolded_app_commits_none_of_its_build_or_test_residue(tmp_path: Path) -> None:
     """The leak this closes: an app scaffolded, tested in its own directory and committed with
     ``git add -A`` published its ``__pycache__/``. Compiled bytecode records the absolute path
     it was compiled from, so the author's home directory went public with the app.
@@ -283,7 +288,7 @@ def test_a_scaffolded_app_commits_none_of_its_build_or_test_residue(
     (``ui/bundle/``) is the positive control: an ignore file that swallowed it would publish an
     app with no UI.
     """
-    app = _generate(provider_type, tmp_path)
+    app = _generate(_RESIDUE_TYPE, tmp_path)
     # Bytecode written where a test run in the app's own directory writes it. The explicit
     # `cfile` is deliberate: this suite's interpreter redirects its own bytecode elsewhere.
     for py in sorted(app.glob("*.py")):
@@ -440,10 +445,16 @@ def test_generated_manifest_declares_its_seams(provider_type: str, tmp_path: Pat
     assert "permissions" not in data
 
 
-@pytest.mark.parametrize("provider_type", ALL_TYPES)
-def test_generated_tests_pass(provider_type: str, tmp_path: Path) -> None:
+#: The type whose generated suite is run here as the apps repo runs it. The suite is one template
+#: in two shapes: an SDK ABC's, which the channel kit tests below run (with the kit's block), and
+#: a duck-typed one's, which ``duty_gate`` takes. Every type's provider is built from its factory
+#: in-process by the registration table further down.
+_SUITE_RUN_TYPE = "duty_gate"
+
+
+def test_generated_tests_pass(tmp_path: Path) -> None:
     """apps-repo job ``tests``: ``python -m pytest <dir>`` on the generated bundle."""
-    app = _generate(provider_type, tmp_path)
+    app = _generate(_SUITE_RUN_TYPE, tmp_path)
     env = dict(os.environ)
     env["PYTHONPATH"] = SRC_ROOT
     env["PERSONALCLAW_HOME"] = str(tmp_path / "home")
@@ -624,20 +635,57 @@ def test_the_generated_cli_seams_are_callable(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("provider_type", ALL_TYPES)
-def test_local_source_install_registers_the_provider(
-    provider_type: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     import personalclaw.config.loader as loader
-    from personalclaw.apps import app_manager, manager
-    from personalclaw.providers.registry import get_provider_registry
+    from personalclaw.apps import manager
 
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(loader, "config_dir", lambda: home)
     monkeypatch.setattr(manager, "config_dir", lambda: home)
+    return home
 
+
+def _no_pip(*_args: object, **_kwargs: object) -> None:
+    raise AssertionError("pip ran: the declared dependency left the no-op path for the network")
+
+
+#: The two types the whole install runs for, and the Python dependencies each declares. The
+#: install takes no branch on a provider's type (a type's own branch is its handler, which the
+#: registration table below runs for every type); it branches on a declared dependency. So one
+#: declares a requirement core already provides, which ``_install_python_deps`` admits and then
+#: satisfies with no pip run and no network, and one declares none. ``duty_gate`` is the type
+#: whose stub once parsed and then failed to register.
+_INSTALLS = [
+    pytest.param("tool", ["PyYAML>=6"], id="tool-declares-a-dependency"),
+    pytest.param("duty_gate", [], id="duty_gate-declares-none"),
+]
+
+
+@pytest.mark.parametrize(("provider_type", "requires"), _INSTALLS)
+def test_local_source_install_registers_the_provider(
+    provider_type: str, requires: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from personalclaw.apps import app_manager, app_python
+    from personalclaw.providers.registry import get_provider_registry
+
+    _isolated_home(tmp_path, monkeypatch)
     app = _generate(provider_type, tmp_path)
+    if requires:
+        manifest = json.loads((app / "app.json").read_text(encoding="utf-8"))
+        manifest["dependencies"] = {"pythonDependencies": requires}
+        (app / "app.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    ensured: list[tuple[str, list[str], list[str]]] = []
+    ensure = app_python.ensure
+
+    def _ensure(name: str, reqs: list[str], *, label: str) -> list[str]:
+        replaced = ensure(name, reqs, label=label)
+        ensured.append((name, list(reqs), replaced))
+        return replaced
+
+    monkeypatch.setattr(app_python, "ensure", _ensure)
+    monkeypatch.setattr(app_python, "_pip_install", _no_pip)
+
     registry = get_provider_registry()
     try:
         result = app_manager.install(app, origin="local", confirm=True)
@@ -648,9 +696,51 @@ def test_local_source_install_registers_the_provider(
         assert ext.enabled, f"{provider_type}: registered but not enabled — {ext.error}"
         assert ext.error == ""
         assert ext.provider_config.type == provider_type
+        # The declared dependency went through the install's dependency step, and came back
+        # satisfied with nothing to install.
+        assert ensured == ([(app.name, requires, [])] if requires else []), ensured
     finally:
         app_manager.disable(app.name)
         registry.deregister(app.name)
+
+
+def test_every_type_registers_through_its_own_handler(
+    subtests: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every type, loaded the way an install loads it, registers in the provider registry.
+
+    Each type has a handler of its own (``providers/registry.py``), which builds the provider
+    from the app's factory and puts it in that type's own registry, and several refuse a
+    provider that lacks the method they call. An install reaches the handler through one call,
+    ``app_runtime.load``, after it has staged, scanned and recorded the app, none of which looks
+    at the type. So each type's scaffold is put where an install puts it, in the home's apps
+    folder, and loaded through that call; then unloaded the way an uninstall unloads it, so the
+    next row finds the registry as this one did.
+    """
+    from personalclaw.apps import app_runtime, manager
+    from personalclaw.providers.registry import get_provider_registry
+
+    _isolated_home(tmp_path, monkeypatch)
+    apps = manager.apps_dir()
+    apps.mkdir(parents=True, exist_ok=True)
+    registry = get_provider_registry()
+    assert len(ALL_TYPES) == len(PROVIDER_TYPES), "a type was dropped from the table"
+    for provider_type in ALL_TYPES:
+        with row(subtests, provider_type=provider_type):
+            app = _generate(provider_type, apps)
+            manifest = _check_manifest(app)
+            before = sorted(ext.name for ext in registry.list_extensions())
+            try:
+                app_runtime.load(manifest)
+                ext = registry.get(app.name)
+                assert ext is not None, f"{provider_type}: nothing registered in the registry"
+                assert ext.enabled, f"{provider_type}: registered but not enabled — {ext.error}"
+                assert ext.error == "", f"{provider_type}: {ext.error}"
+                assert ext.provider_config.type == provider_type
+            finally:
+                app_runtime.unload(app.name, manifest, forget=True)
+            after = sorted(ext.name for ext in registry.list_extensions())
+            assert after == before, f"{provider_type}: the unload left the registry at {after}"
 
 
 # ---------------------------------------------------------------------------
