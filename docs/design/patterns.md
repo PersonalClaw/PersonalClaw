@@ -10,46 +10,47 @@ The canonical usage of each shared primitive + each interaction pattern. Every p
 
 ## Form fields
 
-### `TextField` / `TextArea` — `web/src/ui/TextField.tsx`
+### The form family — `web/src/ui/forms.tsx`
 
-The one shared single-line input (`TextField`) and multi-line input (`TextArea`). The audit found **no** shared field primitive, so ~200 raw `<input>`s across the app re-rolled the same shape by hand — `TextField` is the canonical extraction of that exact shape (not a redesign).
+`Field` wraps one control with its label, an optional hint and an optional error. The controls are `TextInput`, `TextArea`, `Select`, `NumberField`, `DateInput`, `ChipInput` and `Checkbox`; `FieldError` is the one-line failure message. Each component's props, with their reasons, are in `web/src/ui/forms.doc.ts` (held to the source by `uiDocs.drift.test.ts`), so this entry carries the contract and the choices, not the prop tables.
 
-**Canonical shape (what it renders):**
-`rounded-md · bg-surface-{container|high|base} · h-{8|9|10} · px-3 · text-on-surface · placeholder:text-on-surface-low · outline-none · focus:ring-2 focus:ring-inset focus:ring-primary · disabled:opacity-50`
+**The contract a `Field` publishes.** Three ids, read by every control inside it:
 
-Keyboard focus = the global `:focus-visible` ring (`design/tokens.css`) **plus** the established inset primary focus ring. Fully token-routed — no hardcoded colors/px.
+| Id | The control renders | Published when |
+|---|---|---|
+| the label's | `aria-labelledby` — its accessible name | always (a control with its own `ariaLabel` keeps that instead) |
+| the hint's | `aria-describedby`, first | `hint` is set |
+| the error's | `aria-describedby`, after the hint, and `aria-invalid="true"` | `error` is set |
 
-**Props**
+With no error, no `aria-invalid` is rendered at all. The error renders as a `FieldError` (`role="alert"`, the danger tone) under the hint, so the hint does not move when an error comes and goes. `Checkbox` claims the error but not the hint: it is a per-row tick, and a hint would describe every row the same way.
 
-| Prop | Values | Default | Notes |
-|---|---|---|---|
-| `size` | `sm` (h-8) · `md` (h-9) · `lg` (h-10) | `md` | mirrors the measured call-site heights |
-| `surface` | `container` · `high` · `base` | `container` | which surface token the field sits on |
-| `mono` | boolean | `false` | monospace (ids, tokens, code-ish values) |
-| `leadingIcon` | ReactNode | — | adds `pl-9` and an icon slot (TextField only) |
-| `resize` (TextArea) | `y` · `none` | `y` | vertical resize grip |
-| …native | any `<input>`/`<textarea>` attr | — | `value`, `onChange`, `disabled`, `aria-*`, `placeholder`, `ref`, … forwarded |
+**Error or hint.** `error` is only for a value the save would refuse: a check that settled after typing stopped, or the refusal a save returned. A warning the save accepts (a schedule cadence under the suggested floor) is a `hint`; as an error it would mark a working value invalid.
 
 **Usage**
 
 ```tsx
-import { TextField, TextArea } from '../../ui/TextField'
-import { Search } from 'lucide-react'
+import { Field, TextInput, Select, FieldError, FieldErrorProvider } from '../../ui/forms'
 
-// search box
-<TextField size="sm" surface="base" leadingIcon={<Search size={14} />} placeholder="Search…"
-  value={q} onChange={(e) => setQ(e.target.value)} />
+<Field label="Project name" hint="Shown in the sidebar." error={nameError}>
+  <TextInput value={name} onChange={setName} maxLength={200} />
+</Field>
 
-// a form value
-<TextField value={name} onChange={(e) => setName(e.target.value)} aria-label="Name" />
+<Field label="Agent">
+  <Select value={agent} onChange={setAgent} options={agents} />
+</Field>
 
-// multi-line body
-<TextArea mono value={body} onChange={(e) => setBody(e.target.value)} placeholder="Notes…" />
+// A layout of its own (a list editor's add box) publishes the error id itself.
+<FieldErrorProvider value={refused ? errorId : undefined}>
+  <TextInput value={draft} onChange={setDraft} ariaLabel="Add a host to allowed hosts" />
+  {refused && <FieldError id={errorId}>{refused}</FieldError>}
+</FieldErrorProvider>
 ```
 
-**Migrate to it when** you see a raw `<input>`/`<textarea>` whose className contains the canonical shape above. The class contract is pinned by `web/src/ui/TextField.test.ts…x` (`textFieldClass`/`textAreaClass`) so a migration is a provable drop-in — but any migration that changes rendered pixels must still be verified by the visual harness (`web/e2e/`).
+**Shape.** `TextInput`, `TextArea` and `Select` share one scale: `size` `sm` (h-8) · `md` (h-9) · `lg` (h-10, default) and `surface` `container` (default) · `high` · `base`, with the inset primary focus ring. `NumberField` is the dense right-aligned stepper with clamp-on-commit; it is not `TextInput type="number"`, which is the full-width field that can be cleared back to unset. A short fixed set of options is a `Select`; a long or filterable one is a `Combobox`.
 
-> **NOTE:** `<select>` is not yet wrapped — a `Select` primitive is a follow-up (its native chevron + `[color-scheme]` handling differ enough to warrant its own entry). Until then, style `<select>` to match the `TextField` shape.
+**Two other label layouts** publish the same label and hint ids and keep their own look: `settingsUI.tsx`'s settings rows (`Field`, `Row`, `ToggleRow`, `SelectRow`, …) and the Projects modal's local `Field` in `ProjectsSection.tsx`. Neither publishes an error id yet; a row that gains a refusal wraps it in `FieldErrorProvider`.
+
+**Migrate to it when** you see a raw `<input>`, `<textarea>` or `<select>` outside `web/src/ui/`. A raw element cannot claim a Field's label or its error, whatever wraps it: only the family's controls read the ids. `npm run audit:consistency` ranks the files with the most raw controls in `docs/design/consistency-audit.json`.
 
 ---
 

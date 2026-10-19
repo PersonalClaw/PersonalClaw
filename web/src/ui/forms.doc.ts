@@ -14,15 +14,17 @@ const docs: UiDoc[] = [
     props: [
       { name: 'label', description: 'The visible caption-tier label (the Eyebrow primitive, sentence case per the Weight-First rule); carries a stable id exposed to the wrapped control for aria-labelledby.' },
       { name: 'hint', description: 'Optional muted helper text rendered below the control. A node, not just a string, so a call site whose hint text came from OUTSIDE the app (an app manifest\'s `x-meta.help`, a tool schema description) can render it through the markdown renderer — our own hint sentences stay plain strings.' },
+      { name: 'error', description: "Why the value would be refused, while it would be. The wrapped control becomes aria-invalid and is described by the message after the hint, which renders as a FieldError under the hint (so the hint never moves). Only a value the save REFUSES is an error — a delayed check that settled, or the refusal a save returned; an advisory the save accepts goes in `hint`, or the control announces \"invalid\" for a value that works. Unset or empty, nothing renders and no aria-invalid is published." },
       { name: 'right', description: 'Optional slot on the label row (e.g. a SoonTag) aligned to the right.' },
       { name: 'children', description: 'The wrapped control (TextInput / Select / …).' },
     ],
     bestPractices: [
       { guidance: true, description: 'Wrap standard controls in Field rather than hand-rolling a <label> — the control gets its accessible name from the published label id automatically.' },
       { guidance: true, description: "A control claims the Field label only when it passes no ariaLabel of its own — an explicit ariaLabel always WINS, which is how a multi-control Field (two password inputs under one 'Set a password' label) names each member distinctly instead of both announcing the Field label." },
+      { guidance: true, description: 'Pass a refusal as `error` rather than rendering a FieldError beside the Field: only `error` ties the message to the control (aria-invalid plus aria-describedby), so it is heard again when the control is focused, not just once when it appears.' },
       { guidance: false, description: 'Do not hardcode colors or px — the label tone and spacing route through design tokens (the token-lint ratchet fails the build otherwise).' },
     ],
-    anatomy: ['FieldLabelCtx provider', 'label row (caption-tier Eyebrow label id + right slot)', 'wrapped control', 'optional hint paragraph'],
+    anatomy: ['FieldLabelCtx / FieldHintCtx / FieldErrorCtx providers', 'label row (caption-tier Eyebrow label id + right slot)', 'wrapped control', 'optional hint paragraph', 'optional FieldError (role=alert) under the hint'],
   },
   {
     name: 'FieldError',
@@ -32,6 +34,7 @@ const docs: UiDoc[] = [
     props: [
       { name: 'children', description: 'The message. Keep it one line; use InlineError for a multi-line or dismissible banner.' },
       { name: 'className', description: 'Per-site spacing only (mt-2, mb-m, shrink-0). The danger tone and the 0.8125rem size are fixed so every failure line reads the same.' },
+      { name: 'id', description: "The id a control's aria-describedby names, for a layout of its own that publishes it through FieldErrorProvider. Field's `error` passes one itself." },
     ],
     bestPractices: [
       { guidance: true, description: 'Reach for FieldError for the terse failure line that belongs to one control or one action, and InlineError for a tinted, dismissible banner above a body.' },
@@ -240,7 +243,20 @@ const docs: UiDoc[] = [
     bestPractices: [
       { guidance: true, description: 'Publish the id ONLY when a hint is actually rendered: `value={hint ? hintId : undefined}`. An aria-describedby pointing at a missing element is worse than none, because assistive tech resolves it to nothing while the attribute claims a description exists.' },
       { guidance: true, description: 'Pair it with FieldLabelProvider rather than instead of it. The label is the name and the hint is the description; a control that claims the hint as its NAME announces a paragraph where a noun belongs.' },
-      { guidance: false, description: 'Do not reach for this to attach validation errors. It carries the STATIC hint a layout renders; an error message that appears on failure is a different, live announcement (see FieldError).' },
+      { guidance: false, description: 'Do not reach for this to attach validation errors. It carries the STATIC hint a layout renders; an error that appears on failure is published through FieldErrorProvider (or Field\'s `error`), so the control is also marked aria-invalid.' },
+    ],
+  },
+  {
+    name: 'FieldErrorProvider',
+    props: [],
+    anatomy: ['React context provider carrying one error id (no DOM of its own)'],
+    keywords: ['field', 'error', 'invalid', 'validation', 'describedby', 'context', 'provider', 'a11y'],
+    description:
+      "The third of a Field's published ids, beside the label's and the hint's: the id of the ERROR shown while the value would be refused. Every form-family control inside reads it with the hint (useFieldDescription), sets aria-invalid=true and adds the error to aria-describedby after the hint; with no id published it renders no aria-invalid at all. Before it, no form-family control ever set aria-invalid and a FieldError belonged to no control, so a screen-reader user who returned to a refused field heard its name and hint and not why. Field publishes it from its `error` prop; export it for a layout of its own (a list editor's add box), with the FieldError carrying the same id. Checkbox claims the error but not the hint.",
+    bestPractices: [
+      { guidance: true, description: 'Publish the id ONLY while the error is rendered, and render it on a FieldError with that id: `value={error ? errorId : undefined}`. A published id with no element is a dangling description.' },
+      { guidance: true, description: 'Publish only a refusal. An advisory the save accepts (a cadence under the suggested floor) is a hint — an error marks the control invalid for a value that works.' },
+      { guidance: false, description: 'Do not hand-roll aria-invalid and aria-describedby on a raw control. A primitive inside the provider gets both, in the right order, from one source.' },
     ],
   },
 ]

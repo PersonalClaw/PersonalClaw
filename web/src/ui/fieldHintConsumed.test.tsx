@@ -195,7 +195,8 @@ const tsxFiles = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) 
  *  multi-select list (each row names itself with its item), never the single control of a hinted
  *  Field, so pointing a dozen rows at one sentence would describe every option identically. The one
  *  place a multi-select does sit inside a hinted `Field` is `AgentForm`'s `CheckList`, and that does
- *  not use `Checkbox` at all — it renders `aria-pressed` rows inside a `role="group"`. */
+ *  not use `Checkbox` at all — it renders `aria-pressed` rows inside a `role="group"`. It does claim a
+ *  Field's ERROR (`fieldErrorWired.test.tsx`): a refusal is true of the tick beside it. */
 const EXPECTED_CONSUMERS = [
   'ChipInput', 'Combobox', 'DateInput', 'NumberField', 'Select',
   'ShortcutRecorder', 'TextArea', 'TextInput', 'Toggle',
@@ -244,7 +245,8 @@ describe('the hint-consumer census', () => {
 
     for (const [name, { file, body }] of spans) {
       expect(body.length, `${name}'s span in ${file} is implausibly short — span-splitting broke`).toBeGreaterThan(120)
-      expect(body, `${name} (${file}) does not read the published hint id`).toMatch(/useFieldHintId\(\)/)
+      // `useFieldDescription()` reads the hint id and the error id together (pinned below).
+      expect(body, `${name} (${file}) does not read the published hint id`).toMatch(/useFieldHintId\(\)|useFieldDescription\(\)/)
       expect(body, `${name} (${file}) reads the hint id but never emits aria-describedby`).toMatch(/aria-describedby=/)
     }
   })
@@ -252,7 +254,14 @@ describe('the hint-consumer census', () => {
   it('Toggle wires the hint through a softOff-aware binding, not unconditionally', () => {
     const src = readSource(join(UI_DIR, 'Toggle.tsx'))
     // The precedence rule is the whole subtlety; pin its shape so a "simplification" cannot drop it.
-    expect(src).toMatch(/softOff\s*\?\s*undefined\s*:\s*hintId/)
+    expect(src).toMatch(/softOff\s*\?\s*undefined\s*:\s*fieldDescribedBy/)
+  })
+
+  it('useFieldDescription, which the census accepts, really reads the hint id', () => {
+    const src = readSource(join(UI_DIR, 'forms.tsx'))
+    const body = src.slice(src.indexOf('export function useFieldDescription'), src.indexOf('export function FieldError'))
+    expect(body).toMatch(/useFieldHintId\(\)/)
+    expect(body).toMatch(/\[hintId, errorId\]/)
   })
 })
 

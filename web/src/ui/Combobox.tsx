@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { ChevronDown, Search, Check, X } from 'lucide-react'
 import { spring, physics } from '../design/motion'
-import { useFieldHintId } from './forms'
+import { useFieldDescription } from './forms'
 
 export interface ComboOption { value: string; label: string; group?: string; description?: string }
 
@@ -34,7 +34,7 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
   // when this trigger fires. Provided by a registered action provider." The expanded search input
   // deliberately does NOT claim it: it is a transient filter inside the popup, and describing both
   // would announce the same sentence twice in one interaction.
-  const hintId = useFieldHintId()
+  const { describedBy, invalid } = useFieldDescription()
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const [active, setActive] = useState(0)
@@ -209,7 +209,7 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
           //    doesn't stretch during the morph; it's the container-transform's
           //    "outgoing" content (fades quickly as the shape opens).
           <motion.button layout="position" type="button" onClick={() => setOpen(true)} data-type="title-m"
-            aria-haspopup="listbox" aria-expanded={open} aria-describedby={hintId}
+            aria-haspopup="listbox" aria-expanded={open} aria-describedby={describedBy} aria-invalid={invalid}
             className="flex w-full items-center gap-s h-10 px-m text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary">
             <span className={`flex-1 truncate ${selected ? 'text-on-surface' : 'text-on-surface-low'}`}>{selected ? selected.label : placeholder}</span>
             <motion.span className="shrink-0 text-on-surface-low" animate={{ rotate: open ? 180 : 0 }} transition={physics.snappy}>
