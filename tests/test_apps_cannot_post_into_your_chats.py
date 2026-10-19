@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import shutil
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -915,14 +914,12 @@ class TestRoomsTheInboxAndYourAgentsVoice:
 # ── 7. What /api/reveal reaches for an app: the app's own data folder ──────────────────
 
 
-_WHICH = shutil.which
-
-
 def _xdg_open_is_installed(name: str, *args: Any, **kwargs: Any) -> str | None:
-    """``shutil.which`` on a host that has ``xdg-open``, the opener the reveal looks for off macOS.
-    A Linux host without one answers a reveal with the path to copy and starts nothing, so a test
-    of a reveal that is allowed says which host it is on."""
-    return "/usr/bin/xdg-open" if name == "xdg-open" else _WHICH(name, *args, **kwargs)
+    """``shutil.which`` on a host that has ``xdg-open``, the opener the reveal looks for off macOS,
+    and nothing else. A Linux host without one answers a reveal with the path to copy and starts
+    nothing, so a test of a reveal that is allowed says which host it is on, and reads nothing of
+    this host's own ``PATH``."""
+    return "/usr/bin/xdg-open" if name == "xdg-open" else None
 
 
 class TestRevealReachesOnlyTheAppsOwnFiles:
