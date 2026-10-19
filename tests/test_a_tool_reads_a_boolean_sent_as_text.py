@@ -10,31 +10,56 @@ task and loop tools, which already read one so:
 * ``knowledge_update`` sent ``"is_archived": "false"`` archived the item;
 * ``code_map`` sent ``"refresh": "false"`` re-indexed the whole tree;
 * ``automation_update`` stored a patch's ``"enabled": "false"`` as sent, so the automation it
-  switched off kept running, and a stored row read the text back as on;
+  switched off kept running (the stored row reading it back is a door of
+  ``test_safety_flags_reject_truthy_strings``);
 * the control bridge switched an automation ON when the owner confirmed ``"enabled": "false"``;
 * an agent's question card sent ``"multiSelect": "false"`` became a multiple-choice card;
-* a bulk unpin sent ``"value": "false"`` pinned the items.
+* a bulk unpin sent ``"value": "false"`` pinned the items;
+* ``reset_tools`` switched on a group it was sent ``"false"`` for.
 
 Each is read through ``safety_flags.yes_or_no``: a no is a no, a yes a yes, and a value that
 spells neither is the field's safe value or, where there is none, refused. An in-process tool's
 field spec refuses a text boolean before its handler runs, which is pinned here too.
+
+The spellings themselves are rows of the one table in ``test_safety_flags_reject_truthy_strings``,
+and ``test_tool_boolean_census`` holds every boolean a tool declares to the reader. So each door
+here is driven through its real entry point three times, once per answer, each a row of one of
+the three tests below: a yes, a no, and the values that spell neither. A door that holds a switch
+starts each row from the other side of what it is sent, so a row shows the door wrote it.
 """
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
+from table_rows import row
+from test_safety_flags_reject_truthy_strings import (
+    JSON_NO,
+    JSON_REFUSED,
+    JSON_YES,
+    WORD_NEITHER,
+    WORD_NEITHER_NOT_BLANK,
+    WORD_NO,
+    WORD_YES,
+    spells,
+)
 
 from personalclaw.agents.native import read_gate
 from personalclaw.agents.native.builtin_tools import NativeBuiltinToolProvider
 
-#: The ways a caller says no, as a boolean and as text in any case.
-NO = [False, "false", "False", "no", " NO ", "0", "off"]
-#: The ways a caller says yes.
-YES = [True, "true", "TRUE", "yes", " on ", "1"]
-#: What says neither: a blank, another word, a number standing in for a boolean.
-NEITHER = ["", "maybe", 1]
+pytestmark = pytest.mark.security
+
+#: What a door does with a value it refuses, in place of reading it.
+REFUSED = "refused"
+
+
+def _starts_on(sent: object) -> bool:
+    """Where a switch starts before it is sent *sent*: off before a yes, on before a no or a
+    value that spells neither, so each row shows the door wrote what it read, or wrote nothing."""
+    return spells(sent) is not True
 
 
 @pytest.fixture(autouse=True)
@@ -47,168 +72,106 @@ def _fresh_read_ledger():
 # ── edit_file: replace_all ───────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture
-def groceries(tmp_path):
-    (tmp_path / "list.md").write_text("- milk\n- eggs\n- milk\n", encoding="utf-8")
-    return tmp_path
-
-
-async def _replace(root: Path, replace_all):
-    tools = NativeBuiltinToolProvider(root, session_key="boolean-edit")
+async def _edit(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> str:
+    """``"every match"``, or ``"no match"`` when it refused an edit that matched twice."""
+    (scratch / "list.md").write_text("- milk\n- eggs\n- milk\n", encoding="utf-8")
+    tools = NativeBuiltinToolProvider(scratch, session_key=f"boolean-edit-{scratch.name}")
     assert (await tools.invoke("read_file", {"path": "list.md"})).success
-    return await tools.invoke(
+    result = await tools.invoke(
         "edit_file",
-        {"path": "list.md", "old_str": "milk", "new_str": "oat milk", "replace_all": replace_all},
+        {"path": "list.md", "old_str": "milk", "new_str": "oat milk", "replace_all": sent},
     )
+    text = (scratch / "list.md").read_text()
+    if result.success:
+        assert text == "- oat milk\n- eggs\n- oat milk\n"
+        return "every match"
+    assert "matched 2 times" in result.error and text == "- milk\n- eggs\n- milk\n"
+    return "no match"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("sent", NO + NEITHER)
-async def test_an_edit_not_sent_a_yes_changes_no_match_of_two(groceries, sent):
-    result = await _replace(groceries, sent)
-    assert not result.success and "matched 2 times" in result.error
-    assert (groceries / "list.md").read_text() == "- milk\n- eggs\n- milk\n"
+# ── grep and glob: regex and ignore_case ─────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("sent", YES)
-async def test_an_edit_sent_a_yes_replaces_every_match(groceries, sent):
-    result = await _replace(groceries, sent)
-    assert result.success, result.error
-    assert (groceries / "list.md").read_text() == "- oat milk\n- eggs\n- oat milk\n"
-
-
-# ── grep: regex ──────────────────────────────────────────────────────────────────────────────
-
-
-@pytest.fixture
-def notes(tmp_path):
-    (tmp_path / "notes.md").write_text("version a.c is out\nabc is the plan\n", encoding="utf-8")
-    return tmp_path
-
-
-async def _grep(root: Path, **args) -> str:
-    result = await NativeBuiltinToolProvider(root).invoke("grep", args)
-    assert result.success, result.error
-    return result.output
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("sent", NO + NEITHER)
-async def test_grep_not_sent_a_yes_searches_for_the_text(notes, sent):
-    out = await _grep(notes, query="a.c", regex=sent)
-    assert "version a.c is out" in out and "abc is the plan" not in out
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("sent", YES)
-async def test_grep_sent_a_yes_searches_for_a_regular_expression(notes, sent):
-    out = await _grep(notes, query="a.c", regex=sent)
-    assert "version a.c is out" in out and "abc is the plan" in out
-
-
-# ── glob and grep: ignore_case, read by the same reader ──────────────────────────────────────
-
-
-@pytest.fixture
-def appointments(tmp_path):
-    (tmp_path / "plan.md").write_text("Dentist at four\nfill in the dentist forms\n", "utf-8")
-    return tmp_path
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("sent", NO)
-async def test_ignore_case_sent_a_no_matches_the_case_exactly(appointments, sent):
-    out = await _grep(appointments, query="dentist", ignore_case=sent)
-    assert "dentist forms" in out and "Dentist at four" not in out
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("sent", YES)
-async def test_ignore_case_sent_a_yes_ignores_a_capital(appointments, sent):
-    out = await _grep(appointments, query="DENTIST", ignore_case=sent)
-    assert "dentist forms" in out and "Dentist at four" in out
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("tool, args", [("grep", {"query": "dentist"}), ("glob", {"pattern": "*"})])
-@pytest.mark.parametrize("sent", ["sometimes", 1, 0])
-async def test_an_ignore_case_that_spells_neither_is_refused(appointments, tool, args, sent):
-    result = await NativeBuiltinToolProvider(appointments).invoke(
-        tool, {**args, "ignore_case": sent}
+async def _grep_regex(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> str:
+    (scratch / "notes.md").write_text("version a.c is out\nabc is the plan\n", encoding="utf-8")
+    result = await NativeBuiltinToolProvider(scratch).invoke(
+        "grep", {"query": "a.c", "regex": sent}
     )
-    assert not result.success and "ignore_case must be true or false" in result.error
+    assert result.success, result.error
+    assert "version a.c is out" in result.output
+    return "a regular expression" if "abc is the plan" in result.output else "the text"
+
+
+_PLAN = "Dentist at four\nfill in the dentist forms\n"
+
+
+async def _grep_case(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> str:
+    (scratch / "plan.md").write_text(_PLAN, "utf-8")
+    result = await NativeBuiltinToolProvider(scratch).invoke(
+        "grep", {"query": "dentist", "ignore_case": sent}
+    )
+    if not result.success:
+        assert "ignore_case must be true or false" in result.error
+        return REFUSED
+    assert "dentist forms" in result.output
+    return "any case" if "Dentist at four" in result.output else "the case as sent"
+
+
+async def _glob_case(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> str:
+    (scratch / "Plan.md").write_text(_PLAN, "utf-8")
+    result = await NativeBuiltinToolProvider(scratch).invoke(
+        "glob", {"pattern": "plan.md", "ignore_case": sent}
+    )
+    if not result.success:
+        assert "ignore_case must be true or false" in result.error
+        return REFUSED
+    return "any case" if "Plan.md" in result.output else "the case as sent"
 
 
 # ── knowledge_update: is_pinned and is_archived ──────────────────────────────────────────────
 
 
-@pytest.fixture
-def library(tmp_path, monkeypatch):
+def _library(scratch: Path, mp: pytest.MonkeyPatch):
     import personalclaw.knowledge as knowledge_pkg
     from personalclaw.agents.native import builtin_tools
     from personalclaw.knowledge.store import KnowledgeStore
 
-    store = KnowledgeStore(str(tmp_path / "k.db"))
-    monkeypatch.setattr(knowledge_pkg, "get_knowledge_store", lambda *a, **k: store)
-    monkeypatch.setattr(builtin_tools, "_enrich_in_background", lambda *a, **k: None)
+    store = KnowledgeStore(str(scratch / "k.db"))
+    mp.setattr(knowledge_pkg, "get_knowledge_store", lambda *a, **k: store)
+    mp.setattr(builtin_tools, "_enrich_in_background", lambda *a, **k: None)
     return store
 
 
-def _note(library, **switches) -> str:
-    item_id = library.create_typed_item(item_type="note", title="Soup", content="leek and potato")
-    if switches:
-        library.update_item(item_id, **switches)
-    return item_id
+def _knowledge_switch(switch: str):
+    async def drive(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> object:
+        """The switch as stored after the call, or refused with nothing of the call applied."""
+        library = _library(scratch, mp)
+        item = library.create_typed_item(item_type="note", title="Soup", content="leek and potato")
+        start = int(_starts_on(sent))
+        library.update_item(item, **{switch: start})
+        # A value to refuse comes with an edit beside it, so a refusal shows nothing was applied.
+        edit = {"title": "Leek soup"} if spells(sent) is None else {}
+        result = await NativeBuiltinToolProvider().invoke(
+            "knowledge_update", {"id": item, **edit, switch: sent}
+        )
+        stored = library.get_item(item)
+        if not result.success:
+            assert f"{switch} is true or false" in result.error
+            assert (stored["title"], stored[switch]) == ("Soup", start), "the call was applied"
+            return REFUSED
+        return bool(stored[switch])
 
-
-SWITCHES = ["is_archived", "is_pinned"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("switch", SWITCHES)
-@pytest.mark.parametrize("sent", NO)
-async def test_a_knowledge_switch_sent_a_no_is_off(library, switch, sent):
-    item_id = _note(library, **{switch: 1})
-    result = await NativeBuiltinToolProvider().invoke(
-        "knowledge_update", {"id": item_id, switch: sent}
-    )
-    assert result.success, result.error
-    assert library.get_item(item_id)[switch] == 0
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("switch", SWITCHES)
-@pytest.mark.parametrize("sent", YES)
-async def test_a_knowledge_switch_sent_a_yes_is_on(library, switch, sent):
-    item_id = _note(library)
-    result = await NativeBuiltinToolProvider().invoke(
-        "knowledge_update", {"id": item_id, switch: sent}
-    )
-    assert result.success, result.error
-    assert library.get_item(item_id)[switch] == 1
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("switch", SWITCHES)
-@pytest.mark.parametrize("sent", NEITHER)
-async def test_a_knowledge_switch_that_spells_neither_is_refused(library, switch, sent):
-    item_id = _note(library, **{switch: 1})
-    result = await NativeBuiltinToolProvider().invoke(
-        "knowledge_update", {"id": item_id, "title": "Leek soup", switch: sent}
-    )
-    assert not result.success and f"{switch} is true or false" in result.error
-    stored = library.get_item(item_id)
-    assert (stored["title"], stored[switch]) == ("Soup", 1), "nothing of the call was applied"
+    return drive
 
 
 # ── code_map: refresh ────────────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture
-def rebuilt(tmp_path, monkeypatch):
-    """The workspaces ``code_map`` rebuilt an index for, over an index that already exists."""
+async def _code_map(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> str:
+    """Whether ``code_map`` rebuilt an index that already exists."""
     from personalclaw import codegraph
+    from personalclaw.agents.native.builtin_tools import bind_tool_context, reset_tool_context
+    from personalclaw.tool_providers.code_map import _open_index
 
     built: list[str] = []
 
@@ -222,109 +185,61 @@ def rebuilt(tmp_path, monkeypatch):
         def index(self):
             built.append(self._workspace)
 
-    monkeypatch.setattr(codegraph, "CodeGraphIndex", _Index)
-    return built
-
-
-def _open(tmp_path: Path, refresh):
-    from personalclaw.agents.native.builtin_tools import bind_tool_context, reset_tool_context
-    from personalclaw.tool_providers.code_map import _open_index
-
-    tokens = bind_tool_context(cwd=tmp_path)
+    mp.setattr(codegraph, "CodeGraphIndex", _Index)
+    tokens = bind_tool_context(cwd=scratch)
     try:
-        return _open_index({"symbol": "checkout", "refresh": refresh})
+        index, failure = _open_index({"symbol": "checkout", "refresh": sent})
     finally:
         reset_tool_context(tokens)
-
-
-@pytest.mark.parametrize("sent", NO + NEITHER)
-def test_code_map_not_sent_a_yes_reads_the_index_it_has(tmp_path, rebuilt, sent):
-    index, failure = _open(tmp_path, sent)
     assert failure is None and index is not None
-    assert rebuilt == []
-
-
-@pytest.mark.parametrize("sent", YES)
-def test_code_map_sent_a_yes_rebuilds_it(tmp_path, rebuilt, sent):
-    index, failure = _open(tmp_path, sent)
-    assert failure is None and rebuilt == [str(tmp_path.resolve())]
+    return "rebuilt" if built == [str(scratch.resolve())] else "kept"
 
 
 # ── in-process tools: the field spec refuses text, and a real boolean is itself ────────────────
 
 
-@pytest.fixture
-def asked(monkeypatch):
-    """What the workflow service was asked to do, instead of doing it."""
-    from personalclaw.workflows import service
+def _workflow_tool(tool: str, flag: str):
+    async def drive(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> object:
+        """What the workflow service was asked with, or refused before it was asked anything."""
+        from personalclaw.agents.native.tools import InProcessMcpToolProvider
+        from personalclaw.workflows import service
 
-    calls: list[tuple[str, dict]] = []
+        asked: list[dict] = []
 
-    def _rewind(run_id, node_id, **kwargs):
-        calls.append(("rewind", kwargs))
-        return {"ok": True, "run_id": run_id}
+        def _record(run_id, *args, **kwargs):
+            asked.append(kwargs)
+            return {"ok": True, "run_id": run_id}
 
-    def _resume(run_id, **kwargs):
-        calls.append(("resume", kwargs))
-        return {"ok": True, "run_id": run_id}
+        mp.setattr(service, "rewind_run", _record)
+        mp.setattr(service, "resume_run", _record)
+        tools = InProcessMcpToolProvider(
+            module="personalclaw.mcp_workflows",
+            provider_name="personalclaw-workflows",
+            display="PersonalClaw Workflows",
+        )
+        args = {"node_id": "publish"} if tool == "workflow_rewind" else {}
+        result = await tools.invoke(tool, {"run_id": "a1b2c3d4", **args, flag: sent})
+        if not result.success:
+            assert f"{flag}: expected bool" in (result.error or "") and asked == []
+            return REFUSED
+        [kwargs] = asked
+        return kwargs[flag]
 
-    monkeypatch.setattr(service, "rewind_run", _rewind)
-    monkeypatch.setattr(service, "resume_run", _resume)
-    return calls
-
-
-async def _workflow_tool(name: str, **args):
-    from personalclaw.agents.native.tools import InProcessMcpToolProvider
-
-    tools = InProcessMcpToolProvider(
-        module="personalclaw.mcp_workflows",
-        provider_name="personalclaw-workflows",
-        display="PersonalClaw Workflows",
-    )
-    return await tools.invoke(name, {"run_id": "a1b2c3d4", **args})
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "tool, flag",
-    [("workflow_rewind", "redo_effects"), ("workflow_rewind", "force")]
-    + [("workflow_resume", "always_allow")],
-)
-@pytest.mark.parametrize("sent", ["false", "no", "0", "", "true", "yes"])
-async def test_a_workflow_tool_sent_a_flag_as_text_runs_nothing(asked, tool, flag, sent):
-    """The field spec refuses it before the call runs, naming the field, so it is never read."""
-    args = {"node_id": "publish"} if tool == "workflow_rewind" else {}
-    result = await _workflow_tool(tool, **args, **{flag: sent})
-    assert not result.success and f"{flag}: expected bool" in (result.error or "")
-    assert asked == []
+    return drive
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "tool, flag",
-    [("workflow_rewind", "redo_effects"), ("workflow_rewind", "force")]
-    + [("workflow_resume", "always_allow")],
-)
-async def test_a_workflow_tool_reads_a_real_boolean_as_itself(asked, tool, flag):
-    args = {"node_id": "publish"} if tool == "workflow_rewind" else {}
-    for sent in (False, True):
-        assert (await _workflow_tool(tool, **args, **{flag: sent})).success
-    assert [kwargs[flag] for _, kwargs in asked] == [False, True]
+# ── an automation's switches: the agent's patch and the control bridge ─────────────────────────
 
 
-# ── an automation's switches: the agent's patch, the stored row, the control bridge ────────────
-
-
-@pytest.fixture
-def automation(tmp_path, monkeypatch):
+def _automation(scratch: Path, mp: pytest.MonkeyPatch) -> str:
     """A switched-on automation the owner made, in a store under a scratch home."""
     from personalclaw.triggers import tools as T
     from personalclaw.triggers.store import TriggerStore
 
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    mp.setenv("PERSONALCLAW_HOME", str(scratch))
+    mp.setattr("personalclaw.config.loader.config_dir", lambda: scratch)
     made = T.create(
-        TriggerStore(base_dir=tmp_path),
+        TriggerStore(base_dir=scratch),
         name="Nightly backup reminder",
         kind="clock",
         spec={"kind": "cron", "expr": "0 3 * * *"},
@@ -333,7 +248,7 @@ def automation(tmp_path, monkeypatch):
         owner_consented=True,
     )
     assert made.ok, made.text
-    return tmp_path, made.data["trigger"]["id"]
+    return made.data["trigger"]["id"]
 
 
 def _stored(home: Path, trigger_id: str):
@@ -345,187 +260,216 @@ def _stored(home: Path, trigger_id: str):
     return loaded.trigger
 
 
-def _patch(home: Path, trigger_id: str, patch: dict):
-    from personalclaw.triggers import tools as T
-    from personalclaw.triggers.store import TriggerStore
+def _patch_switch(switch: str, start: bool | None = None):
+    """*start* is where the switch starts; left out, the other side of what each row sends."""
 
-    return T.update(TriggerStore(base_dir=home), trigger_id=trigger_id, patch=patch)
+    async def drive(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> object:
+        """The switch as stored after the patch, or refused with nothing of the patch applied."""
+        from personalclaw.triggers import tools as T
+        from personalclaw.triggers.store import TriggerStore
 
+        tid = _automation(scratch, mp)
+        store = TriggerStore(base_dir=scratch)
+        begin = _starts_on(sent) if start is None else start
+        if switch == "enabled" and not begin:
+            assert T.set_paused(store, trigger_id=tid, paused=True).ok
+        if switch == "yield_to_user" and begin:
+            assert T.update(store, trigger_id=tid, patch={switch: True}).ok
+        assert getattr(_stored(scratch, tid), switch) is begin
+        result = T.update(store, trigger_id=tid, patch={"name": "Renamed", switch: sent})
+        stored = _stored(scratch, tid)
+        if not result.ok:
+            assert f"{switch} is true or false" in result.text
+            assert stored.name == "Nightly backup reminder", "the patch was applied"
+            assert getattr(stored, switch) is begin
+            return REFUSED
+        return getattr(stored, switch)
 
-def _switch_off(home: Path, trigger_id: str) -> None:
-    from personalclaw.triggers import tools as T
-    from personalclaw.triggers.store import TriggerStore
-
-    assert T.set_paused(TriggerStore(base_dir=home), trigger_id=trigger_id, paused=True).ok
-
-
-@pytest.mark.parametrize("sent", NO)
-def test_a_patch_that_switches_an_automation_off_switches_it_off(automation, sent):
-    home, tid = automation
-    result = _patch(home, tid, {"enabled": sent})
-    assert result.ok, result.text
-    assert _stored(home, tid).enabled is False
-
-
-@pytest.mark.parametrize("sent", YES)
-def test_a_patch_that_switches_an_automation_on_switches_it_on(automation, sent):
-    home, tid = automation
-    _switch_off(home, tid)
-    result = _patch(home, tid, {"enabled": sent})
-    assert result.ok, result.text
-    assert _stored(home, tid).enabled is True
+    return drive
 
 
-@pytest.mark.parametrize("switch", ["enabled", "yield_to_user"])
-@pytest.mark.parametrize("sent", NEITHER)
-def test_a_patch_switch_that_spells_neither_changes_nothing(automation, switch, sent):
-    home, tid = automation
-    result = _patch(home, tid, {"name": "Renamed", switch: sent})
-    assert not result.ok and f"{switch} is true or false" in result.text
-    stored = _stored(home, tid)
-    assert (stored.name, stored.enabled, stored.yield_to_user) == (
-        "Nightly backup reminder",
-        True,
-        False,
-    )
-
-
-@pytest.mark.parametrize("sent, yields", [(s, False) for s in NO] + [(s, True) for s in YES])
-def test_a_patch_sets_yield_to_user_to_the_word_it_spells(automation, sent, yields):
-    home, tid = automation
-    assert _patch(home, tid, {"yield_to_user": sent}).ok
-    assert _stored(home, tid).yield_to_user is yields
-
-
-@pytest.mark.parametrize(
-    "stored, on",
-    [("false", False), ("no", False), ("0", False), ("", False), ("maybe", False)]
-    + [(False, False), ("true", True), ("yes", True), (True, True), (1, True)],
-)
-def test_a_stored_switch_is_read_as_the_word_it_spells(stored, on):
-    """A row an agent's patch already wrote as text reads as what it said; one nothing can read
-    is off, because a switch that runs things on its own must not come on by a guess."""
-    from personalclaw.triggers.models import parse_trigger
-
-    row = {
-        "id": "clock:backup",
-        "name": "Nightly backup reminder",
-        "kind": "clock",
-        "spec": {"kind": "cron", "expr": "0 3 * * *"},
-        "enabled": stored,
-        "yield_to_user": stored,
-    }
-    trigger, _ = parse_trigger(row)
-    assert (trigger.enabled, trigger.yield_to_user) == (on, on)
-
-
-def test_a_row_that_never_said_is_on_and_does_not_yield():
-    from personalclaw.triggers.models import parse_trigger
-
-    trigger, _ = parse_trigger(
-        {
-            "id": "clock:b",
-            "name": "B",
-            "kind": "clock",
-            "spec": {"kind": "cron", "expr": "0 3 * * *"},
-        }
-    )
-    assert (trigger.enabled, trigger.yield_to_user) == (True, False)
-
-
-async def _bridge_toggle(trigger_id: str, **params):
+async def _bridge(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> object:
+    """The automation as stored after the bridge toggled it, or refused and still as it was."""
     from personalclaw.inbound import bridge
+    from personalclaw.triggers import tools as T
+    from personalclaw.triggers.store import TriggerStore
 
-    return await bridge._toggle_automation(object(), {"id": trigger_id, **params})
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("sent", NO)
-async def test_the_bridge_switches_an_automation_off_on_a_no(automation, sent):
-    home, tid = automation
-    assert await _bridge_toggle(tid, enabled=sent) == {"id": tid, "enabled": False}
-    assert _stored(home, tid).enabled is False
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("sent", YES)
-async def test_the_bridge_switches_an_automation_on_on_a_yes(automation, sent):
-    home, tid = automation
-    _switch_off(home, tid)
-    assert await _bridge_toggle(tid, enabled=sent) == {"id": tid, "enabled": True}
-    assert _stored(home, tid).enabled is True
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("sent", NEITHER)
-async def test_the_bridge_refuses_an_enabled_that_spells_neither(automation, sent):
-    home, tid = automation
-    with pytest.raises(ValueError, match="enabled is true or false"):
-        await _bridge_toggle(tid, enabled=sent)
-    assert _stored(home, tid).enabled is True
-
-
-@pytest.mark.asyncio
-async def test_the_bridge_left_without_enabled_switches_it_over(automation):
-    home, tid = automation
-    assert await _bridge_toggle(tid) == {"id": tid, "enabled": False}
-    assert await _bridge_toggle(tid) == {"id": tid, "enabled": True}
+    tid = _automation(scratch, mp)
+    start = _starts_on(sent)
+    if not start:
+        assert T.set_paused(TriggerStore(base_dir=scratch), trigger_id=tid, paused=True).ok
+    try:
+        answer = await bridge._toggle_automation(object(), {"id": tid, "enabled": sent})
+    except ValueError as refused:
+        assert "enabled is true or false" in str(refused)
+        assert _stored(scratch, tid).enabled is start
+        return REFUSED
+    assert answer == {"id": tid, "enabled": _stored(scratch, tid).enabled}
+    return answer["enabled"]
 
 
 # ── an agent's question card: multiSelect ────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(
-    "sent, multiple", [(s, False) for s in NO + NEITHER] + [(s, True) for s in YES]
-)
-def test_a_question_card_takes_several_answers_only_on_a_yes(sent, multiple):
+async def _question_card(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> str:
     from personalclaw.validation import validate_ask_user_question
 
     [card] = validate_ask_user_question(
         {"questions": [{"question": "Which days?", "options": ["Mon", "Tue"], "multiSelect": sent}]}
     )
-    assert card["multiSelect"] is multiple
+    return "several answers" if card["multiSelect"] is True else "one answer"
 
 
 # ── a bulk pin or favourite: value ───────────────────────────────────────────────────────────
 
 
-@pytest.fixture
-def shelf(tmp_path):
+def _bulk(op: str, column: str):
+    async def drive(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> object:
+        """The switch after a bulk call, or refused and still as it was."""
+        from personalclaw.knowledge.store import KnowledgeStore
+
+        shelf = KnowledgeStore(scratch / "k.db")
+        item = shelf.create_typed_item(item_type="note", title="Soup", content="leek")
+        start = _starts_on(sent)
+        if start:
+            shelf.bulk_apply(op, [item], value=True)
+        try:
+            done = shelf.bulk_apply(op, [item], value=sent)
+        except ValueError as refused:
+            assert f"{op} requires value true or false" in str(refused)
+            assert bool(shelf.get_item(item)[column]) is start
+            return REFUSED
+        assert done["changed"] == [item], done
+        return bool(shelf.get_item(item)[column])
+
+    return drive
+
+
+# ── reset_tools: one boolean per tool group ──────────────────────────────────────────────────
+
+
+async def _reset_tools(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> str:
+    from test_tool_boolean_census import _runtime
+
+    runtime = await _runtime(scratch)
+    start = _starts_on(sent)
+    runtime._reset_tools({"groups": {"schedule": start}})
+    assert ("schedule" in runtime._active_groups) is start
+    runtime._reset_tools({"groups": {"schedule": sent}})
+    return "on" if "schedule" in runtime._active_groups else "off"
+
+
+class Door(NamedTuple):
+    """A tool door, how it is driven, and what it does with each answer."""
+
+    name: str
+    drive: Callable[[Path, pytest.MonkeyPatch, object], Awaitable[object]]
+    yes: object
+    no: object
+    neither: object
+    #: Whether the door takes words, or only a JSON boolean (an in-process field spec).
+    words: bool = True
+    #: What a door that takes words is sent for neither.
+    spells_neither: tuple[object, ...] = WORD_NEITHER
+
+
+#: Every door the defect reached, each with what a yes, a no and a value that spells neither does.
+DOORS = [
+    Door("edit_file.replace_all", _edit, "every match", "no match", "no match"),
+    Door("grep.regex", _grep_regex, "a regular expression", "the text", "the text"),
+    # A blank ignore_case is the field left out: smart case.
+    *[
+        Door(name, drive, "any case", "the case as sent", REFUSED, True, WORD_NEITHER_NOT_BLANK)
+        for name, drive in (("grep.ignore_case", _grep_case), ("glob.ignore_case", _glob_case))
+    ],
+    Door("knowledge_update.is_archived", _knowledge_switch("is_archived"), True, False, REFUSED),
+    Door("knowledge_update.is_pinned", _knowledge_switch("is_pinned"), True, False, REFUSED),
+    Door("code_map.refresh", _code_map, "rebuilt", "kept", "kept"),
+    *[
+        Door(f"{tool}.{flag}", _workflow_tool(tool, flag), True, False, REFUSED, words=False)
+        for tool, flag in (
+            ("workflow_rewind", "redo_effects"),
+            ("workflow_rewind", "force"),
+            ("workflow_resume", "always_allow"),
+        )
+    ],
+    Door("automation_update.enabled, on", _patch_switch("enabled", True), True, False, REFUSED),
+    Door("automation_update.enabled, off", _patch_switch("enabled", False), True, False, REFUSED),
+    Door("automation_update.yield_to_user", _patch_switch("yield_to_user"), True, False, REFUSED),
+    Door("toggle_automation.enabled", _bridge, True, False, REFUSED),
+    Door(
+        "ask_user_question.multiSelect",
+        _question_card,
+        "several answers",
+        "one answer",
+        "one answer",
+    ),
+    Door("knowledge bulk pin.value", _bulk("pin", "is_pinned"), True, False, REFUSED),
+    Door("knowledge bulk favorite.value", _bulk("favorite", "favorited"), True, False, REFUSED),
+    Door("reset_tools.groups.*", _reset_tools, "on", "off", "off"),
+]
+
+
+def _sent(door: Door, answer: str) -> tuple[object, ...]:
+    """What *door* is sent for *answer*. A door that reads words is sent the word and, for a yes
+    or a no, the real boolean too: a real boolean is still itself there."""
+    words, json = {
+        "yes": ((WORD_YES,), JSON_YES),
+        "no": ((WORD_NO,), JSON_NO),
+        "neither": (door.spells_neither, JSON_REFUSED),
+    }[answer]
+    if not door.words:
+        return (json,)
+    return words if answer == "neither" else (*words, json)
+
+
+async def _answers(subtests, tmp_path: Path, answer: str) -> None:
+    assert len(DOORS) == 18, "a door was dropped from the table"
+    assert len(DOORS) == len({door.name for door in DOORS}), "two doors share a name"
+    for at, door in enumerate(DOORS):
+        for value in _sent(door, answer):
+            with row(subtests, door=door.name, sent=repr(value)):
+                scratch = tmp_path / f"door-{at}-{value!r}"
+                scratch.mkdir()
+                with pytest.MonkeyPatch.context() as mp:
+                    read_gate.reset_all()
+                    got = await door.drive(scratch, mp, value)
+                expected = getattr(door, answer)
+                assert got == expected, f"{door.name} sent {value!r} did {got!r}, not {expected!r}"
+
+
+@pytest.mark.asyncio
+async def test_every_tool_door_does_what_a_yes_says(subtests, tmp_path):
+    await _answers(subtests, tmp_path, "yes")
+
+
+@pytest.mark.asyncio
+async def test_every_tool_door_does_what_a_no_says(subtests, tmp_path):
+    await _answers(subtests, tmp_path, "no")
+
+
+@pytest.mark.asyncio
+async def test_every_tool_door_reads_what_spells_neither_as_its_safe_value_or_refuses_it(
+    subtests, tmp_path
+):
+    await _answers(subtests, tmp_path, "neither")
+
+
+# ── what a door does when the boolean is left out ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_bridge_left_without_enabled_switches_it_over(tmp_path, monkeypatch):
+    from personalclaw.inbound import bridge
+
+    tid = _automation(tmp_path, monkeypatch)
+    assert await bridge._toggle_automation(object(), {"id": tid}) == {"id": tid, "enabled": False}
+    assert await bridge._toggle_automation(object(), {"id": tid}) == {"id": tid, "enabled": True}
+
+
+def test_a_bulk_switch_left_without_a_value_switches_it_on(tmp_path):
     from personalclaw.knowledge.store import KnowledgeStore
 
-    return KnowledgeStore(tmp_path / "k.db")
-
-
-OPS = [("pin", "is_pinned"), ("favorite", "favorited")]
-
-
-@pytest.mark.parametrize("op, column", OPS)
-@pytest.mark.parametrize("sent", NO)
-def test_a_bulk_switch_sent_a_no_switches_it_off(shelf, op, column, sent):
-    item = shelf.create_typed_item(item_type="note", title="Soup", content="leek")
-    shelf.bulk_apply(op, [item], value=True)
-    assert shelf.bulk_apply(op, [item], value=sent)["changed"] == [item]
-    assert not shelf.get_item(item)[column]
-
-
-@pytest.mark.parametrize("op, column", OPS)
-@pytest.mark.parametrize("sent", YES)
-def test_a_bulk_switch_sent_a_yes_switches_it_on(shelf, op, column, sent):
-    item = shelf.create_typed_item(item_type="note", title="Soup", content="leek")
-    assert shelf.bulk_apply(op, [item], value=sent)["changed"] == [item]
-    assert shelf.get_item(item)[column]
-
-
-@pytest.mark.parametrize("op, column", OPS)
-@pytest.mark.parametrize("sent", NEITHER)
-def test_a_bulk_switch_that_spells_neither_is_refused(shelf, op, column, sent):
-    item = shelf.create_typed_item(item_type="note", title="Soup", content="leek")
-    with pytest.raises(ValueError, match=f"{op} requires value true or false"):
-        shelf.bulk_apply(op, [item], value=sent)
-    assert not shelf.get_item(item)[column]
-
-
-def test_a_bulk_switch_left_without_a_value_switches_it_on(shelf):
+    shelf = KnowledgeStore(tmp_path / "k.db")
     item = shelf.create_typed_item(item_type="note", title="Soup", content="leek")
     assert shelf.bulk_apply("pin", [item])["changed"] == [item]

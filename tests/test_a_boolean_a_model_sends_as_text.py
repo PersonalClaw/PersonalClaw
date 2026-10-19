@@ -13,14 +13,24 @@ not. Each was read with ``bool()`` or an identity check, and ``bool("false")`` i
 Only a real boolean, or a word that spells one (``safety_flags.yes_or_no``), decides. Anything
 else (a blank, an unrecognised word, a number) is the field's safe value: not met, not finished,
 not repeatable, attended.
+
+The spellings, and what ``yes_or_no`` makes of each, are rows of the one table in
+``test_safety_flags_reject_truthy_strings``. Each field here is read through the code that reads it
+three times, once per answer, each a row of one of the three tests below; the journeys after them
+drive the task tools and the loop end to end.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+from typing import NamedTuple
 from unittest.mock import patch
 
 import pytest
+from table_rows import row
+from test_safety_flags_reject_truthy_strings import WORD_NEITHER, WORD_NO, WORD_YES
 
 from personalclaw.agents.native.builtin_tools import NativeBuiltinToolProvider
 from personalclaw.tasks import registry
@@ -33,13 +43,6 @@ from personalclaw.tasks.models import (
 
 pytestmark = pytest.mark.security
 
-
-#: Each way a caller spells yes, and no. A real boolean included: it must still pass through.
-YES = [True, "true", "TRUE", " yes ", "1", "on"]
-NO = [False, "false", "False", " no ", "0", "off"]
-#: What spells neither, so each field reads it as its safe value. A number is a type confused
-#: with a boolean, and a blank says nothing.
-NEITHER = ["", "   ", "maybe", "met", 1, 0, 1.5, None, [], {"met": True}]
 
 CRITERION = "Proofread by a second reader"
 
@@ -62,57 +65,123 @@ def _created(output: str) -> str:
     return output.split("created task ")[1].split(":")[0]
 
 
-class TestTheReading:
-    @pytest.mark.parametrize("value", YES)
-    def test_a_word_for_yes_is_yes(self, value):
-        from personalclaw.safety_flags import yes_or_no
-
-        assert yes_or_no(value) is True
-
-    @pytest.mark.parametrize("value", NO)
-    def test_a_word_for_no_is_no(self, value):
-        from personalclaw.safety_flags import yes_or_no
-
-        assert yes_or_no(value) is False
-
-    @pytest.mark.parametrize("value", NEITHER)
-    def test_anything_else_is_neither(self, value):
-        from personalclaw.safety_flags import yes_or_no
-
-        assert yes_or_no(value) is None
+# ── the fields, each through the code that reads it ──────────────────────────────────────────
 
 
-class TestAnExitCriterion:
-    @pytest.mark.parametrize("sent", YES)
-    def test_a_yes_is_met(self, sent):
-        criterion = normalize_exit_criterion({"description": CRITERION, "met": sent})
-        assert (criterion["status"], criterion["met"]) == ("complete", True)
+async def _criterion(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> bool:
+    """Whether an exit criterion sent *sent* is met, where it is written and where it is read."""
+    criterion = normalize_exit_criterion({"description": CRITERION, "met": sent})
+    met = criterion["met"]
+    assert criterion["status"] == ("complete" if met else "incomplete")
+    [written] = coerce_task_field("exit_criteria", [{"description": CRITERION, "met": sent}])
+    assert written["met"] is met, "the write and the read disagree"
+    task = Task.from_dict(
+        {"id": "t1", "title": "T", "exit_criteria": [{"description": CRITERION, "met": sent}]}
+    )
+    assert task.can_mark_complete() is met
+    assert task.incomplete_exit_criteria() == ([] if met else [CRITERION])
+    return met
 
-    @pytest.mark.parametrize("sent", NO + NEITHER)
-    def test_anything_else_is_not_met(self, sent):
-        criterion = normalize_exit_criterion({"description": CRITERION, "met": sent})
-        assert (criterion["status"], criterion["met"]) == ("incomplete", False)
 
-    @pytest.mark.parametrize("sent", NO + NEITHER)
-    def test_the_write_and_the_read_agree(self, sent):
-        [written] = coerce_task_field("exit_criteria", [{"description": CRITERION, "met": sent}])
-        assert written["met"] is False
-        task = Task.from_dict(
-            {"id": "t1", "title": "T", "exit_criteria": [{"description": CRITERION, "met": sent}]}
+async def _plan_step(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> bool:
+    return normalize_action_plan_item({"content": "build", "completed": sent}, 0)["completed"]
+
+
+async def _repeatable(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> bool:
+    """Whether ``task_list_create`` filed the list under Repeatable."""
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    home = scratch / "home"
+    (scratch / "ws").mkdir()
+    mp.setattr("personalclaw.tasks.native.config_dir", lambda: home)
+    mp.setattr("personalclaw.tasks.hierarchy.config_dir", lambda: home)
+    registry._providers.clear()
+    try:
+        made = await NativeBuiltinToolProvider(scratch / "ws").invoke(
+            "task_list_create", {"name": "Weekly review", "repeatable": sent}
         )
-        assert task.can_mark_complete() is False
-        assert task.incomplete_exit_criteria() == [CRITERION]
+        assert made.success, made.error
+        project = HierarchyStore().get_project(made.output.split("project_id=")[1].rstrip(")"))
+        assert project is not None
+        return project.name == "Repeatable"
+    finally:
+        registry._providers.clear()
 
 
-class TestAnActionPlanStep:
-    @pytest.mark.parametrize("sent", YES)
-    def test_a_yes_is_finished(self, sent):
-        assert normalize_action_plan_item({"content": "build", "completed": sent}, 0)["completed"]
+def _attended(kind: str):
+    async def drive(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> bool:
+        """Whether the run ``project_run_create`` made is attended."""
+        from personalclaw.agents.native import sdlc_tools
+        from personalclaw.loop import store
 
-    @pytest.mark.parametrize("sent", NO + NEITHER)
-    def test_anything_else_is_not(self, sent):
-        step = normalize_action_plan_item({"content": "build", "completed": sent}, 0)
-        assert step["completed"] is False
+        mp.setattr("personalclaw.loop.files.config_dir", lambda: scratch)
+        made = await sdlc_tools.project_create(
+            {"kind": kind, "task": "Add a health endpoint to the order service", "attended": sent}
+        )
+        assert made.success, made.error
+        [loop] = store.list_all()
+        return loop.attended
+
+    return drive
+
+
+class Field(NamedTuple):
+    """A boolean a model sends, how it is read, and what each answer reads as."""
+
+    name: str
+    read: Callable[[Path, pytest.MonkeyPatch, object], Awaitable[bool]]
+    yes: bool
+    no: bool
+    neither: bool
+
+
+#: Every field the defect reached. What spells neither is the field's safe value: not met, not
+#: finished, not repeatable, attended.
+FIELDS = [
+    Field("task exit_criteria[].met", _criterion, True, False, False),
+    Field("task action_plan[].completed", _plan_step, True, False, False),
+    Field("task_list_create.repeatable", _repeatable, True, False, False),
+    Field("project_run_create.attended, code", _attended("code"), True, False, True),
+    Field("project_run_create.attended, goal", _attended("goal"), True, False, True),
+]
+
+
+async def _answers(subtests, tmp_path: Path, answer: str) -> None:
+    """Each field sent the word for *answer* and, for a yes or a no, the real boolean too."""
+    assert len(FIELDS) == 5, "a field was dropped from the table"
+    assert len(FIELDS) == len({field.name for field in FIELDS}), "two fields share a name"
+    sent = {"yes": (WORD_YES, True), "no": (WORD_NO, False), "neither": WORD_NEITHER}[answer]
+    for at, field in enumerate(FIELDS):
+        for value in sent:
+            with row(subtests, field=field.name, sent=repr(value)):
+                scratch = tmp_path / f"field-{at}-{value!r}"
+                scratch.mkdir()
+                with pytest.MonkeyPatch.context() as mp:
+                    got = await field.read(scratch, mp, value)
+                expected = getattr(field, answer)
+                assert (
+                    got is expected
+                ), f"{field.name} sent {value!r} read {got!r}, not {expected!r}"
+
+
+@pytest.mark.asyncio
+async def test_every_field_a_model_sends_reads_a_yes_as_yes(subtests, tmp_path):
+    await _answers(subtests, tmp_path, "yes")
+
+
+@pytest.mark.asyncio
+async def test_every_field_a_model_sends_reads_a_no_as_no(subtests, tmp_path):
+    await _answers(subtests, tmp_path, "no")
+
+
+@pytest.mark.asyncio
+async def test_every_field_a_model_sends_reads_what_spells_neither_as_its_safe_value(
+    subtests, tmp_path
+):
+    await _answers(subtests, tmp_path, "neither")
+
+
+# ── a task does not close on a criterion sent as "false" ─────────────────────────────────────
 
 
 class TestATaskDoesNotCloseOnMetSentAsFalse:
@@ -172,51 +241,10 @@ class TestATaskDoesNotCloseOnMetSentAsFalse:
         assert (await registry.get_task(tid)).status.value == "open"
 
 
-class TestATaskListMarkedRepeatable:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "sent, repeatable",
-        [(True, True), ("true", True), ("yes", True), (False, False), ("false", False)]
-        + [("no", False), ("0", False), ("maybe", False), (1, False)],
-    )
-    async def test_it_is_filed_under_repeatable_only_on_a_yes(self, tools, sent, repeatable):
-        from personalclaw.tasks.hierarchy import HierarchyStore
-
-        made = await tools.invoke("task_list_create", {"name": "Weekly review", "repeatable": sent})
-        assert made.success, made.error
-        project_id = made.output.split("project_id=")[1].rstrip(")")
-        project = HierarchyStore().get_project(project_id)
-        assert project is not None
-        assert (project.name == "Repeatable") is repeatable
-
-
 class TestARunTheAgentCreates:
     @pytest.fixture(autouse=True)
     def _loops_home(self, monkeypatch, tmp_path):
         monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
-
-    @pytest.mark.parametrize("kind", ["code", "goal"])
-    @pytest.mark.parametrize(
-        "sent, attended",
-        [(False, False), ("false", False), ("no", False), ("0", False), ("off", False)]
-        + [(True, True), ("true", True), ("", True), ("maybe", True), (0, True)],
-    )
-    def test_it_goes_unattended_only_on_a_no(self, kind, sent, attended):
-        from personalclaw.agents.native import sdlc_tools
-        from personalclaw.loop import store
-
-        made = asyncio.run(
-            sdlc_tools.project_create(
-                {
-                    "kind": kind,
-                    "task": "Add a health endpoint to the order service",
-                    "attended": sent,
-                }
-            )
-        )
-        assert made.success, made.error
-        [loop] = store.list_all()
-        assert loop.attended is attended
 
     @pytest.mark.parametrize("kind", ["code", "goal"])
     def test_a_run_nobody_said_was_unattended_asks(self, kind):
