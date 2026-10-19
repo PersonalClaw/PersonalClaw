@@ -13,7 +13,7 @@
 # header below).
 #
 # The `changes` job plans the run from the diff with main's planner (tools/ci/plan.py, #3945):
-# the browser-driven `e2e` job and `apps-contract` run only when the plan names them, so a diff
+# the browser-driven `e2e` jobs and `apps-contract` run only when the plan names them, so a diff
 # that cannot reach a rendered pixel does not pay for a Chromium. See that job's header for why
 # an unread plan runs them.
 #
@@ -180,8 +180,8 @@ jobs:
     # (`!cancelled()`), so even an unwritten output runs them.
     # tests/rails/test_ci_plan_step_tree.py runs this step as written against planted answers.
     #
-    # The browser run keeps its saving: the `e2e` job (MEASURED 2026-09-19 at 19.9-29.4 min when
-    # it was three jobs) is planned only for the diffs its inputs reach, as the ignore-list it
+    # The browser run keeps its saving: the `e2e` jobs (MEASURED 2026-09-19 at 19.9-29.4 min when
+    # it was three jobs) are planned only for the diffs their inputs reach, as the ignore-list it
     # replaces did. src/personalclaw/** is always in its reach: a backend diff can change the DOM
     # the browser run scans.
     runs-on: ubuntu-24.04
@@ -1054,8 +1054,8 @@ jobs:
         # (a text-*/bg-*/border-* class must compile to real CSS — a name with no
         # token emits NOTHING and styles silently vanish). A new hardcoded value, a
         # new bespoke element, or a new inert utility turns this step — and CI — red.
-        # (The axe-per-route a11y rail lives in web/e2e/ and runs in the `e2e` job below. It is a
-        # separate job because the harness boots a real gateway, so it needs the Python toolchain
+        # (The axe-per-route a11y rail lives in web/e2e/ and runs in the `e2e-shard` legs below. They
+        # are separate jobs because the harness boots a real gateway, so it needs the Python toolchain
         # too.)
         run: npm run test:web
       - name: test (desktop, node --test)
@@ -1095,15 +1095,15 @@ jobs:
       # Stdlib only, so the runner's python3 is enough.
       - name: bundled asset licences (built web)
         run: python3 scripts/check_asset_licenses.py --built-web
-      # Record what this build was built FROM, so the `e2e` job's preview can refuse a dist that
+      # Record what this build was built FROM, so each browser leg's preview can refuse a dist that
       # does not match its checkout (web/playwright.config.ts). This is the run's ONE vite build:
-      # the browser run serves it rather than building its own. The render smoke that used to run
-      # here is the `smoke` project, the first thing the `e2e` job's one Playwright run does.
+      # the browser legs serve it rather than building their own. The render smoke that used to run
+      # here is the `smoke` project, which an `e2e-shard` leg runs.
       - name: stamp the build (scripts/spa_dist_freshness.py)
         run: python3 scripts/spa_dist_freshness.py stamp
       # `include-hidden-files`: the stamp is `web/dist/.build-inputs.json`, and upload-artifact
-      # leaves dotfiles out by default, which would hand the `e2e` job an unstamped dist that its
-      # preview refuses.
+      # leaves dotfiles out by default, which would hand the browser legs an unstamped dist that
+      # their preview refuses.
       - name: upload the build (web-dist)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -1131,38 +1131,55 @@ jobs:
       - name: verify the wheel contract (contents · install from the wheel alone · boot · serve)
         run: uv run --no-project python scripts/verify_wheel.py --wheel "dist/*.whl"
 
-  e2e:
-    # ── Every browser spec, in ONE Playwright run, against the ONE build `web` made (#3939) ───────
-    # This job replaced four. `e2e-a11y` ran eleven `playwright test` steps, each rebuilding the SPA
-    # and booting a gateway (a 43-54 s floor apiece), and one red step skipped every step after it.
-    # `e2e-walkthrough`, `e2e-pwa` and `browse-live` each installed a Chromium of their own.
-    # Measured on main's green run 39083799842: 20.5 + 7.1 + 1.7 + 1.5 min across four runners,
-    # five Chromium installs and fourteen SPA builds per run.
+  e2e-shard:
+    # ── The browser specs that share a gateway, in two legs, against the ONE build `web` made ──────
+    # (#3939) One job replaced four: `e2e-a11y` ran eleven `playwright test` steps, each rebuilding
+    # the SPA and booting a gateway (a 43-54 s floor apiece), and one red step skipped every step
+    # after it. `e2e-walkthrough`, `e2e-pwa` and `browse-live` each installed a Chromium of their
+    # own. Measured on main's green run 39083799842: 20.5 + 7.1 + 1.7 + 1.5 min across four
+    # runners, five Chromium installs and fourteen SPA builds per run.
     #
-    # Now the `web` job builds and stamps the dashboard once and uploads it as `web-dist`. This job
-    # downloads it, installs Chromium once, and runs every spec but the visual rail in one
-    # invocation. web/playwright.config.ts decides the order: the render smoke first, reaching no
-    # gateway; then the specs that share the gateway, in parallel; then the stateful set, one at a
-    # time, and once more in an order drawn from a seed the report names. web/e2e/isolation.ts says
-    # which spec is which and why. One red spec hides none of the others, and the preview refuses a
-    # dist that does not match this checkout before any test runs.
+    # That one job then became the run's longest: 752 s on main's run 39174942130, 677 s of it the
+    # shared specs on three workers, and walkthrough plus a11y 83% of that. So the run is split:
+    #   · `e2e-shard`, this job: two legs, each running half of the smoke and the shared specs
+    #     (`--shard=N/2`), with the auth setup each needs, and without the stateful chain
+    #     (PW_STATEFUL_CHAIN=0). Playwright splits by test count, not time, so leg 1 held the
+    #     smoke, a11y and the first walkthrough rows, and leg 2 the rest of walkthrough (#3941
+    #     since put surfaces.spec.ts where a11y's route scans and walkthrough were);
+    #   · `e2e-stateful`: the stateful set, one spec at a time, then once more in an order drawn
+    #     from a seed the report names. It is its own job because a step of one leg only is a
+    #     step the catalogue cannot run (tools/ci/catalogue.toml runs a sharded job's every step on
+    #     every shard), and it is meant to cost a runner, not wall time: two specs, expected to
+    #     be shorter than either leg (to be read from the first finished runs of this layout);
+    #   · `e2e`: merges the three blob reports into the run's one report and judges it.
+    # Each leg downloads the build `web` stamped, installs Chromium and boots a gateway and home of
+    # its own (web/e2e/runPlaces.ts). web/e2e/isolation.ts says which spec is shared, which serial,
+    # and why. The preview refuses a dist that does not match this checkout before any test runs.
     #
     # No `--reporter` on the command line: it would replace the config's reporters, and with them
     # the isolation reporter that annotates every test with its mode and fails a run in which a
     # stateful spec shares the gateway. Under CI the config writes github, json, blob and html.
-    # `visual.spec.ts` stays out (`--grep-invert @visual`): tests/test_e2e_specs_are_executed.py
-    # declares that exemption.
+    # Each leg's blob goes to a folder of its own (PLAYWRIGHT_BLOB_OUTPUT_DIR), because the blob
+    # reporter empties its folder before it writes, and a run of the catalogue's legs one after the
+    # other in one checkout would otherwise keep only the last. `visual.spec.ts` stays out
+    # (`--grep-invert @visual`): tests/test_e2e_specs_are_executed.py declares that exemption.
     #
     # The browse behavioural proof is the `browse-live` job: security evidence, which no plan
-    # leaves out, so it runs on every diff while this job runs on the diffs its inputs reach.
+    # leaves out, so it runs on every diff while these jobs run on the diffs their inputs reach.
     #
     # Gated on the plan (#3945) — see the `changes` job's header for why it defaults to running.
     needs: [changes, tree-check, web]
-    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && (needs.changes.outputs.full != 'false' || contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'e2e')) }}
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && (needs.changes.outputs.full != 'false' || contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'e2e-shard')) }}
     runs-on: ubuntu-24.04
-    # The browser run's budget is 12 min; 30 is slack for a loaded runner, and still ends a
+    # A leg's browser run is expected near half of the one job's 677 s (an estimate until the
+    # first finished runs of this layout); 30 is slack for a loaded runner, and still ends a
     # wedged browser long before the default 360.
     timeout-minutes: 30
+    strategy:
+      # One red leg cancels nothing: the merge reports both, and the other leg's report is whole.
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -1188,25 +1205,180 @@ jobs:
         with:
           name: web-dist
           path: web/dist
-      - name: install chromium (the one browser this run installs)
+      - name: install chromium (the one browser this leg installs)
         run: npx playwright install --with-deps chromium
-      - name: every browser spec but the visual rail, in one invocation (web/e2e/*.spec.ts)
+      - name: this leg's half of the smoke and the shared specs (web/e2e/*.spec.ts)
         working-directory: web
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: e2e-report.json
-        run: npx playwright test --grep-invert @visual
-      # A SKIP reads exactly like a PASS in a green job, and the UI quality check's claim is a
-      # COUNT ("every authenticated route"). So the count is asserted against the manifest rather
-      # than trusted: zero route-level skips, scans == declared routes × themes, and every scan
-      # carrying every step of the matrix. It counts `surfaces.spec.ts`'s specs only, by the file
-      # the report names for each. Runs whatever the browser run answered, so a red elsewhere does
-      # not hide a coverage loss.
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/shard-${{ matrix.shard }}
+          PW_STATEFUL_CHAIN: "0"
+        run: npx playwright test --project=smoke --project=chromium --shard=${{ matrix.shard }}/2 --grep-invert @visual
+      # The blob is what `e2e` merges. A leg that wrote none uploads none, and the merge names it.
+      - name: upload this leg's blob report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-blob-shard-${{ matrix.shard }}
+          path: web/blob-report/
+          if-no-files-found: ignore
+          retention-days: 7
+      # This leg's own JSON report, traces and HTML report, for reading one leg on its own.
+      - name: upload this leg's reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-reports-shard-${{ matrix.shard }}
+          path: |
+            web/e2e-report.json
+            web/test-results/
+            web/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  e2e-stateful:
+    # ── The stateful set, then its seeded second pass, on a gateway of its own (#3939) ───────────
+    # The specs web/e2e/isolation.ts calls serial write what the shared specs read, so they run
+    # apart from them: one at a time (`stateful`), then once more each in an order drawn from a
+    # seed (`stateful-again-1`, `stateful-again-2`), so a stateful spec that passes only after the
+    # other has run reds here. A file filter naming only stateful specs hangs the chain off `setup`
+    # (web/playwright.config.ts, PW_STATEFUL_ONLY), so the auth setup runs first and no shared spec
+    # runs at all, and each pass depends on the one before it: a red pass skips the passes after
+    # it, and the isolation reporter reds the leg naming each test that did not run. The seed is
+    # in this leg's report, on each second-pass test (`stateful-seed`), and the merge writes it
+    # into the run's one report.
+    needs: [changes, tree-check, web]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && (needs.changes.outputs.full != 'false' || contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'e2e-stateful')) }}
+    runs-on: ubuntu-24.04
+    # The set took under a minute of main's one-job run (695.9-752.2 s of run 39174942130), before
+    # this job's own install and boot; 15 is slack for a loaded runner.
+    timeout-minutes: 15
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
+        with:
+          python-version: "3.12.15"
+          node: "true"
+      # The harness starts `../.venv/bin/personalclaw`.
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828).
+      - name: npm ci (root)
+        run: npm ci
+      - name: the dashboard the web job built (web-dist)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-dist
+          path: web/dist
+      - name: install chromium (the one browser this leg installs)
+        run: npx playwright install --with-deps chromium
+      - name: the stateful set, then its second pass in a seeded order (web/e2e/isolation.ts)
+        working-directory: web
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: e2e-report.json
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/stateful
+        run: npx playwright test e2e/staleWrite.spec.ts e2e/deployedArtifacts.spec.ts
+      - name: upload this leg's blob report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-blob-stateful
+          path: web/blob-report/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: upload this leg's reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-reports-stateful
+          path: |
+            web/e2e-report.json
+            web/test-results/
+            web/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  e2e:
+    # ── The browser run's one report, merged from its legs and judged (#3939) ────────────────────
+    # Every leg's blob report, merged into `e2e-report.json` (the JSON report: every test with its
+    # isolation mode, the stateful seed in its metadata) and the HTML report, then held to what one
+    # unsharded run was. It runs whatever the legs answered (`!cancelled()`), so a red leg hides
+    # nothing, and it keeps the stable `e2e` name.
+    #   · web/e2e/merge-legs.mjs refuses to merge when a leg left no blob: a leg that did not run or
+    #     did not finish has its tests in no report, and a merge of the others would read as a
+    #     whole run.
+    #   · web/e2e/assert-no-route-skips.mjs: zero route-level skips, scans == declared routes ×
+    #     themes, and every scan carrying every step of the matrix. It counts `surfaces.spec.ts`'s
+    #     specs only, by the file the report names for each. A SKIP reads exactly like a PASS in a
+    #     green job, and the UI quality check's claim is a COUNT ("every authenticated route"), so
+    #     the count is asserted against the manifest.
+    #   · web/e2e/assert-one-run.mjs: every test ran, once and where its isolation mode allows, the
+    #     stateful set and its second pass there under one seed, each pass started after the one
+    #     before it had ended (the results' own timings), and no failure or error in any leg.
+    #   · every leg passed: each leg's own result, read from `needs`. A leg can fail where its
+    #     report shows nothing (a step after its blob, a run that ended before its first test), so
+    #     a leg that failed, was cancelled or was skipped is red here too.
+    # It needs no browser and no gateway: Node, and the Playwright package `npm ci` installs.
+    needs: [changes, tree-check, e2e-shard, e2e-stateful]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && (needs.changes.outputs.full != 'false' || contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'e2e')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
+        with:
+          node: "true"
+      # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828).
+      - name: npm ci (root)
+        run: npm ci
+      # Each leg's blob under a folder named for its leg: blob-report/shard-1, shard-2, stateful.
+      - name: every leg's blob report
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: e2e-blob-*
+          merge-multiple: true
+          path: web/blob-report
+      # After a failed download too, so the leg that left nothing is named.
+      - name: merge the legs into the run's one report (a leg that left no blob is a red)
+        if: ${{ !cancelled() }}
+        working-directory: web
+        run: node e2e/merge-legs.mjs blob-report shard-1 shard-2 stateful
       - name: every authenticated route was actually SCANNED (not skipped)
         if: ${{ !cancelled() }}
         working-directory: web
         run: node e2e/assert-no-route-skips.mjs e2e-report.json
-      # The JSON report (every test with its isolation mode, the stateful seed in its metadata),
-      # the blob report `merge-reports` reads, the traces, the axe reports and the HTML report.
+      - name: the merged report is one whole run
+        if: ${{ !cancelled() }}
+        working-directory: web
+        run: node e2e/assert-one-run.mjs e2e-report.json
+      # This job runs after a red leg (`!cancelled()` above), and a report can look whole while its
+      # leg failed. So it is green only when every leg was, after the checks above have named what
+      # they could. tests/rails/test_e2e_specs_are_executed_tree.py runs this step on every answer.
+      - name: every browser leg passed
+        if: ${{ !cancelled() }}
+        env:
+          SHARDS: ${{ needs.e2e-shard.result }}
+          STATEFUL: ${{ needs.e2e-stateful.result }}
+        run: |
+          echo "e2e-shard: ${SHARDS:-no result}, e2e-stateful: ${STATEFUL:-no result}"
+          if [ "$SHARDS" != "success" ] || [ "$STATEFUL" != "success" ]; then
+            echo "::error title=a browser leg did not pass::the merged run counts only when every leg passed. Open the leg that did not."
+            exit 1
+          fi
+      # The JSON report, the blobs `merge-reports` read, and the merged HTML report. Each leg's
+      # traces are in its own `e2e-reports-*` artifact.
       - name: upload the browser run's reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1215,7 +1387,6 @@ jobs:
           path: |
             web/e2e-report.json
             web/blob-report/
-            web/test-results/
             web/playwright-report/
           if-no-files-found: ignore
           retention-days: 7

@@ -52,7 +52,7 @@ _GATE = (
     "needs.changes.outputs.full != 'false' || "
     "contains(fromJSON(needs.changes.outputs.jobs || '[]'), '{job}')"
 )
-_GATED = ("e2e", "apps-contract")
+_GATED = ("e2e", "e2e-shard", "e2e-stateful", "apps-contract")
 
 
 def _ci() -> dict:

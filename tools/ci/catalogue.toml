@@ -34,6 +34,8 @@ jobs = [
   "web-build",
   "package",
   "e2e",
+  "e2e-shard",
+  "e2e-stateful",
   "browse-live",
   "security",
   "apps-contract",
@@ -568,18 +570,72 @@ inputs = [
   ":(exclude)packages/personalclaw-client-py/",
   ":(exclude).github/",
 ]
+external_inputs = []
+toolchain = ["node", "npm-ci"]
+cache = ["npm"]
+security = "ordinary"
+timeout_min = 10
+needs_node = true
+after = ["e2e-shard", "e2e-stateful"]
+command = [
+  { argv = ["node", "e2e/merge-legs.mjs", "blob-report", "shard-1", "shard-2", "stateful"], workdir = "web" },
+  { argv = ["node", "e2e/assert-no-route-skips.mjs", "e2e-report.json"], workdir = "web" },
+  { argv = ["node", "e2e/assert-one-run.mjs", "e2e-report.json"], workdir = "web" },
+]
+
+# The browser run itself, in the legs `e2e` merges (#3939): two shards of the specs that share a
+# gateway, and the stateful set on a gateway of its own. Their inputs are e2e's, so one plan
+# schedules all three. Each writes its blob report under web/blob-report/<leg>/, so a run of the
+# legs one after another in one checkout keeps every blob for the merge.
+[[job]]
+id = "e2e-shard"
+tiers = ["merge"]
+inputs = [
+  ":(glob)**",
+  ":(exclude)docs/",
+  ":(exclude,glob)*.md",
+  ":(exclude)tests/",
+  ":(exclude)harness/",
+  ":(exclude)packages/personalclaw-client-py/",
+  ":(exclude).github/",
+]
 external_inputs = ["browser-download"]
 toolchain = ["uv-sync", "node", "npm-ci", "chromium"]
 cache = ["uv", "npm"]
 security = "ordinary"
 python = "3.12.15"
 timeout_min = 30
+shards = 2
 needs_node = true
 needs_browser = true
 after = ["web-build"]
 command = [
-  { argv = ["npx", "playwright", "test", "--grep-invert", "@visual"], workdir = "web", env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report.json" } },
-  { argv = ["node", "e2e/assert-no-route-skips.mjs", "e2e-report.json"], workdir = "web" },
+  { argv = ["npx", "playwright", "test", "--project=smoke", "--project=chromium", "--shard={shard}/2", "--grep-invert", "@visual"], workdir = "web", env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report.json", PLAYWRIGHT_BLOB_OUTPUT_DIR = "blob-report/shard-{shard}", PW_STATEFUL_CHAIN = "0" } },
+]
+
+[[job]]
+id = "e2e-stateful"
+tiers = ["merge"]
+inputs = [
+  ":(glob)**",
+  ":(exclude)docs/",
+  ":(exclude,glob)*.md",
+  ":(exclude)tests/",
+  ":(exclude)harness/",
+  ":(exclude)packages/personalclaw-client-py/",
+  ":(exclude).github/",
+]
+external_inputs = ["browser-download"]
+toolchain = ["uv-sync", "node", "npm-ci", "chromium"]
+cache = ["uv", "npm"]
+security = "ordinary"
+python = "3.12.15"
+timeout_min = 15
+needs_node = true
+needs_browser = true
+after = ["web-build"]
+command = [
+  { argv = ["npx", "playwright", "test", "e2e/staleWrite.spec.ts", "e2e/deployedArtifacts.spec.ts"], workdir = "web", env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report.json", PLAYWRIGHT_BLOB_OUTPUT_DIR = "blob-report/stateful" } },
 ]
 
 # A real browser driven by the browse tool. Its steps run two security-marked modules (the

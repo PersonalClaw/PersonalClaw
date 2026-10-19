@@ -203,6 +203,8 @@ _INPUT_ROWS = {
     "web-build": ("web/src/App.tsx", None),
     "package": ("setup.cfg", None),
     "e2e": ("web/src/App.tsx", "docs/vision.md"),
+    "e2e-shard": ("web/src/App.tsx", "docs/vision.md"),
+    "e2e-stateful": ("web/src/App.tsx", "docs/vision.md"),
     "browse-live": ("src/personalclaw/browse/x.py", None),
     "security": ("tests/security/test_x.py", None),
     "apps-contract": ("src/personalclaw/sdk/channel.py", "docs/vision.md"),
@@ -542,11 +544,14 @@ def _ci() -> dict:
 #: Each gated job's whole condition. A job output is a string, so `full` is compared with
 #: the string 'false', and an unwritten output (the empty string) runs the job.
 GATED_IF = {
-    "e2e": (
-        "${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && "
-        "(needs.changes.outputs.full != 'false' || "
-        "contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'e2e')) }}"
-    ),
+    **{
+        job: (
+            "${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && "
+            "(needs.changes.outputs.full != 'false' || "
+            f"contains(fromJSON(needs.changes.outputs.jobs || '[]'), '{job}')) }}}}"
+        )
+        for job in ("e2e", "e2e-shard", "e2e-stateful")
+    },
     "apps-contract": (
         "${{ !cancelled() && (needs.changes.outputs.full != 'false' || "
         "contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'apps-contract')) }}"

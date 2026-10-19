@@ -398,9 +398,9 @@ real browser driven by `scripts/motion_frame_budget.mjs`, a standalone driver be
 loads the built artifact and needs a live
 gateway. Deliberately **not** a spec in `web/e2e/`, which is the zero-diff gate tier — a
 frame-time distribution has no committed baseline and no machine-independent threshold, so a
-red/green there would be a claim about hardware. Nothing in CI runs it (`ci.yml`'s `e2e` job
-runs the specs in `web/e2e/` and nothing else); it is a driver you point at a
-gateway and read.
+red/green there would be a claim about hardware. Nothing in CI runs it (`ci.yml`'s browser
+legs, `e2e-shard` and `e2e-stateful`, run the specs in `web/e2e/` and nothing else); it is a
+driver you point at a gateway and read.
 
 **Why the unit of the report is a distribution.** A mean hides a stall: 60fps with one 400ms
 freeze averages to something respectable, and the freeze is the entire content of "no jank". So

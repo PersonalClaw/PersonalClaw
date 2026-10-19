@@ -60,7 +60,11 @@ const MAY_WRITE_SCRATCH: Record<string, string> = {
   'design/e2eIsolation.test.ts':
     'Writes two Playwright configs (the real projects, and one with the stateful set planted ' +
     'into the shared project) for `playwright test --list`, to prove the isolation reporter ' +
-    'fails a run that shares a stateful spec.',
+    'fails a run that shares a stateful spec; and stand-in specs with a config running the real ' +
+    'projects over them, to prove the stateful passes run in order and a skipped pass reds the run.',
+  'design/e2eMergedRun.test.ts':
+    'Writes planted merged reports for the run check, and leg folders of stand-in blobs for the ' +
+    'leg merge, to prove each reds on the run it exists to refuse.',
   'app/thirdPartyNotices.test.ts':
     'Lays out a throwaway repository (a package-lock.json, installed packages and a web ' +
     'build) for the third-party notices plugin to read, and to write its notices into.',

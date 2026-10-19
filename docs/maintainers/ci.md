@@ -273,8 +273,9 @@ is read the same way, with the outer call's inputs and `env:`, and a call of one
 cannot read fails the row. A setup step inside the action counts at the index of the call. Each
 of those rows has a plant inside the action.
 
-A change under `.github/actions/` runs the planned jobs, `e2e` and `apps-contract`, as a
-change to `ci.yml` does: both set up their toolchain through the action, so it defines them too.
+A change under `.github/actions/` runs the planned jobs, the browser run's (`e2e-shard`,
+`e2e-stateful` and their merge, `e2e`) and `apps-contract`, as a change to `ci.yml` does: each
+sets up its toolchain through the action, so it defines them too.
 The planner plans the whole tier for it (`tools/ci/areas.toml`). The rails check that every
 local action `apps-contract` calls, and each one that action calls, plans that job, and that
 every one a `ci.yml` job calls plans the whole tier.
@@ -451,19 +452,19 @@ overrides (`--areas`, beside the catalogue by default):
 `run --changed` plans the same way, from `git diff --name-only --no-renames -z` against the
 base, so a move names both the path it left and the path it reached.
 
-`e2e`, `apps-contract` and `python-suite` name their inputs; every other job declares the whole
-tree today. `e2e`'s inputs are the whole tree less the paths that cannot reach the browser run,
-each exclusion carrying its reason in the catalogue. `apps-contract`'s are the triggers of
-the SDK classifier ci.yml ran it by before the plan, less the classifier's own file.
-`python-suite`'s are every top-level entry but `flake.nix` and `flake.lock`. The suite reads
-every tracked path: its publication-hygiene tests list the tracked tree and open each file in
-it, and suite modules name `docs/`, `web/`, `deploy/` and the root files besides.
-`tests/rails/test_ci_python_suite_inputs_tree.py` holds the list to that census (the hygiene
-check's own `tracked_files`, and every repository path a suite module names), so a tracked path
-the list does not name fails the rail however a test reads it. The flake is left out by choice,
-and the rail holds the choice in one row: the suite reads it too, but it is what the Nix workflow
-builds and checks, a workflow of its own and no catalogue job, so a change to it alone is named
-by no input and plans the whole tier.
+The browser run's three jobs, `apps-contract` and `python-suite` name their inputs; every other
+job declares the whole tree today. The browser run's inputs are the whole tree less the paths
+that cannot reach it, each exclusion carrying its reason in the catalogue, and its three jobs
+name the same ones. `apps-contract`'s are the triggers of the SDK classifier ci.yml ran it by
+before the plan, less the classifier's own file. `python-suite`'s are every top-level entry but
+`flake.nix` and `flake.lock`. The suite reads every tracked path: its publication-hygiene tests
+list the tracked tree and open each file in it, and suite modules name `docs/`, `web/`,
+`deploy/` and the root files besides. `tests/rails/test_ci_python_suite_inputs_tree.py` holds
+the list to that census (the hygiene check's own `tracked_files`, and every repository path a
+suite module names), so a tracked path the list does not name fails the rail however a test
+reads it. The flake is left out by choice, and the rail holds the choice in one row: the suite
+reads it too, but it is what the Nix workflow builds and checks, a workflow of its own and no
+catalogue job, so a change to it alone is named by no input and plans the whole tier.
 
 The list does not decide whether `python-suite` runs: it is a security job, so every plan holds
 it, as every plan holds `python-suite-macos` and `browse-live`. It decides which paths are known.
@@ -494,12 +495,13 @@ copy that cannot be read plans nothing, so everything runs. With no such commit,
 can be fetched, nothing plans. The `ci:full` label passes `--full`; the labels are the
 event's, so one added later counts from the next push. The step publishes only `full` and a
 list of job ids exactly as the planner prints it; anything else, and no answer, becomes
-`full=true`. `e2e` and `apps-contract` run when `full` is not `false` or the list names them,
-and survive a failed `changes` job (`!cancelled()`), so an answer that is missing, malformed or
-never written runs them. `tests/rails/test_ci_plan_step_tree.py` runs the step as written,
-against planted answers and the real planner. `browse-live` is a job of its own that waits on
-nothing and runs on every pull request and every push, a tested tree's included: a security job
-is never planned out, and its evidence is never reused. Every other job runs as before.
+`full=true`. The browser run's jobs and `apps-contract` run when `full` is not `false` or the
+list names them, and survive a failed `changes` job (`!cancelled()`), so an answer that is
+missing, malformed or never written runs them. `tests/rails/test_ci_plan_step_tree.py` runs the
+step as written, against planted answers and the real planner. `browse-live` is a job of its own
+that waits on nothing and runs on every pull request and every push, a tested tree's included: a
+security job is never planned out, and its evidence is never reused. Every other job runs as
+before.
 
 To add a rule, prefer a declared input of the job it affects; use an override only for a path
 that is no job's input but changes a job's result, and give it a reason that says how.
@@ -1173,7 +1175,7 @@ shadow mode, and the recall study.
 
 - **CI's commands.** A job's toolchain installs run first, as `ci.yml` runs them, then each step,
   word for word. A step's environment is built from nothing: what a GitHub runner gives every
-  step (`CI=true`, which the e2e job's Playwright config reads for its JSON report, retries and
+  step (`CI=true`, which the e2e jobs' Playwright config reads for its JSON report, retries and
   server; never `GITHUB_ACTIONS`, which says the run is on GitHub), then the workflow's
   (`UV_PYTHON_PREFERENCE`), then the job's, then the step's; of the caller's it gets only
   `PATH`. `{runner_temp}` is the job's own temporary folder, `{shard}` the shard asked for, and
@@ -1196,8 +1198,8 @@ shadow mode, and the recall study.
   back and refuses any other shape, NaN and Infinity among them. A checkout that was not clean
   at one head before and after the job leaves no record, since the head it would name is not
   the tree it ran; so does a partner checkout the job reads that was not at one head before and
-  after it. The partner checkout (`.ci-apps`) and the e2e job's reports (`web/e2e-report.json`,
-  `web/blob-report/`) are git-ignored, so they leave the checkout clean.
+  after it. The partner checkout (`.ci-apps`) and the e2e jobs' reports (`web/e2e-report.json`,
+  `web/blob-report/`, `web/playwright-report/`) are git-ignored, so they leave the checkout clean.
 - **What runs here.** A job for the other platform family, in a container, or needing a
   toolchain or a partner checkout (`.ci-apps`) this machine lacks is named and not run. A
   sharded job run here plans its shards with equal weights, since `shards plan` reads CI's

@@ -5232,7 +5232,11 @@ def _rails_legs_scaffold(root: Path) -> None:
         _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
 
 
-_RAILS_LEGS = "      fail-fast: false\n      matrix:\n        shard: [1, 2]\n"
+# Anchored on the rails job's own comment: the browser legs' matrix is the same three lines.
+_RAILS_LEGS = (
+    "      # One red half does not cancel the other: both halves' reports land in one push.\n"
+    "      fail-fast: false\n      matrix:\n        shard: [1, 2]\n"
+)
 _RAILS_HALF_STEP = "      - name: the rails, half ${{ matrix.shard }} of 2 (tests/rails)\n"
 _RAILS_HALF_LIST = "--shard-list tools/ci/rails-half-${{ matrix.shard }}.txt"
 
@@ -5990,6 +5994,8 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "web-build": _Mapped(("web",), ("merge",), reuse="tree"),
     "package": _Mapped(("web",), ("merge",)),
     "e2e": _Mapped(("e2e",), ("merge",)),
+    "e2e-shard": _Mapped(("e2e-shard",), ("merge",)),
+    "e2e-stateful": _Mapped(("e2e-stateful",), ("merge",)),
     "browse-live": _Mapped(("browse-live",), ("merge",), security="security", live=True),
     "apps-contract": _Mapped(("apps-contract",), ("merge",)),
     "audit": _Mapped(("audit",), ("merge",), live=True),
@@ -6023,11 +6029,16 @@ def _owners(keys: Sequence[str]) -> str:
     return " and ".join(f"{w}'s" for w in reversed(found)) if len(found) > 1 else f"{found[0]}'s"
 
 
-def _norm(value: str) -> str:
-    """A workflow value with each runner spelling of a placeholder read as the placeholder."""
+def _norm(value: str, *, expressions_only: bool = False) -> str:
+    """A workflow value with each runner spelling of a placeholder read as the placeholder.
+
+    With ``expressions_only``, only the ``${{ }}`` spellings: a step's ``env:`` is not a shell,
+    so GitHub expands an expression there and leaves ``$RUNNER_TEMP`` or ``$(...)`` as the
+    literal text, which is not what the entry's placeholder becomes when it runs."""
     for name, spellings in catalogue.PLACEHOLDERS.items():
         for spelling in spellings:
-            value = value.replace(spelling, f"{{{name}}}")
+            if not expressions_only or spelling.startswith("${{"):
+                value = value.replace(spelling, f"{{{name}}}")
     return value
 
 
@@ -6083,6 +6094,13 @@ _NOT_COMMANDS: dict[str, str] = {
         git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/origin/main"
         echo "ref=origin/main" >> "$GITHUB_OUTPUT"
     """,
+    "the browser merge's gate on each leg's own result, which only the run knows": r"""
+        echo "e2e-shard: ${SHARDS:-no result}, e2e-stateful: ${STATEFUL:-no result}"
+        if [ "$SHARDS" != "success" ] || [ "$STATEFUL" != "success" ]; then
+          echo "::error title=a browser leg did not pass::the merged run counts only when every leg passed. Open the leg that did not."
+          exit 1
+        fi
+    """,  # noqa: E501
     "a value only the runner knows, set through GITHUB_ENV for the steps after it": r"""
         echo "VITEST_MAX_WORKERS=$(nproc)" | tee -a "$GITHUB_ENV"
     """,
@@ -6301,10 +6319,12 @@ class _Line:
 
 
 def _step_env(step: dict[str, Any]) -> tuple[tuple[str, str], ...]:
-    """A workflow step's own env, less the variables a placeholder stands for."""
+    """A workflow step's own env, less the variables a placeholder stands for, each value with
+    its ``${{ }}`` placeholders read as the placeholder (an entry's env value may name one, as
+    ``blob-report/shard-{shard}`` does). A shell spelling stays as it is: GitHub leaves it."""
     return tuple(
         sorted(
-            (str(k), str(v))
+            (str(k), _norm(str(v), expressions_only=True))
             for k, v in (step.get("env") or {}).items()
             if str(k) not in _PLACEHOLDER_VARIABLES
         )
@@ -6730,7 +6750,7 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             catalogue.CATALOGUE,
             '"@visual"], workdir = "web", env',
             '"@visual"], env',
-            expect="e2e: command step 1",
+            expect="e2e-shard: command step 1",
         ),
         _plant(
             "an entry naming a ci.yml job that does not exist",
@@ -6827,15 +6847,42 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "two steps swapped",
             catalogue.CATALOGUE,
-            '  { argv = ["npx", "playwright", "test", "--grep-invert", "@visual"], workdir = "web",'
-            ' env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report.json" } },\n'
+            '  { argv = ["node", "e2e/merge-legs.mjs", "blob-report", "shard-1", "shard-2",'
+            ' "stateful"], workdir = "web" },\n'
             '  { argv = ["node", "e2e/assert-no-route-skips.mjs", "e2e-report.json"],'
             ' workdir = "web" },\n',
             '  { argv = ["node", "e2e/assert-no-route-skips.mjs", "e2e-report.json"],'
             ' workdir = "web" },\n'
-            '  { argv = ["npx", "playwright", "test", "--grep-invert", "@visual"], workdir = "web",'
-            ' env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report.json" } },\n',
+            '  { argv = ["node", "e2e/merge-legs.mjs", "blob-report", "shard-1", "shard-2",'
+            ' "stateful"], workdir = "web" },\n',
             expect="e2e: command step 2 is out of ci.yml's order",
+        ),
+        _plant(
+            "a step env that names another shard's folder",
+            _CI,
+            "          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/shard-${{ matrix.shard }}\n",
+            "          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/shard-1\n",
+            expect="e2e-shard: command step 1",
+        ),
+        # GitHub expands only `${{ }}` in a step's env:, so `$RUNNER_TEMP` there is the literal
+        # text, and the entry's `{runner_temp}` is the real folder when it runs locally.
+        _plant_files(
+            "a step env that spells a placeholder the shell's way",
+            (
+                (
+                    _CI,
+                    "          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/stateful\n",
+                    "          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/stateful\n"
+                    "          PW_SCRATCH: $RUNNER_TEMP/pw\n",
+                ),
+                (
+                    catalogue.CATALOGUE,
+                    'PLAYWRIGHT_BLOB_OUTPUT_DIR = "blob-report/stateful" }',
+                    'PLAYWRIGHT_BLOB_OUTPUT_DIR = "blob-report/stateful",'
+                    ' PW_SCRATCH = "{runner_temp}/pw" }',
+                ),
+            ),
+            expect="e2e-stateful: command step 1",
         ),
         _plant(
             "a step listed twice",
