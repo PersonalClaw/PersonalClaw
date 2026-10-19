@@ -15,9 +15,10 @@
 #
 # `inputs` are git pathspecs, and tools/ci/plan.py plans each run from them: a changed path a
 # job's inputs reach, or a path one of its steps runs, schedules that job. A path no input but
-# the whole tree names plans the whole tier. Every job but e2e and apps-contract still declares
-# the whole tree; each is narrowed in a change of its own, with its reason and a planted path.
-# tools/ci/areas.toml holds the explicit overrides, which add jobs for named paths and only add.
+# the whole tree names plans the whole tier. e2e, apps-contract and python-suite name their
+# inputs; every other job still declares the whole tree, and each is narrowed in a change of its
+# own, with its reason and a planted path. tools/ci/areas.toml holds the explicit overrides,
+# which add jobs for named paths and only add.
 
 # The jobs the merge tier must run. Each job whose tiers claim merge is listed here, and only
 # those, so dropping one from the merge tier takes two edits.
@@ -88,10 +89,63 @@ command = [
 
 # The suite, its security-marked modules included: the merge tier's security evidence is this
 # run of them, so the job is security posture and never reused.
+#
+# Its inputs are what the suite reads, held to a census by tests/rails/test_ci_python_suite_inputs_tree.py:
+# every tracked file the licence sweep reads (tests/test_licence_governance.py walks every tracked
+# text file), and every path a suite module names. That is the whole tree but flake.nix and
+# flake.lock, which no suite test reads (the nix workflow's flake job does). The list is explicit,
+# not the whole tree, so a path in it is known: a src/ diff plans this job and its peers without
+# planning the whole tier. A new top-level path is in no input, so it plans the whole tier. As the
+# whole-tree readers move to tests/rails, entries leave this list, docs/ first.
 [[job]]
 id = "python-suite"
 tiers = ["merge"]
-inputs = [":(glob)**"]
+inputs = [
+".dockerignore",
+".env.example",
+".githooks/",
+".github/",
+".gitignore",
+".nvmrc",
+".python-version",
+"AGENTS.md",
+"ASSET_LICENSES.json",
+"CHANGELOG.md",
+"CLAUDE.md",
+"CODE_OF_CONDUCT.md",
+"CONTRIBUTING.md",
+"LICENSE",
+"MAINTAINERS",
+"MANIFEST.in",
+"Makefile",
+"README.md",
+"SECURITY.md",
+"SHOWCASE.md",
+"config-baseline.json",
+"deploy/",
+"desktop/",
+"docs-lint-baseline.json",
+"docs/",
+"harness/",
+"inert-surface-baseline.json",
+"mobile/",
+"nix/",
+"package-lock.json",
+"package.json",
+"packages/",
+"personalclaw-backend.spec",
+"publication-hygiene-baseline.json",
+"pyproject.toml",
+"scripts/",
+"setup.cfg",
+"setup.py",
+"src/",
+"structural-baseline.json",
+"tests/",
+"tools/",
+"uv.lock",
+"web/",
+]
 external_inputs = ["shard-history"]
 toolchain = ["uv-sync", "tmux"]
 cache = ["uv"]

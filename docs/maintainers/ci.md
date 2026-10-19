@@ -359,11 +359,19 @@ overrides (`--areas`, beside the catalogue by default):
 `run --changed` plans the same way, from `git diff --name-only --no-renames -z` against the
 base, so a move names both the path it left and the path it reached.
 
-Every job but `e2e` and `apps-contract` declares the whole tree today. `e2e`'s inputs are the
-whole tree less the paths that cannot reach the browser run, each exclusion carrying its reason
-in the catalogue. Narrowing another job is a change of its own: its inputs, the reason, and a
-planted path in `tests/rails/test_ci_plan_tree.py`, which also plants a path per override and
-finds the override's reason in its plan.
+`e2e`, `apps-contract` and `python-suite` name their inputs; every other job declares the whole
+tree today. `e2e`'s inputs are the whole tree less the paths that cannot reach the browser run,
+each exclusion carrying its reason in the catalogue. `python-suite`'s are every top-level entry
+the suite reads, which today is all of them but `flake.nix` and `flake.lock`: suite tests walk
+every tracked file (the licence sweep) and name `docs/`, `deploy/` and the root files.
+`tests/rails/test_ci_python_suite_inputs_tree.py` holds the list to a census (the licence sweep's
+own walk and filter, and every repository path a suite module names), so a path the suite reads
+can never fall outside it. Because the list names `src/`, a `src/` diff is known: the plan is not
+the whole tier, and `apps-contract` runs only when the diff reaches `src/personalclaw/sdk/`. A
+docs-only diff still runs the suite. Entries leave the list as the whole-tree readers move to
+`tests/rails`. Narrowing another job is a change of its own: its inputs, the reason, and a planted
+path in `tests/rails/test_ci_plan_tree.py`, which also plants a path per override and finds the
+override's reason in its plan.
 
 To add a rule, prefer a declared input of the job it affects; use an override only for a path
 that is no job's input but changes a job's result, and give it a reason that says how.

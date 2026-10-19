@@ -299,22 +299,34 @@ def test_no_plan_leaves_out_the_rails_or_a_security_or_live_job() -> None:
         assert floor <= set(_plan(path).jobs), path
 
 
+def test_a_src_diff_is_known_and_leaves_apps_contract_out() -> None:
+    """python-suite names src/, so a backend diff is a known path: the plan is not the whole
+    tier, and apps-contract, whose inputs are the SDK's, is left out."""
+    p = _plan("src/personalclaw/app.py")
+    assert not p.full, p.full_reasons
+    assert {"python-suite", "python-suite-macos", "e2e"} <= set(p.jobs)
+    assert "apps-contract" not in p.jobs
+    assert any("a declared input" in r for r in p.reasons["python-suite"])
+
+
+def test_a_src_diff_that_reaches_the_sdk_plans_apps_contract() -> None:
+    p = _plan("src/personalclaw/app.py", "src/personalclaw/sdk/channel.py")
+    assert not p.full and "apps-contract" in p.jobs
+
+
+def test_a_docs_only_diff_still_runs_the_suite() -> None:
+    """Suite modules read docs/ (the architecture and guide checks, and the licence sweep
+    over every tracked file), so a docs change can turn the suite red: it is an input."""
+    p = _plan("docs/vision.md")
+    assert not p.full and "python-suite" in p.jobs and "python-suite-macos" in p.jobs
+
+
 def test_a_path_only_a_whole_tree_input_reaches_plans_the_whole_tier() -> None:
-    """Every job but e2e and apps-contract declares the whole tree, which names no path: a
-    backend or web change is therefore unknown and runs the whole tier, apps-contract included,
-    until a job declares it. A narrower input is each job's own change."""
-    for path in ("src/personalclaw/app.py", "web/src/App.tsx", "Makefile"):
-        p = _plan(path)
-        assert p.full and set(p.jobs) == _MERGE, path
-        assert p.full_reasons == (f"{path} is named by no input but the whole tree",), path
-
-
-def test_a_path_a_whole_tree_jobs_step_runs_is_still_unknown() -> None:
-    """package's step runs scripts/verify_wheel.py: the step schedules package, but only a
-    declared input names a path, and package declares the whole tree."""
-    p = _plan("scripts/verify_wheel.py")
+    """flake.nix is in no job's named inputs (python-suite leaves it out: no suite test reads
+    it), so a change to it alone is unknown and plans the whole tier."""
+    p = _plan("flake.nix")
     assert p.full and set(p.jobs) == _MERGE
-    assert p.full_reasons == ("scripts/verify_wheel.py is named by no input but the whole tree",)
+    assert p.full_reasons == ("flake.nix is named by no input but the whole tree",)
 
 
 def test_a_docs_only_plan_leaves_out_the_browser_run_and_reports_the_floor() -> None:
