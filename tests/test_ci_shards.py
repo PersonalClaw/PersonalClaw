@@ -316,6 +316,57 @@ def test_plan_writes_one_plan_for_every_leg(tmp_path: Path, monkeypatch) -> None
     assert "telemetry runs 20" in plan["legs"]["test-shard"]["durations"]
 
 
+#: Durations files another tool, or an older version of this one, would leave behind: pytest-split's
+#: own, and a plain JSON table. Each gives weights that plan the shards differently from the record.
+STRAY_DURATIONS = (".test_durations", "durations.json")
+
+
+@pytest.mark.parametrize("where", ["root", "cwd"])
+@pytest.mark.parametrize("name", STRAY_DURATIONS)
+def test_a_planted_second_durations_file_changes_nothing(
+    tmp_path: Path, monkeypatch, name: str, where: str
+) -> None:
+    """The plan's one source is the telemetry record. A second durations file, in the repository
+    or in the folder the plan runs from, is never read, so it changes no file's shard."""
+    record = {
+        20: _history(
+            20,
+            ("junit-test-shard-1", "tests.test_a::t", 30.0),
+            ("junit-test-shard-1", "tests.test_ab::t", 1.0),
+            ("junit-test-shard-1", "tests.sub.test_s::t", 2.0),
+        )
+    }
+    leg = "test-shard:ci.yml:junit-test-shard-:2"
+    (tmp_path / "alone").mkdir()
+    code, alone = _plan(tmp_path / "alone", monkeypatch, _Gh(dict(record)), leg)
+    assert code == 0
+
+    planted = tmp_path / "planted"
+    planted.mkdir()
+    # Weights that would move tests/test_a.py, the heaviest file, out of its shard, and change
+    # every bucket.
+    stray = {
+        "tests/test_a.py": 0.1,
+        "tests/test_ab.py": 500.0,
+        "tests/sub/test_s.py": 400.0,
+        "tests/test_c.py": 300.0,
+    }
+    folder = planted if where == "root" else tmp_path / "cwd"
+    folder.mkdir(exist_ok=True)
+    (folder / name).write_text(json.dumps(stray), encoding="utf-8")
+    monkeypatch.chdir(tmp_path / "cwd" if where == "cwd" else planted)
+    from_stray = shards.plan(sorted([*FILES, "tests/test_c.py"]), stray, 2)
+    code, with_stray = _plan(planted, monkeypatch, _Gh(dict(record)), leg)
+
+    assert code == 0
+    buckets = with_stray["legs"]["test-shard"]["buckets"]
+    assert buckets == alone["legs"]["test-shard"]["buckets"]
+    assert (
+        buckets != from_stray
+    ), "the planted weights must plan differently, or this proves nothing"
+    assert "telemetry runs 20" in with_stray["legs"]["test-shard"]["durations"]
+
+
 def test_plan_still_writes_a_complete_plan_when_durations_are_unreadable(
     tmp_path: Path, monkeypatch
 ) -> None:
