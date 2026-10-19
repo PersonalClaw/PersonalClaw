@@ -75,6 +75,7 @@ _PY_TOOLS = (
 
 #: The JavaScript tools that drive a gateway, with what each is given besides the home.
 _JS_TOOLS = (
+    ("docs/screenshots/baseline.mjs", []),
     ("docs/screenshots/capture.mjs", []),
     ("docs/demo/capture_demo.mjs", []),
     ("scripts/motion_frame_budget.mjs", []),

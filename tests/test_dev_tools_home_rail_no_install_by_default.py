@@ -45,6 +45,7 @@ KNOWN_TOOLS = (
     "scripts/smoke_unified_loop_classify.py",
     "scripts/lib/named_home.mjs",
     "scripts/ci_smoke_run.sh",
+    "docs/screenshots/baseline.mjs",
     "docs/screenshots/capture.mjs",
     "docs/screenshots/CAPTURE.md",
     "docs/demo/capture_demo.mjs",

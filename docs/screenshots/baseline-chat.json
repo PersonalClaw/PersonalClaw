@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "on_exhausted": "repeat_last",
+  "turns": [
+    {
+      "thinking": [
+        "Looking up this week's reading items before planning the digest."
+      ],
+      "text": "Planning this week's reading digest.",
+      "tool_calls": [
+        {
+          "id": "call-1",
+          "name": "knowledge_search",
+          "input": {
+            "query": "tag:reading",
+            "limit": 5
+          },
+          "risk_level": "safe"
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 1840,
+        "output_tokens": 32,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0
+      },
+      "context_usage_pct": 3.0
+    },
+    {
+      "text": "Here is the plan for this week's reading digest.\n\n1. **Collect** the five newest knowledge items tagged `reading`.\n2. **Summarise** each in two sentences, with its source linked.\n3. **Rank** them by how often they come up in the open projects.\n\nThe draft goes to your Inbox on Friday at 09:00. Say *skip* to leave a week out.",
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 2310,
+        "output_tokens": 96,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0
+      },
+      "context_usage_pct": 4.0
+    }
+  ]
+}

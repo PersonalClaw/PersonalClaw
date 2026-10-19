@@ -70,3 +70,16 @@ theme via `localStorage.mode` + `data-mode` (how the SPA persists it), and write
 - **No real personal data.** Capture against a throwaway `PERSONALCLAW_HOME` (the script
   refuses the default home). Seed illustrative data only.
 - **Refresh per release** so the showcase never drifts from the shipped UI.
+
+## The redesign baseline
+
+[`baseline.mjs`](baseline.mjs) is a sibling of `capture.mjs` for the redesign's measured "before",
+[`docs/design/baseline.md`](../design/baseline.md). It walks every route in
+[`web/e2e/routes.ts`](../../web/e2e/routes.ts), the shell routes and three detail routes, in both
+themes at 1280 and 390 px wide, and records each region's box, the work surface's share of the
+window, what is visible and how long the route takes to become actionable. The report's "How it was
+measured" section has the recipe. To check one screen against the report without writing anything:
+
+```bash
+node docs/screenshots/baseline.mjs --home /tmp/pc-baseline --only dashboard
+```
