@@ -57,9 +57,10 @@ def _history(tmp_path: Path, reports: dict[str, bytes], head: dict | None = None
     lines: list[dict] = [head or _head()]
     for name, junit in sorted(reports.items()):
         cases, platform, workers = telemetry.report_cases(name, _zip(name, junit))
-        for test, seconds, result, host, rerun in cases:
+        for test, seconds, result, host, rerun, environment in cases:
             line = dict.fromkeys(telemetry.TEST_FIELDS)
             line["rerun_result"] = rerun
+            line["environment_failure"] = environment
             line.update(
                 kind="test",
                 run_id=RUN,
@@ -217,3 +218,19 @@ def test_the_command_is_reachable_from_the_controller(tmp_path, capsys):
 
     path = _history(tmp_path, {"junit-test-shard-1": _junit(A), "junit-test-macos-1": _junit(B)})
     assert main(["parity", "--history", str(path)]) == 1
+
+
+def test_a_version_one_history_is_read_as_one_without_the_environment_marker(tmp_path, capsys):
+    """Version 2 only added ``environment_failure``, so a version-1 history, whose lines lack
+    it, is compared as before."""
+    path = _history(
+        tmp_path,
+        {"junit-test-shard-1": _junit(A), "junit-test-macos-1": _junit(A)},
+        _head(version=1),
+    )
+    lines = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines()]
+    for line in lines[1:]:
+        del line["environment_failure"]
+    path.write_text("".join(json.dumps(x) + "\n" for x in lines), encoding="utf-8")
+    code, out = _parity(path, capsys)
+    assert code == 0, out

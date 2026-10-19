@@ -298,7 +298,6 @@ def test_the_real_workflows_name_the_entry_points_they_run(tmp_path: Path) -> No
         "scripts/lint_bundled_apps.py",
         "scripts/release_tags.py",
         "scripts/sdk_signature_snapshot.py",
-        "tools/browse_live_quarantine_frequency.py",
         "tools/docker_single_container_smoke.py",
         "harness/__main__.py",
         "web/e2e/assert-no-route-skips.mjs",

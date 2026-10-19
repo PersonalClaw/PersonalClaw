@@ -664,3 +664,78 @@ def test_a_test_line_carries_the_rerun_result_run_job_wrote_on_its_case(
     two = tests["tests.test_a.TestB::test_two"]
     assert two["first_result"] == "failed" and two["rerun_result"] == "flake"
     assert tests["tests.test_a::test_one"]["rerun_result"] is None
+
+
+# ── the environment marker (version 2) ────────────────────────────────────────────────────────
+
+
+def test_the_schema_is_version_two_and_every_reader_accepts_version_one() -> None:
+    """Version 2 adds ``environment_failure`` to the test line and changes nothing else, so a
+    reader takes a version-1 history as one whose lines carry no such field."""
+    assert telemetry.VERSION == 2
+    assert telemetry.READS == frozenset({1, 2})
+    assert "environment_failure" in telemetry.TEST_FIELDS
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        pytest.param(
+            '<testcase classname="tests.test_b" name="test_live" time="9.0">'
+            '<failure message="AssertionError: proof: ENVIRONMENT, NOT POLICY — detached">'
+            "trace</failure></testcase>",
+            True,
+            id="in-the-failure-message",
+        ),
+        pytest.param(
+            '<testcase classname="tests.test_b" name="test_live" time="9.0">'
+            '<failure message="AssertionError">E   ENVIRONMENT, NOT POLICY — detached</failure>'
+            "</testcase>",
+            True,
+            id="in-the-failure-text",
+        ),
+        pytest.param(
+            '<testcase classname="tests.test_b" name="test_live" time="9.0">'
+            '<error message="ENVIRONMENT, NOT POLICY in setup"/></testcase>',
+            True,
+            id="in-an-error",
+        ),
+        pytest.param(
+            '<testcase classname="tests.test_b" name="test_live" time="9.0">'
+            '<failure message="AssertionError: the redirect was allowed">trace</failure>'
+            "</testcase>",
+            False,
+            id="a-failure-without-it",
+        ),
+        pytest.param(
+            '<testcase classname="tests.test_b" name="test_live" time="9.0">'
+            '<failure message="environment, not policy">trace</failure></testcase>',
+            False,
+            id="not-the-exact-marker",
+        ),
+        pytest.param(
+            '<testcase classname="tests.test_b" name="test_live" time="9.0">'
+            '<skipped type="pytest.skip" message="ENVIRONMENT, NOT POLICY"/></testcase>',
+            False,
+            id="a-skip-that-names-it",
+        ),
+        pytest.param(
+            '<testcase classname="tests.test_b" name="test_live" time="9.0">'
+            "<system-out>ENVIRONMENT, NOT POLICY</system-out></testcase>",
+            False,
+            id="a-pass-whose-output-names-it",
+        ),
+    ],
+)
+def test_a_test_line_says_whether_its_failure_carried_the_environment_marker(
+    tmp_path: Path, monkeypatch, case: str, expected: bool
+) -> None:
+    """The suite names a red the environment caused, and not the code under test, with the
+    exact words ``ENVIRONMENT, NOT POLICY`` in the failure (the browse proof's detached page).
+    Only a failure or an error carries it; any other case is false, never null."""
+    gh = FakeGh()
+    gh.artifacts[0] = gh._artifact(11, "junit-browse-live", _junit(PASSED, case))
+    _, lines = _collect(tmp_path, monkeypatch, gh)
+    tests = {line["test"]: line for line in lines if line["kind"] == "test"}
+    assert tests["tests.test_b::test_live"]["environment_failure"] is expected
+    assert tests["tests.test_a::test_one"]["environment_failure"] is False

@@ -8,7 +8,9 @@ fixture histories written in that schema.
 from __future__ import annotations
 
 import datetime
+import io
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -700,3 +702,177 @@ def test_what_each_added_run_costs_the_reader_falls_off_and_90_days_stay_under_5
     assert projected < 512 * 1024 * 1024, f"{projected / 2**20:.0f} MiB at 90 days"
     _, held = _per_run(_reference, {runs: windows[runs] for runs in sizes[:3]})
     assert held[-1] > 0.9 * held[0], f"the oracle's bytes per added run fell off: {held}"
+
+
+# ── browse-live's environment quarantine ──────────────────────────────────────────────────────
+# The row that replaced the browse-live quarantine-frequency tracker (a workflow and a tool of its
+# own until this row), run on that tracker's own fixtures: each run's junit-browse-live report is
+# the same ZIP, read by the collector's own parser into the history's lines.
+
+
+def _browse_junit(message: str) -> bytes:
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as zipped:
+        zipped.writestr(
+            "junit-browse-live.xml",
+            f"<testsuite><testcase><failure>{message}</failure></testcase></testsuite>",
+        )
+    return payload.getvalue()
+
+
+def _browse_run(
+    folder: Path,
+    run_id: int,
+    sha: str,
+    updated: str,
+    conclusion: str = "success",
+    archive: bytes | None = None,
+    *,
+    attempt: int = 1,
+    version: int = telemetry.VERSION,
+) -> None:
+    head = {f: None for f in telemetry.RUN_FIELDS}
+    head.update(kind="run", schema=telemetry.SCHEMA, version=version, run_id=run_id)
+    head.update(attempt=attempt, sha=sha, conclusion=conclusion, created_at=updated)
+    head.update(updated_at=updated, workflow="ci.yml", event="push", branch="main", jobs=[])
+    lines = [head]
+    if archive is not None:
+        cases, _, _ = telemetry.report_cases(report.BROWSE_LIVE_REPORT, archive)
+        for test, seconds, first, _, rerun, environment in cases:
+            line = {f: None for f in telemetry.TEST_FIELDS}
+            line.update(kind="test", run_id=run_id, attempt=attempt, sha=sha, test=test)
+            line.update(report=report.BROWSE_LIVE_REPORT, seconds=seconds, first_result=first)
+            line.update(rerun_result=rerun, environment_failure=environment)
+            if version == 1:
+                del line["environment_failure"]
+            lines.append(line)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"history-{run_id}-{attempt}.jsonl"
+    path.write_text("".join(json.dumps(x) + "\n" for x in lines), encoding="utf-8")
+
+
+def _row(folder: Path) -> dict:
+    return report.figures(report.read(folder), [], [])["browse_live"]
+
+
+def test_retries_are_collapsed_to_the_newest_measured_run_per_sha(tmp_path: Path) -> None:
+    """The tracker's own case. Its head on another base is gone: every history is a push to
+    main, so there are no pull-request heads to keep or leave out."""
+    folder = tmp_path / "h"
+    a, b, d, e, f = (c * 40 for c in "abdef")
+    _browse_run(folder, 12, a, "2026-09-20T10:02:00Z", "cancelled")
+    _browse_run(folder, 11, a, "2026-09-20T10:01:00Z", archive=_browse_junit("passed on retry"))
+    stale = _browse_junit("ENVIRONMENT, NOT POLICY — stale failed retry")
+    _browse_run(folder, 10, a, "2026-09-20T10:00:00Z", "failure", stale)
+    unattached = _browse_junit("ENVIRONMENT, NOT POLICY — unattached")
+    _browse_run(folder, 20, b, "2026-09-20T09:00:00Z", "failure", unattached)
+    _browse_run(folder, 40, d, "2026-09-20T07:00:00Z", archive=_browse_junit("passed"))
+    _browse_run(folder, 50, e, "2026-09-20T06:00:00Z", "failure", unattached)
+    _browse_run(folder, 60, f, "2026-09-20T05:00:00Z", "failure", unattached)
+    row = _row(folder)
+    assert [o["run_id"] for o in row["observations"]] == [11, 20, 40, 50, 60]
+    assert [o["quarantined"] for o in row["observations"]] == [False, True, False, True, True]
+    assert row["quarantined"] == 3 and row["recurring"] is True
+    assert (row["window"], row["threshold"]) == (5, 3)
+
+
+@pytest.mark.parametrize(
+    ("first", "quarantined", "recurring"),
+    [(1, 3, False), (1, 4, True), (3, 2, False)],
+    ids=["a-window-short-of-five", "three-of-five", "two-of-five"],
+)
+def test_the_alert_needs_a_full_window_and_three_distinct_quarantined_heads(
+    tmp_path: Path, first: int, quarantined: int, recurring: bool
+) -> None:
+    folder = tmp_path / "h"
+    marked = _browse_junit("ENVIRONMENT, NOT POLICY — unattached")
+    heads = [False] * first + [True] * quarantined
+    if (first, quarantined) == (3, 2):
+        heads = [False, False, True, True, False]
+    for i, marked_head in enumerate(heads):
+        archive = marked if marked_head else _browse_junit("passed")
+        _browse_run(
+            folder, 100 + i, f"{i:040x}", f"2026-09-20T{10 - i:02d}:00:00Z", archive=archive
+        )
+    row = _row(folder)
+    assert row["recurring"] is recurring
+    assert row["measured"] == len(heads) and row["quarantined"] == sum(heads)
+
+
+def test_a_newest_run_that_measured_no_browse_live_leaves_its_head_unobserved(
+    tmp_path: Path,
+) -> None:
+    """As the tracker did: a head's newest run that is not cancelled is the one that counts,
+    and an older run of that head never stands in for it."""
+    folder = tmp_path / "h"
+    sha = "a" * 40
+    _browse_run(folder, 2, sha, "2026-09-20T10:00:00Z", "failure")
+    marked = _browse_junit("ENVIRONMENT, NOT POLICY — unattached")
+    _browse_run(folder, 1, sha, "2026-09-20T09:00:00Z", "failure", marked)
+    assert _row(folder)["observations"] == []
+
+
+def test_a_rerun_attempt_of_one_run_is_a_retry_of_its_head(tmp_path: Path) -> None:
+    folder = tmp_path / "h"
+    sha = "a" * 40
+    marked = _browse_junit("ENVIRONMENT, NOT POLICY — unattached")
+    _browse_run(folder, 7, sha, "2026-09-20T09:00:00Z", "failure", marked)
+    clear = _browse_junit("passed")
+    _browse_run(folder, 7, sha, "2026-09-20T09:30:00Z", "success", clear, attempt=2)
+    [observation] = _row(folder)["observations"]
+    assert (observation["attempt"], observation["quarantined"]) == (2, False)
+
+
+def test_a_version_one_history_is_read_but_cannot_say_whether_browse_live_was_quarantined(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A version-1 test line has no ``environment_failure``, so its head is no observation,
+    never a clear one; every other figure reads it as before."""
+    folder = tmp_path / "h"
+    marked = _browse_junit("ENVIRONMENT, NOT POLICY — unattached")
+    _browse_run(folder, 1, "a" * 40, "2026-09-20T09:00:00Z", "failure", marked, version=1)
+    code, data, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 0 and data["window"]["runs"] == 1
+    assert data["browse_live"]["observations"] == [] and data["tests"][0]["first_failures"] == 1
+
+
+def test_the_row_is_shown_and_a_recurring_quarantine_is_an_error_annotation(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    folder = tmp_path / "h"
+    marked = _browse_junit("ENVIRONMENT, NOT POLICY — unattached")
+    for i in range(5):
+        archive = marked if i < 3 else _browse_junit("passed")
+        _browse_run(
+            folder, 200 + i, f"{i + 1}" * 40, f"2026-09-20T{10 - i:02d}:00:00Z", "failure", archive
+        )
+    code, _, summary = _report(folder, monkeypatch, tmp_path)
+    out = capsys.readouterr().out
+    assert code == 0
+    section = summary.split("### Browse-live")[1].split("###")[0]
+    assert "**3 of the last 5** measured heads on main carried `ENVIRONMENT, NOT POLICY`" in section
+    assert "- `111111111111` run 200: quarantined" in section
+    assert "::error title=browse-live environment quarantine is recurring::" in out
+    assert "::error" not in summary
+
+
+def test_a_short_window_says_there_is_no_rate_yet(tmp_path: Path, monkeypatch) -> None:
+    folder = tmp_path / "h"
+    _browse_run(folder, 1, "a" * 40, "2026-09-20T09:00:00Z", archive=_browse_junit("passed"))
+    _, data, summary = _report(folder, monkeypatch, tmp_path)
+    assert data["browse_live"]["recurring"] is False
+    assert "1 measured head on main of the 5 a rate needs" in summary
+
+
+def test_the_reports_are_read_within_the_trackers_size_limits() -> None:
+    """The tracker never read an archive past 8 MiB, nor its XML past 8 MiB unpacked. The
+    collector that writes the history holds the same two limits, and a report past them fails
+    the collection, so no line of the row comes from one."""
+    assert telemetry.MAX_ARCHIVE_BYTES == telemetry.MAX_JUNIT_BYTES == 8 * 1024 * 1024
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w", zipfile.ZIP_DEFLATED) as zipped:
+        zipped.writestr(
+            "junit-browse-live.xml", "<testsuite>" + " " * (8 * 1024 * 1024) + "</testsuite>"
+        )
+    with pytest.raises(telemetry.CollectError, match="bytes"):
+        telemetry.report_cases(report.BROWSE_LIVE_REPORT, payload.getvalue())

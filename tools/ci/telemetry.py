@@ -39,6 +39,13 @@ test line carries it as ``rerun_result``, null for a case that was not rerun. An
 two on one case, or one on a case whose first result was not a failure, fails the collection.
 The first result is never replaced by it.
 
+**The environment marker** (version 2). The suite names a red the environment caused, rather than
+the code under test, with the exact words ``ENVIRONMENT, NOT POLICY`` in the failure: the browse
+proof's page that stayed detached. A test line's ``environment_failure`` is true when its case
+failed or errored with those words in the failure's message or text, and false for every other
+case. Version 2 adds that field and changes nothing else, so every reader takes a version-1
+history (:data:`READS`) as one whose lines carry no such field.
+
 Quarantine facts (``quarantined``) and cache hits (``cache_hits``) no API reports, so until they
 are written they are null, never guessed. Standard library only, like every file in
 ``tools/ci``.
@@ -60,7 +67,10 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA = "personalclaw-ci-telemetry"
-VERSION = 1
+VERSION = 2
+#: The versions a reader takes: this one, and version 1, whose test lines lack
+#: ``environment_failure``.
+READS = frozenset({1, VERSION})
 
 #: The run line's fields, after ``kind``, ``schema`` and ``version``.
 RUN_FIELDS = (
@@ -98,6 +108,7 @@ TEST_FIELDS = (
     "seconds",
     "first_result",
     "rerun_result",
+    "environment_failure",
     "quarantined",
     "platform",
     "workers",
@@ -319,9 +330,22 @@ RERUN_PROPERTY = "rerun_result"
 FLAKE = "flake"
 RERUN_RESULTS = frozenset({FLAKE, "repeated failure"})
 
-Case = tuple[str, float, str, str | None, str | None]
-"""One test case: its id, its seconds, its first result, the runner host it ran on, and the
-diagnostic rerun's classification of it, or None when it was not rerun."""
+#: The words a failure carries when the environment, not the code under test, caused it.
+ENVIRONMENT_MARKER = "ENVIRONMENT, NOT POLICY"
+
+Case = tuple[str, float, str, str | None, str | None, bool]
+"""One test case: its id, its seconds, its first result, the runner host it ran on, the
+diagnostic rerun's classification of it (None when it was not rerun), and whether its failure
+carried :data:`ENVIRONMENT_MARKER`."""
+
+
+def _environment_failure(case: ET.Element) -> bool:
+    """Whether a failure or an error of the case carries the marker, in its message or text."""
+    for element in (*case.findall("failure"), *case.findall("error")):
+        text = (element.get("message") or "") + "".join(element.itertext())
+        if ENVIRONMENT_MARKER in text:
+            return True
+    return False
 
 
 def _rerun_result(name: str, test: str, first: str, case: ET.Element) -> str | None:
@@ -374,7 +398,9 @@ def report_cases(name: str, archive: bytes) -> tuple[list[Case], str | None, int
                         found = {p.get("name"): p.get("value") for p in case.iter("property")}
                         first = _result(case)
                         rerun = _rerun_result(name, test, first, case)
-                        cases.append((test, float(case.get("time") or 0.0), first, host, rerun))
+                        environment = first in ("failed", "error") and _environment_failure(case)
+                        seconds = float(case.get("time") or 0.0)
+                        cases.append((test, seconds, first, host, rerun, environment))
                         if PLATFORM_PROPERTY in found or WORKERS_PROPERTY in found:
                             facts.add((found.get(PLATFORM_PROPERTY), found.get(WORKERS_PROPERTY)))
     except zipfile.BadZipFile:
@@ -466,7 +492,7 @@ def collect(
         if len(data) > MAX_ARCHIVE_BYTES:
             raise CollectError(f"{name}: the archive passes {MAX_ARCHIVE_BYTES} bytes")
         cases, platform, workers = report_cases(name, data)
-        for test, seconds, result, host, rerun in cases:
+        for test, seconds, result, host, rerun, environment in cases:
             tests.append(
                 {
                     "kind": "test",
@@ -480,6 +506,7 @@ def collect(
                     "seconds": seconds,
                     "first_result": result,
                     "rerun_result": rerun,
+                    "environment_failure": environment,
                     "quarantined": None,
                     "platform": platform,
                     "workers": workers,
