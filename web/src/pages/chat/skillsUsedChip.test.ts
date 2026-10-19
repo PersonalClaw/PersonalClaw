@@ -387,6 +387,8 @@ describe('the chip is wired at both surfaces (not an inert helper)', () => {
   // The ledger moved out of `ChatPage.tsx` so its one-action reach could be mounted and proved
   // (`contextLedgerReach.test.tsx`); these scans follow the code rather than the old address.
   const ledger = read('./ContextLedger.tsx')
+  // The WS handler moved out of `ChatPage.tsx` into the chat's stream; its scans follow it.
+  const stream = read('./useChatStream.ts')
 
   it('the chat run panel renders the label + the names on hover', () => {
     expect(chatPage).toContain('title={skillsUsedTitle(skills)}')
@@ -412,15 +414,15 @@ describe('the chip is wired at both surfaces (not an inert helper)', () => {
   })
 
   it('the chat names the skills LIVE, from the activity event the turn announces them on', () => {
-    expect(chatPage).toContain("if (kind === 'skills') {")
-    expect(chatPage).toContain('skillsUsed: joined')
+    expect(stream).toContain("if (kind === 'skills') {")
+    expect(stream).toContain('skillsUsed: joined')
   })
 
   it('the learned row routes on origin instead of one hardcoded link', () => {
     // The WS handler must actually stamp the wire's `origin`, and the ledger must read it off
     // the same segment — otherwise `learnedSurface` is only ever called with `undefined` and
     // every chip degrades, which would look exactly like "old messages" forever.
-    expect(chatPage).toContain('textRun.activity(text, kind, origin, ref)')
+    expect(stream).toContain('textRun.activity(text, kind, origin, ref)')
     expect(textRunOwner).toContain('stampActivityOrigin(segs, insertActivity(')
     expect(chatPage).toContain("ledger.learnedOrigin = (s as ActivitySegment).origin")
     // …and a learned preference's key, which is what its "Forget it" and its link need.

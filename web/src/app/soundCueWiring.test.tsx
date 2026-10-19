@@ -77,8 +77,10 @@ function blockAt(src: string, from: number): string {
   throw new Error('unbalanced block')
 }
 
-describe('turn ended → ChatPage', () => {
-  const code = stripComments(readFileSync(join(SRC, 'pages/ChatPage.tsx'), 'utf8'))
+describe('turn ended → the chat stream', () => {
+  // A turn's ending is said by the chat's stream (`chat/useChatStream`), which ChatPage composes.
+  const code = stripComments(readFileSync(join(SRC, 'pages/chat/useChatStream.ts'), 'utf8'))
+  const page = stripComments(readFileSync(join(SRC, 'pages/ChatPage.tsx'), 'utf8'))
 
   it('the comment stripper actually strips (or every assertion below is vacuous)', () => {
     expect(stripComments('a /* playCue("x") */ b')).not.toMatch(/playCue/)
@@ -88,7 +90,7 @@ describe('turn ended → ChatPage', () => {
   })
 
   it('imports the cue from the design module, not a local re-implementation', () => {
-    expect(code).toMatch(/import \{ playCue \} from '\.\.\/design\/soundCues'/)
+    expect(code).toMatch(/import \{ playCue \} from '\.\.\/\.\.\/design\/soundCues'/)
   })
 
   it('fires where a turn’s ending is said, once, with the cue that ending calls for', () => {
@@ -108,9 +110,10 @@ describe('turn ended → ChatPage', () => {
     // …and every settle path reaches it with what it knows.
     const settle = blockAt(code, code.indexOf('const markStreaming = '))
     expect(settle).toMatch(/if \(!v\) sayTurnEnded\(outcome\)/)
-    // Exactly one cue in the whole page: a second call site would mean a cue on a
-    // path nobody reasoned about.
+    // Exactly one cue in the whole page — the stream's, none in the page that composes it: a
+    // second call site would mean a cue on a path nobody reasoned about.
     expect(code.match(/playCue\(/g)?.length).toBe(1)
+    expect(page.match(/playCue\(/g)).toBeNull()
   })
 })
 

@@ -238,8 +238,11 @@ describe('§3 the remaining hand-rolled server-data caches are a shrinking, name
 
   it('the two that were converged are gone for good', () => {
     const chat = codeOf(join(SRC, 'pages', 'ChatPage.tsx'))
+    // The transcript seed is read and written by the chat's stream, which ChatPage composes.
+    const stream = codeOf(join(SRC, 'pages', 'chat', 'useChatStream.ts'))
     expect(chat, 'the private chat-detail prefix must not come back').not.toMatch(/'chat-detail:'/)
-    expect(chat, 'and the transcript seed goes through the shared store').toMatch(/peekQuery</)
+    expect(stream, 'the private chat-detail prefix must not come back').not.toMatch(/'chat-detail:'/)
+    expect(stream, 'and the transcript seed goes through the shared store').toMatch(/peekQuery</)
   })
 })
 

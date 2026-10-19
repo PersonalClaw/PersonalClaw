@@ -1209,6 +1209,23 @@ A dashboard session can be linked to a channel thread (and vice versa):
   (`upload_voice_to_channel`); markdown deep links are stripped generically
   before synthesis.
 
+## The chat page's regions (web)
+
+`web/src/pages/ChatPage.tsx` routes a chat URL and composes the open chat
+(`ChatSession`) from region controllers, each a hook and its component, so a
+change to one region touches that region's files:
+
+- **The stream** — `web/src/pages/chat/useChatStream.ts`. Opens a session from
+  its detail (seeded from the `chat:detail:<key>` cache), folds the session's
+  `/api/ws` frames into the transcript through the pure folds
+  (`coalesceReducers.ts`, `liveToolFrames.ts`, `questionFrames.ts`), holds the
+  stream while a snapshot read is out and replays it on top
+  (`snapshotReplay.ts`), resyncs when the socket comes back, and settles a
+  streaming claim that outlived its turn (`streamStall.ts`). What other regions
+  own reaches them through its sinks: the routing suggestion, a reading's audio,
+  a finished reply that may be read out, and the composer's posture from the
+  first read.
+
 ## Prompt entities
 
 `prompt_providers/` is the prompt-catalog subsystem (bundled use-case prompts

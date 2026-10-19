@@ -82,15 +82,16 @@ describe('resolveStalledStream', () => {
 // Source-derived because nothing in `web/` can mount `ChatPage` — the repo's shipped pattern for
 // pinning a ChatPage wiring contract (`sessionDelivery.test.ts`) does the same, for the same
 // reason. Every assertion below is keyed on an anchor that must exist, so a rename reds the rail
-// instead of silently making it vacuous.
-const CHAT_PAGE = readFileSync(join(process.cwd(), 'src', 'pages', 'ChatPage.tsx'), 'utf8')
+// instead of silently making it vacuous. The reconciler lives in the chat's stream
+// (`useChatStream.ts`), which ChatPage composes.
+const CHAT_STREAM = readFileSync(join(process.cwd(), 'src', 'pages', 'chat', 'useChatStream.ts'), 'utf8')
 /** The comments here quote the rule at length, so the rail must read CODE only. */
 const stripComments = (s: string) =>
   s.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 /** The idle stream-reconciler effect — the one silent-while-streaming poll. */
 function reconcilerBody(src: string): string {
   const anchor = src.indexOf('const showingApproval =')
-  expect(anchor, 'the idle stream-reconciler must exist in ChatPage — the rail is keyed on it').toBeGreaterThan(-1)
+  expect(anchor, 'the idle stream-reconciler must exist in the chat stream — the rail is keyed on it').toBeGreaterThan(-1)
   const start = src.lastIndexOf('useEffect(() => {', anchor)
   expect(start, 'the reconciler must live in a useEffect').toBeGreaterThan(-1)
   const end = src.indexOf('}, [streaming, turns, sessionId])', anchor)
@@ -100,7 +101,7 @@ function reconcilerBody(src: string): string {
 
 describe('ChatPage wires the stall reading', () => {
   it('asks resolveStalledStream instead of re-deriving the rule inline', () => {
-    const body = reconcilerBody(CHAT_PAGE)
+    const body = reconcilerBody(CHAT_STREAM)
     expect(body, 'the reconciler must resolve the stall through the shared reading').toMatch(/resolveStalledStream\(\{/)
     // The pre-fix rule, which threw the server's `running` away and returned on anything that was
     // not a pending approval. If it comes back, the stall is undetectable again.
@@ -109,7 +110,7 @@ describe('ChatPage wires the stall reading', () => {
   })
 
   it('ENDS the streaming claim on a settled verdict', () => {
-    const body = reconcilerBody(CHAT_PAGE)
+    const body = reconcilerBody(CHAT_STREAM)
     // Without this the reading is inert: the whole defect is a `streaming` that never clears.
     expect(body, 'a settled stall must clear `streaming` — that is the lie being corrected')
       .toMatch(/stall === 'settled'[\s\S]*markStreaming\(false\b/)
@@ -127,7 +128,7 @@ describe('ChatPage wires the stall reading', () => {
   })
 
   it('feeds the reading the SERVER\'s run state, not a client guess', () => {
-    const body = reconcilerBody(CHAT_PAGE)
+    const body = reconcilerBody(CHAT_STREAM)
     expect(body, 'serverRunning must come from session detail').toMatch(/serverRunning:\s*!!d\.run_state\.turn\b/)
     // A turn waiting on her OK is its run state's phase: the detail's own `pending_approval` flag
     // is gone with the others.
