@@ -282,8 +282,8 @@ command = [
 
 # The browser run boots the gateway and drives a real Chromium. Its inputs are the whole tree
 # less what provably cannot reach a rendered pixel or the harness boot; each exclusion below
-# carries scripts/ci_touches_frontend.py's reason, word for word. src/personalclaw/** is never
-# excluded: a backend diff can change the DOM the browser run scans.
+# carries the reason the ignore-list it replaced gave, word for word. src/personalclaw/** is
+# never excluded: a backend diff can change the DOM the browser run scans.
 # - docs/**: prose only. Nothing under docs/ is served by the gateway or packaged into the wheel at
 #   runtime — pyproject.toml references it only as a Documentation URL.
 # - *.md at the repo root: README / CHANGELOG / CONTRIBUTING / AGENTS / SECURITY. Deliberately NOT
@@ -331,7 +331,9 @@ command = [
 
 # A real browser driven by the browse tool. Its steps run two security-marked modules (the
 # browsed page's safety script, and a denied navigation that never reaches the network), so its
-# result is security evidence; and it is live. Either way it is never reused.
+# result is security evidence; and it is live. Either way it is never reused, and no plan leaves
+# it out: ci.yml runs it as a job of its own that waits on nothing, on every pull request and
+# every push to main.
 [[job]]
 id = "browse-live"
 tiers = ["merge"]
@@ -342,7 +344,7 @@ cache = ["uv", "npm"]
 security = "security"
 live = true
 python = "3.12.15"
-timeout_min = 30
+timeout_min = 20
 needs_node = true
 needs_browser = true
 junit = ["reports/junit-browse-live.xml"]
@@ -350,18 +352,19 @@ command = [
   { argv = ["uv", "run", "pytest", "tests/test_browse_safety_script.py", "tests/test_browse_cdp_live.py", "tests/test_browse_behavioural_proof_is_reachable.py", "--junitxml=reports/junit-browse-live.xml"], env = { PERSONALCLAW_REQUIRE_BROWSE_PROOF = "1", PERSONALCLAW_SKIP_APP_BACKENDS = "1" } },
 ]
 
-# ci.yml runs it only when scripts/ci_touches_sdk.py says the diff changes what the apps build
-# against; these are that classifier's triggers. python-suite names every tracked path but the
-# flake, so on any of them no unknown-path fallback stands behind these inputs, and they alone
-# decide a plan's apps-contract. tests/rails/test_ci_plan_tree.py holds them to the triggers and
-# plans every tracked path the classifier runs the job on.
+# What the apps build against. A signature change anywhere in core must regenerate the snapshot
+# under src/personalclaw/sdk/, so a trigger list is sound here where e2e needs default-deny.
+# These are the triggers of the SDK classifier ci.yml ran the job by before the plan, less that
+# classifier's own file. python-suite names every tracked path but the flake, so on any of them
+# no unknown-path fallback stands behind these inputs, and they alone decide a plan's
+# apps-contract. tests/rails/test_ci_plan_tree.py holds them to the triggers and plans every
+# tracked path the classifier ran the job on.
 [[job]]
 id = "apps-contract"
 tiers = ["merge"]
 inputs = [
   "src/personalclaw/sdk/",
   "scripts/apps_sdk_contract.py",
-  "scripts/ci_touches_sdk.py",
   "scripts/sdk_signature_snapshot.py",
   ".github/workflows/ci.yml",
   ".github/actions/",

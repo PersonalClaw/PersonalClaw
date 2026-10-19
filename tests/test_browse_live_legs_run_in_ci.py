@@ -47,7 +47,7 @@ _TESTS = _ROOT / "tests"
 
 #: The job id as it stands today. Used only in failure messages — the assertions locate the leg
 #: by behaviour, so renaming the job is not a regression and must not read as one.
-EXPECTED_LEG = "e2e"
+EXPECTED_LEG = "browse-live"
 
 
 # ── the parser ────────────────────────────────────────────────────────────────

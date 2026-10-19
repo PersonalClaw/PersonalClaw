@@ -389,22 +389,20 @@ class TelemetryRecord:
 GH_TIMEOUT_SECONDS = 120
 
 
-def _gh_text(*args: str) -> str:
+def _gh_text(*args: str, timeout: float = GH_TIMEOUT_SECONDS) -> str:
     done = subprocess.run(
         ["gh", *args],
         capture_output=True,
         text=True,
         errors="replace",
         check=True,
-        timeout=GH_TIMEOUT_SECONDS,
+        timeout=timeout,
     )
     return done.stdout
 
 
-def _gh_binary(*args: str) -> bytes:
-    return subprocess.run(
-        ["gh", *args], capture_output=True, check=True, timeout=GH_TIMEOUT_SECONDS
-    ).stdout
+def _gh_binary(*args: str, timeout: float = GH_TIMEOUT_SECONDS) -> bytes:
+    return subprocess.run(["gh", *args], capture_output=True, check=True, timeout=timeout).stdout
 
 
 def _durations_or_equal(

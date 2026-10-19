@@ -833,3 +833,319 @@ def test_the_overrides_load_typed() -> None:
     first, second = catalogue.load_areas(_AREAS, _cat())
     assert first.paths == ("README.md",) and first.jobs == ("build",) and not first.whole_tier
     assert second.whole_tier and second.jobs == ()
+
+
+# ── the rails floor on CI, from the collector's history ──────────────────────────────────────
+
+_REPO = "example/repo"
+
+
+def _zip(
+    run_id: int,
+    rails: float,
+    workflow: str = "ci.yml",
+    *,
+    kind: str = "run",
+    line_bytes: int | None = None,
+) -> bytes:
+    """One history archive whose run line names ``run_id``; ``line_bytes`` pads that line,
+    its newline included, to exactly that length."""
+    import io
+    import zipfile
+
+    head: dict[str, object] = {
+        "kind": kind,
+        "run_id": run_id,
+        "workflow": workflow,
+        "jobs": [{"name": "rails", "conclusion": "success", "minutes": rails}],
+    }
+    line = json.dumps(head) + "\n"
+    if line_bytes is not None:
+        head["pad"] = ""
+        bare = len(json.dumps(head)) + 1
+        head["pad"] = "x" * (line_bytes - bare)
+        line = json.dumps(head) + "\n"
+        assert len(line.encode()) == line_bytes
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(f"history-{run_id}-1.jsonl", line)
+    return out.getvalue()
+
+
+class _Clock:
+    """A clock that moves only when a fake gh call takes time."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _gh(
+    runs: dict[int, tuple[str, bytes | None]],
+    *,
+    collector: bool = True,
+    owner: str = _REPO,
+    size: int = 10,
+    clock: _Clock | None = None,
+    cost=None,
+    timeouts: list[float | None] | None = None,
+):
+    """A fake gh: the listed runs, each with its conclusion and its history archive. With a
+    ``clock``, each call takes ``cost(args)`` seconds, or its timeout, when that is shorter, and
+    then fails as a hung call would."""
+    from tools.ci import telemetry
+
+    def spend(args: tuple[str, ...], timeout: float | None) -> None:
+        if timeouts is not None:
+            timeouts.append(timeout)
+        if clock is None:
+            return
+        took = cost(args) if cost else 0.0
+        if timeout is not None and took > timeout:
+            clock.now += timeout
+            raise subprocess.TimeoutExpired(["gh", *args], timeout)
+        clock.now += took
+
+    def text(*args: str, timeout: float | None = None) -> str:
+        spend(args, timeout)
+        path = args[1]
+        if path.startswith(f"repos/{_REPO}/actions/workflows/"):
+            return "".join(f"{r} {c} {owner}\n" for r, (c, _) in runs.items())
+        if path.startswith(f"repos/{_REPO}/actions/artifacts?name="):
+            run = int(path.split("telemetry-history-")[1].split("-")[0])
+            if runs[run][1] is None:
+                return json.dumps({"artifacts": []})
+            made_by = {"id": 9000 + run, "head_branch": "main"}
+            made_by.update(head_repository_id=1, repository_id=1)
+            listed = [{"id": run, "size_in_bytes": size, "expired": False, "workflow_run": made_by}]
+            return json.dumps({"artifacts": listed})
+        if path.startswith(f"repos/{_REPO}/actions/runs/"):
+            return json.dumps(
+                {
+                    "path": telemetry.COLLECTOR_PATH if collector else "an-impostor-workflow.yml",
+                    "event": "workflow_run",
+                    "head_branch": "main",
+                    "head_repository": {"full_name": _REPO},
+                }
+            )
+        raise AssertionError(args)
+
+    def binary(*args: str, timeout: float | None = None) -> bytes:
+        spend(args, timeout)
+        run = int(args[1].split("/artifacts/")[1].split("/")[0])
+        data = runs[run][1]
+        assert data is not None
+        return data
+
+    return text, binary
+
+
+def _floor(text, binary, **kw):
+    return planner.rails_floor_from_ci(_REPO, text=text, binary=binary, **kw)
+
+
+def test_the_ci_floor_is_the_median_of_the_newest_three_collected_runs() -> None:
+    """A cancelled run is skipped; a red run counts, since its rails job passed."""
+    runs = {
+        5: ("success", _zip(5, 8.0)),
+        4: ("cancelled", _zip(4, 1.0)),
+        3: ("failure", _zip(3, 6.0)),
+        2: ("success", None),
+        1: ("success", _zip(1, 7.0)),
+        0: ("success", _zip(0, 99.0)),
+    }
+    assert _floor(*_gh(runs)) == {"minutes": 7.0, "runs": 3}
+
+
+def test_history_the_collector_did_not_upload_is_not_read() -> None:
+    text, binary = _gh({1: ("success", _zip(1, 7.0))}, collector=False)
+    assert _floor(text, binary) == planner.NOT_MEASURED
+
+
+def test_a_history_line_for_another_run_is_not_read() -> None:
+    assert _floor(*_gh({1: ("success", _zip(2, 7.0))})) == planner.NOT_MEASURED
+
+
+def test_a_run_of_another_repository_is_not_read() -> None:
+    """A fork's run on its own main can carry a history of the same name."""
+    text, binary = _gh({1: ("success", _zip(1, 7.0))}, owner="someone/fork")
+    assert _floor(text, binary) == planner.NOT_MEASURED
+
+
+@pytest.mark.parametrize(
+    ("workflow", "kind"), [("other.yml", "run"), ("ci.yml", "test")], ids=["workflow", "kind"]
+)
+def test_a_head_of_another_workflow_or_kind_is_not_read(workflow: str, kind: str) -> None:
+    text, binary = _gh({1: ("success", _zip(1, 7.0, workflow, kind=kind))})
+    assert _floor(text, binary) == planner.NOT_MEASURED
+
+
+def test_a_history_line_is_read_only_within_its_bound() -> None:
+    """A line of the bound, its newline included, is read; one byte more is refused."""
+    from tools.ci import shards
+
+    bound = shards.MAX_HISTORY_LINE_BYTES
+    at = _gh({1: ("success", _zip(1, 7.0, line_bytes=bound))})
+    over = _gh({1: ("success", _zip(1, 7.0, line_bytes=bound + 1))})
+    assert _floor(*at) == {"minutes": 7.0, "runs": 1}
+    assert _floor(*over) == planner.NOT_MEASURED
+
+
+def test_a_long_history_line_is_never_read_whole(monkeypatch) -> None:
+    """The bound is on what is read, not only on what is kept: of a line three times over it,
+    about the bound is read (io's readline may read one buffer past its limit), never the
+    line."""
+    import zipfile
+
+    from tools.ci import shards
+
+    bound = shards.MAX_HISTORY_LINE_BYTES
+    read: list[int] = []
+    real = zipfile.ZipExtFile.readline
+
+    def readline(self, limit: int = -1) -> bytes:
+        got = real(self, limit)
+        read.append(len(got))
+        return got
+
+    monkeypatch.setattr(zipfile.ZipExtFile, "readline", readline)
+    assert _floor(*_gh({1: ("success", _zip(1, 7.0, line_bytes=3 * bound))})) == (
+        planner.NOT_MEASURED
+    )
+    assert read and max(read) < 2 * bound, read
+
+
+def test_an_archive_it_cannot_read_is_skipped_and_the_next_is_read() -> None:
+    runs = {2: ("success", b"not a zip archive"), 1: ("success", _zip(1, 7.0))}
+    assert _floor(*_gh(runs)) == {"minutes": 7.0, "runs": 1}
+
+
+def test_a_failing_api_gives_not_measured_never_a_guess(capsys) -> None:
+    def text(*_a: str, timeout: float | None = None) -> str:
+        raise OSError("api down")
+
+    assert _floor(text, text) == planner.NOT_MEASURED
+    assert "rails floor not read" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("listing", "each"),
+    [(59.0, 119.0), (30.0, 100.0), (1.0, 119.0), (0.0, 30.0), (0.0, 500.0), (61.0, 1.0)],
+)
+def test_reading_never_passes_its_time_limit(listing: float, each: float) -> None:
+    """Every gh call is given only the time left, so a slow API cannot hold the gating job
+    past the limit, however its time is spread across calls."""
+    from tools.ci import shards
+
+    clock = _Clock()
+    runs = {r: ("success", _zip(r, 8.0)) for r in range(9, 0, -1)}
+    timeouts: list[float | None] = []
+
+    def cost(args: tuple[str, ...]) -> float:
+        return listing if "/actions/workflows/" in args[1] else each
+
+    text, binary = _gh(runs, clock=clock, cost=cost, timeouts=timeouts)
+    _floor(text, binary, clock=clock)
+    assert clock.now <= planner.FLOOR_SECONDS, clock.now
+    assert timeouts and all(t is not None and 0 < t <= shards.GH_TIMEOUT_SECONDS for t in timeouts)
+
+
+def test_a_read_that_runs_out_of_time_keeps_what_it_read(capsys) -> None:
+    clock = _Clock()
+    runs = {2: ("success", _zip(2, 8.0)), 1: ("success", _zip(1, 6.0))}
+    text, binary = _gh(runs, clock=clock, cost=lambda args: 15.0)
+    assert _floor(text, binary, clock=clock) == {"minutes": 8.0, "runs": 1}
+    assert clock.now <= planner.FLOOR_SECONDS
+    assert "rails floor not read" in capsys.readouterr().err
+
+
+def test_a_floor_given_to_plan_is_the_one_reported() -> None:
+    p = _plan(["docs/a.md"], floor={"minutes": 7.0, "runs": 3})
+    assert p.rails_floor == {"minutes": 7.0, "runs": 3}
+
+
+def _outputs(tmp_path: Path, paths: str, *extra: str) -> subprocess.CompletedProcess[str]:
+    cat = tmp_path / "catalogue.toml"
+    cat.write_text(_TEXT)
+    (tmp_path / "areas.toml").write_text(_AREAS)
+    listed = tmp_path / "changed.txt"
+    listed.write_text(paths)
+    return _command("merge", "--catalogue", str(cat), "--paths", str(listed), "--outputs", *extra)
+
+
+@pytest.mark.parametrize(
+    ("paths", "full", "jobs"),
+    [
+        ("docs/a.md\n", "false", _FLOOR | {"docs-check"}),
+        ("newtop/x.py\n", "true", _MERGE),
+        ("", "true", _MERGE),
+    ],
+    ids=["a plan", "an unknown path", "an empty diff"],
+)
+def test_outputs_prints_github_output_lines_and_the_plan_on_stderr(
+    tmp_path, paths: str, full: str, jobs: set[str]
+) -> None:
+    done = _outputs(tmp_path, paths)
+    assert done.returncode == 0, done.stderr
+    lines = done.stdout.splitlines()
+    assert len(lines) == 2 and lines[0] == f"full={full}", lines
+    assert lines[1].startswith("jobs=")
+    listed = lines[1][len("jobs=") :]
+    assert set(json.loads(listed)) == jobs
+    assert listed == json.dumps(json.loads(listed), separators=(",", ":"))
+    assert json.loads(done.stderr)["full"] is (full == "true")
+
+
+def test_outputs_with_full_plans_the_whole_tier(tmp_path) -> None:
+    done = _outputs(tmp_path, "docs/a.md\n", "--full")
+    assert done.returncode == 0 and done.stdout.splitlines()[0] == "full=true"
+
+
+def _main_outputs(tmp_path: Path, monkeypatch, capsys, text, binary) -> tuple[int, list[str], str]:
+    """``plan merge --repo --outputs`` in this process, its gh calls answered by the fakes."""
+    from tools.ci import shards
+
+    cat = tmp_path / "catalogue.toml"
+    cat.write_text(_TEXT)
+    (tmp_path / "areas.toml").write_text(_AREAS)
+    listed = tmp_path / "changed.txt"
+    listed.write_text("docs/a.md\n")
+    monkeypatch.setattr(shards, "_gh_text", text)
+    monkeypatch.setattr(shards, "_gh_binary", binary)
+    code = planner.main(
+        ["merge", "--catalogue", str(cat), "--paths", str(listed), "--repo", _REPO, "--outputs"]
+    )
+    captured = capsys.readouterr()
+    return code, captured.out.splitlines(), captured.err
+
+
+def test_an_api_answer_that_is_not_json_still_gives_the_plan(tmp_path, monkeypatch, capsys) -> None:
+    """The floor is a report, never a gate: whatever the API answers, the plan is printed."""
+    good, binary = _gh({1: ("success", _zip(1, 7.0))})
+
+    def text(*args: str, timeout: float | None = None) -> str:
+        if "/actions/artifacts?name=" in args[1]:
+            return "<html>an error page</html>"
+        return good(*args, timeout=timeout)
+
+    code, out, err = _main_outputs(tmp_path, monkeypatch, capsys, text, binary)
+    assert code == 0, err
+    assert out[0] == "full=false" and out[1].startswith("jobs=") and len(out) == 2
+    assert "rails floor not read" in err
+
+
+def test_a_warning_during_the_floor_read_stays_off_the_outputs(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """stdout carries the two output lines alone; what the floor read says goes to stderr."""
+    from tools.ci import shards
+
+    big = shards.MAX_HISTORY_ARCHIVE_BYTES + 1
+    text, binary = _gh({1: ("success", _zip(1, 7.0))}, size=big)
+    code, out, err = _main_outputs(tmp_path, monkeypatch, capsys, text, binary)
+    assert code == 0 and len(out) == 2, out
+    assert out[0] == "full=false" and out[1].startswith("jobs=")
+    assert "telemetry history skipped" in err
+    assert json.loads(err[err.index("{") :])["rails_floor"] == planner.NOT_MEASURED

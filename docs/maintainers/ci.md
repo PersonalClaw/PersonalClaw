@@ -200,8 +200,8 @@ jobs it maps to, in both directions:
   fails the row too, so the list holds only lines that exist. No line is a step of two entries.
 - An install is toolchain, never a step: `uv sync`, `npm ci` and the Playwright browser install
   are refused as steps, and each install an entry's toolchain names (`uv-sync`, `npm-ci`,
-  `chromium`) is one its `ci.yml` jobs run. Each entry names every install it needs, so one that
-  shares a `ci.yml` job with another (`browse-live` with `e2e`) does not lean on the other's.
+  `chromium`) is one its `ci.yml` jobs run. Each entry names every install it needs, so no entry
+  leans on another job's installs.
 - The cap, the runner, the Python (the one `setup-uv` sets before the entry's steps, inside the
   setup action when the job calls it there), the environment, the JUnit reports and the shard
   count are the jobs'.
@@ -244,12 +244,11 @@ is read the same way, with the outer call's inputs and `env:`, and a call of one
 cannot read fails the row. A setup step inside the action counts at the index of the call. Each
 of those rows has a plant inside the action.
 
-A change under `.github/actions/` runs the path-gated jobs, `e2e` and `apps-contract`, as a
-change to `ci.yml` does: both set up their toolchain through the action, so it defines them too
-(`scripts/ci_touches_frontend.py`, `scripts/ci_touches_sdk.py`). The planner plans the whole
-tier for it (`tools/ci/areas.toml`). The rails check that every local action `e2e` or
-`apps-contract` calls, and each one that action calls, runs that job's gate, and that every one
-a `ci.yml` job calls plans the whole tier.
+A change under `.github/actions/` runs the planned jobs, `e2e` and `apps-contract`, as a
+change to `ci.yml` does: both set up their toolchain through the action, so it defines them too.
+The planner plans the whole tier for it (`tools/ci/areas.toml`). The rails check that every
+local action `apps-contract` calls, and each one that action calls, plans that job, and that
+every one a `ci.yml` job calls plans the whole tier.
 
 `python -m tools.ci list` prints every job. `python -m tools.ci explain <tier>` says what a tier
 proves and what it does not, and lists each of its jobs' commands. Both read only the catalogue
@@ -392,7 +391,15 @@ overrides (`--areas`, beside the catalogue by default):
 - **The rails floor** is the median minutes of `ci.yml`'s passing `rails` job over a folder of
   telemetry history (`--history`). A head it cannot measure from (no job list, minutes that
   are not a finite positive number) is skipped; with none it reads
-  `{"minutes": null, "runs": 0}`, never a guessed number.
+  `{"minutes": null, "runs": 0}`, never a guessed number. On CI it is read with `--repo
+  <owner/name>` from `main`'s history instead: the newest three completed `ci.yml` runs on
+  `main` whose history the collector itself uploaded, a cancelled run skipped and a red one
+  counted when its rails job passed, and only a history line naming that run. Each `gh` call
+  gets what is left of 60 seconds, so the read ends within them; any failure, running out of
+  time included, gives what was read and a warning on stderr. The floor is a report, never a
+  gate: nothing it reads changes the plan's jobs.
+- **`--outputs`** prints the two GitHub output lines on stdout, `full=true|false` and
+  `jobs=<JSON list>`, and the plan as JSON on stderr, with anything the floor read printed.
 - **Exit codes:** 0 with a plan; 2, printing nothing, when the tier has no job in the catalogue
   (`weekly` and `release` have none yet) or the catalogue or its overrides cannot be read, so a
   caller plans everything.
@@ -403,10 +410,10 @@ base, so a move names both the path it left and the path it reached.
 `e2e`, `apps-contract` and `python-suite` name their inputs; every other job declares the whole
 tree today. `e2e`'s inputs are the whole tree less the paths that cannot reach the browser run,
 each exclusion carrying its reason in the catalogue. `apps-contract`'s are the triggers of
-`scripts/ci_touches_sdk.py`, the classifier ci.yml runs it by. `python-suite`'s are every
-top-level entry but `flake.nix` and `flake.lock`. The suite reads every tracked path: its
-publication-hygiene tests list the tracked tree and open each file in it, and suite modules name
-`docs/`, `web/`, `deploy/` and the root files besides.
+the SDK classifier ci.yml ran it by before the plan, less the classifier's own file.
+`python-suite`'s are every top-level entry but `flake.nix` and `flake.lock`. The suite reads
+every tracked path: its publication-hygiene tests list the tracked tree and open each file in
+it, and suite modules name `docs/`, `web/`, `deploy/` and the root files besides.
 `tests/rails/test_ci_python_suite_inputs_tree.py` holds the list to that census (the hygiene
 check's own `tracked_files`, and every repository path a suite module names), so a tracked path
 the list does not name fails the rail however a test reads it. The flake is left out by choice,
@@ -417,16 +424,32 @@ by no input and plans the whole tier.
 The list does not decide whether `python-suite` runs: it is a security job, so every plan holds
 it, as every plan holds `python-suite-macos` and `browse-live`. It decides which paths are known.
 Because it names `src/`, a `src/` diff is known: the plan is not the whole tier, and
-`apps-contract` runs only when the diff reaches one of its classifier's triggers. So two kinds of
-rule now decide plans alone, and `tests/rails/test_ci_plan_tree.py` holds each across the tree:
+`apps-contract` runs only when the diff reaches one of its inputs. So two kinds of rule now
+decide plans alone, and `tests/rails/test_ci_plan_tree.py` holds each across the tree:
 `apps-contract`'s inputs, held to the classifier's triggers and planned on every tracked path the
-classifier runs the job on, and the whole-tier overrides of folders (`.github/workflows/`,
+classifier ran the job on, and the whole-tier overrides of folders (`.github/workflows/`,
 `.github/actions/`, `tools/ci/`, `deploy/docker/`), each planning the whole tier for every tracked
 file under it. A docs-only plan without the suite needs a security-posture decision, not a
 narrower list, and an entry leaves the list only when no suite test reads it, which waits on the
 publication-hygiene tests' real-tree runs moving to `tests/rails`. Narrowing another job is a
 change of its own: its inputs, the reason, and a planted path in `tests/rails/test_ci_plan_tree.py`,
 which also plants a path per override and finds the override's reason in its plan.
+
+**In `ci.yml`,** the `changes` job runs `plan merge --repo <this repository> --outputs` over the
+pull request's files (or, on a push to `main`, the push's), passed NUL-separated so a name with
+a newline in it stays one name. The planner that runs is `main`'s, never the checkout's: the
+step fetches `main`'s tip (on a push, the commit the push replaced), archives its `tools/ci`
+into a folder of its own and runs it there over the checkout's catalogue and overrides, so a
+pull request's catalogue is its input and never its judge. With no such commit, or none that
+can be fetched, nothing plans. The `ci:full` label passes `--full`; the labels are the
+event's, so one added later counts from the next push. The step publishes only `full` and a
+list of job ids exactly as the planner prints it; anything else, and no answer, becomes
+`full=true`. `e2e` and `apps-contract` run when `full` is not `false` or the list names them,
+and survive a failed `changes` job (`!cancelled()`), so an answer that is missing, malformed or
+never written runs them. `tests/rails/test_ci_plan_step_tree.py` runs the step as written,
+against planted answers and the real planner. `browse-live` is a job of its own that waits on
+nothing and runs on every pull request and every push, a tested tree's included: a security job
+is never planned out, and its evidence is never reused. Every other job runs as before.
 
 To add a rule, prefer a declared input of the job it affects; use an override only for a path
 that is no job's input but changes a job's result, and give it a reason that says how.
@@ -489,9 +512,9 @@ these hold:
   retarget to `main`, may have tested another base and skipped `test-macos`.
 
 Anything else, and any error, is no. Every job outside the always-run set (`tree-check`,
-`changes`, `security-corpus`, and `apps-contract` when the SDK changed) waits on the answer and
-runs unless it is exactly `tested=true`. So a push behind its base, a merge queue's commit or a
-direct push runs the whole gate, `test-macos` included.
+`changes`, `security-corpus`, `browse-live`, and `apps-contract` when the plan names it) waits
+on the answer and runs unless it is exactly `tested=true`. So a push behind its base, a merge
+queue's commit or a direct push runs the whole gate, `test-macos` included.
 
 The check is `tools/ci/tree_tested.py`, and the copy that runs is the previous `main` commit's,
 read from the API at `github.event.before`. It is standard-library Python, run on the image's

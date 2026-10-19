@@ -1294,9 +1294,12 @@ def wheel_and_scan_base_violations(tree: Tree) -> list[str]:
 # result only on identical inputs. These rows hold the shape that makes both claims true.
 
 _GATE = "needs.tree-check.outputs.tested != 'true'"
-#: ``ci.yml`` jobs that run whatever ``tree-check`` answers: the check itself, the change
-#: classifier, the security corpus (never skipped on main) and the SDK contract.
-_ALWAYS_RUN = frozenset({"tree-check", "changes", "security-corpus", "apps-contract"})
+#: ``ci.yml`` jobs that run whatever ``tree-check`` answers: the check itself, the plan, the
+#: security corpus (never skipped on main), the browse proof (security evidence, never reused)
+#: and the SDK contract.
+_ALWAYS_RUN = frozenset(
+    {"tree-check", "changes", "security-corpus", "browse-live", "apps-contract"}
+)
 _ON_MAIN = "github.ref == 'refs/heads/main'"
 
 
@@ -5424,7 +5427,7 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "web-build": _Mapped(("web",), ("merge",), reuse="tree"),
     "package": _Mapped(("web",), ("merge",)),
     "e2e": _Mapped(("e2e",), ("merge",)),
-    "browse-live": _Mapped(("e2e",), ("merge",), security="security", live=True),
+    "browse-live": _Mapped(("browse-live",), ("merge",), security="security", live=True),
     "apps-contract": _Mapped(("apps-contract",), ("merge",)),
     "audit": _Mapped(("audit",), ("merge",), live=True),
 }
