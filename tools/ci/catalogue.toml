@@ -469,6 +469,8 @@ timeout_min = 45
 workers = "auto"
 workers_env = "VITEST_MAX_WORKERS"
 needs_node = true
+# Vitest writes it under CI (web/vitest.config.ts), and run-job reruns its failed tests from it.
+junit = ["reports/junit-web-unit.xml"]
 command = [
   { argv = ["npm", "run", "typecheck:web"] },
   { argv = ["npm", "run", "test:web"] },

@@ -40,7 +40,9 @@ import timeout_marks
 import yaml
 from rails_repo import REPO
 
-from tools.ci import breadth_evidence, catalogue, rails_census, shards
+from tools.ci import breadth_evidence, catalogue
+from tools.ci import jobs as run_jobs
+from tools.ci import rails_census, shards
 
 #: An exact release, ``X.Y.Z``.
 _EXACT = re.compile(r"\d+\.\d+\.\d+")
@@ -6179,6 +6181,10 @@ def _job_lines(ci_job: str, job: dict[str, Any], bad: list[str]) -> list[_Line]:
 
 
 def _junit_paths(argv: tuple[str, ...]) -> Iterator[str]:
+    # The Vitest step names no report: its config writes one under CI, which the Vitest
+    # runner's row holds to this path.
+    if tuple(argv) == run_jobs.VITEST_STEP:
+        yield run_jobs.VITEST_JUNIT
     for n, arg in enumerate(argv):
         if arg.startswith("--junitxml="):
             yield arg.split("=", 1)[1]
@@ -7152,6 +7158,544 @@ QUARANTINE_IS_CAPPED_ASSIGNED_AND_EXPIRING = Row(
 )
 
 ROWS = (*ROWS, QUARANTINE_IS_CAPPED_ASSIGNED_AND_EXPIRING)
+
+
+# ── Each runner retries once, in a fresh process, on the same budget ───────────────────────
+#
+# One contract for pytest, Vitest and Playwright (#3947), one row per runner: a failed test is run
+# once more, in a new process, under the first attempt's per-test time budget, only to classify
+# it; a test that passes only on that retry still reds the job. pytest's and Vitest's retry is
+# run-job's diagnostic rerun (tools/ci/jobs.py), which tests/test_ci_jobs_rerun.py and
+# tests/test_ci_jobs_web_rerun.py hold; Playwright's is its own `retries: 1`, a new worker under
+# the same test timeout, with `failOnFlakyTests`. Each row holds what the tree must not add for
+# its runner, wherever that runner reads it: a second retry, a same-process retry or a changed
+# budget, and the report the runner's classification is read from. Each rule has a planted break,
+# each listed option, plugin and key its own.
+
+_PYPROJECT = "pyproject.toml"
+_UV_LOCK = "uv.lock"
+#: The packages with a pytest and dependencies of their own (the client's: no lock, its own venv).
+_PACKAGE_PYPROJECTS = "packages/*/pyproject.toml"
+_VITEST_CONFIG = "web/vitest.config.ts"
+_PLAYWRIGHT_CONFIG = "web/playwright.config.ts"
+
+#: pytest options that retry or repeat a test in the same process, or skip to the last failures.
+_PYTEST_RETRIES = (
+    "--reruns",
+    "--reruns-delay",
+    "--count",
+    "--lf",
+    "--last-failed",
+    "--sw",
+    "--stepwise",
+)
+#: The names ``-p`` loads a retry or repeat plugin by.
+_PYTEST_RETRY_PLUGINS = ("rerunfailures", "flaky", "pytest_repeat", "repeat")
+#: The distributions of retry and repeat plugins. Installed, each loads itself with no ``-p``, and
+#: pytest-rerunfailures then reruns a test that carries its own ``flaky(reruns=N)`` mark.
+_PYTEST_RETRY_DISTS = (
+    "pytest-rerunfailures",
+    "flaky",
+    "pytest-repeat",
+    "pytest-retry",
+    "pytest-flakefinder",
+)
+#: Vitest options that retry, repeat or retime a test.
+_VITEST_RETRIES = ("--retry", "--repeats", "--testTimeout", "--hookTimeout")
+#: Vitest config keys that retry or repeat a test in the same worker, at its top or in a project.
+_VITEST_CONFIG_RETRIES = ("retry", "repeats")
+#: The npm scripts the Vitest step runs (``npm run test:web``, then the web workspace's ``test``),
+#: by file, and their text: an option there is the step's and never its rerun's.
+_VITEST_SCRIPTS = (
+    ("package.json", "test:web", "npm run test --workspace=web"),
+    ("web/package.json", "test", "vitest run"),
+)
+#: How Vitest's config adds the JUnit report under CI alone: to Vitest's own reporters, at
+#: :data:`run_jobs.VITEST_JUNIT` from the repository root.
+_VITEST_REPORTERS = "reporters: [...configDefaults.reporters, 'junit'],"
+_VITEST_OUTPUT = (
+    "outputFile: { junit: join(WEB, "
+    + ", ".join(f"'{part}'" for part in ("..", *run_jobs.VITEST_JUNIT.split("/")))
+    + ") },"
+)
+_VITEST_UNDER_CI = re.compile(
+    r"\.\.\.\(process\.env\.CI\s*\?\s*\{\s*"
+    + re.escape(_VITEST_REPORTERS)
+    + r"\s*"
+    + re.escape(_VITEST_OUTPUT)
+    + r"\s*\}\s*:\s*\{\}\s*\),"
+)
+#: Playwright options that change its one retry or its test timeout.
+_PLAYWRIGHT_RETRIES = ("--retries", "--repeat-each", "--timeout", "--fail-on-flaky-tests")
+#: The config's one retry, and the flag that reds a retried pass, each a top-level line.
+_PLAYWRIGHT_RETRY = "  retries: process.env.CI ? 1 : 0,"
+_PLAYWRIGHT_FLAKY = "  failOnFlakyTests: !!process.env.CI,"
+
+
+def _option_names(argv: tuple[str, ...]) -> set[str]:
+    return {a.split("=", 1)[0] for a in argv if a.startswith("-")}
+
+
+def _runner_steps(root: Path) -> list[tuple[str, tuple[str, ...], dict[str, str]]]:
+    data = tomllib.loads((root / catalogue.CATALOGUE).read_text(encoding="utf-8"))
+    return [
+        (str(job.get("id")), tuple(step.get("argv") or ()), dict(step.get("env") or {}))
+        for job in data.get("job") or []
+        for step in job.get("command") or []
+    ]
+
+
+def _dist(requirement: str) -> str:
+    """A requirement's distribution name, normalised as an index normalises it."""
+    match = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", requirement)
+    return re.sub(r"[-_.]+", "-", match.group(1)).lower() if match else ""
+
+
+def _pytest_runner_check(root: Path) -> list[str]:
+    bad: list[str] = []
+    runs: list[tuple[str, tuple[str, ...]]] = []
+    held: list[tuple[str, str]] = []
+    for path in [root / _PYPROJECT, *sorted(root.glob(_PACKAGE_PYPROJECTS))]:
+        rel = path.relative_to(root).as_posix()
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        addopts = data.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("addopts", [])
+        opts = tuple(addopts if isinstance(addopts, list) else str(addopts).split())
+        runs.append((f"{rel}'s addopts", ("pytest", *opts)))
+        project = data.get("project", {})
+        held += [(rel, r) for r in project.get("dependencies", [])]
+        for extra, reqs in project.get("optional-dependencies", {}).items():
+            held += [(f"{rel}'s {extra} extra", r) for r in reqs]
+        for group, reqs in data.get("dependency-groups", {}).items():
+            held += [(f"{rel}'s {group} group", r) for r in reqs if isinstance(r, str)]
+    for where, argv in [*runs, *((job_id, argv) for job_id, argv, _ in _runner_steps(root))]:
+        if "pytest" not in argv:
+            continue
+        for name in sorted(_option_names(argv) & set(_PYTEST_RETRIES)):
+            bad.append(f"pytest: {where} passes {name}, a second retry in the same process")
+        plugins = [argv[i + 1] for i, a in enumerate(argv[:-1]) if a == "-p"]
+        for plugin in plugins:
+            if plugin in _PYTEST_RETRY_PLUGINS:
+                bad.append(f"pytest: {where} loads {plugin}, a second retry")
+    lock = root / _UV_LOCK
+    if not lock.is_file():
+        bad.append(f"pytest: there is no {_UV_LOCK} to read the installed plugins from")
+    else:
+        packages = tomllib.loads(lock.read_text(encoding="utf-8")).get("package", [])
+        held += [(_UV_LOCK, str(p.get("name", ""))) for p in packages]
+    retry_dists = {_dist(d) for d in _PYTEST_RETRY_DISTS}
+    for where, requirement in held:
+        if _dist(requirement) in retry_dists:
+            bad.append(
+                f"pytest: {where} holds {_dist(requirement)}, a retry plugin that loads itself"
+            )
+    return bad
+
+
+def _vitest_runner_check(root: Path) -> list[str]:
+    bad: list[str] = []
+    steps = _runner_steps(root)
+    for job_id, argv, _ in steps:
+        if "vitest" in argv[:3]:
+            for name in sorted(_option_names(argv) & set(_VITEST_RETRIES)):
+                bad.append(f"vitest: {job_id} passes {name}, which retries or retimes a test")
+    if run_jobs.VITEST_STEP not in [argv for job_id, argv, _ in steps if job_id == "web-unit"]:
+        bad.append(f"vitest: web-unit no longer runs {shlex.join(run_jobs.VITEST_STEP)}")
+    for rel, script, want in _VITEST_SCRIPTS:
+        path = root / rel
+        if not path.is_file():
+            bad.append(f"vitest: there is no {rel} to read the step's {script} script from")
+            continue
+        scripts = json.loads(path.read_text(encoding="utf-8")).get("scripts", {})
+        if scripts.get(script) != want:
+            bad.append(
+                f"vitest: {rel}'s {script} script is {scripts.get(script)!r}, not {want!r}: the"
+                " step runs it, and an option there is the step's and never its rerun's"
+            )
+    vitest = (root / _VITEST_CONFIG).read_text(encoding="utf-8")
+    for key in _VITEST_CONFIG_RETRIES:
+        if re.search(rf"\b{key}\s*:", vitest):
+            bad.append(f"vitest: its config sets {key}, a retry in the same worker")
+    if "'junit'" not in vitest:
+        bad.append("vitest: its config writes no JUnit report, so no rerun can read one")
+    elif _VITEST_REPORTERS not in vitest:
+        bad.append(
+            "vitest: its config's reporters are not Vitest's own and junit, so one of Vitest's"
+            " own (the github-actions reporter's failure annotations) is dropped"
+        )
+    elif _VITEST_OUTPUT not in vitest:
+        bad.append(f"vitest: its config's JUnit report is not {run_jobs.VITEST_JUNIT}")
+    elif not _VITEST_UNDER_CI.search(vitest):
+        bad.append("vitest: its config sets its reporters other than under CI alone")
+    return bad
+
+
+def _playwright_runner_check(root: Path) -> list[str]:
+    bad: list[str] = []
+    for job_id, argv, env in _runner_steps(root):
+        if tuple(argv[:3]) != run_jobs.PLAYWRIGHT_STEP:
+            continue
+        for name in sorted(_option_names(argv) & set(_PLAYWRIGHT_RETRIES)):
+            bad.append(f"playwright: {job_id} passes {name}, over the config's one retry")
+        if run_jobs.PLAYWRIGHT_REPORT_ENV not in env:
+            bad.append(
+                f"playwright: {job_id} sets no {run_jobs.PLAYWRIGHT_REPORT_ENV}, so its"
+                " classification has no report to be read from"
+            )
+    playwright = (root / _PLAYWRIGHT_CONFIG).read_text(encoding="utf-8")
+    lines = playwright.splitlines()
+    if _PLAYWRIGHT_RETRY not in lines:
+        bad.append("playwright: retries is not one under CI and none locally")
+    if len(re.findall(r"\bretries\s*:", playwright)) > 1:
+        bad.append("playwright: its config sets retries more than once, a project's own included")
+    if _PLAYWRIGHT_FLAKY not in lines:
+        bad.append("playwright: failOnFlakyTests is not set under CI, so a retried pass is green")
+    if re.search(r"\brepeatEach\s*:", playwright):
+        bad.append("playwright: its config sets repeatEach, which runs each test again")
+    if re.search(r"^\s*timeout\s*:", playwright.split("projects:", 1)[0], re.M):
+        bad.append("playwright: its config sets a test timeout of its own")
+    return bad
+
+
+_RUNNER_PYPROJECT = (
+    '[project]\nname = "planted"\ndependencies = ["aiohttp>=3"]\n\n'
+    "[project.optional-dependencies]\n"
+    'dev = [\n    "pytest>=7",\n    "pytest-xdist>=3",\n]\n\n'
+    '[tool.pytest.ini_options]\naddopts = ["--timeout=120"]\n'
+)
+_RUNNER_PACKAGE = "packages/client/pyproject.toml"
+_RUNNER_PACKAGE_TOML = (
+    '[project]\nname = "client"\n\n[project.optional-dependencies]\ndev = ["pytest>=8.0"]\n\n'
+    '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n'
+)
+_RUNNER_LOCK = (
+    'version = 1\n\n[[package]]\nname = "pytest"\nversion = "8.0.0"\n\n'
+    '[[package]]\nname = "pytest-xdist"\nversion = "3.0.0"\n'
+)
+_RUNNER_CATALOGUE = (
+    '[[job]]\nid = "suite"\ncommand = [\n'
+    '  { argv = ["uv", "run", "pytest", "-n", "auto", "tests", "--junitxml=reports/j.xml"] },\n'
+    "]\n\n"
+    '[[job]]\nid = "web-unit"\ncommand = [\n  { argv = ["npm", "run", "test:web"] },\n]\n\n'
+    '[[job]]\nid = "e2e"\ncommand = [\n'
+    '  { argv = ["npx", "playwright", "test", "--grep-invert", "@visual"], workdir = "web",'
+    ' env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report.json" } },\n]\n'
+)
+_RUNNER_VITEST = (
+    "export default defineConfig({\n  test: {\n    testTimeout: 20_000,\n"
+    "    ...(process.env.CI\n      ? {\n"
+    f"          {_VITEST_REPORTERS}\n          {_VITEST_OUTPUT}\n"
+    "        }\n      : {}),\n"
+    "    projects: [\n      {\n        extends: true,\n        test: { name: 'dom' },\n      },\n"
+    "    ],\n  },\n})\n"
+)
+_RUNNER_PLAYWRIGHT = (
+    f"export default defineConfig({{\n{_PLAYWRIGHT_RETRY}\n{_PLAYWRIGHT_FLAKY}\n"
+    "  projects: [\n    {\n      name: 'chromium',\n    },\n  ],\n"
+    "  webServer: [{ command: 'serve', timeout: 60_000 }],\n})\n"
+)
+
+
+def _runners_scaffold(root: Path) -> None:
+    _write(root, _PYPROJECT, _RUNNER_PYPROJECT)
+    _write(root, _UV_LOCK, _RUNNER_LOCK)
+    _write(root, _RUNNER_PACKAGE, _RUNNER_PACKAGE_TOML)
+    _write(root, catalogue.CATALOGUE, _RUNNER_CATALOGUE)
+    for rel, script, text in _VITEST_SCRIPTS:
+        _write(root, rel, json.dumps({"scripts": {script: text}}, indent=2) + "\n")
+    _write(root, _VITEST_CONFIG, _RUNNER_VITEST)
+    _write(root, _PLAYWRIGHT_CONFIG, _RUNNER_PLAYWRIGHT)
+
+
+def _edit(rel: str, old: str, new: str) -> Callable[[Path], None]:
+    def plant(root: Path) -> None:
+        text = (root / rel).read_text(encoding="utf-8")
+        assert old in text, f"the plant's anchor is not in {rel}: {old!r}"
+        _write(root, rel, text.replace(old, new, 1))
+
+    return plant
+
+
+def _another_job(argv: Sequence[str]) -> Callable[[Path], None]:
+    return _append(
+        catalogue.CATALOGUE,
+        f'\n[[job]]\nid = "other"\ncommand = [\n  {{ argv = {json.dumps(list(argv))} }},\n]\n',
+    )
+
+
+#: The members of the lists above, each written out again for its own planted break: read from
+#: the lists themselves, a member dropped from one would drop its plant with it, unseen.
+_PLANTED_PYTEST_RETRIES = (
+    "--reruns",
+    "--reruns-delay",
+    "--count",
+    "--lf",
+    "--last-failed",
+    "--sw",
+    "--stepwise",
+)
+_PLANTED_PYTEST_RETRY_PLUGINS = ("rerunfailures", "flaky", "pytest_repeat", "repeat")
+_PLANTED_PYTEST_RETRY_DISTS = (
+    "pytest-rerunfailures",
+    "flaky",
+    "pytest-repeat",
+    "pytest-retry",
+    "pytest-flakefinder",
+)
+_PLANTED_VITEST_RETRIES = ("--retry", "--repeats", "--testTimeout", "--hookTimeout")
+_PLANTED_VITEST_CONFIG_RETRIES = ("retry", "repeats")
+_PLANTED_PLAYWRIGHT_RETRIES = ("--retries", "--repeat-each", "--timeout", "--fail-on-flaky-tests")
+
+_PYTEST_STEP = '"tests", "--junitxml=reports/j.xml"'
+_DEV_EXTRA = '    "pytest-xdist>=3",\n'
+_PW_STEP = '"--grep-invert", "@visual"]'
+_VITEST_PROJECT = "test: { name: 'dom' }"
+
+PYTEST_RETRIES_ONCE_FRESH_ON_ITS_BUDGET = Row(
+    name="pytest-retries-once-in-a-fresh-process-on-the-same-budget",
+    check=_pytest_runner_check,
+    scaffold=_runners_scaffold,
+    controls=(
+        Control(
+            "a second retry in addopts",
+            _edit(_PYPROJECT, '"--timeout=120"', '"--timeout=120", "--reruns=2"'),
+            expect="pyproject.toml's addopts passes --reruns,",
+        ),
+        Control(
+            "a second retry in a package's addopts",
+            _edit(
+                _RUNNER_PACKAGE,
+                'testpaths = ["tests"]\n',
+                'testpaths = ["tests"]\naddopts = "-q --reruns 2"\n',
+            ),
+            expect=f"{_RUNNER_PACKAGE}'s addopts passes --reruns,",
+        ),
+        Control(
+            "a retry plugin in a package's dev extra",
+            _edit(_RUNNER_PACKAGE, 'dev = ["pytest>=8.0"]', 'dev = ["pytest>=8.0", "flaky>=3"]'),
+            expect=f"{_RUNNER_PACKAGE}'s dev extra holds flaky,",
+        ),
+        *(
+            Control(
+                f"a step that passes {name}",
+                _edit(catalogue.CATALOGUE, _PYTEST_STEP, f'"{name}", "1", {_PYTEST_STEP}'),
+                expect=f"suite passes {name},",
+            )
+            for name in _PLANTED_PYTEST_RETRIES
+        ),
+        *(
+            Control(
+                f"a step that loads {plugin}",
+                _edit(catalogue.CATALOGUE, _PYTEST_STEP, f'"-p", "{plugin}", {_PYTEST_STEP}'),
+                expect=f"suite loads {plugin},",
+            )
+            for plugin in _PLANTED_PYTEST_RETRY_PLUGINS
+        ),
+        Control(
+            "a step that blocks a retry plugin passes",
+            _edit(catalogue.CATALOGUE, _PYTEST_STEP, f'"-p", "no:rerunfailures", {_PYTEST_STEP}'),
+            fails=False,
+        ),
+        *(
+            Control(
+                f"{dist} in the dev extra",
+                _edit(_PYPROJECT, _DEV_EXTRA, f'{_DEV_EXTRA}    "{dist}>=1",\n'),
+                expect=f"dev extra holds {dist},",
+            )
+            for dist in _PLANTED_PYTEST_RETRY_DISTS
+        ),
+        Control(
+            "a retry plugin in a dependency group, spelt otherwise",
+            _append(_PYPROJECT, '\n[dependency-groups]\nci = ["Pytest_RerunFailures==14"]\n'),
+            expect="ci group holds pytest-rerunfailures,",
+        ),
+        *(
+            Control(
+                f"{dist} in the lock",
+                _append(_UV_LOCK, f'\n[[package]]\nname = "{dist}"\nversion = "1.0"\n'),
+                expect=f"{_UV_LOCK} holds {dist},",
+            )
+            for dist in _PLANTED_PYTEST_RETRY_DISTS
+        ),
+        Control(
+            "a plugin that only times a test passes",
+            _edit(_PYPROJECT, _DEV_EXTRA, f'{_DEV_EXTRA}    "pytest-timeout>=2",\n'),
+            fails=False,
+        ),
+        Control(
+            "no lock to read",
+            lambda root: (root / _UV_LOCK).unlink(),
+            expect=f"no {_UV_LOCK}",
+        ),
+    ),
+)
+
+VITEST_RETRIES_ONCE_FRESH_ON_ITS_BUDGET = Row(
+    name="vitest-retries-once-in-a-fresh-process-on-the-same-budget",
+    check=_vitest_runner_check,
+    scaffold=_runners_scaffold,
+    controls=(
+        *(
+            Control(
+                f"a step that passes {name}",
+                _another_job(["npx", "vitest", "run", f"{name}=2"]),
+                expect=f"other passes {name},",
+            )
+            for name in _PLANTED_VITEST_RETRIES
+        ),
+        Control(
+            "a step that runs vitest through npm exec",
+            _another_job(["npm", "exec", "vitest", "--", "run", "--retry=2"]),
+            expect="other passes --retry,",
+        ),
+        *(
+            Control(
+                f"the config sets {key}",
+                _edit(_VITEST_CONFIG, "    testTimeout:", f"    {key}: 1,\n    testTimeout:"),
+                expect=f"its config sets {key},",
+            )
+            for key in _PLANTED_VITEST_CONFIG_RETRIES
+        ),
+        *(
+            Control(
+                f"a project sets {key}",
+                _edit(_VITEST_CONFIG, _VITEST_PROJECT, f"test: {{ name: 'dom', {key}: 2 }}"),
+                expect=f"its config sets {key},",
+            )
+            for key in _PLANTED_VITEST_CONFIG_RETRIES
+        ),
+        Control(
+            "the root script passes a retry to the workspace",
+            _edit(
+                "package.json",
+                '"npm run test --workspace=web"',
+                '"npm run test --workspace=web -- --retry=2"',
+            ),
+            expect="package.json's test:web script",
+        ),
+        Control(
+            "the web script retries",
+            _edit("web/package.json", '"vitest run"', '"vitest run --retry=2"'),
+            expect="web/package.json's test script",
+        ),
+        Control(
+            "no web workspace manifest to read the script from",
+            lambda root: (root / "web/package.json").unlink(),
+            expect="there is no web/package.json",
+        ),
+        Control(
+            "the web script retimes",
+            _edit("web/package.json", '"vitest run"', '"vitest run --testTimeout=120000"'),
+            expect="web/package.json's test script",
+        ),
+        Control(
+            "no JUnit report under CI",
+            _edit(_VITEST_CONFIG, ", 'junit']", "]"),
+            expect="writes no JUnit report",
+        ),
+        Control(
+            "Vitest's own reporters dropped",
+            _edit(_VITEST_CONFIG, "[...configDefaults.reporters, 'junit']", "['default', 'junit']"),
+            expect="are not Vitest's own and junit",
+        ),
+        Control(
+            "the report under another name",
+            _edit(_VITEST_CONFIG, "'junit-web-unit.xml'", "'junit-web.xml'"),
+            expect=f"is not {run_jobs.VITEST_JUNIT}",
+        ),
+        Control(
+            "the report under web/reports/",
+            _edit(_VITEST_CONFIG, "join(WEB, '..', 'reports',", "join(WEB, 'reports',"),
+            expect=f"is not {run_jobs.VITEST_JUNIT}",
+        ),
+        Control(
+            "the reporters set locally too",
+            _edit(_VITEST_CONFIG, "...(process.env.CI", "...(true"),
+            expect="other than under CI alone",
+        ),
+        Control(
+            "web-unit runs it another way",
+            _edit(catalogue.CATALOGUE, '"npm", "run", "test:web"', '"npm", "run", "test"'),
+            expect="no longer runs",
+        ),
+    ),
+)
+
+PLAYWRIGHT_RETRIES_ONCE_FRESH_ON_ITS_BUDGET = Row(
+    name="playwright-retries-once-in-a-fresh-process-on-the-same-budget",
+    check=_playwright_runner_check,
+    scaffold=_runners_scaffold,
+    controls=(
+        *(
+            Control(
+                f"a step that passes {name}",
+                _edit(catalogue.CATALOGUE, _PW_STEP, f'"{name}", "3", {_PW_STEP}'),
+                expect=f"e2e passes {name},",
+            )
+            for name in _PLANTED_PLAYWRIGHT_RETRIES
+        ),
+        Control(
+            "a step with no JSON report",
+            _edit(
+                catalogue.CATALOGUE,
+                ', env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report.json" }',
+                "",
+            ),
+            expect="sets no PLAYWRIGHT_JSON_OUTPUT_NAME",
+        ),
+        Control(
+            "two retries",
+            _edit(_PLAYWRIGHT_CONFIG, "CI ? 1 : 0", "CI ? 2 : 0"),
+            expect="retries is not one",
+        ),
+        Control(
+            "a project's own retries",
+            _edit(
+                _PLAYWRIGHT_CONFIG,
+                "      name: 'chromium',\n",
+                "      name: 'chromium',\n      retries: 3,\n",
+            ),
+            expect="sets retries more than once",
+        ),
+        Control(
+            "failOnFlakyTests off",
+            _edit(_PLAYWRIGHT_CONFIG, f"{_PLAYWRIGHT_FLAKY}\n", ""),
+            expect="failOnFlakyTests is not set",
+        ),
+        Control(
+            "a retried pass green under CI",
+            _edit(
+                _PLAYWRIGHT_CONFIG, "failOnFlakyTests: !!process.env.CI", "failOnFlakyTests: false"
+            ),
+            expect="failOnFlakyTests is not set",
+        ),
+        Control(
+            "repeatEach in the config",
+            _edit(_PLAYWRIGHT_CONFIG, "  projects:", "  repeatEach: 2,\n  projects:"),
+            expect="sets repeatEach",
+        ),
+        Control(
+            "repeatEach in a project",
+            _edit(
+                _PLAYWRIGHT_CONFIG,
+                "      name: 'chromium',\n",
+                "      name: 'chromium',\n      repeatEach: 2,\n",
+            ),
+            expect="sets repeatEach",
+        ),
+        Control(
+            "a longer test timeout in the config",
+            _edit(_PLAYWRIGHT_CONFIG, "  projects:", "  timeout: 120_000,\n  projects:"),
+            expect="a test timeout of its own",
+        ),
+    ),
+)
+
+ROWS = (
+    *ROWS,
+    PYTEST_RETRIES_ONCE_FRESH_ON_ITS_BUDGET,
+    VITEST_RETRIES_ONCE_FRESH_ON_ITS_BUDGET,
+    PLAYWRIGHT_RETRIES_ONCE_FRESH_ON_ITS_BUDGET,
+)
 
 
 # ── No candidate job posts the merge verdict (#3915) ──────────────────────────────────────────

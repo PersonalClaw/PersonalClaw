@@ -1539,10 +1539,66 @@ a rerun stopped at the end of the job's time, one the runner is interrupted in, 
 report cannot be read; and a session report beside the JUnit that the rerun leaves as the step
 wrote it. The weekly report counts the `flake` and not the `repeated failure`.
 
-The web half (Vitest, Playwright's `failOnFlakyTests`) comes later, and with it the CI contract's
-row per runner, pytest's included: one retry, in a fresh process, with the same time budget, and
-red on a first failure the retry passes. Until then a web job's failure is red with no rerun, and
-the pytest half is held by `tests/test_ci_jobs_rerun.py` alone.
+**The web runners follow the same contract:** one retry, in a fresh process, with the same time
+budget, and red on a first failure the retry passes.
+
+- **Vitest:** under CI, `web/vitest.config.ts` adds a JUnit reporter to Vitest's own default
+  reporters (the github-actions annotations on a CI runner stay), writing
+  `reports/junit-web-unit.xml`, which `web-unit` declares; locally it sets no reporter, so
+  Vitest's defaults stand. When `web-unit`'s `npm run test:web` step exits 1 and nothing else
+  went wrong, `run-job` reads the failed tests from that report and reruns them once in a new
+  process: `npx vitest run --maxWorkers=1` (and `VITEST_MAX_WORKERS=1`) in `web/`, the failed
+  tests' files only, filtered to their full names, each whole (`--testNamePattern=^(?:…)$`, the
+  names escaped), so a test that passed in the step, its title's namesake in another suite
+  included, does not run again. The rerun has the config's own per-test time budget, inside the
+  job's remaining time. A case that names no test file under `web/` is not rerun. The rerun's
+  report is read only when every test it ran is one the step's report failed (Vitest reports a
+  test of a named file that the filter leaves out as skipped). The classification is recorded in
+  the same three places as pytest's, and the files beside the report are put back after the
+  rerun. As for pytest, a step that fails for another reason (another exit, the job's time
+  running out) and a report that is missing, older than the job or not XML get no rerun, and a
+  step that exits 0 with such a report is red; a rerun that exits otherwise than 0 or 1, is
+  stopped at the end of the job's time or is interrupted, or whose report is missing or
+  unreadable, classifies nothing.
+- **Playwright:** its own retry is the rerun, so `run-job` starts no second one. Under CI
+  `web/playwright.config.ts` keeps `retries: 1` (a new worker process, the same test timeout) and
+  sets `failOnFlakyTests`, so a test that passes only on its retry fails the run. When the `e2e`
+  step exits 1, and nothing else went wrong, `run-job` reads its JSON report
+  (`PLAYWRIGHT_JSON_OUTPUT_NAME`): a `flaky` test is a `flake`; an `unexpected` one whose retry
+  failed or timed out too is a `repeated failure`; one that failed with no retry run, or whose
+  retry ended otherwise (it was interrupted), is not classified. The record's `rerun` names the
+  step's own argv and exit. A report that is missing, older than the job (an earlier run's, left
+  when Playwright exits 1 before writing one, as on a config that throws at load), or not of the
+  shape Playwright writes classifies nothing, and says so.
+
+Three contract rows, one per runner, hold what the tree must not add, each rule with a planted
+break, each listed option, plugin and key its own:
+
+- `pytest-retries-once-in-a-fresh-process-on-the-same-budget`: no option in `addopts` (the
+  root's, or a package's own under `packages/`) or a catalogue step that retries in the same
+  process (`--reruns`, `--count`, `--lf`, `--sw` and the like), no retry plugin loaded with `-p`,
+  and no retry plugin (`pytest-rerunfailures`, `flaky`, `pytest-repeat`, `pytest-retry`,
+  `pytest-flakefinder`) in the dependencies of `pyproject.toml` or a package's own, or in
+  `uv.lock`, since an installed one loads itself.
+- `vitest-retries-once-in-a-fresh-process-on-the-same-budget`: no `--retry`, `--repeats`,
+  `--testTimeout` or `--hookTimeout` in a catalogue step; no `retry` or `repeats` in the config,
+  a project's included; the two npm scripts the step runs (the root's `test:web`, the web
+  workspace's `test`) held to their text, so an option there cannot change the step's retries or
+  budget unseen; and the JUnit report added under CI alone, to Vitest's own reporters, at
+  `reports/junit-web-unit.xml`.
+- `playwright-retries-once-in-a-fresh-process-on-the-same-budget`: no `--retries`,
+  `--repeat-each`, `--timeout` or `--fail-on-flaky-tests` in the step; `retries` one under CI and
+  set once (a project's own `retries` is refused); `failOnFlakyTests` set; no `repeatEach`; no
+  test timeout of the config's own; and the step's JSON report named.
+
+`tests/test_ci_jobs_web_rerun.py` runs both web runners through `run-job`'s step path with
+stand-in `npm` and `npx` that play a planted suite, the rerun's name filter applied as Vitest
+applies it: a Vitest test that fails then passes, one that fails twice and one that times out
+twice, in one job, and a job whose only failure is a flake, each red; a passing test of the same
+title, and a title of regular expression characters, never rerun with it; each step, report and
+rerun fault above; the report folder put back; and for Playwright a flaky test, a repeated failure
+and a timeout twice, a job whose only failure is a flake, a retry that did not fail, and a missing,
+stale or malformed report. Neither real runner is started by these tests.
 
 ## State a test leaves behind
 

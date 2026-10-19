@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { join } from 'node:path'
 import { census } from './src/test/domCensus'
@@ -72,6 +72,17 @@ export default defineConfig({
     // Keep bare local invocations from claiming every core; CI sets Vitest's built-in
     // VITEST_MAX_WORKERS to the runner's core count.
     maxWorkers: 3,
+    // Under CI each test's result is also written as JUnit, at the repository root's reports/,
+    // which `tools/ci run-job` reads to rerun a failed test once, alone, to classify it
+    // (tools/ci/jobs.py, VITEST_JUNIT). The job stays red either way. JUnit is added to Vitest's
+    // own default reporters, its github-actions annotations on a CI runner among them; locally
+    // neither key is set, so Vitest's defaults stand untouched.
+    ...(process.env.CI
+      ? {
+          reporters: [...configDefaults.reporters, 'junit'],
+          outputFile: { junit: join(WEB, '..', 'reports', 'junit-web-unit.xml') },
+        }
+      : {}),
     projects: [
       {
         extends: true,
