@@ -489,6 +489,103 @@ jobs:
         run: |
           "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/rails-macos-26-3.12__1.json"
 
+  collection-parses:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg collection-parses/1
+    # #3927: no code of ours parses the source tree while pytest collects. The only parses of it
+    # before the source index's warm-up (tests/source_index.py) are pytest's assertion rewrite
+    # and Hypothesis's own constants scan, which this leg excuses by module and function. One
+    # whole-suite collection in one process, with tests/collection_parse_guard.py counting every
+    # ast.parse named as a file under the index's roots, or of a whole .py file under them.
+    needs: [freshness]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      PY: "3.13.16"
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.1"
+          python-version: "3.13.16"
+          enable-cache: true
+          prune-cache: true
+      # As the macos leg: `uv python find` never downloads, so the managed interpreter is made first.
+      - name: the uv-managed Python this shard runs on
+        run: uv venv "$RUNNER_TEMP/shard-python"
+      # Read only on main: off main nothing is reused, and decide reads no map.
+      - name: the earlier record's results
+        if: ${{ github.ref == 'refs/heads/main' }}
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: breadth-previous
+          path: ${{ runner.temp }}/previous
+      - name: this shard's inputs, as its runner reports them
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" \
+            --node "$(node --version 2>/dev/null || echo none)"
+      # Run, or carry the earlier result when every recorded input matches exactly; a crashed
+      # decision leaves the shard to run (see the macos leg).
+      - name: run, or carry the earlier result
+        id: decide
+        continue-on-error: true
+        run: >-
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "collection-parses/1"
+          --inputs "$RUNNER_TEMP/inputs.json"
+          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF"
+          --attempt "$GITHUB_RUN_ATTEMPT"
+          --out "$RUNNER_TEMP/entry/collection-parses__1.json"
+      - name: Install (locked)
+        if: ${{ steps.decide.outputs.run != 'false' }}
+        run: uv sync --locked --extra dev
+      - name: pytest (collect the whole suite, counting parses of the source tree)
+        id: pytest
+        if: ${{ steps.decide.outputs.run != 'false' }}
+        continue-on-error: true
+        env:
+          PYTHONPATH: tests
+        run: uv run pytest --collect-only -qq -n0 -p collection_parse_guard tests --junitxml=reports/junit-collection-parses.xml
+      - name: Upload JUnit results (collection parses)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-collection-parses
+          path: reports/junit-collection-parses.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: record what this shard ran
+        if: ${{ always() && steps.decide.outputs.run != 'false' }}
+        env:
+          OUTCOME: ${{ steps.pytest.outcome }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/collection-parses__1.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-collection-parses-1
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red, ran or carried: a carried red is still red (#3904).
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/collection-parses__1.json"
+
   arm:
     # report holds each key to this job's latest attempt, by this name.
     name: breadth-leg ubuntu-24.04-arm-3.13/${{ matrix.shard }}
@@ -1302,7 +1399,7 @@ jobs:
   report:
     # Last: settles every leg, writes the run's record under its digest, and keeps the leg
     # issues. It writes issues only on main; a dispatch on another ref says what it would do.
-    needs: [freshness, ubuntu, macos, rails-macos, arm, coverage-shard, coverage, security-corpus, canary, install-smoke, audit]
+    needs: [freshness, ubuntu, macos, rails-macos, collection-parses, arm, coverage-shard, coverage, security-corpus, canary, install-smoke, audit]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
