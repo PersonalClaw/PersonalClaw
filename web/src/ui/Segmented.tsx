@@ -92,6 +92,20 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
       // could reclaim. Measuring wrap.clientWidth ALONE was the bug: it tracks the
       // collapsed content, so the control could never see enough room to re-expand —
       // a one-way latch that stuck the dial collapsed even on a wide desktop.
+      //
+      // 🔴 THE WRAP IS GIVEN THE STRIP'S WIDTH FOR THE READING, or the latch comes back through the
+      // parent. A header rail is CONTENT-SIZED: with no cap it is exactly as wide as what it holds,
+      // so once the strip had folded the row shrank to the pill, its free space read 0, and the
+      // room came out as the pill's own 32px — the dial stayed folded for the rest of the visit.
+      // Measured on the Knowledge view switcher: some loads showed every view and others one pill,
+      // at the same width, depending on whether the rail was briefly capped while it settled.
+      // Widened to `need`, a content-sized row grows to hold it (room = need, so it expands) while
+      // a capped row cannot (free goes negative, so it stays folded). Both reads and the restore
+      // happen in one synchronous block, so the trial width never paints — `HeaderActions`'
+      // `slotWidths` reads its slot the same way.
+      const { width, flex } = wrap.style
+      wrap.style.flex = '0 0 auto'
+      wrap.style.width = `${need}px`
       let childrenWidth = 0
       for (const c of Array.from(parent.children)) childrenWidth += (c as HTMLElement).getBoundingClientRect().width
       // free can be NEGATIVE when the row already overflows — don't clamp it, or an
@@ -101,6 +115,8 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
       // identical whether currently collapsed or expanded → no latch, reversible.)
       const free = parent.clientWidth - childrenWidth
       const avail = wrap.getBoundingClientRect().width + free
+      wrap.style.width = width
+      wrap.style.flex = flex
       setCollapsed(need > avail + 1)  // +1px slack so sub-pixel rounding doesn't flap
     }
     measure()

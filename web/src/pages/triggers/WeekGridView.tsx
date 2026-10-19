@@ -203,7 +203,10 @@ export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: st
                             : undefined
                         }
                         data-type="caption"
-                        className="h-6 rounded text-center tabular-nums transition-colors"
+                        // `h-11`, not `h-6`: a cell with fires opens its trigger, so it is a touch
+                        // target, and 24 px was under the 44 px rule at every phone width. Seven
+                        // days beside the hour column still cannot be 44 px WIDE at 390 and 320.
+                        className="h-11 rounded text-center tabular-nums transition-colors"
                         style={{
                           background: tone.bg,
                           color: tone.fg,
