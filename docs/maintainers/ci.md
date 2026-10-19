@@ -202,8 +202,9 @@ jobs it maps to, in both directions:
   are refused as steps, and each install an entry's toolchain names (`uv-sync`, `npm-ci`,
   `chromium`) is one its `ci.yml` jobs run. Each entry names every install it needs, so one that
   shares a `ci.yml` job with another (`browse-live` with `e2e`) does not lean on the other's.
-- The cap, the runner, the Python (the one `setup-uv` sets before the entry's steps), the
-  environment, the JUnit reports and the shard count are the jobs'.
+- The cap, the runner, the Python (the one `setup-uv` sets before the entry's steps, inside the
+  setup action when the job calls it there), the environment, the JUnit reports and the shard
+  count are the jobs'.
 - An entry whose pytest steps name a security-marked module, by its file or by a folder that
   holds one, is `security` posture. The census in `tests/security_census.py` says which modules
   are marked.
@@ -213,6 +214,42 @@ jobs it maps to, in both directions:
   `test`, `test-macos-gate`).
 
 The map from entry to job lives in that row.
+
+### The setup action
+
+`ci.yml`'s jobs set up their toolchain with one composite action, `.github/actions/setup`. It
+runs setup-uv with the one uv release and the exact Python the job names (`python-version`),
+and setup-node from `.nvmrc` when the job asks for it (`node: "true"`, with `node-cache`, `npm`
+by default). Each job keeps the rest itself:
+
+- the checkout, before the action, because a local action loads only from a checkout;
+- the Runner identity step, first, so a failed checkout still logs the image. The runner
+  identity row reads it from the job's own steps and fails one inside a local action;
+- its installs (`uv sync`, `npm ci`), which the catalogue row holds to the toolchain each entry
+  names;
+- its JUnit upload, after its tests: a composite action has no post step.
+
+The toolchain rows (Python, uv, the uv Python preference, Node, npm, the runner identity), the
+catalogue row and the uv-cache rail read a job's steps with each local action it calls read in
+place (`tests/rails/local_actions.py`), as the runner reads them for that call: the call's
+inputs fill the action's `${{ inputs.* }}`, its `env:` sits beneath each step's own, and a step
+whose `if:` compares an input to a literal, bare or as the whole of one `${{ }}`, is read only
+when that call runs it, the comparison ignoring case as GitHub's does. Text outside the
+`${{ }}`, such as a block scalar's newline, makes the condition a string GitHub fills in, which
+is always true, so that step is held. So is a step behind any other condition the reader cannot
+evaluate, and one whose input is itself an expression or a YAML boolean (the rails parse YAML
+1.1, which reads `yes` and `on` as `true`, where GitHub hands on the word): a step it cannot
+rule out is still held. A local action read from `action.yaml`, or called from inside another,
+is read the same way, with the outer call's inputs and `env:`, and a call of one the reader
+cannot read fails the row. A setup step inside the action counts at the index of the call. Each
+of those rows has a plant inside the action.
+
+A change under `.github/actions/` runs the path-gated jobs, `e2e` and `apps-contract`, as a
+change to `ci.yml` does: both set up their toolchain through the action, so it defines them too
+(`scripts/ci_touches_frontend.py`, `scripts/ci_touches_sdk.py`). The planner plans the whole
+tier for it (`tools/ci/areas.toml`). The rails check that every local action `e2e` or
+`apps-contract` calls, and each one that action calls, runs that job's gate, and that every one
+a `ci.yml` job calls plans the whole tier.
 
 `python -m tools.ci list` prints every job. `python -m tools.ci explain <tier>` says what a tier
 proves and what it does not, and lists each of its jobs' commands. Both read only the catalogue
@@ -335,9 +372,10 @@ overrides (`--areas`, beside the catalogue by default):
   `whole_tier = true`) and a `reason`. The loader refuses an override with no reason or one
   naming a job the catalogue lacks. Since it makes no path known, an override never takes a
   job out of a plan: a path no input names still plans the whole tier, the override's jobs and
-  reason in it. The overrides today are the workflows (`.github/workflows/`), `tools/ci/`, the
-  locks and manifests and the image smoke's own inputs (all whole-tier), the installer
-  (`static`) and the SDK snapshot script (`apps-contract`).
+  reason in it. The overrides today are the workflows (`.github/workflows/`), the local actions
+  their jobs call (`.github/actions/`), `tools/ci/`, the locks and manifests and the image
+  smoke's own inputs (all whole-tier), the installer (`static`) and the SDK snapshot script
+  (`apps-contract`).
 - **Always planned:** the `rails` job, every `security` job, every `live` job, and each job an
   `after` of a planned one names.
 - **Fail-safe: the whole tier.** An empty diff, a path no input but the whole tree names, a

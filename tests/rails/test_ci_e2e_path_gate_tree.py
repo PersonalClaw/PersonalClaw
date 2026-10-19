@@ -7,8 +7,10 @@ hold to.
 
 from __future__ import annotations
 
+import posixpath
 import sys
 
+import local_actions
 import pytest
 import yaml
 from ci_e2e_path_gate_shared import _ROOT
@@ -50,6 +52,8 @@ MUST_RUN = (
     # The file that DEFINES the gated jobs. If editing it could skip them, a broken job
     # definition would be waved through by the very gate it broke.
     ".github/workflows/ci.yml",
+    # The local action the gated job sets its toolchain up with defines it too, as ci.yml does.
+    ".github/actions/setup/action.yml",
     # Default-deny: a path in no rule at all must run, which is what makes a new top-level
     # directory safe by construction rather than safe by someone remembering this file.
     "an-unheard-of-top-level-dir/thing.ts",
@@ -97,6 +101,34 @@ def test_an_out_of_reach_path_alone_skips_the_gates(path: str) -> None:
         f"taken — and that the table and the code disagree."
     )
     assert reaching == []
+
+
+@pytest.mark.parametrize("job", GATED_JOBS)
+def test_every_local_action_a_gated_job_calls_runs_the_gates(job: str) -> None:
+    """A gated job runs its own steps and those of each local action it calls, and of each one
+    that action calls. A diff to any file of such an action alone runs the job, as a diff to
+    ci.yml does, or a broken setup step would be waved through by the gate it broke."""
+    folders = local_actions.called(_ci()["jobs"][job].get("steps") or [], _actions())
+    assert folders, f"{job} calls no local action, so this check read nothing"
+    skipped = [
+        rel
+        for folder in folders
+        for rel in _files_of(folder)
+        if touches_frontend([rel])[0] is not True
+    ]
+    assert not skipped, f"a diff to one of {skipped} alone skips {job}, which runs that action"
+
+
+def _actions() -> dict:
+    return local_actions.actions_at(_ROOT)
+
+
+def _files_of(folder: str) -> list[str]:
+    """The action's file under each name GitHub reads it from, and a file beside it that its
+    steps may run."""
+    return [
+        posixpath.normpath(f"{folder}/{name}") for name in (*local_actions.ACTION_FILES, "run.sh")
+    ]
 
 
 def test_one_reaching_path_outvotes_any_number_of_ignorable_ones() -> None:
