@@ -585,7 +585,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          python3 -m tools.ci shards plan --repo "$GITHUB_REPOSITORY"
+          python3 -m tools.ci shards plan --repo "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID"
           --leg test-shard:ci.yml:junit-test-shard-:4
           --leg test-macos:ci.yml:junit-test-macos-:4
           --out "$RUNNER_TEMP/shard-plan/plan.json"

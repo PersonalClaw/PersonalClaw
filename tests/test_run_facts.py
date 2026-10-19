@@ -66,10 +66,13 @@ def test_each_process_records_its_platform_and_worker_count_once(
     assert len(cases) == 6
     assert len(recorded) == max(expected, 1), "one record per process, on its first test"
     for facts in recorded:
-        assert facts == {
+        want = {
             telemetry.PLATFORM_PROPERTY: run_facts.platform_id(),
             telemetry.WORKERS_PROPERTY: str(expected),
         }
+        if run_facts.cpu_model():
+            want[telemetry.CPU_PROPERTY] = run_facts.cpu_model()
+        assert facts == want
 
 
 def test_the_platform_names_the_os_machine_and_python() -> None:
@@ -86,3 +89,41 @@ def test_the_property_names_are_the_collectors() -> None:
     """The suite writes the two properties under the names the collector reads."""
     assert run_facts.PLATFORM_PROPERTY == telemetry.PLATFORM_PROPERTY
     assert run_facts.WORKERS_PROPERTY == telemetry.WORKERS_PROPERTY
+    assert run_facts.CPU_PROPERTY == telemetry.CPU_PROPERTY
+
+
+def test_the_cpu_model_is_read_from_linuxs_cpuinfo(tmp_path: Path, monkeypatch) -> None:
+    info = tmp_path / "cpuinfo"
+    info.write_text("processor\t: 0\nmodel name\t: AMD EPYC 7763 64-Core Processor\n", "utf-8")
+    monkeypatch.setattr(run_facts, "CPUINFO", info)
+    monkeypatch.setattr(run_facts.sys, "platform", "linux")
+    run_facts.cpu_model.cache_clear()
+    try:
+        assert run_facts.cpu_model() == "AMD EPYC 7763 64-Core Processor"
+    finally:
+        run_facts.cpu_model.cache_clear()
+
+
+def test_a_cpu_model_that_cannot_be_read_is_none(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(run_facts, "CPUINFO", tmp_path / "missing")
+    monkeypatch.setattr(run_facts.sys, "platform", "linux")
+    run_facts.cpu_model.cache_clear()
+    try:
+        assert run_facts.cpu_model() is None
+    finally:
+        run_facts.cpu_model.cache_clear()
+
+
+def test_the_first_test_records_the_cpu_model_when_there_is_one(monkeypatch) -> None:
+    """Off Linux there is no model to read, so the subprocess run above records none; this pins
+    that a model, when read, is written beside the platform and the worker count."""
+
+    class _Item:
+        config = type("Config", (), {})()
+        user_properties: list = []
+
+    monkeypatch.setattr(run_facts, "cpu_model", lambda: "AMD EPYC 7763 64-Core Processor")
+    item = _Item()
+    item.user_properties = []
+    run_facts._FirstTest().pytest_runtest_setup(item)
+    assert (telemetry.CPU_PROPERTY, "AMD EPYC 7763 64-Core Processor") in item.user_properties

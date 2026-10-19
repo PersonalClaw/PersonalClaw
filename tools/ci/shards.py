@@ -13,6 +13,13 @@ the recorded files. The same files and durations always give the same buckets.
 median first-attempt seconds over the leg's own reports in the newest three main runs whose
 history ``tools/ci/telemetry.py`` wrote, the one writer of CI telemetry, and nothing else. Until
 the first collected main run there is no record, and the plan uses equal weights and says so.
+
+**Seconds are weighed by the host they ran on.** GitHub's Linux hosts come in CPU models whose
+speeds differ by about 1.5x, and every file of a shard runs slower together on a slower one. So
+each report's seconds are divided by its host model's factor before the median is taken: the
+median, over the input runs' reports on that model, of what the report ran against what its
+files' plain medians planned. Factors come from the input runs only, never from the run being
+planned, and a report whose model was not recorded weighs as it ran (a factor of 1.0).
 Durations only balance the shards: ``shards check`` is what proves every file runs once.
 
 Standard library only, like every file in ``tools/ci``.
@@ -203,17 +210,29 @@ def _file_of(dotted: str, modules: Mapping[str, str]) -> str | None:
 #: What a history's reports say they ran on: ``(platform, workers)``, as the suite recorded them.
 Identity = tuple[str | None, int | None]
 
+#: One run's seconds: by identity, by report, by file.
+RunSeconds = dict[Identity, dict[str, dict[str, float]]]
 
-def history_seconds(
-    archive: bytes, leg: Leg, files: Sequence[str], *, run: int
-) -> dict[Identity, dict[str, float]]:
+
+@dataclass(frozen=True)
+class History:
+    """One run's first-attempt seconds of a leg's reports, and each report's host CPU model
+    (None where the report recorded none)."""
+
+    seconds: RunSeconds
+    cpus: Mapping[str, str | None]
+
+
+def history_seconds(archive: bytes, leg: Leg, files: Sequence[str], *, run: int) -> History:
     """Per-file first-attempt seconds of ``leg``'s reports in one history archive, by the
     platform and worker count the reports recorded, so seconds measured on one never weigh
-    another. Read line by line, each line within :data:`MAX_HISTORY_LINE_BYTES` and the whole
-    within :data:`MAX_HISTORY_BYTES`. A history not in the one schema, or whose run line
-    describes another run than ``run``, raises ``ValueError``."""
+    another, and by report, with the CPU model the run line names for each. Read line by line,
+    each line within :data:`MAX_HISTORY_LINE_BYTES` and the whole within
+    :data:`MAX_HISTORY_BYTES`. A history not in the one schema or in a version the reader does
+    not know, or whose run line describes another run than ``run``, raises ``ValueError``."""
     modules = {f[: -len(".py")].replace("/", "."): f for f in files if f.endswith(".py")}
-    grouped: dict[Identity, dict[str, float]] = {}
+    grouped: RunSeconds = {}
+    cpus: dict[str, str | None] = {}
     budget = MAX_HISTORY_BYTES
     with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
         members = [m for m in zipped.infolist() if m.filename.endswith(".jsonl")]
@@ -237,17 +256,25 @@ def history_seconds(
                         if (
                             line.get("kind") != "run"
                             or line.get("schema") != telemetry.SCHEMA
-                            or line.get("version") != telemetry.VERSION
+                            or line.get("version") not in telemetry.READS
                         ):
                             raise ValueError(f"{member.filename} is not in the one schema")
                         if line.get("run_id") != run:
                             raise ValueError(
                                 f"the history describes run {line.get('run_id')}, not run {run}"
                             )
+                        named = line.get("cpus") or {}
+                        if not isinstance(named, Mapping):
+                            raise ValueError("the run line's cpus is not a mapping")
+                        cpus = {
+                            str(k): v if isinstance(v, str) and v else None
+                            for k, v in named.items()
+                        }
                         continue
                     if line.get("kind") != "test" or line.get("attempt") != 1:
                         continue
-                    if not str(line.get("report", "")).startswith(leg.report_prefix):
+                    report = str(line.get("report", ""))
+                    if not report.startswith(leg.report_prefix):
                         continue
                     classname, _, name = str(line.get("test", "")).partition("::")
                     path = _file_of(classname or name, modules)
@@ -258,9 +285,42 @@ def history_seconds(
                         line.get("platform") if isinstance(line.get("platform"), str) else None,
                         workers if isinstance(workers, int) else None,
                     )
-                    seconds = grouped.setdefault(identity, {})
+                    seconds = grouped.setdefault(identity, {}).setdefault(report, {})
                     seconds[path] = seconds.get(path, 0.0) + float(line.get("seconds") or 0.0)
-    return grouped
+    return History(grouped, {report: cpus.get(report) for r in grouped.values() for report in r})
+
+
+def _per_file(reports: Mapping[str, Mapping[str, float]]) -> dict[str, float]:
+    merged: dict[str, float] = {}
+    for seconds in reports.values():
+        for path, value in seconds.items():
+            merged[path] = merged.get(path, 0.0) + value
+    return merged
+
+
+def host_factors(
+    read: Sequence[tuple[Mapping[str, Mapping[str, float]], Mapping[str, str | None]]],
+) -> dict[str, float]:
+    """Each recorded CPU model's factor over ``read``, the input runs' ``(reports, cpus)``: the
+    median, over the reports that ran on it, of the report's seconds against what its files'
+    plain medians over ``read`` planned. A model with no report, or reports whose files planned
+    nothing, has no factor, and a report with no model gives none."""
+    plain = _medians([_per_file(reports) for reports, _ in read])
+    ratios: dict[str, list[float]] = {}
+    for reports, cpus in read:
+        for report, seconds in reports.items():
+            model = cpus.get(report)
+            planned = sum(plain[p] for p in seconds)
+            if model and planned > 0:
+                ratios.setdefault(model, []).append(sum(seconds.values()) / planned)
+    return {model: statistics.median(r) for model, r in sorted(ratios.items())}
+
+
+def _medians(runs: Sequence[Mapping[str, float]]) -> dict[str, float]:
+    return {
+        path: statistics.median(s[path] for s in runs if path in s)
+        for path in sorted({p for s in runs for p in s})
+    }
 
 
 def _describe(identity: Identity) -> str:
@@ -286,8 +346,12 @@ class TelemetryRecord:
     RUNS = 3
     COUNTED = frozenset({"success", "failure"})
 
-    def __init__(self, repo: str, *, text: Text, binary: Binary, runs: int = 30) -> None:
+    def __init__(
+        self, repo: str, *, text: Text, binary: Binary, runs: int = 30, planning: int = 0
+    ) -> None:
         self.repo, self.text, self.binary, self.limit = repo, text, binary, runs
+        #: The run this plan is for, whose history (a rerun's first attempt) is never read.
+        self.planning = planning
         self._archives: dict[int, bytes | None] = {}
 
     def _archive(self, run: int) -> bytes | None:
@@ -342,9 +406,7 @@ class TelemetryRecord:
             return None
         return archive
 
-    def _run_seconds(
-        self, run: int, leg: Leg, files: Sequence[str]
-    ) -> dict[Identity, dict[str, float]] | None:
+    def _run_seconds(self, run: int, leg: Leg, files: Sequence[str]) -> History | None:
         archive = self._archive(run)
         if archive is None:
             return None
@@ -360,7 +422,7 @@ class TelemetryRecord:
         ) as exc:
             print(f"::warning title=telemetry history unreadable::run {run}: {exc}")
             return None
-        return grouped or None
+        return grouped if grouped.seconds else None
 
     def durations(self, leg: Leg, files: Sequence[str]) -> tuple[dict[str, float], str]:
         listed = self.text(
@@ -371,18 +433,21 @@ class TelemetryRecord:
             '.workflow_runs[] | "\\(.id) \\(.conclusion) \\(.head_repository.full_name)"',
         )
         identity: Identity | None = None
-        read: list[tuple[int, dict[str, float]]] = []
+        read: list[tuple[int, dict[str, dict[str, float]], Mapping[str, str | None]]] = []
         for line in listed.splitlines():
             ident, conclusion, owner = (line.split() + ["", "", ""])[:3]
             if not ident.isdigit() or conclusion not in self.COUNTED or owner != self.repo:
                 continue
-            grouped = self._run_seconds(int(ident), leg, files)
-            if grouped is None:
+            if int(ident) == self.planning:
                 continue
+            history = self._run_seconds(int(ident), leg, files)
+            if history is None:
+                continue
+            grouped = history.seconds
             if identity is None:
-                identity = max(grouped, key=lambda key: (len(grouped[key]), str(key)))
+                identity = max(grouped, key=lambda key: (len(_per_file(grouped[key])), str(key)))
             if identity in grouped:
-                read.append((int(ident), grouped[identity]))
+                read.append((int(ident), grouped[identity], history.cpus))
             if len(read) == self.RUNS:
                 break
         if not read or identity is None:
@@ -390,14 +455,26 @@ class TelemetryRecord:
                 f"no telemetry history of {leg.workflow} on main holds {leg.report_prefix}* yet,"
                 " so every file weighs the same"
             )
-        merged = {
-            path: statistics.median(s[path] for _, s in read if path in s)
-            for path in sorted({p for _, s in read for p in s})
-        }
-        runs = ", ".join(str(run) for run, _ in read)
+        factors = host_factors([(reports, cpus) for _, reports, cpus in read])
+        normalized = []
+        unrecorded = False
+        for _, reports, cpus in read:
+            seconds: dict[str, float] = {}
+            for report, by_file in reports.items():
+                model = cpus.get(report)
+                unrecorded = unrecorded or not model
+                factor = factors.get(model, 1.0) if model else 1.0
+                for path, value in by_file.items():
+                    seconds[path] = seconds.get(path, 0.0) + value / factor
+            normalized.append(seconds)
+        merged = _medians(normalized)
+        runs = ", ".join(str(run) for run, _, _ in read)
+        hosts = ", ".join(f"{m} {f:.2f}" for m, f in factors.items()) or "none recorded"
+        if unrecorded:
+            hosts += "; an unrecorded CPU model weighs as it ran"
         return merged, (
             f"the median of telemetry runs {runs}' {leg.report_prefix}* first attempts"
-            f" on {_describe(identity)}"
+            f" on {_describe(identity)}, by host factor ({hosts})"
         )
 
 
@@ -546,7 +623,9 @@ def _plan(args: argparse.Namespace) -> int:
     if not files:
         print(f"no test file is collectable under {root}", file=sys.stderr)
         return 1
-    record: DurationsSource = TelemetryRecord(args.repo, text=_gh_text, binary=_gh_binary)
+    record: DurationsSource = TelemetryRecord(
+        args.repo, text=_gh_text, binary=_gh_binary, planning=args.run_id
+    )
     # A breadth shard records its list's digest as an input, so a result is carried only onto
     # the files it measured. A plan made afresh from each run's durations moves files between
     # shards every night (measured: two green main runs hours apart planned 885-949 of each
@@ -660,7 +739,7 @@ def main(argv: list[str] | None = None) -> int:
         help="keep the plan the newest earlier main run of WORKFLOW uploaded, for each leg "
         "it still plans whole",
     )
-    p.add_argument("--run-id", type=int, default=0, help="this run, never kept from")
+    p.add_argument("--run-id", type=int, default=0, help="this run, never kept from or weighed by")
     p.add_argument("--out", required=True)
     p = sub.add_parser("list", help="write one shard's files, for pytest @<file>")
     p.add_argument("--plan", required=True)

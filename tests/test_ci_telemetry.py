@@ -672,8 +672,8 @@ def test_a_test_line_carries_the_rerun_result_run_job_wrote_on_its_case(
 def test_the_schema_is_version_two_and_every_reader_accepts_version_one() -> None:
     """Version 2 adds ``environment_failure`` to the test line and changes nothing else, so a
     reader takes a version-1 history as one whose lines carry no such field."""
-    assert telemetry.VERSION == 2
-    assert telemetry.READS == frozenset({1, 2})
+    assert telemetry.VERSION >= 2, "version 3 pins the exact version and readers below"
+    assert frozenset({1, 2}) <= telemetry.READS
     assert "environment_failure" in telemetry.TEST_FIELDS
 
 
@@ -739,3 +739,59 @@ def test_a_test_line_says_whether_its_failure_carried_the_environment_marker(
     tests = {line["test"]: line for line in lines if line["kind"] == "test"}
     assert tests["tests.test_b::test_live"]["environment_failure"] is expected
     assert tests["tests.test_a::test_one"]["environment_failure"] is False
+
+
+# ── the CPU model each report ran on (schema version 3) ────────────────────────────────────────
+
+
+def _hosted(platform: str, workers: str, cpu: str | None) -> str:
+    model = f'<property name="ci_cpu" value="{cpu}"/>' if cpu is not None else ""
+    return (
+        '<testcase classname="tests.test_a" name="test_one" time="1.5"><properties>'
+        f'<property name="ci_platform" value="{platform}"/>'
+        f'<property name="ci_workers" value="{workers}"/>{model}'
+        "</properties></testcase>"
+    )
+
+
+def test_the_run_line_maps_each_report_to_the_cpu_model_it_ran_on(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A shard's every file runs slower together on a slower host model, so the planner reads
+    the model per report from the run line: one entry per report, null when none was recorded."""
+    gh = FakeGh()
+    gh.artifacts[0] = gh._artifact(
+        11, "junit-test-shard-1", _junit(_hosted("linux-x86_64-3.12.15", "4", "EPYC 7763"), FAILED)
+    )
+    gh.artifacts.append(gh._artifact(13, "junit-test-shard-2", _junit(PASSED)))
+    _, lines = _collect(tmp_path, monkeypatch, gh)
+    head = lines[0]
+    assert head["version"] == 3 == telemetry.VERSION
+    assert head["cpus"] == {"junit-test-shard-1": "EPYC 7763", "junit-test-shard-2": None}
+    assert "cpus" in telemetry.RUN_FIELDS
+    for line in lines[1:]:
+        assert set(line) == set(telemetry.TEST_FIELDS), "the test lines are unchanged"
+
+
+def test_a_report_whose_processes_disagree_on_the_cpu_model_writes_nothing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    gh = FakeGh()
+    gh.artifacts[0] = gh._artifact(
+        11,
+        "junit-test-shard-1",
+        _junit(
+            _hosted("linux-x86_64-3.12.15", "4", "EPYC 7763"),
+            _hosted("linux-x86_64-3.12.15", "4", "EPYC 9V45"),
+        ),
+    )
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 1 and lines == []
+
+
+def test_the_schema_is_version_three_and_every_reader_accepts_versions_one_and_two() -> None:
+    """Version 3 only adds the run line's ``cpus``, so a version 1 or 2 history kept from before
+    it stays readable for as long as it is kept, and nothing newer is guessed at."""
+    assert telemetry.VERSION == 3
+    assert telemetry.READS == frozenset({1, 2, 3})
+    assert "cpus" in telemetry.RUN_FIELDS
