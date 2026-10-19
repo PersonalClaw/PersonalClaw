@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { rowSubject } from '../../lib/rowSubject'
-import { FieldError } from '../../ui/forms'
+import { FieldError, TextArea } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { readableErrText } from '../../lib/errText'
-import { unavailableWhen } from '../../ui/unavailable'
 import { fvs } from '../../design/fontWeight'
 import { Pencil, Trash2, Check, X, ExternalLink, Lock, CornerDownRight, Send, AlertTriangle, FolderKanban, Workflow } from 'lucide-react'
 import { Button } from '../../ui/Button'
@@ -299,6 +298,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
                   byte-identical across: without it the square shifted right 4px and the tick-to-text gap
                   loosened from 8px to 12px. `mt-0.5` goes too — the square is centred in a 24px box now,
                   so the button carries the alignment the margin used to. */}
+              {/* Raw: a painted 16px tick inside a 24px target; no primitive draws this shape. */}
               <button type="button" disabled={readOnly} onClick={() => toggleExit(i)} aria-label={m ? 'Mark criterion incomplete' : 'Mark criterion complete'}
                 className="group -mx-1 shrink-0 inline-flex size-6 items-center justify-center disabled:cursor-default">
                 {/* The hover ring stays on the PAINTED square, not on the 24px box — a ring drawn on the
@@ -320,6 +320,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
                   `gap-1.5`, so the spacing exception rescues it — but 20px is still under the floor, and
                   leaving it at 20 beside a criterion tick now at 24 would put two target sizes in one
                   panel. The 24px box is the target, the 20px pill stays the paint. */}
+              {/* Raw: a numbered 20px pill inside a 24px target; no primitive draws this shape. */}
               <button type="button" disabled={readOnly} onClick={() => toggleStep(i)} aria-label={a.completed ? 'Mark step incomplete' : 'Mark step done'}
                 className="group -mx-0.5 shrink-0 inline-flex size-6 items-center justify-center disabled:cursor-default">
                 <span className="inline-flex size-5 items-center justify-center rounded-pill tabular-nums transition-shadow group-hover:ring-2 group-hover:ring-primary group-disabled:ring-0" data-type="caption"
@@ -339,6 +340,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
               const dep = allTasks.find((t) => t.id === d)
               const dsm = statusMeta(dep?.status)
               const done = dep && (dep.status === 'done' || dep.status === 'cancelled')
+              // Raw: a full-row clickable list item; no primitive draws a list row.
               return (
                 <button key={d} type="button" disabled={!dep || !onOpenTask} onClick={() => dep && onOpenTask?.(d)}
                   className="flex items-center gap-s rounded-md bg-surface-container px-2 py-1.5 text-left enabled:hover:bg-surface-high transition-colors disabled:cursor-default">
@@ -367,6 +369,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
               {dependents.map((dep) => {
                 const dsm = statusMeta(dep.status)
                 const done = dep.status === 'done' || dep.status === 'cancelled'
+                // Raw: a full-row clickable list item; no primitive draws a list row.
                 return (
                   <button key={dep.id} type="button" disabled={!onOpenTask} onClick={() => onOpenTask?.(dep.id)}
                     className="flex items-center gap-s rounded-md bg-surface-container px-2 py-1.5 text-left enabled:hover:bg-surface-high transition-colors disabled:cursor-default">
@@ -493,12 +496,12 @@ function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
           </div>
         ))}
         <div className="flex items-end gap-s">
-          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add a comment…" rows={1}
-            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send() } }}
-            data-type="body-s" className="flex-1 rounded-md bg-surface-container px-m py-2 text-on-surface placeholder:text-on-surface-low outline-none resize-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          <TextArea value={draft} onChange={setDraft} placeholder="Add a comment…" rows={1} size="sm"
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send() } }} />
           {/* Icon-only send, one per comment composer — a constant name is correct. */}
-          <button type="button" aria-label="Post comment" onClick={send}
-            {...unavailableWhen(!draft.trim(), 'Write a comment first', { busy: sending })} className="shrink-0 inline-flex size-9 items-center justify-center rounded-pill bg-primary text-on-primary disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"><Send size={15} /></button>
+          <IconButton icon={Send} label="Post comment" filled size={36} iconSize={15} onClick={send}
+            disabled={!draft.trim()} disabledReason={!draft.trim() ? 'Write a comment first' : undefined}
+            loading={sending} />
         </div>
       </div>
     </SectionLabel>
