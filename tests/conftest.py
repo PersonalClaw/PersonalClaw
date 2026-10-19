@@ -18,6 +18,7 @@ import pytest
 import real_home_guard
 import run_facts
 import shard_list
+import state_leak_guard
 from hypothesis import HealthCheck, settings
 
 # ── Bytecode-cache rail (#2659) ─────────────────────────────────────────
@@ -278,6 +279,8 @@ def pytest_addoption(parser):
     )
     # A CI shard's file list (`python -m tools.ci shards list`): collect only those files.
     shard_list.addoption(parser)
+    # --strict-state and its allowlist: a test that leaves process-global state (#3949).
+    state_leak_guard.addoption(parser)
 
 
 def pytest_configure(config):
@@ -288,6 +291,10 @@ def pytest_configure(config):
         config.pluginmanager.register(fixture_costs.Plugin(config.rootpath), "fixture-costs")
     config.pluginmanager.register(real_home_guard.Plugin(real_home_guard.GUARD), "real-home-guard")
     config.pluginmanager.register(container_runtime.Plugin(), "container-runtime-guard")
+    config.pluginmanager.register(
+        state_leak_guard.Plugin(config, listening=lambda: frozenset(port_guard.GUARD.own_ports())),
+        _STATE_LEAK_PLUGIN,
+    )
     config.pluginmanager.register(security_census.Reporter(), "security-census")
     waiver_guard.register(config, _INVOKING_REPO_ROOT)
     quarantine.configure(config, _INVOKING_REPO_ROOT)
@@ -1765,6 +1772,50 @@ def _restore_notification_kinds() -> object:
     yield
     notification_kinds._REGISTRY.clear()
     notification_kinds._REGISTRY.update(before)
+
+
+#: The name ``state_leak_guard.Plugin`` is registered under, in ``pytest_configure``.
+_STATE_LEAK_PLUGIN = "state-leak-guard"
+
+
+@pytest.fixture(autouse=True)
+def _a_test_leaves_process_state_as_it_found_it(
+    request,
+    _reset_trust_mode,
+    _reset_model_call_breakers,
+    _reset_context_engine_breakers,
+    _reset_memory_store_cache,
+    _reset_session_restrictions,
+    _restore_personalclaw_logging,
+    _reset_sel_singleton,
+    _reset_knowledge_store_singleton,
+    _restore_provider_registry,
+    _reset_channel_delivery_registry,
+    _reset_action_services,
+    _reset_app_restart_reasons,
+    _reset_provider_measurement_boards,
+    _restore_workflow_def_registry,
+    _restore_tool_provider_registry,
+    _restore_knowledge_provider_registry,
+    _restore_pipeline_node_registry,
+    _restore_local_model_registry,
+    _restore_notification_kinds,
+):
+    """Name the test that leaves a fenced registry changed, read before its fence restores it.
+
+    It requests every snapshot-and-restore fence, so each is set up before it and torn down after
+    it: what it reads after the test is what the test left in each registry, before the fence puts
+    it back. Such a change is recorded as ``fenced`` and never fails while its fence stands. The
+    state no fence restores (threads, the working directory, signal handlers, child processes,
+    listening sockets) is read around the test's whole setup and teardown by the plugin's own hooks,
+    once ``monkeypatch`` and every fixture have given back what they changed. Report mode writes
+    ``reports/state-leaks.json``; ``--strict-state`` fails the leaker unless
+    ``tests/state_leak_allowlist.toml`` names it. Rules: tests/state_leak_guard.py.
+    """
+    guard = request.config.pluginmanager.get_plugin(_STATE_LEAK_PLUGIN).guard
+    fenced = guard.fenced_before()
+    yield
+    guard.fenced_after(fenced)
 
 
 @pytest.fixture
