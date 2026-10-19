@@ -55,6 +55,11 @@ const EXEMPT: Record<string, string> = {
   // an error channel would make every caller decide what to do about an unknown OS, and hiding the
   // affordance is already the right answer. A distinction, not drift.
   'app/usePlatform.ts:usePlatform': 'fail-closed by design — "" hides OS-gated UI',
+  // Not an adapter over its reads: the chat's stream (moved out of `ChatPage`) reads two settings
+  // that tune how it folds frames (the reveal cadence, thinking shown inline) and returns neither.
+  // An unanswered read is the shipped behaviour at the use site, the smooth reveal and thinking
+  // hidden; `loadErrorState.test.tsx` budgets the pair as its own debt.
+  'pages/chat/useChatStream.ts:useChatStream': 'reads stream settings it never returns — unanswered is the shipped default',
 }
 
 describe('an adapter hook re-exposes useQuery\'s error', () => {

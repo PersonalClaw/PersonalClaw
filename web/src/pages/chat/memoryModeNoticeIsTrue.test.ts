@@ -22,9 +22,12 @@ const strip = (raw: string) =>
 
 describe('a chat that is not persistent says what is kept', () => {
   it('the chat page promises a restricted chat no place in the history that lists none of them', () => {
-    const page = strip(read('src/pages/ChatPage.tsx'))
-    expect(page).not.toMatch(/saved in your history/)
-    expect(page).not.toMatch(/forgotten when the session ends|Forget when the session ends/)
+    // The page and the stream it composes (`chat/useChatStream.ts`).
+    for (const file of ['src/pages/ChatPage.tsx', 'src/pages/chat/useChatStream.ts']) {
+      const page = strip(read(file))
+      expect(page, file).not.toMatch(/saved in your history/)
+      expect(page, file).not.toMatch(/forgotten when the session ends|Forget when the session ends/)
+    }
   })
 
   it('each notice says both halves: out of the history and its search, and what is kept', () => {
@@ -82,13 +85,16 @@ describe('a chat that is not persistent says what is kept', () => {
 
   it('the chat page keeps no copy of a Temporary chat that outlives the page', () => {
     const page = strip(read('src/pages/ChatPage.tsx'))
+    // The transcript cache lives with the chat's stream, which seeds and revalidates from it.
+    const stream = strip(read('src/pages/chat/useChatStream.ts'))
     // The one writer of the transcript cache persists every mode but Temporary to session storage.
-    expect(page).toMatch(/writeQuery\(detailKey\(key\), d, d\.memory_mode !== 'temporary'\)/)
-    expect(page.match(/writeQuery\(detailKey\(/g)?.length, 'a second writer of the transcript cache').toBe(1)
+    expect(stream).toMatch(/writeQuery\(detailKey\(key\), d, d\.memory_mode !== 'temporary'\)/)
+    expect(stream.match(/writeQuery\(detailKey\(/g)?.length, 'a second writer of the transcript cache').toBe(1)
+    expect(page.match(/writeQuery\(detailKey\(/g), 'a second writer of the transcript cache').toBeNull()
     // The first message of a new chat is seeded with its mode, so that seed is not persisted either.
     expect(page).toMatch(/messages: seedMessages, run_state: idleRunState\(created\.key\), memory_mode: memoryMode \}/)
     // A chat that is gone drops what the page held of it.
-    expect(page).toMatch(/status === 404\) \{ invalidateKeys\(detailKey\(sessionId\)\); setMissing\(true\) \}/)
+    expect(stream).toMatch(/status === 404\) \{ invalidateKeys\(detailKey\(sessionId\)\); setMissing\(true\) \}/)
   })
 
   it('the backend facts the notices rest on still hold', () => {

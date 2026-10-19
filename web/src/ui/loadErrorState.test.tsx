@@ -1419,10 +1419,16 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   'app/App.tsx': 1,
   'app/onboarding/EssentialsStep.tsx': 1,
   'app/usePlatform.ts': 1,
-  // 6 → 5: the chat's voice-settings read moved to `pages/chat/voiceConfig.ts`, below.
-  'pages/ChatPage.tsx': 5,
+  // 6 → 5: the chat's voice-settings read moved to `pages/chat/voiceConfig.ts`, below. 5 → 3: the
+  // stream's two settings reads (the reveal cadence, thinking shown inline) moved with it to
+  // `pages/chat/useChatStream.ts`, below.
+  'pages/ChatPage.tsx': 3,
   'pages/agents/AgentDetail.tsx': 1,
   'pages/apps/AppsSection.tsx': 2,
+  // The two settings reads that moved out of `ChatPage` with the chat's stream, the same debt under
+  // its new address: each is a `dashboardConfig` read whose consumer falls back to the shipped
+  // behaviour (the smooth reveal, thinking hidden) while it is unanswered.
+  'pages/chat/useChatStream.ts': 2,
   // `voiceConfig`'s entry is that same read, moved out of `ChatPage`, and it is a KEEP: nothing on
   // screen waits on it, so there is no spinner to be eternal. A failed read is the designed
   // fallback the hook states at the call: hands-free hears the shipped phrases, and "Speak

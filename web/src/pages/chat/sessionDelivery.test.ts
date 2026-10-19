@@ -66,13 +66,15 @@ describe('deliverableToOpenSession — the one session gate', () => {
 })
 
 const CHAT_PAGE = readFileSync(join(process.cwd(), 'src', 'pages', 'ChatPage.tsx'), 'utf8')
+/** The chat's stream (`useChatStream.ts`), where ChatPage's frames are dispatched. */
+const CHAT_STREAM = readFileSync(join(process.cwd(), 'src', 'pages', 'chat', 'useChatStream.ts'), 'utf8')
 /** Comments describe the old duplication on purpose, so the rail must read CODE only. */
 const stripComments = (s: string) =>
   s.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 /** The `onWs` callback body — where every WS frame is dispatched. */
 function onWsBody(src: string): string {
   const start = src.indexOf('const onWs = useCallback(')
-  expect(start, 'onWs must exist in ChatPage — the rail is keyed on it').toBeGreaterThan(-1)
+  expect(start, 'onWs must exist in the chat stream — the rail is keyed on it').toBeGreaterThan(-1)
   const end = src.indexOf('\n  }, [])', start)
   expect(end, 'onWs must end with the empty-dep close').toBeGreaterThan(start)
   return src.slice(start, end)
@@ -80,7 +82,7 @@ function onWsBody(src: string): string {
 
 describe('the session gate is resolved in ONE place', () => {
   it('onWs gates through the shared resolver, exactly once', () => {
-    const body = stripComments(onWsBody(CHAT_PAGE))
+    const body = stripComments(onWsBody(CHAT_STREAM))
     const calls = [...body.matchAll(/deliverableToOpenSession\s*\(/g)]
     // One for the frame gate; one for session_title, whose payload names the session in
     // `key` rather than `session` so it cannot be gated by the frame check above — but it
@@ -93,7 +95,7 @@ describe('the session gate is resolved in ONE place', () => {
     // 🪤 Keyed on the POPULATION of comparisons, not on the compliant pattern: a rail that
     // greps for the fixed form can only ever visit sites that already comply, which is how
     // eleven copies of this rule survived in the first place.
-    const body = stripComments(onWsBody(CHAT_PAGE))
+    const body = stripComments(onWsBody(CHAT_STREAM))
     const lines = body.split('\n')
     const offenders: string[] = []
     for (const line of lines) {

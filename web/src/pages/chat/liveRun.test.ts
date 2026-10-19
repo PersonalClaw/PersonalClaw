@@ -67,27 +67,32 @@ describe('#3444 — what the composer advertises at the moment of the click', ()
 // that came out of this same remount boundary.
 
 const CHAT_PAGE = readFileSync(join(process.cwd(), 'src', 'pages', 'ChatPage.tsx'), 'utf8')
+/** The chat's stream, which holds the streaming claim ChatSession is mounted with. */
+const CHAT_STREAM = readFileSync(join(process.cwd(), 'src', 'pages', 'chat', 'useChatStream.ts'), 'utf8')
 const stripComments = (s: string) =>
   s.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 const CODE = stripComments(CHAT_PAGE)
+const STREAM = stripComments(CHAT_STREAM)
 
 describe('ChatPage wires the handoff', () => {
   it('initialises `streaming` from it, not from a bare false', () => {
     expect(
-      CODE,
+      STREAM,
       'a fresh `false` on the remounted instance is the window the composer lies in (#3444)',
     ).not.toMatch(/const \[streaming, setStreaming\] = useState\(false\)/)
-    expect(CODE).toMatch(
+    expect(STREAM).toMatch(
       /const \[streaming, setStreaming\] = useState\(\(\) => streamingAtMount\(liveRun, sessionId\)\)/,
     )
+    // …which is the stream's claim only if ChatSession hands the stream the handoff it was given.
+    expect(CODE, 'ChatSession must hand the handoff to the chat stream').toMatch(/useChatStream\(\{\s*sessionId, liveRun, setLiveRun,/)
   })
 
   it('seeds `streamingRef` from the same value', () => {
     // send() branches on the REF, not the state. A `false` here would reopen the window
     // one layer below an honest button — the worst version, because the label would be
     // right and the behaviour still wrong.
-    expect(CODE, 'streamingRef must seed from the resolved initial state').toMatch(/useRef\(streaming\)/)
-    expect(CODE).not.toMatch(/const streamingRef = useRef\(false\)/)
+    expect(STREAM, 'streamingRef must seed from the resolved initial state').toMatch(/const streamingRef = useRef\(streaming\)/)
+    expect(STREAM).not.toMatch(/const streamingRef = useRef\(false\)/)
   })
 
   it('owns the handoff ABOVE the remount boundary', () => {
@@ -115,6 +120,6 @@ describe('ChatPage wires the handoff', () => {
 
   it('releases it when the run settles', () => {
     // Left set, a later mount of the same session would claim a finished run was live.
-    expect(CODE, 'the handoff must be cleared as a turn settles').toMatch(/if \(!v && liveRun\) setLiveRun\(''\)/)
+    expect(STREAM, 'the handoff must be cleared as a turn settles').toMatch(/if \(!v && liveRun\) setLiveRun\(''\)/)
   })
 })

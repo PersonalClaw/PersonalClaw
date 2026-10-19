@@ -101,14 +101,16 @@ describe('a reload reads the served model back from the turn it was recorded on'
   })
 })
 
-// The live half is folded inside `ChatPage.tsx` (a page that owns a socket and is not mountable
-// here), so it is asserted as source, in the attribute form the page writes it.
+// The live half is folded inside the chat's stream (`chat/useChatStream.ts`, which owns the socket
+// and is not mountable here) and handed on by `ChatPage.tsx`, so it is asserted as source, in the
+// attribute form the page writes it.
 describe('the chat page hands the served model and the chain to both readers', () => {
   const page = readFileSync(join(__dirname, '../../pages/ChatPage.tsx'), 'utf8')
+  const stream = readFileSync(join(__dirname, '../../pages/chat/useChatStream.ts'), 'utf8')
 
   it("the live stats frame sets the turn's served model", () => {
-    expect(page).toMatch(/if \(kind === 'stats'\) \{\s*const served = servedModelOf\(/)
-    expect(page).toContain('next[i] = { ...next[i], servedModel: served }')
+    expect(stream).toMatch(/if \(kind === 'stats'\) \{\s*const served = servedModelOf\(/)
+    expect(stream).toContain('next[i] = { ...next[i], servedModel: served }')
   })
 
   it('the composer is given the latest served model and the chain, and the chip its turn\'s', () => {
@@ -118,7 +120,7 @@ describe('the chat page hands the served model and the chain to both readers', (
   })
 
   it('the chain is read from session detail and from setting the working directory', () => {
-    expect(page).toContain("setAutoChain(d.auto_chain ?? '')")
+    expect(stream).toContain("setAutoChain(d.auto_chain ?? '')")
     expect(page).toContain("if (typeof r.auto_chain === 'string') setAutoChain(r.auto_chain)")
   })
 })
