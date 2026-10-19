@@ -55,7 +55,8 @@ const OWNER = 'pages/loops/loopPhases.ts'
 const CONSUMERS = [
   'pages/loops/runFold.ts',
   'pages/loops/DesignCockpitPage.tsx',
-  'pages/code/CodeCockpitPage.tsx',
+  // The cockpit's stage key, which moved out of `CodeCockpitPage` into what its regions share.
+  'pages/code/cockpit/cockpitShared.ts',
   'pages/code/CodeSection.tsx',
 ]
 
@@ -109,8 +110,9 @@ describe('one phase-status key resolution, imported by every surface that render
   it.each(CONSUMERS)('%s imports the shared helper', (consumer) => {
     expect(FILES.map(rel), `${consumer} is gone — move this rail with it`).toContain(consumer)
     const src = read(join(SRC, consumer))
+    // Any depth of `../` up to `loops/`: the cockpit's consumer sits two folders down.
     expect(src, `${consumer} must import phaseKey from loopPhases, not rebuild it`)
-      .toMatch(/import \{[^}]*\bphaseKey\b[^}]*\} from '(?:\.|\.\.\/loops)\/loopPhases'/)
+      .toMatch(/import \{[^}]*\bphaseKey\b[^}]*\} from '(?:\.|(?:\.\.\/)+loops)\/loopPhases'/)
   })
 
   it('no phase-rendering surface reads the retired phase-id field off a plan row', () => {

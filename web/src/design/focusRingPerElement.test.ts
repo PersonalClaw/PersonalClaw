@@ -129,7 +129,14 @@ const INVENTORY: { file: string; anchor: string; ring: RegExp; what: string }[] 
     file: 'pages/code/CodeCockpitPage.tsx',
     anchor: 'max-h-24 min-h-0 flex-1 resize-none overflow-y-auto bg-transparent',
     ring: CONTAINER_RING,
-    what: 'steer-the-worker composers (two call sites, identical chrome — both checked)',
+    what: 'steer-the-worker composer (the project-level one)',
+  },
+  {
+    // Its twin, identical chrome, which moved with the task detail into its own module.
+    file: 'pages/code/cockpit/tasks/TaskDetailView.tsx',
+    anchor: 'max-h-24 min-h-0 flex-1 resize-none overflow-y-auto bg-transparent',
+    ring: CONTAINER_RING,
+    what: 'steer-the-worker composer (the task-scoped one)',
   },
   {
     file: 'pages/knowledge/KnowledgeCreatePage.tsx',

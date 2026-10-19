@@ -160,7 +160,8 @@ describe('every list whose label states a total discloses its cap', () => {
     // names "Show more" as its canonical standalone use, and which renders a `<button type="button">`
     // underneath. So the thing this rail protects never changed; only the tag it is written with did.
     // Read the title's sentence and the wired `onClick` together, which is the disclosure itself.
-    const src = strip(readSource(join(SRC, 'pages/code/CodeCockpitPage.tsx')))
+    // The cockpit's file chips, which moved out of `CodeCockpitPage` into their own module.
+    const src = strip(readSource(join(SRC, 'pages/code/cockpit/FilesTouched.tsx')))
     expect(src, 'still an interactive disclosure').toMatch(/title=\{`Show \$\{hidden\} more file\$\{[^}]*\}`\}>\+\{hidden\} more<\/TextLink>/)
     expect(src, 'and it still expands the list').toMatch(/onClick=\{\(\) => setExpanded\(true\)\}/)
   })
