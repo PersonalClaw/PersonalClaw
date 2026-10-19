@@ -24,7 +24,8 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // Six drag-to-resize handles exist. This rail governs the ones that CLAIM to be splitters; the others
 // are pointer-only and do not lie about it, which is a smaller defect but still one:
 //
-//   pages/code/CodeCockpitPage  ×2   full pattern (via the hook)   ← canonical
+//   pages/code/CodeCockpitPage  ×2   full pattern (via the hook)   ← canonical (the terminal's is in
+//                                                                   `pages/code/cockpit/BottomTerminal` now)
 //   ui/NavRail                       full pattern                  ← inline, its own state
 //   ui/SidePanel                     full pattern (via the hook)
 //   pages/chat/ChatFilePanel         full pattern (via the hook)
@@ -56,6 +57,8 @@ describe('a declared splitter implements the splitter contract', () => {
     expect(claimants().map((f) => f.rel).sort()).toEqual([
       'pages/chat/ChatFilePanel.tsx',
       'pages/code/CodeCockpitPage.tsx',
+      // The cockpit terminal's top-edge handle, which moved with the terminal into its own module.
+      'pages/code/cockpit/BottomTerminal.tsx',
       'pages/terminal/TerminalDrawer.tsx',
       'ui/NavRail.tsx',
       'ui/SidePanel.tsx',

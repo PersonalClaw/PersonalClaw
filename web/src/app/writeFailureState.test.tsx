@@ -348,8 +348,9 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // action the user asked for, and a second toast about it would explain nothing.
   'pages/artifacts/ArtifactViewer.tsx': 1,
   // (b) Teardown on unmount, twice: "unmounted mid-create → don't leak". The user has left the
-  // surface; there is nobody to tell and nothing for them to do.
-  'pages/code/CodeCockpitPage.tsx': 2,
+  // surface; there is nobody to tell and nothing for them to do. Moved out of `CodeCockpitPage` with
+  // the cockpit terminal, which leaves that file's budget.
+  'pages/code/cockpit/useBottomTerminal.ts': 2,
   // (b) the 60-SECOND POLL, named deliberate by `userActionReported`: "Nobody asked; one toast per
   // failed poll is noise, and a stale tile still shows its last value with its own timestamp."
   // (a) the tile resolve beside it — a keep/dismiss the user clicked, whose sibling refresh BUTTON

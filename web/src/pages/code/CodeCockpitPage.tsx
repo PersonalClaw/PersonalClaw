@@ -50,9 +50,6 @@ import { FileViewer, type ArtifactCopy, type FileViewerHandle, type SaveAsArtifa
 import type { DraftEntry } from '../../ui/content/ContentSurface'
 import { useFileTabs } from '../files/browse/useFileTabs'
 import { useDirCache, useGitStatus } from '../files/filesData'
-import { TerminalView } from '../terminal/TerminalView'
-import { runInTerminalWhenReady } from '../terminal/terminalBridge'
-import type { TermTab } from '../terminal/TerminalPage'
 import { TypingReveal } from './TypingReveal'
 import { DiffReveal } from './DiffReveal'
 import { withArticle } from '../../lib/article'
@@ -71,6 +68,7 @@ import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { messageEnter, listItemEnter, stagger, physics } from '../../design/motion'
 import { Expandable } from '../../ui/motion'
 import { BUSY_REASON } from '../../ui/unavailable'
+import { BottomTerminal } from './cockpit/BottomTerminal'
 
 const EMPTY_ARTIFACTS = new Set<string>()
 
@@ -3171,86 +3169,6 @@ function CommitView({ ws, hash, subject, onClose }: { ws: string; hash: string; 
             )}
           </>
         )}
-      </div>
-    </div>
-  )
-}
-
-/** A terminal docked at the bottom of the editor, rooted at the workspace. The
- *  PTY session is created on mount and KILLED on unmount (hiding the panel or
- *  leaving the cockpit) — otherwise every open/close would orphan a PTY on the
- *  backend (the gateway wedges under accumulated PTYs). */
-function BottomTerminal({ ws, hidden, onClose, runCmd }: { ws: string; hidden?: boolean; onClose: () => void; runCmd?: { cmd: string; n: number } | null }) {
-  const [tab, setTab] = useState<TermTab | null>(null)
-  // Surface a PTY-create failure (workspace dir gone, shell can't spawn) instead of
-  // spinning forever — the old .catch(()=>{}) left an eternal loader with no recourse.
-  const [err, setErr] = useState<string | null>(null)
-  // A PTY spawn failure is often transient (shell momentarily busy, brief resource
-  // contention). Bumping `attempt` re-runs the create effect so the user can retry in
-  // place rather than toggling the whole terminal off and back on.
-  const [attempt, setAttempt] = useState(0)
-  // Drag-resizable height (mini-IDE expectation: pull the terminal taller for more
-  // output, shorter for more editor). Persisted; grows upward (handle on the top edge).
-  // Reuses the same pointer-capture hook as the side panels so a drag crossing the
-  // Monaco editor above doesn't stick.
-  const { width: height, onHandleDown, onHandleKey, min, max } = useResizablePanel(
-    'code-term-h', { def: 260, min: 120, max: 640, side: 'bottom', collapsible: true })
-  // The LIVE server-side PTY id this panel owns. Tracked in a ref (not the effect's
-  // local) because a Restart inside TerminalView mints a NEW session — without following
-  // it here, cleanup would delete the stale (dead) id and LEAK the restarted PTY, the
-  // exact "gateway wedges under accumulated PTYs" failure this teardown exists to prevent.
-  const liveSessionRef = useRef<string>('')
-  useEffect(() => {
-    let alive = true
-    setErr(null); setTab(null)
-    api.createTerminal(ws).then((r) => {
-      liveSessionRef.current = r.session_id
-      if (alive) setTab({ id: r.session_id, label: 'Terminal', cwd: r.cwd, shell: r.shell })
-      else api.deleteTerminal(r.session_id).catch(() => {})  // unmounted mid-create → don't leak
-    }).catch((e) => { if (alive) setErr((e as Error).message || 'Could not start a terminal here.') })
-    return () => { alive = false; if (liveSessionRef.current) api.deleteTerminal(liveSessionRef.current).catch(() => {}) }
-  }, [ws, attempt])
-  // Run a requested build/test command on THIS terminal's own session, once it can
-  // actually accept input — never the global "active" terminal, which could be an
-  // unrelated one. Target the LIVE session id (liveSessionRef), not tab.id: a Restart
-  // mints a new PTY, so tab.id goes stale + dead — running against it would silently
-  // no-op. runInTerminalWhenReady retries until the SEND succeeds (not merely until
-  // the session registers — registration happens synchronously at mount while the
-  // WebSocket is still CONNECTING, so a send at that instant returned false and the
-  // command was silently dropped on every cold open). Keyed on runCmd.n so a repeat
-  // click re-fires.
-  useEffect(() => {
-    if (!runCmd || !tab) return
-    return runInTerminalWhenReady(runCmd.cmd, () => liveSessionRef.current || tab.id)
-  }, [runCmd?.n, tab?.id])  // eslint-disable-line react-hooks/exhaustive-deps
-  return (
-    <div className="relative flex shrink-0 flex-col border-t border-outline-variant/40"
-      // Hide via CSS (not unmount) so the PTY + running process + scrollback survive a
-      // header Hide/Show toggle. display:none collapses it; TerminalView's ResizeObserver
-      // re-fits xterm when it's shown again (0-size → sized).
-      style={{ height, display: hidden ? 'none' : undefined }} aria-hidden={hidden}>
-      {/* top-edge resize handle (grows the terminal upward) */}
-      <div onPointerDown={onHandleDown} onKeyDown={onHandleKey} role="separator" aria-orientation="horizontal"
-        tabIndex={0} aria-label="Resize terminal — arrow keys to resize"
-        aria-valuenow={Math.round(height)} aria-valuemin={min} aria-valuemax={max}
-        className="group/th absolute inset-x-0 top-0 z-20 h-2 cursor-row-resize outline-none focus-visible:bg-primary/30">
-        <div className="mx-auto h-0.5 w-full bg-transparent transition-colors group-hover/th:bg-primary/60 group-focus-visible/th:bg-primary" />
-      </div>
-      <div className="flex shrink-0 items-center justify-between border-b border-outline-variant/40 bg-surface-low/40 px-3 py-1">
-        <span data-type="caption" className="inline-flex items-center gap-1.5 text-on-surface-low"><TerminalSquare size={12} /> Terminal · {ws.split('/').slice(-1)[0]}</span>
-        <IconButton icon={X} label="Hide terminal" onClick={onClose} size={24} iconSize={13} />
-      </div>
-      <div className="min-h-0 flex-1">
-        {err ? (
-          <div data-type="body-s" className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-            <span style={{ color: 'var(--color-danger)' }}>{err}</span>
-            <div className="flex items-center gap-2">
-              <Button variant="ghost-accent" size="xs" onClick={() => setAttempt((n) => n + 1)}><RotateCcw size={13} /> Try again</Button>
-              <Button variant="ghost" size="xs" onClick={onClose}>Close</Button>
-            </div>
-          </div>
-        ) : tab ? <TerminalView tab={tab} onExited={() => {}} onClose={onClose}
-            onSession={(sid) => { liveSessionRef.current = sid }} /> : <Centered><Loader2 size={16} className="animate-spin text-on-surface-low" /></Centered>}
       </div>
     </div>
   )
