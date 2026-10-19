@@ -1293,6 +1293,45 @@ Each step runs through `tools/ci/run.py`, which runs one command from an empty e
   loop over a name bound more than once or over a list or set, so no pass is keyed on a list
   read short; the rail `tests/rails/test_ci_capabilities_tree.py` holds this tree to it.
 
+### A push to main's replay
+
+`tools/ci/main_replay.py` holds what a push to `main` may replay from its pull request's run
+(#3919), one job at a time, where `tools/ci/tree_tested.py` answers for the whole run. Nothing
+calls it yet: `merge.yml`'s plan job will, once that workflow writes a verdict file per job
+(#3915) and the controller App posts the merge verdict (#4584).
+
+- **Nothing replays,** and every job runs, unless the run is a push to `main` naming the commit
+  it replaced (a `pull_request` event replays nothing and reads nothing, so a pull request's own
+  evidence never reaches its own verdict); `tree_tested`'s guards hold (one pull request merged
+  as the commit, the pushed tree its head's tree, the head containing the previous `main`, the
+  first run made after it opened, its base never changed), in a copy of its sequence that this
+  module's own tests hold row for row; the `merge.yml` listing holds only runs of `merge.yml`
+  and its count says it is whole; the head's first `merge.yml` `pull_request` run has a first
+  attempt that completed, concluding `success` or `failure` (a cancelled or timed-out attempt
+  is judged by nothing); the controller's merge verdict on the head counts; and every verdict
+  file attempt 1 left reads as a job record. Any error reading the API, the verdict files or the
+  merge verdict is a full run; inputs the caller gets wrong are refused before anything is read.
+- **A job replays** only when its class is `tree` or `ttl` (a security, live or `never` job
+  always runs); its job in attempt 1 concluded `success`; exactly one verdict file names it, of
+  attempt 1, a pass on the head, reading no partner repository, with an empty quarantined-failure
+  list and no rerun; a `ttl` job's attempt 1 started inside its TTL; and every other shard of it
+  replays too, so one red shard runs every shard. Only attempt 1 is read, never a later attempt
+  or a later run, so a red is never rerun into a green.
+- **A later run is not read either way.** Unlike `tree_tested`, which needs every `pull_request`
+  run on the head green on attempt 1, a later run's red does not stop the first run's green from
+  replaying. What a later run found reaches the push only through the merge verdict, whose newest
+  run on the head decides, so a later red verdict stops every replay.
+- **A pass that read a partner repository never replays** on a push, whatever its class: the push
+  has no partner head to hold the pull request's to. `apps-contract`, which reads the apps
+  partner, is `never` today and runs on its class; were it made `tree`, its partner read would
+  still keep it running.
+- **The receipt** carries the trust receipt's fields (the pushed commit, its tree, the toolchain,
+  and the sha256 of the plan, of attempt 1's job list and of each replayed verdict file), the
+  source run and each job's decision and why.
+
+`tests/test_ci_main_replay.py` plants the API answers and the verdict files, each written by
+`verdict.job_record`, and the quarantined one by `run-job` itself.
+
 ## Local tooling and evidence
 
 A maintainer may run private tooling that makes local work faster. This section says, for each
