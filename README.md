@@ -448,9 +448,9 @@ rather than by PR'ing the owner's internal roadmap (not in this repo). See
   only ever apply to *new* releases; it could not reach back to the one you installed.
 
 These are commitments, not a legal instrument — but they are **enforced against the tree**,
-which is the part a promise usually lacks. `tests/test_licence_governance.py` reds CI on a
-licence identifier that stops saying MIT anywhere in the repo, on a rewrite of `LICENSE`'s
-grant text, and on a `CLA`/`CONTRIBUTOR_LICENSE_AGREEMENT` file appearing;
+which is the part a promise usually lacks. `tests/rails/test_licence_governance_tree.py` reds
+CI on a licence identifier that stops saying MIT anywhere in the repo, on a rewrite of
+`LICENSE`'s grant text, and on a `CLA`/`CONTRIBUTOR_LICENSE_AGREEMENT` file appearing;
 `tests/test_network_egress_hosts.py` reds it on a new outbound host. So changing any of the
 four takes a deliberate, reviewable edit to committed artifacts — never a quiet one.
 

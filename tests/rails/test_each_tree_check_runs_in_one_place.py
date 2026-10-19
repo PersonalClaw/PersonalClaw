@@ -53,7 +53,6 @@ NO_ARGS = "no-args"
 ROOT = "root"
 
 _LICENCE = "licence_governance_shared"
-_LICENCE_TESTS = "test_licence_governance"
 
 
 @dataclass(frozen=True)
@@ -120,10 +119,10 @@ CHECKS: Mapping[str, Check] = {
         },
         sources=(_group(_ASSETS, "REPO_ROOT"),),
     ),
-    # Lane E's whole-repository readers, which no job runs: their one place is the rails job, once
-    # their real-tree tests move to tests/rails (#3929's next steps, the licence sweep first).
+    # The whole-repository readers that no job but the suite's shards ran. The licence sweep's
+    # one place is now the rails job; the scanner's whole-tree scan is the next to move.
     "licence-sweep": Check(
-        owner="none yet: only the suite runs it; its place is tests/rails, in the rails job",
+        owner="ci.yml rails: tests/rails/test_licence_governance_tree.py",
         entries={
             **{
                 (_LICENCE, name): ROOT
@@ -131,7 +130,7 @@ CHECKS: Mapping[str, Check] = {
             },
             **{(_LICENCE, "check_no_cla_file"): ROOT},
             **{
-                (_LICENCE_TESTS, name): ROOT
+                (_LICENCE, name): ROOT
                 for name in (
                     "licence_files",
                     "check_every_declaration_is_mit",
@@ -141,7 +140,7 @@ CHECKS: Mapping[str, Check] = {
                 )
             },
         },
-        sources=(_group(_LICENCE, "_ROOT") | _group(_LICENCE_TESTS, "_ROOT"),),
+        sources=(_group(_LICENCE, "_ROOT"),),
     ),
     "harness-scanner": Check(
         owner="ci.yml rails: tests/rails/test_harness_scanner_tree.py (harness runs scan --diff)",
@@ -157,42 +156,11 @@ CHECKS: Mapping[str, Check] = {
 
 #: The calls that still run a check on the real tree in the suite, each removed by the step of
 #: #3929 that gives its check one place. ``(check, "path::test")``. The gate aggregate's copies
-#: are gone: its tests run every gate on stubs. Next, the whole-repository readers no job runs:
-#: the licence sweep, then the scanner's whole-tree scan, which move to tests/rails.
+#: are gone: its tests run every gate on stubs. So are the licence sweep's: its real-tree tests
+#: are the rail ``tests/rails/test_licence_governance_tree.py``. Next, the scanner's whole-tree
+#: scan, which moves to tests/rails.
 KNOWN_COPIES: frozenset[tuple[str, str]] = frozenset(
     {
-        (
-            "licence-sweep",
-            "tests/test_licence_governance.py::" "test_every_declaration_site_is_in_the_census",
-        ),
-        (
-            "licence-sweep",
-            "tests/test_licence_governance.py::"
-            "test_every_licence_declaration_in_the_tree_says_mit",
-        ),
-        (
-            "licence-sweep",
-            "tests/test_licence_governance.py::" "test_every_licence_file_carries_the_pinned_grant",
-        ),
-        (
-            "licence-sweep",
-            "tests/test_licence_governance.py::" "test_every_licence_file_names_an_approved_holder",
-        ),
-        (
-            "licence-sweep",
-            "tests/test_licence_governance.py::" "test_no_contributor_licence_agreement_exists",
-        ),
-        (
-            "licence-sweep",
-            "tests/test_licence_governance.py::" "test_no_licence_file_names_an_app_as_its_holder",
-        ),
-        ("licence-sweep", "tests/test_licence_governance.py::test_no_pattern_is_silently_dead"),
-        ("licence-sweep", "tests/test_licence_governance.py::test_the_census_has_no_stale_entries"),
-        ("licence-sweep", "tests/test_licence_governance.py::test_the_census_is_not_vacuous"),
-        (
-            "licence-sweep",
-            "tests/test_licence_governance.py::" "test_the_licence_file_sweep_is_not_vacuous",
-        ),
         (
             "asset-licences",
             "tests/test_asset_licenses.py::"
@@ -288,7 +256,7 @@ KNOWN_COPIES: frozenset[tuple[str, str]] = frozenset(
 
 #: The suite's modules and helpers that read ``docs/``: prose checked against the tree. Each is a
 #: whole-tree read the suite still holds, so the suite's inputs are the docs too (#3945). They move
-#: to tests/rails after the licence sweep and the scanner's whole-tree scan.
+#: to tests/rails after the scanner's whole-tree scan.
 KNOWN_DOCS_READERS: frozenset[str] = frozenset(
     {
         "tests/network_egress_hosts_shared.py",
@@ -307,7 +275,6 @@ KNOWN_DOCS_READERS: frozenset[str] = frozenset(
         "tests/test_container_host_address_is_the_runtimes_own.py",
         "tests/test_docs_api_reference.py",
         "tests/test_getting_started_walkthrough.py",
-        "tests/test_licence_governance.py",
         "tests/test_owner_only_census.py",
         "tests/test_service_keeps_its_environment.py",
         "tests/test_sso_design_note_citations.py",

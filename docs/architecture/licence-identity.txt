@@ -6,7 +6,7 @@
 # the tree that states a licence identifier about THIS project, each with a judgment saying
 # what the declaration is for and who reads it.
 #
-# `tests/test_licence_governance.py` enforces the mirror in both directions — a new
+# `tests/rails/test_licence_governance_tree.py` enforces the mirror in both directions — a new
 # declaration site reds, and a stale entry reds — so the table cannot quietly accumulate or
 # quietly shrink. Every identifier here must be `MIT`.
 #
