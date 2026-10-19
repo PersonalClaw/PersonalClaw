@@ -29,6 +29,14 @@ halves, ``rails (1)`` and ``rails (2)``, or the one job a run before the halves 
 missing a half, or naming one twice, measures nothing); "not measured" when there is none,
 never a guessed number. The floor is a report: nothing it reads changes the jobs.
 
+``--trusted-areas`` names main's areas file. Its overrides, read against main's own catalogue
+beside it, are added to the tree's: the overrides in force are the union of main's and the pull
+request's, so a pull request that drops or narrows one of main's (the workflows', ``tools/ci``'s,
+``deploy/docker``'s whole tier, or a job a script adds) still plans what main's says. A job-adding
+override of main's that names a job the tree's catalogue lacks plans the whole tier for its paths,
+since the job it promised can no longer be named. Either file unreadable plans nothing, exit 2,
+so the caller runs everything.
+
 ``--outputs`` prints the two lines ``ci.yml``'s ``changes`` job publishes, ``full=true|false``
 and ``jobs=<JSON list>``, on stdout, and the plan on stderr.
 
@@ -586,10 +594,33 @@ def read_beside(path: Path, cat: Catalogue, areas: Path | None = None) -> tuple[
     return catalogue.load_areas(catalogue._text(where, str(where)), cat, str(where))
 
 
+def trusted_overrides(areas: Path, cat: Catalogue) -> tuple[Override, ...]:
+    """The overrides of a trusted areas file (main's, beside main's catalogue), read against that
+    catalogue, never the tree under test's, as they apply to ``cat``, the tree's. Added to the
+    tree's own they make the union: a path is whole-tier when either copy says so, and gets every
+    job either copy adds. A job main's override adds that ``cat`` does not have makes its paths
+    whole-tier instead, so dropping a job cannot drop the run it promised. Each reason says it is
+    main's. Raises what :func:`read_beside` raises when either file cannot be read, and the
+    command then plans nothing, so its caller runs everything."""
+    path = areas.with_name(Path(catalogue.CATALOGUE).name)
+    trusted = catalogue.load(catalogue._text(path, str(path)), str(path))
+    ids = {j.id for j in cat.jobs}
+    out: list[Override] = []
+    for o in read_beside(path, trusted, areas):
+        reason = f"{o.reason} (main's {catalogue.AREAS})"
+        gone = [j for j in o.jobs if j not in ids]
+        if gone:
+            why = f"{reason}; it adds {', '.join(gone)}, which this catalogue does not have"
+            out.append(Override(o.paths, (), True, why))
+            continue
+        out.append(Override(o.paths, o.jobs, o.whole_tier, reason))
+    return tuple(out)
+
+
 def main(argv: list[str]) -> int:
     """``python -m tools.ci plan <tier>``: the plan as JSON. Exit 0 with a plan, 2 when the
-    tier, the catalogue or its overrides cannot be read (nothing is printed, so a caller plans
-    everything)."""
+    tier, the catalogue or its overrides, or the ``--trusted-areas`` file or the catalogue
+    beside it, cannot be read (nothing is printed, so a caller plans everything)."""
     parser = argparse.ArgumentParser(
         prog="python -m tools.ci plan", description=__doc__.splitlines()[0]
     )
@@ -597,6 +628,12 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--catalogue", type=Path, default=catalogue.REPO / catalogue.CATALOGUE)
     parser.add_argument(
         "--areas", type=Path, default=None, help="the overrides (areas.toml beside the catalogue)"
+    )
+    parser.add_argument(
+        "--trusted-areas",
+        type=Path,
+        default=None,
+        help="main's areas file: its overrides are added to the tree's own (the union)",
     )
     parser.add_argument("--paths", default=None, help="the changed paths, one per line (stdin)")
     parser.add_argument("-z", action="store_true", help="the paths are NUL-separated")
@@ -618,11 +655,14 @@ def main(argv: list[str]) -> int:
     try:
         source = str(args.catalogue)
         cat = catalogue.load(catalogue._text(args.catalogue, source), source)
+        overrides = read_beside(args.catalogue, cat, args.areas)
+        if args.trusted_areas is not None:
+            overrides += trusted_overrides(args.trusted_areas, cat)
         result = plan(
             cat,
             args.tier,
             _changed(args),
-            overrides=read_beside(args.catalogue, cat, args.areas),
+            overrides=overrides,
             full=args.full,
             history=args.history,
             root=args.root,

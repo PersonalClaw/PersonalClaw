@@ -166,14 +166,16 @@ def _run(
     judge: Path | None = None,
     gh_down: bool = False,
     fetch_fails: bool = False,
+    checkout: Path | None = None,
 ) -> Ran:
     """Run the step once. ``gh`` lists the ``changed`` names as ``--jq '... | @json'`` prints
     them, or ``listing`` as it is. ``answer`` plants the planner's stdout (and ``rc``, ``err``);
-    without one, the real planner runs from ``judge``, over this checkout as the workspace."""
+    without one, the real planner runs from ``judge``, over ``checkout`` (this checkout when
+    none is given) as the workspace."""
     stub, bin_, temp = tmp / "stub", tmp / "bin", tmp / "runner"
     for folder in (stub, bin_, temp):
         folder.mkdir()
-    workspace = REPO
+    workspace = checkout if checkout is not None else REPO
     if answer is not None:
         workspace = tmp / "workspace"
         workspace.mkdir()
@@ -384,6 +386,7 @@ def test_the_planner_is_the_base_commits_run_beside_this_checkouts_catalogue(tmp
         return argv[argv.index(flag) + 1]
 
     assert value("--catalogue") == f"{ran.workspace}/tools/ci/catalogue.toml"
+    assert value("--trusted-areas") == f"{ran.runner_temp}/judge/tools/ci/areas.toml"
     assert value("--root") == str(ran.workspace)
     assert value("--paths") == f"{ran.runner_temp}/changed.txt" and "-z" in argv
     listed = (ran.runner_temp / "changed.txt").read_bytes()
@@ -502,6 +505,51 @@ def test_an_enumeration_that_fails_runs_the_whole_tier(tmp_path, judge_tar) -> N
     ran = _run(tmp_path, judge=judge_tar, gh_down=True)
     assert ran.rc == 0 and ran.published["full"] == "true", ran.log
     assert all(_gate(ran.published, job) for job in _GATED)
+
+
+#: The whole-tier overrides a planted pull request drops, each by the line that opens its
+#: ``paths``, with a path under it the step is handed.
+_DROPPED_OVERRIDES = {
+    "the workflows'": ('paths = [".github/workflows/"]', ".github/workflows/ci.yml"),
+    "tools/ci's": ('paths = ["tools/ci/"]', "tools/ci/plan.py"),
+    "deploy/docker's": ('paths = [\n  "deploy/docker/",', "deploy/docker/Dockerfile.backend"),
+}
+
+
+def _without_override(text: str, opening: str) -> str:
+    """The areas file with the one ``[[override]]`` whose paths open with ``opening`` removed."""
+    blocks = text.split("[[override]]\n")
+    kept = [b for b in blocks if not b.startswith(opening)]
+    assert len(kept) == len(blocks) - 1, f"no override opens with {opening!r}"
+    return "[[override]]\n".join(kept)
+
+
+@pytest.mark.parametrize("dropped", sorted(_DROPPED_OVERRIDES))
+def test_a_pull_request_that_drops_a_whole_tier_override_still_runs_the_whole_tier(
+    tmp_path, judge_tar, dropped: str
+) -> None:
+    """The planted pull request: this tree's catalogue, and its areas file without one of
+    main's whole-tier overrides. Its own files alone plan the path narrowly, so the plant takes
+    effect; through the step, main's areas file, which the judge carries, plans the whole
+    tier."""
+    from tools.ci import catalogue
+    from tools.ci import plan as planner
+
+    opening, path = _DROPPED_OVERRIDES[dropped]
+    checkout = tmp_path / "checkout"
+    (checkout / "tools" / "ci").mkdir(parents=True)
+    for name in ("catalogue.toml", "areas.toml"):
+        text = (REPO / "tools" / "ci" / name).read_text(encoding="utf-8")
+        if name == "areas.toml":
+            text = _without_override(text, opening)
+        (checkout / "tools" / "ci" / name).write_text(text, encoding="utf-8")
+    cat = catalogue.read(checkout)
+    alone = planner.plan(cat, "merge", [path], overrides=catalogue.read_areas(checkout, cat))
+    assert not alone.full, f"the plant took no effect: {path} is whole-tier on its own"
+    ran = _run(tmp_path, changed=(path,), judge=judge_tar, checkout=checkout)
+    assert ran.rc == 0, ran.log
+    assert ran.published["full"] == "true", (ran.lines, ran.summary)
+    assert "main's tools/ci/areas.toml" in ran.summary, ran.summary
 
 
 def test_a_judge_with_no_planner_runs_the_whole_tier(tmp_path) -> None:

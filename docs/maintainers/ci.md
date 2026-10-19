@@ -403,11 +403,16 @@ overrides (`--areas`, beside the catalogue by default):
   gets what is left of 60 seconds, so the read ends within them; any failure, running out of
   time included, gives what was read and a warning on stderr. The floor is a report, never a
   gate: nothing it reads changes the plan's jobs.
+- **`--trusted-areas <file>`** adds the overrides of a trusted areas file (main's), read
+  against the catalogue beside it, to the tree's own: the overrides in force are the union of
+  the two. Their reasons say they are main's. A job one of main's adds that the tree's
+  catalogue does not have makes that override's paths whole-tier instead.
 - **`--outputs`** prints the two GitHub output lines on stdout, `full=true|false` and
   `jobs=<JSON list>`, and the plan as JSON on stderr, with anything the floor read printed.
 - **Exit codes:** 0 with a plan; 2, printing nothing, when the tier has no job in the catalogue
-  (`weekly` and `release` have none yet) or the catalogue or its overrides cannot be read, so a
-  caller plans everything.
+  (`weekly` and `release` have none yet), or the catalogue or its overrides, or the
+  `--trusted-areas` file or the catalogue beside it, cannot be read, so a caller plans
+  everything.
 
 `run --changed` plans the same way, from `git diff --name-only --no-renames -z` against the
 base, so a move names both the path it left and the path it reached.
@@ -445,7 +450,13 @@ pull request's files (or, on a push to `main`, the push's), passed NUL-separated
 a newline in it stays one name. The planner that runs is `main`'s, never the checkout's: the
 step fetches `main`'s tip (on a push, the commit the push replaced), archives its `tools/ci`
 into a folder of its own and runs it there over the checkout's catalogue and overrides, so a
-pull request's catalogue is its input and never its judge. With no such commit, or none that
+pull request's catalogue is its input and never its judge. Main's areas file, which that archive
+carries, is passed as `--trusted-areas`: its overrides are added to the checkout's, read against
+main's own catalogue, so the overrides in force are the union of main's and the pull request's.
+A pull request that drops or narrows the workflows', `tools/ci`'s or `deploy/docker`'s override
+still runs the whole tier for them, one that drops a job-adding override still runs that job,
+and one that removes the job itself runs the whole tier for that override's paths. A trusted
+copy that cannot be read plans nothing, so everything runs. With no such commit, or none that
 can be fetched, nothing plans. The `ci:full` label passes `--full`; the labels are the
 event's, so one added later counts from the next push. The step publishes only `full` and a
 list of job ids exactly as the planner prints it; anything else, and no answer, becomes

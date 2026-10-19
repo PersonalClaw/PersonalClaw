@@ -863,6 +863,170 @@ def test_the_command_reads_the_overrides_beside_the_catalogue(tmp_path) -> None:
     assert json.loads(out)["full_reasons"] == ["ci.yml is named by no input but the whole tree"]
 
 
+# ── main's overrides hold whatever the tree under test says: the union ───────────────────────
+
+#: The planted pull request's areas file: main's whole-tier override for ci.yml dropped.
+_DROPPED = _AREAS.split('[[override]]\npaths = ["ci.yml"]')[0]
+#: The planted pull request's catalogue: ci.yml named by an input, so the path is known and,
+#: without main's override, planned narrowly.
+_KNOWN = _TEXT.replace('inputs = ["package.json"]', 'inputs = ["package.json", "ci.yml"]', 1)
+
+
+def _main_copy(tmp_path: Path, areas: str = _AREAS) -> Path:
+    """Main's catalogue and areas file, in a folder of their own: the trusted copy."""
+    main = tmp_path / "main"
+    main.mkdir()
+    (main / "catalogue.toml").write_text(_TEXT)
+    (main / "areas.toml").write_text(areas)
+    return main / "areas.toml"
+
+
+def _pull_request(tmp_path: Path, text: str = _KNOWN, areas: str = _DROPPED) -> list[str]:
+    cat = tmp_path / "catalogue.toml"
+    cat.write_text(text)
+    (tmp_path / "areas.toml").write_text(areas)
+    listed = tmp_path / "changed.txt"
+    listed.write_text("ci.yml\n")
+    return ["merge", "--catalogue", str(cat), "--paths", str(listed)]
+
+
+def test_a_pull_request_that_drops_a_whole_tier_override_still_plans_the_whole_tier(
+    tmp_path,
+) -> None:
+    """The planted pull request drops main's whole-tier override for ci.yml and names ci.yml by
+    an input. Read alone, its own files plan a narrow set; with main's areas file trusted,
+    main's override plans the whole tier, under main's reason."""
+    assert "ci.yml" not in _DROPPED and "README.md" in _DROPPED and _KNOWN != _TEXT
+    argv = _pull_request(tmp_path)
+    alone = _command(*argv)
+    assert alone.returncode == 0 and json.loads(alone.stdout)["full"] is False, alone.stdout
+    trusted = _main_copy(tmp_path)
+    done = _command(*argv, "--trusted-areas", str(trusted))
+    data = json.loads(done.stdout)
+    assert done.returncode == 0 and data["full"] is True and set(data["jobs"]) == _MERGE
+    assert any("main's tools/ci/areas.toml" in r for r in data["full_reasons"]), data
+    outputs = _command(*argv, "--trusted-areas", str(trusted), "--outputs")
+    assert outputs.stdout.splitlines()[0] == "full=true", outputs.stdout
+
+
+def test_a_pull_request_that_keeps_the_override_plans_as_before(tmp_path) -> None:
+    """Either copy saying whole-tier is enough; both saying so plans the same whole tier, its
+    reason listed once for each copy."""
+    argv = _pull_request(tmp_path, areas=_AREAS)
+    done = _command(*argv, "--trusted-areas", str(_main_copy(tmp_path)))
+    data = json.loads(done.stdout)
+    assert done.returncode == 0 and data["full"] is True and set(data["jobs"]) == _MERGE
+    why = "ci.yml: the file that defines the jobs: editing it re-runs all of them"
+    assert data["full_reasons"] == [why, f"{why} (main's tools/ci/areas.toml)"], data
+
+
+def test_main_adds_every_override_it_holds(tmp_path) -> None:
+    """The overrides in force are the union: main's job-adding override comes too, read against
+    main's catalogue and checked against the tree's, each reason marked main's."""
+    trusted = _main_copy(tmp_path)
+    added = planner.trusted_overrides(trusted, _cat())
+    assert [(o.paths, o.jobs, o.whole_tier) for o in added] == [
+        (("README.md",), ("build",), False),
+        (("ci.yml",), (), True),
+    ]
+    assert all("main's tools/ci/areas.toml" in o.reason for o in added)
+    code, out = _cli(tmp_path, "--trusted-areas", str(trusted), paths="docs/a.md\n")
+    assert code == 0 and json.loads(out)["full"] is False, "a path main names no override for"
+
+
+def test_the_pull_requests_own_override_still_counts_beside_mains(tmp_path) -> None:
+    """The union's other half: an override only the pull request's areas file holds still adds
+    its job, for its own reason, once main's copy is trusted (plan JSON and --outputs)."""
+    own = '[[override]]\npaths = ["docs/a.md"]\njobs = ["lint"]\nreason = "the tree adds lint"\n'
+    trusted = _main_copy(tmp_path)
+    argv = _pull_request(tmp_path, text=_TEXT, areas=_AREAS)
+    (tmp_path / "changed.txt").write_text("docs/a.md\n")
+    without = json.loads(_command(*argv, "--trusted-areas", str(trusted)).stdout)
+    assert not without["full"] and "lint" not in without["jobs"], "lint is the override's alone"
+    (tmp_path / "areas.toml").write_text(_AREAS + "\n" + own)
+    done = _command(*argv, "--trusted-areas", str(trusted))
+    data = json.loads(done.stdout)
+    assert done.returncode == 0 and not data["full"] and "lint" in data["jobs"], done.stderr
+    assert data["reasons"]["lint"] == ["docs/a.md: the tree adds lint"], data
+    outputs = _command(*argv, "--trusted-areas", str(trusted), "--outputs").stdout.splitlines()
+    assert outputs[0] == "full=false" and "lint" in json.loads(outputs[1].removeprefix("jobs="))
+
+
+def test_a_pull_request_that_drops_a_job_adding_override_still_plans_that_job(tmp_path) -> None:
+    """The planted pull request drops main's README.md override, which adds build: read alone
+    its own files leave build out; with main's copy trusted, build is planned for main's
+    reason."""
+    no_readme = _AREAS.split('[[override]]\npaths = ["README.md"]')[0] + (
+        "[[override]]" + _AREAS.split("[[override]]")[2]
+    )
+    assert "README.md" not in no_readme and "ci.yml" in no_readme
+    argv = _pull_request(tmp_path, text=_TEXT, areas=no_readme)
+    (tmp_path / "changed.txt").write_text("README.md\n")
+    alone = json.loads(_command(*argv).stdout)
+    assert not alone["full"] and "build" not in alone["jobs"], alone
+    done = json.loads(_command(*argv, "--trusted-areas", str(_main_copy(tmp_path))).stdout)
+    assert not done["full"] and "build" in done["jobs"], done
+    assert any("main's tools/ci/areas.toml" in r for r in done["reasons"]["build"]), done
+
+
+@pytest.mark.parametrize(
+    "jobs",
+    [("build",), ("sdk", "build"), ("build", "sdk")],
+    ids=["its one job", "the second of its two", "the first of its two"],
+)
+def test_a_job_main_adds_that_the_tree_dropped_plans_the_whole_tier(tmp_path, jobs) -> None:
+    """The pull request removes a job main's override adds, and the override with it: the job
+    it promised can no longer be named, so its paths run the whole tier, however many other
+    jobs the override adds and wherever the lost one stands among them."""
+    main_areas = _AREAS.replace('jobs = ["build"]', f"jobs = {json.dumps(list(jobs))}", 1)
+    assert f"jobs = {json.dumps(list(jobs))}" in main_areas
+    no_build = _TEXT.replace('"web", "build", "sdk"', '"web", "sdk"', 1)
+    cut = no_build.index('[[job]]\nid = "build"')
+    no_build = no_build[:cut] + no_build[no_build.index("[[job]]", cut + 1) :]
+    no_build = no_build.replace('after = ["build"]\n', "", 1)
+    no_build = no_build.replace('inputs = ["src/sdk/"]', 'inputs = ["src/sdk/", "README.md"]', 1)
+    assert 'id = "build"' not in no_build
+    argv = _pull_request(tmp_path, text=no_build, areas=_DROPPED.split("[[override]]")[0])
+    (tmp_path / "changed.txt").write_text("README.md\n")
+    assert json.loads(_command(*argv).stdout)["full"] is False
+    done = _command(*argv, "--trusted-areas", str(_main_copy(tmp_path, main_areas)))
+    data = json.loads(done.stdout)
+    assert done.returncode == 0 and data["full"] is True, done.stderr
+    assert any("adds build, which this catalogue does not have" in r for r in data["full_reasons"])
+
+
+def test_main_is_read_against_its_own_catalogue(tmp_path) -> None:
+    """The pull request renames a job main's areas file names. Main's file is read against
+    main's catalogue, so the rename can neither make it unreadable nor void its whole tier."""
+    renamed = _KNOWN.replace('"build"', '"build-wheel"')
+    assert 'id = "build-wheel"' in renamed
+    argv = _pull_request(tmp_path, text=renamed, areas=_DROPPED.replace('"build"', '"build-wheel"'))
+    assert json.loads(_command(*argv).stdout)["full"] is False
+    done = _command(*argv, "--trusted-areas", str(_main_copy(tmp_path)))
+    assert done.returncode == 0 and json.loads(done.stdout)["full"] is True, done.stderr
+
+
+@pytest.mark.parametrize("what", ["no areas file", "no catalogue beside it", "a bad areas file"])
+def test_a_trusted_copy_it_cannot_read_plans_nothing(tmp_path, what) -> None:
+    """Exit 2 and nothing on stdout: the changes step then publishes the whole tier. The error
+    names the trusted copy's file it could not read, so the exit is that read's, not a usage
+    error over the flag."""
+    trusted = _main_copy(tmp_path)
+    unread = trusted
+    if what == "no areas file":
+        trusted.unlink()
+    elif what == "no catalogue beside it":
+        unread = trusted.parent / "catalogue.toml"
+        unread.unlink()
+    else:
+        trusted.write_text("[[override]]\npaths = []\n")
+    argv = _pull_request(tmp_path, text=_TEXT, areas=_AREAS)
+    done = _command(*argv, "--trusted-areas", str(trusted), "--outputs")
+    assert done.returncode == 2 and done.stdout == ""
+    lines = done.stderr.splitlines()
+    assert any(line.startswith("plan: ") and str(unread) in line for line in lines), done.stderr
+
+
 @pytest.mark.parametrize("areas", [None, "[[override]]\npaths = []\n"], ids=["missing", "bad"])
 def test_the_command_exits_2_on_overrides_it_cannot_read(tmp_path, areas) -> None:
     cat = tmp_path / "catalogue.toml"
