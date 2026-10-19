@@ -90,7 +90,8 @@ describe('every reader of the chat-session collection shares its namespace', () 
 })
 
 describe('both session mutations bust the collection', () => {
-  const chat = () => codeOf('pages/ChatPage.tsx')
+  // The chat header's controller, whose rename busts it.
+  const chat = () => codeOf('pages/chat/header/useChatHeader.ts')
   // The chat history page's controller, whose loader the delete runs.
   const history = () => codeOf('pages/chat/history/useChatHistory.ts')
 

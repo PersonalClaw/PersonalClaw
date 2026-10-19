@@ -62,8 +62,9 @@ describe('a failed cancel tells the user the work did not stop', () => {
     // adopter of the callback form. The assertions follow it; the discipline does not change.
     // `failureSentence` joined the import for the INLINE form of the same sentence (the edit
     // editor's failure line), which is the export that module keeps for exactly that.
-    expect(page, 'the shared sentence is imported').toMatch(
-      /import \{ reportActionFailure, reportingWrite \} from '\.\.\/app\/reportingWrite'/,
+    // ChatPage itself cancels nothing now: its six sites live in the regions read below.
+    expect(readSource(PANES), 'the shared sentence is imported by the docked panes, which cancel a fan-out').toMatch(
+      /import \{ reportActionFailure \} from '\.\.\/\.\.\/\.\.\/app\/reportingWrite'/,
     )
     expect(history, 'and by the history page, which cancels a retag run').toMatch(
       /import \{ failureSentence, reportActionFailure, reportingWrite \} from '\.\.\/\.\.\/\.\.\/app\/reportingWrite'/,

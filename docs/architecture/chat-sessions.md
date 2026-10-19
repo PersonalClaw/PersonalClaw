@@ -1269,6 +1269,14 @@ change to one region touches that region's files:
   tool's full result (`?result`), fetched from the session when its card asks.
   `ChatPanes.tsx` draws the docked panels, the Session Map's drawer on the
   mobile form among them, and `ToolResultModal` the full result.
+- **The header** — `web/src/pages/chat/header/`. `useChatHeader.ts` keeps what
+  the bar above an open chat does: the bound project's name for its context
+  line, renaming the chat inline and regenerating its title, and the actions in
+  its cluster (copy the link, continue on a chat channel, brief the agent, set
+  the working directory, save the setup as a starter). `ChatHeader.tsx` draws
+  the bar: the way back, the title, the context line, the task and permission
+  pills, and the openers of the Session Map, the Activity rail and the new
+  chat's history panel.
 
 ## Prompt entities
 

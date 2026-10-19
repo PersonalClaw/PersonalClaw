@@ -433,6 +433,16 @@ describe('the migrated surfaces read the error', () => {
   // proposals appear here when the system notices a pattern worth offering" with **no error text
   // anywhere**, and its capture-week panel — the whole point of the surface, the days capture never
   // ran — simply vanished. The most confident possible way to say the opposite of what happened.
+  /** A surface whose reads moved into the files of its regions is read as one with them. `#/chat`'s
+   *  session readers, folders, tags and artifact picker live in its history and composer regions
+   *  now; the page keeps its own chat-load `LoadError`. */
+  const ADOPTER_PARTS: Record<string, string[]> = {
+    'pages/ChatPage.tsx': [
+      'pages/chat/history/useChatHistory.ts', 'pages/chat/history/ChatHistoryPage.tsx',
+      'pages/chat/history/ChatHistorySidePanel.tsx', 'pages/chat/composer/ContextPickers.tsx',
+    ],
+  }
+  const surfaceOf = (rel: string): string[] => [rel, ...(ADOPTER_PARTS[rel] ?? [])]
   const ADOPTERS = [
     // `#/tasks` joined last and was the sharpest remaining member: its fetcher carried
     // `.catch(() => [] as TaskItem[])`, the harsher variant — the rejection never reached the hook,
@@ -541,7 +551,7 @@ describe('the migrated surfaces read the error', () => {
 
   for (const rel of ADOPTERS) {
     it(`${rel} branches on the load error before the empty state`, () => {
-      const src = readSource(join(SRC, rel))
+      const src = surfaceOf(rel).map((f) => readSource(join(SRC, f))).join('\n')
       expect(src, 'must render the shared primitive').toMatch(/<LoadError\b/)
       // The property that makes the branch possible is that the rejection is CAPTURED rather than
       // discarded. Two shapes qualify, and both ship here:
@@ -638,7 +648,9 @@ describe('the migrated surfaces read the error', () => {
     const adopterKeys = new Set<string>()
     for (const relPath of ADOPTERS) {
       // Keyed calls only, same reason as the census above: this check is about a KEY's consumers.
-      for (const c of cachedCalls(codeOf(join(SRC, relPath)))) if (c.key) adopterKeys.add(c.key)
+      for (const part of surfaceOf(relPath)) {
+        for (const c of cachedCalls(codeOf(join(SRC, part)))) if (c.key) adopterKeys.add(c.key)
+      }
     }
     expect(adopterKeys.size, 'the adopters must declare at least one cache key').toBeGreaterThan(0)
 
@@ -670,12 +682,14 @@ describe('the migrated surfaces read the error', () => {
     // named after would not be counted here. Sharing one scanner with §B also means the budget has
     // ONE definition: an adopter row and a tree row can no longer drift apart by construction.
     for (const relPath of ADOPTERS) {
-      const at = swallowSites(codeOf(join(SRC, relPath)))
-      expect(
-        at.length,
-        `${relPath} swallows ${at.length} rejection(s) at line(s) ${at.join(', ')}; `
-        + `§B's budget allows ${SWALLOW_BUDGET[relPath] ?? 0}`,
-      ).toBe(SWALLOW_BUDGET[relPath] ?? 0)
+      for (const part of surfaceOf(relPath)) {
+        const at = swallowSites(codeOf(join(SRC, part)))
+        expect(
+          at.length,
+          `${part} swallows ${at.length} rejection(s) at line(s) ${at.join(', ')}; `
+          + `§B's budget allows ${SWALLOW_BUDGET[part] ?? 0}`,
+        ).toBe(SWALLOW_BUDGET[part] ?? 0)
+      }
     }
   })
 })

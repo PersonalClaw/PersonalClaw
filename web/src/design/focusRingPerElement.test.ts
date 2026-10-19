@@ -67,7 +67,8 @@ const CONTAINER_RING =
 const INVENTORY: { file: string; anchor: string; ring: RegExp; what: string }[] = [
   // ── the control IS the box ──
   {
-    file: 'pages/ChatPage.tsx',
+    // Moved with the chat's header.
+    file: 'pages/chat/header/ChatHeader.tsx',
     anchor: 'h-8 w-full min-w-0 max-w-[420px] rounded-md bg-surface-high',
     ring: ELEMENT_RING,
     what: 'rename-this-chat input',

@@ -216,7 +216,8 @@ describe('the channel list is read under two keys, and every bust reaches both',
   // over the same content hold only while every bust reaches both: a pairing on one page must not
   // leave the other painting the channel without its owner.
   it('the two readers that render a failure share a key of their own', () => {
-    expect(codeOf('pages/ChatPage.tsx')).toMatch(/useQuery\('settings:channels-owners', \(\) => api\.channels\(\)/)
+    // The chat's "Continue on" list, read by the chat header's controller.
+    expect(codeOf('pages/chat/header/useChatHeader.ts')).toMatch(/useQuery\('settings:channels-owners', \(\) => api\.channels\(\)/)
     expect(codeOf('pages/apps/AppsSection.tsx')).toMatch(/'settings:channels-owners', \(\) => api\.channels\(\),/)
     expect(codeOf('pages/settings/ProvidersPanel.tsx'), 'the tolerant read keeps its key')
       .toMatch(/'settings:channels', \(\) => api\.channels\(\)\.catch/)

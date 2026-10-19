@@ -60,6 +60,10 @@ const EXEMPT: Record<string, string> = {
   // An unanswered read is the shipped behaviour at the use site, the smooth reveal and thinking
   // hidden; `loadErrorState.test.tsx` budgets the pair as its own debt.
   'pages/chat/useChatStream.ts:useChatStream': 'reads stream settings it never returns — unanswered is the shipped default',
+  // Moved out of `ChatPage` with the chat's header: the channels this chat can continue on. A failed
+  // read offers no channel, on purpose and in its own comment, so the header's "Continue on …"
+  // controls are simply absent; there is nowhere in the cluster that would say a list failed.
+  'pages/chat/header/useChatHeader.ts:useChatHeader': 'a failed channel read offers no channel — the handoff controls are absent, by design',
 }
 
 describe('an adapter hook re-exposes useQuery\'s error', () => {
