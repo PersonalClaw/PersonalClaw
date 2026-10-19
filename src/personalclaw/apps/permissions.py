@@ -1533,7 +1533,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         owns=_OWN_CHAT,
     ),
     "PATCH /api/chat/sessions/{session}/color": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
-    "PATCH /api/chat/sessions/{session}/natural-voice": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "PATCH /api/chat/sessions/{session}/reply-style": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
     "PATCH /api/chat/sessions/{session}/title": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
     "PATCH /api/chat/sessions/{session}/pin": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
     "PATCH /api/chat/sessions/{session}/folder": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
@@ -1642,6 +1642,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "GET /api/chat/folders": OwnerOnly(_YOUR_ORGANISATION),
     "GET /api/chat/tags": OwnerOnly(_YOUR_ORGANISATION),
     "GET /api/chat/tag-columns": OwnerOnly(_YOUR_ORGANISATION),
+    "GET /api/chat/reply-styles": OwnerOnly("the reply styles your chats choose from"),
     "GET /api/chat/screen-frame": OwnerOnly(
         "whether one of your chats can share your screen, and the frame staged for it"
     ),

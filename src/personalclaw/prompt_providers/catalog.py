@@ -1321,9 +1321,19 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
         ),
     ),
     BundledSnippet(
-        name="natural-voice",
-        filename="natural-voice.md",
-        description="The plainer-prose instruction appended to a turn when natural voice resolves on (per-conversation or per-agent). Names the patterns to avoid; changes style only, never facts or refusals.",  # noqa: E501
+        name="reply-style-plain",
+        filename="reply-style-plain.md",
+        description="The Plain reply style: plainer prose, appended to every turn the style resolves to (per conversation, per agent or the platform default). Names the patterns to avoid; changes style only, never facts or refusals.",  # noqa: E501
+    ),
+    BundledSnippet(
+        name="reply-style-terse",
+        filename="reply-style-terse.md",
+        description="The Terse reply style: short and direct, appended to every turn the style resolves to. Changes style only, never facts or refusals.",  # noqa: E501
+    ),
+    BundledSnippet(
+        name="reply-style-conversational",
+        filename="reply-style-conversational.md",
+        description="The Conversational reply style: fuller and warmer explanations, appended to every turn the style resolves to. Changes style only, never facts or refusals.",  # noqa: E501
     ),
     BundledSnippet(
         name="persona-lumon",

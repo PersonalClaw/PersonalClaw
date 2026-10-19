@@ -1,6 +1,6 @@
 """An ABSENT field on a session-metadata PATCH is not a request to CLEAR it (#2970).
 
-``PATCH .../color {}``, ``.../pin {}``, ``.../folder {}`` and ``.../natural-voice {}`` all
+``PATCH .../color {}``, ``.../pin {}``, ``.../folder {}`` and the reply-style route's ``{}`` all
 answered ``200 {"ok": true}`` and wiped the value, because each read its field with a bare
 ``body.get(...)`` — which cannot tell "the caller said null/false/empty" from "the caller
 never mentioned this field". A typo'd key (`{"colour": 7}`) hit the same path: `ok: true`,
@@ -32,7 +32,7 @@ _ROUTES = {
     "color": ("patch", {"color_index": 3}, "color_index", 3),
     "pin": ("patch", {"pinned": True}, "pinned", True),
     "folder": ("patch", {"folder_id": ""}, "folder_id", ""),
-    "natural-voice": ("patch", {"natural_voice": "on"}, "natural_voice", "on"),
+    "reply-style": ("patch", {"reply_style": "terse"}, "reply_style", "terse"),
     "title": ("patch", {"title": "named"}, "title", "named"),
     "lifecycle": ("patch", {"never_archive": True}, "never_archive", True),
     # One tag out of the session's `["t1"]` — the route takes edits, never a whole list.
@@ -68,7 +68,7 @@ def _app(state: DashboardState) -> web.Application:
     app["state"] = state
     app.router.add_patch("/api/chat/sessions/{session}/color", chat.api_chat_session_color)
     app.router.add_patch(
-        "/api/chat/sessions/{session}/natural-voice", chat.api_chat_session_natural_voice
+        "/api/chat/sessions/{session}/reply-style", chat.api_chat_session_reply_style
     )
     app.router.add_patch("/api/chat/sessions/{session}/title", chat.api_chat_session_rename)
     app.router.add_patch("/api/chat/sessions/{session}/folder", chat.api_chat_session_folder)
@@ -86,7 +86,7 @@ def _seeded_session() -> _ChatSession:
     s.color_index = 3
     s.pinned = True
     s.folder_id = "f1"
-    s.natural_voice = "on"
+    s.reply_style = "plain"
     s.title = "kept"
     s.never_archive = True
     s.tags = ["t1"]
@@ -149,9 +149,9 @@ async def test_a_body_that_carries_the_field_still_applies(suffix):
         ("color", {"color_index": None}, "color_index", None),
         ("pin", {"pinned": False}, "pinned", False),
         ("folder", {"folder_id": ""}, "folder_id", ""),
-        ("natural-voice", {"natural_voice": ""}, "natural_voice", ""),
+        ("reply-style", {"reply_style": ""}, "reply_style", ""),
     ],
-    ids=["color", "pin", "folder", "natural-voice"],
+    ids=["color", "pin", "folder", "reply-style"],
 )
 async def test_an_EXPLICIT_clear_still_clears(suffix, body, attr, cleared):
     """The refusal is about ABSENCE. Saying "clear this" out loud must still work."""

@@ -116,6 +116,9 @@ async def api_agent_marketplace_create(request: web.Request) -> web.Response:
         model=string_field(body, "model"),
         system_prompt=string_field(body, "system_prompt", strip=False),
         voice=string_field(body, "voice", strip=False),
+        # Read here or a definition made through this route loses its style; `validate` holds
+        # it to the bundled set, as the update route's does.
+        reply_style=string_field(body, "reply_style"),
         skills=list(body.get("skills") or []),
         provider_entry=string_field(body, "provider_entry"),
         provider=string_field(body, "provider"),
@@ -195,10 +198,9 @@ async def api_agent_marketplace_activate(request: web.Request) -> web.Response:
         system_prompt=defn.system_prompt,
         voice=defn.voice,
         model=defn.model,
-        # Natural voice must cross into the config profile here or an agent
-        # activated from the marketplace loses the preference its definition carries —
-        # the field exists so it TRAVELS with the agent.
-        natural_voice=defn.natural_voice,
+        # The reply style must cross into the config profile here or an agent activated from
+        # the marketplace loses the style its definition carries: it exists to TRAVEL.
+        reply_style=defn.reply_style,
         source="local",
     )
     cfg.save()

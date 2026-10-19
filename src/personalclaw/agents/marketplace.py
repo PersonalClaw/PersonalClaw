@@ -18,8 +18,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from personalclaw.safety_flags import strict_bool
-
 logger = logging.getLogger(__name__)
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -50,10 +48,10 @@ class AgentDefinition:
     # — kept SEPARATE from system_prompt (the operating rules / what it does), and
     # injected high-priority so personality survives long operating-rule prompts.
     voice: str = ""
-    # Natural voice: plainer, less machine-sounding PROSE — a named set of
-    # patterns to avoid. Orthogonal to ``voice`` (WHO the agent is) and to the
-    # ``voice_profiles`` speech surface; see personalclaw/natural_voice.py.
-    natural_voice: bool = False
+    # Reply style: HOW the agent writes ("plain", "terse", "conversational", "default" for no
+    # instruction, "" to follow the platform default). Orthogonal to ``voice`` (WHO the agent
+    # is) and to the ``voice_profiles`` speech surface; see personalclaw/reply_style.py.
+    reply_style: str = ""
     skills: list[str] = field(default_factory=list)
     provider_entry: str = ""
     mcp_servers: dict[str, Any] = field(default_factory=dict)
@@ -85,11 +83,9 @@ class AgentDefinition:
             # Voice layer — MUST be read here (the loader-allowlist gotcha)
             # or it's silently dropped on every reload/round-trip.
             voice=str(d.get("voice", "")),
-            # Natural voice — same gotcha: unread here the preference is
-            # dropped on every round-trip and stops travelling with the agent.
-            natural_voice=strict_bool(
-                d.get("natural_voice"), field="agent natural_voice", default=False
-            ),
+            # Reply style — same gotcha: unread here the choice is dropped on every
+            # round-trip and stops travelling with the agent.
+            reply_style=str(d.get("reply_style") or ""),
             skills=list(d.get("skills") or []),
             provider_entry=str(d.get("provider_entry", "")),
             mcp_servers=dict(d.get("mcp_servers") or {}),
@@ -122,6 +118,11 @@ class AgentDefinition:
         for s in self.skills:
             if not isinstance(s, str) or ".." in s or "/" in s:
                 errors.append(f"invalid skill name: {s!r}")
+        if self.reply_style:
+            from personalclaw.reply_style import STYLE_IDS
+
+            if self.reply_style not in STYLE_IDS:
+                errors.append(f"reply_style must be one of {list(STYLE_IDS)} or empty")
         return errors
 
 
@@ -250,7 +251,7 @@ class LocalAgentMarketplace(AgentMarketplace):
             "model",
             "system_prompt",
             "voice",
-            "natural_voice",
+            "reply_style",
             "skills",
             "provider_entry",
             "mcp_servers",
@@ -269,11 +270,6 @@ class LocalAgentMarketplace(AgentMarketplace):
                 existing.skills = [str(s) for s in (value or [])]
             elif key == "mcp_servers":
                 existing.mcp_servers = dict(value or {})
-            elif key == "natural_voice":
-                # The ONLY boolean field here, and it needs its own branch: the
-                # else-arm below stringifies, and `str(False)` is the TRUTHY
-                # string "False" — so turning natural voice off would wedge it on.
-                existing.natural_voice = bool(value)
             else:
                 setattr(existing, key, str(value) if value is not None else "")
         existing.updated_at = time.time()

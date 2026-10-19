@@ -539,6 +539,16 @@ def _bot_name_disallowed(name: str) -> list[str]:
     return list(dict.fromkeys(ch for ch in name if not _bot_name_char_allowed(ch)))
 
 
+def _reply_style_choice(value: object, empty: str) -> str:
+    """A stored reply style as one of the bundled ids, or *empty* for anything else.
+
+    The set is ``reply_style.STYLE_IDS``; an unknown value never resolves to a style nobody
+    chose."""
+    from personalclaw.reply_style import normalize_choice
+
+    return normalize_choice(value) or empty
+
+
 def _sanitize_bot_name(raw: str) -> str:
     """Normalize ``agent.bot_name`` as ``load()`` reads it: drop every character a name may not
     contain, trim surrounding whitespace, cap at 50 characters.
@@ -733,6 +743,16 @@ class AgentConfig:
         metadata=_meta(
             "Bot Name",
             "Custom name the bot identifies as in conversations. Leave empty for default.",
+        ),
+    )
+    reply_style: str = field(
+        default="default",
+        metadata=_meta(
+            "Reply Style",
+            "How every agent writes its replies unless the agent or the conversation chooses "
+            "its own: 'default' (no style instruction), 'plain', 'terse' or 'conversational'. "
+            "Changes style only, never facts, caveats or refusals.",
+            enum=["default", "plain", "terse", "conversational"],
         ),
     )
     orchestrator_skill: bool = field(
@@ -1897,15 +1917,16 @@ class AgentProfile:
             "personality survives long prompts.",
         ),
     )
-    natural_voice: bool = field(
-        default=False,
+    reply_style: str = field(
+        default="",
         metadata=_meta(
-            "Natural Voice",
-            "Ask this agent for plainer, less machine-sounding prose — a named set "
-            "of patterns to avoid, not a persona. Travels with the agent into every "
-            "conversation that binds it; a conversation can override it for itself "
-            "from the composer. Distinct from Voice (WHO the agent is) and from "
-            "voice profiles (speech). Never changes facts, caveats or refusals.",
+            "Reply Style",
+            "How this agent writes its replies: 'plain', 'terse' or 'conversational', "
+            "'default' for no style instruction, or empty to follow the platform default. "
+            "Travels with the agent into every conversation that binds it; a conversation "
+            "can choose its own from the composer. Distinct from Voice (WHO the agent is) "
+            "and from voice profiles (speech). Never changes facts, caveats or refusals.",
+            enum=["", "default", "plain", "terse", "conversational"],
         ),
     )
     model: str = field(
@@ -4207,11 +4228,10 @@ class AppConfig:
                         # Voice layer — MUST be read here (the loader-allowlist
                         # gotcha) or it's dropped on every config reload.
                         voice=entry.get("voice", ""),
-                        # Natural voice — the same loader-allowlist gotcha:
-                        # unread here it would be dropped on every config reload,
-                        # so the agent's plainer-prose preference would silently
-                        # stop travelling with it after the first save.
-                        natural_voice=bool(entry.get("natural_voice", False)),
+                        # Reply style — the same loader-allowlist gotcha: unread here
+                        # it would be dropped on every config reload. A value outside
+                        # the closed set reads as "states nothing".
+                        reply_style=_reply_style_choice(entry.get("reply_style"), ""),
                         model=entry.get("model", ""),
                         approval_mode=entry.get("approval_mode", ""),
                         skills=entry.get("skills", []),
@@ -4284,6 +4304,7 @@ class AppConfig:
                 subagent_cwd_allowed_roots=list(agent_data.get("subagent_cwd_allowed_roots", [])),
                 log_level=agent_data.get("log_level", "WARNING").upper(),
                 bot_name=_sanitize_bot_name(agent_data.get("bot_name", "")),
+                reply_style=_reply_style_choice(agent_data.get("reply_style"), "default"),
                 soft_stop_budget_secs=max(
                     0.5, min(60.0, float(agent_data.get("soft_stop_budget_secs", 10.0)))
                 ),

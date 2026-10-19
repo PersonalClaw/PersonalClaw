@@ -1069,7 +1069,7 @@ item vector).
   `own_words.own_words(row)` of the row that started the turn, never the
   message the model was sent: that message also holds a saved prompt's text in
   place of its `@name`, an attached file's or a referenced item's text, a
-  theme's persona and natural voice's instructions, and a turn an automation, a
+  theme's persona and a reply style's instructions, and a turn an automation, a
   subagent's report or a heartbeat started holds no words of hers at all. A
   pasted block and a fenced span are left out too. The code that composes a row
   records which of its words were typed (`meta.own_words`: the send, a queued

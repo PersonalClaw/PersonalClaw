@@ -268,52 +268,56 @@ export function ReasoningPill({ value, efforts, onSelect, openSignal }: {
   )
 }
 
-/** Natural-voice selector — plainer, less machine-sounding prose.
+/** A reply style the picker lists: the backend's `GET /api/chat/reply-styles` rows. */
+export type ReplyStyleOption = { id: string; title: string; description: string }
+
+/** Who chose the style, as the pill says it; the conversation's own choice needs no word. */
+const REPLY_STYLE_CHOSEN_BY: Record<string, string> = { agent: ' (agent)', platform: ' (default)' }
+
+/** Reply-style picker: how the agent writes its replies in this conversation.
  *
- *  Three rows because the control is a TRI-state: a conversation can inherit the bound
- *  agent's preference, or state its own "on", or state its own "off". Without the third,
- *  a conversation could never turn plainer prose OFF for an agent whose definition asks
- *  for it.
+ *  `""` (Agent default) follows the bound agent's style, then the platform default; each other row is a
+ *  style this conversation chooses for itself, `default` included (no style, even when the agent
+ *  asks for one). The rows and their one-line descriptions come from the backend.
  *
- *  This component RESOLVES NOTHING. `effective` and `source` arrive already decided by
- *  the backend, which owns the one statement of the resolution order
- *  (`natural_voice.NATURAL_VOICE_PRECEDENCE`); a label computed here from `choice` and
- *  the agent default would be a second statement of that order, free to drift from the
- *  one the turn actually uses.
+ *  This component RESOLVES NOTHING. `effective` and `source` arrive decided by the backend, which
+ *  owns the one statement of the order (`reply_style.REPLY_STYLE_PRECEDENCE`); a label computed
+ *  here from `choice` and the agent's style would be a second statement of it.
  *
- *  The pill always shows the EFFECTIVE state, including when it comes from the agent —
- *  that is the whole point of it being a pill and not a hidden setting. When the prose
- *  changes, the owner can see which control changed it. */
-export function NaturalVoicePill({ choice, effective, source, agentDefault, onSelect }: {
-  choice: '' | 'on' | 'off'
-  effective: boolean
-  /** Which scope decided — a member of the backend's precedence tuple, or `''` before
-   *  a conversation exists to resolve against (a brand-new chat). In that state the
-   *  pill shows the CHOICE rather than an effect, because the only honest way to show
-   *  an effect would be to resolve the order here. */
+ *  The pill shows the EFFECTIVE style and who chose it, so a change in how replies read can be
+ *  traced to a control the owner can see. */
+export function ReplyStylePill({ choice, effective, source, agentDefault, styles, onSelect }: {
+  /** What THIS conversation states: a style id, or `''` to follow the agent. */
+  choice: string
+  /** The style the next turn resolves to (a style id). */
+  effective: string
+  /** Which scope decided, a member of the backend's precedence tuple, or `''` before a
+   *  conversation exists to resolve against. Then the pill shows the CHOICE, not an effect. */
   source: string
-  /** What the bound agent's definition carries, for the inherit row's hint. */
-  agentDefault: boolean
-  onSelect: (choice: '' | 'on' | 'off') => void
+  /** What the bound agent's definition states, for the reset row's hint. */
+  agentDefault: string
+  styles: ReplyStyleOption[]
+  onSelect: (style: string) => void
 }) {
+  const title = (id: string) => styles.find((s) => s.id === id)?.title ?? id
   const label = source === ''
-    ? (choice === 'on' ? 'Plain' : choice === 'off' ? 'Off' : 'Agent default')
-    : effective ? (source === 'agent' ? 'Plain (agent)' : 'Plain') : 'Default'
+    ? (choice ? title(choice) : 'Agent default')
+    : `${title(effective)}${effective === 'default' ? '' : (REPLY_STYLE_CHOSEN_BY[source] ?? '')}`
   return (
-    <Popover portal width={280} trigger={(open, toggle) => (
-      <PillButton icon={<Feather size={16} strokeWidth={2} />} label={label} dimension="Natural voice" open={open} toggle={toggle} />
+    <Popover portal width={300} trigger={(open, toggle) => (
+      <PillButton icon={<Feather size={16} strokeWidth={2} />} label={label} dimension="Reply style" open={open} toggle={toggle} />
     )}>
       {(close) => (
         <div className="flex flex-col">
           <MenuRow label="Agent default"
-            hint={agentDefault ? 'This agent asks for plainer prose' : 'This agent states no preference — plainer prose off'}
+            hint={agentDefault ? `This agent asks for ${title(agentDefault)}` : 'Follows this agent, then the platform default'}
             selected={choice === ''} onClick={() => { onSelect(''); close() }} />
-          <MenuRow label="Plainer prose" hint="Answer first, no filler openers, no summary close, shortest accurate word"
-            selected={choice === 'on'} onClick={() => { onSelect('on'); close() }} />
-          <MenuRow label="Off" hint="Standard prose here, even if the agent asks for plainer"
-            selected={choice === 'off'} onClick={() => { onSelect('off'); close() }} />
+          {styles.map((s) => (
+            <MenuRow key={s.id} label={s.id === 'default' ? 'No style' : s.title} hint={s.description}
+              selected={choice === s.id} onClick={() => { onSelect(s.id); close() }} />
+          ))}
           <div data-type="caption" className="border-t border-outline-variant/30 px-m py-2 text-on-surface-low">
-            Changes style only — never a fact, a caveat or a refusal. A choice here applies to this conversation and does not edit the agent.
+            Changes style only, never a fact, a caveat or a refusal. A choice here applies to this conversation and does not edit the agent.
           </div>
         </div>
       )}

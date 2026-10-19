@@ -42,6 +42,7 @@ from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import consent_required, json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.providers.provider_bridge import agent_model_problem
+from personalclaw.reply_style import STYLE_IDS as REPLY_STYLE_IDS
 from personalclaw.request_validation import json_object_body, string_field
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.stale_write import (
@@ -821,10 +822,8 @@ _AGENT_FIELD_SPECS: dict[str, dict] = {
     "description": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
     "system_prompt": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
     "voice": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
-    # A real boolean, not `bool(value)`. `bool("false")` is True, so coercing here would
-    # turn a request to switch a behaviour OFF into one that switches it ON — the exact
-    # defect `config/edit_spec.py` was created to stop re-deriving.
-    "natural_voice": {"type": "bool"},
+    # One of the bundled styles, or "" to follow the platform default (`reply_style.STYLE_IDS`).
+    "reply_style": {"type": "str", "max_len": 32, "values": ["", *REPLY_STYLE_IDS]},
     "model": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
     # The agent's own approval floor — `auto` is "Always allow for this agent", seeded into
     # every chat with it (`chat_runner`), so it is the approval policy stored per agent and the
@@ -1138,7 +1137,7 @@ _AGENT_SYNC_KEYS = (
     "description",
     "system_prompt",
     "voice",
-    "natural_voice",
+    "reply_style",
     "model",
     "approval_mode",
     "skills",

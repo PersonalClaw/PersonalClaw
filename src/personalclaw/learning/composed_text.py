@@ -3,7 +3,7 @@
 Until learning read only a person's own words (:mod:`personalclaw.own_words`), every per-turn
 capture read the message the model was sent. That message holds a saved prompt's text in place of
 its ``@name``, an attached file's text, a referenced note, an automation's or a subagent's message,
-a theme's persona and natural voice's instructions. So a prompt that says "List what I said I would
+a theme's persona and a reply style's instructions. So a prompt that says "List what I said I would
 do" became the lesson "User correction to honor: Execute the following instructions: …", and a
 prompt that defines "Yesterday" put that definition in the glossary.
 
@@ -18,7 +18,7 @@ Two kinds of what was learned that way are told apart, and handled differently:
   had displaced restored.
 * **A learned veto, preference or glossary line** was read out of the middle of the message, so
   nothing in it says where it came from. One that matches the text of a saved prompt, or of a
-  theme's or natural voice's instructions, may have come from there, or she may have said the same
+  theme's or a reply style's instructions, may have come from there, or she may have said the same
   thing herself; what is stored cannot tell which. So it is not removed: it is offered for review
   (:func:`offer_review`) as one proposal that lists each item and what it matches, whose Accept
   removes them (:func:`install_accepted_review`) and whose Reject keeps them for good.
@@ -60,11 +60,14 @@ COMPOSED_OPENINGS: tuple[str, ...] = (
 )
 
 #: The blocks the platform added after a person's words: a theme's persona on a new session's
-#: first turn, and natural voice's instructions on every turn it is on.
+#: first turn, and a reply style's instructions on every turn it applies to. ``[NATURAL VOICE]``
+#: is what the plain style's block opened with before reply styles: lessons learned then still
+#: carry it, and they are what this module takes back.
 APPENDED_BLOCKS: tuple[str, ...] = (
     "[LUMON PERSONA]",
     "[CLAW ARCADE PERSONA]",
     "[RETRO TERMINAL PERSONA]",
+    "[REPLY STYLE: ",
     "[NATURAL VOICE]",
 )
 
@@ -78,7 +81,7 @@ _REVIEW_TARGET = "learning.text_not_typed"
 _REVIEW_TITLE = "Check what may have been learned from text you didn't type"
 _REVIEW_INTRO = (
     "Learning used to read the whole message the agent was sent, so the text of a saved prompt "
-    "you ran, or of a theme's or natural voice's instructions, could be learned as if you had "
+    "you ran, or of a theme's or a reply style's instructions, could be learned as if you had "
     "said it. Each of these matches such a text, so it may have come from there, or you may have "
     "said the same thing yourself:"
 )
@@ -199,8 +202,8 @@ def composed_sources() -> list[tuple[str, str]]:
         name = snippet.name
         if name.startswith("persona-"):
             label = f"the {name.removeprefix('persona-').replace('-', ' ').title()} theme's persona"
-        elif name == "natural-voice":
-            label = "natural voice's instructions"
+        elif name.startswith("reply-style-"):
+            label = f"the {name.removeprefix('reply-style-').title()} reply style's instructions"
         else:
             continue
         text = render_snippet_block(name)

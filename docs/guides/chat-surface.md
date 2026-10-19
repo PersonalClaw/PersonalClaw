@@ -5,8 +5,8 @@ needs more than a send button. This guide covers the nine things the chat surfac
 beyond typing a message: taking a wrong turn back, spinning the same conversation off in two
 directions, having a plan approved before anything runs, letting a queued message cut in,
 finding something you said hours ago, quoting it, following a suggestion, controlling how
-text appears, and putting a piece of your screen into the conversation. It ends with which
-model answers a turn, and what gets recorded.
+text appears, and putting a piece of your screen into the conversation. It ends with how
+replies are written, which model answers a turn, and what gets recorded.
 
 Everything here works in a browser tab. Where a mechanic needs a platform capability that
 your browser does not have, the control is **hidden** rather than shown and made to fail —
@@ -463,6 +463,44 @@ not here.
 The captured region is saved into your uploads directory like any attachment and recorded in
 the security log as the file write that it is — there is no separate "screenshot" event, and
 no ongoing capture to audit, because the capture ends before the crop overlay even opens.
+
+---
+
+## Reply style: how the agent writes
+
+**Where:** the feather pill in the composer. An agent's own default is under **Reply style** on
+the agent's form.
+
+A reply style changes how replies are written, never what they say: every fact, caveat and
+refusal stays as it would be without it, and so does what the agent may do.
+
+| Style | What it asks for |
+|---|---|
+| Default | No style instruction: the agent writes as its own prompt says. |
+| Plain | Plainer prose: the answer first, no filler openers or summary close, the shortest accurate word. |
+| Terse | Short and direct: the answer first, no padding, only the reasoning that matters. |
+| Conversational | Fuller and warmer: full sentences, the reasoning and background, an example when it helps. |
+
+**Which style applies.** This conversation's choice wins, then the agent's, then the platform
+default: Default, unless you set `agent.reply_style` through the config API
+(`PATCH /api/config/personalclaw` with `{"path": "agent.reply_style", "value": "terse"}`).
+Settings has no control for it. The pill names the style in effect and who chose it
+("Terse (agent)"). **Agent default** resets this conversation so it follows its agent again;
+choosing here never edits the agent. A change applies from the next turn.
+
+**A personality's own voice.** Some personalities, such as Retro Terminal, bring a voice of
+their own on a new chat's first turn. A chosen style wins over it: while this chat has a style
+other than Default, the personality's voice is not sent. With Default, the personality sets the
+voice as before. The chat's detail carries a preview that names which of the two applies and
+its exact text: a style's section, which every turn adds, or the personality's voice, which only
+a new chat's first turn adds (the preview marks it `first_turn_only`), so a turn after that adds
+nothing for it.
+
+**Editing a style.** Each style's wording is a prompt in Settings → Prompts
+(`reply-style-plain`, `reply-style-terse`, `reply-style-conversational`). Its text is sent as
+one bounded section, and the platform's safety rules are sent right after it on every styled
+turn, so no style can have the last word. A style whose text opens or closes a style section
+of its own is not sent, and the turn goes without it.
 
 ---
 

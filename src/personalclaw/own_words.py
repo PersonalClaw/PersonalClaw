@@ -2,7 +2,7 @@
 
 A turn's message is rarely only what the person typed. The composer expands each pasted block
 into it, the turn builder runs a saved prompt in place of its ``@name`` and puts an attached
-file's text, a referenced note, a theme's persona and natural voice's instructions around it, and
+file's text, a referenced note, a theme's persona and a reply style's instructions around it, and
 the platform sends rows of its own into a chat (an automation's result, a subagent's report, a
 loop's nudge, a heartbeat's delivery) that nobody typed at all. The model is right to read all of
 it. None of it is the person's own words, and a reader that takes it for theirs learns a prompt's

@@ -68,7 +68,7 @@ EDITOR_FIELDS = (
     "model",
     "system_prompt",
     "voice",
-    "natural_voice",
+    "reply_style",
     "approval_mode",
     "skills",
     "tools",

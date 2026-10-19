@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUp, Square, CornerDownLeft, ListPlus, Sparkles, Mic, Ear, Loader2, Paperclip, Check, MonitorUp } from 'lucide-react'
 import { IconButton } from './IconButton'
 import { spring, physics, expr } from '../design/motion'
-import { AgentPill, ModelPill, ApprovalPill, ReasoningPill, NaturalVoicePill, effortsForAgent, PlusMenu } from './composer/controls'
+import { AgentPill, ModelPill, ApprovalPill, ReasoningPill, ReplyStylePill, effortsForAgent, PlusMenu } from './composer/controls'
 import { MarkdownInput, type MarkdownInputHandle } from './composer/MarkdownInput'
 import { resolveSendButton } from './composer/sendButtonState'
 import { DROP_GROW_PX, RISE_GROW_PX, riseScale } from './composer/rise'
@@ -38,7 +38,7 @@ export function Composer({
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
   onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, servedModel, autoChain, minChars = 1,
   openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
-  naturalVoice, sendHeldReason, hostPills,
+  replyStyle, sendHeldReason, hostPills,
 }: ComposerProps) {
   const [focused, setFocused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -166,11 +166,11 @@ export function Composer({
       {controls.model && <ModelPill data={data} agent={sel?.agent ?? ''} value={sel?.model ?? ''} contextPct={contextPct} contextWindow={contextWindow} served={servedModel} autoChain={autoChain} openSignal={openModelSignal} onSelect={(m) => onSelect?.({ model: m })} />}
       {controls.approval && <ApprovalPill value={sel?.approval ?? 'normal'} onSelect={(m) => onSelect?.({ approval: m })} />}
       {controls.reasoning && <ReasoningPill value={sel?.reasoning ?? ''} efforts={effortsForAgent(data, sel?.agent ?? '')} openSignal={openReasoningSignal} onSelect={(e) => onSelect?.({ reasoning: e })} />}
-      {/* Natural voice — feature-detected on the prop, not a `controls` flag:
+      {/* Reply style — feature-detected on the prop, not a `controls` flag:
           it needs a conversation to scope itself to, and the goal composer has none.
-          Always rendered when present, including in its off state, so a prose change
-          is attributable to a control the owner can see. */}
-      {naturalVoice && <NaturalVoicePill {...naturalVoice} />}
+          Always rendered when present, including at Default, so a change in how replies
+          read is attributable to a control the owner can see. */}
+      {replyStyle && <ReplyStylePill {...replyStyle} />}
       {hostPills}
     </div>
   )

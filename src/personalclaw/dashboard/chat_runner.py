@@ -3328,22 +3328,21 @@ async def run_chat(
             # Use resolved provider agent name (e.g. "personalclaw"), not the session
             # name (e.g. "default"), so build_message's is_custom check
             # correctly identifies personalclaw sessions and enables skills.
-            # Lumon persona injection — prepend to message so build_message
-            # accounts for it in context budget calculations.
-            message = _maybe_inject_persona(message, getattr(session, "color_theme", ""), is_new)
-            # Natural voice — plainer prose, resolved from the conversation's
-            # own tri-state over the bound agent's definition (the order lives in
-            # natural_voice.NATURAL_VOICE_PRECEDENCE). Same seam as the persona
-            # above (a bundled snippet appended to the turn), NOT a second model
-            # call over the reply; see natural_voice.py for why that was rejected.
-            # Every turn, not just the first: the toggle is flippable mid-chat.
-            from personalclaw import natural_voice as _nv
+            # The voice of the reply: the reply style this turn resolves to (the conversation's,
+            # its agent's or the platform's, in reply_style.REPLY_STYLE_PRECEDENCE), appended to
+            # every turn it applies to with the safety rules right after it, or, when no style is
+            # chosen, the identity's persona on a new chat's first turn. A chosen style wins over
+            # the persona. Appended here so build_message counts it in the context budget; an
+            # instruction to the model, never a second call over the reply (reply_style.py).
+            from personalclaw import reply_style as _rs
 
-            message = _nv.maybe_inject(
-                message,
-                getattr(session, "natural_voice", ""),
-                _nv.agent_default(session.agent or ""),
-            )
+            _style = _rs.resolve_for(session).style
+            if _style == _rs.DEFAULT:
+                message = _maybe_inject_persona(
+                    message, getattr(session, "color_theme", ""), is_new
+                )
+            else:
+                message = _rs.appended(message, _style)
             # Project-bound chat: on the first turn, prepend the project's
             # context — workspace, loop history, context-dir — so the session operates
             # with the project's cohesive shared context. First turn only (is_new); the

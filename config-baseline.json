@@ -66,6 +66,12 @@
     "type": "str"
   },
   {
+    "default": "default",
+    "path": "agent.reply_style",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
     "default": 3600,
     "path": "agent.runner_health_check_secs",
     "sensitive": false,
