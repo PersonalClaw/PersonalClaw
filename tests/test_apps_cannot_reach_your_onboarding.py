@@ -18,6 +18,11 @@ the real ``app_permission_middleware``, a fixture app you installed through prev
 install, and the token you minted for it, sent both ways an app sends one. The route matrix
 answers with a stand-in at each real template. The leak cases run the real handlers, with the two
 network probes replaced by recorders, so no case here scans anything.
+
+The app is installed once for the module (``shared_app_rows.SharedApp``), and each route and each
+leak case is a row on that install: the home is put back to what the install left before every
+row and checked by digest, every session is signed out, and the fenced registries are read
+around it. One leak case stays its own test, on an app installed for it alone.
 """
 
 from __future__ import annotations
@@ -30,6 +35,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from aiohttp import web
+from shared_app_rows import Row, SharedApp, planted_rows
+from table_rows import row
 from test_apps_cannot_change_your_models import _gateway, _Gateway
 
 # Imported before any test patches `config_dir`: a module first imported under a patch keeps the
@@ -184,102 +191,148 @@ def _your_setup() -> None:
     save_active_models({"chat": [YOUR_REF]})
 
 
+#: The fixture app, installed once for the module.
+SHARED = SharedApp(APP, _bundle, _gateway)
+
+
 # ── 1. Every route in the family is yours ───────────────────────────────────────────────────────
 
 
-class TestAnAppCannotReachYourSetup:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("method", "template", "body"),
-        ONBOARDING_ROUTES,
-        ids=[f"{m} {t}" for m, t, _ in ONBOARDING_ROUTES],
-    )
-    async def test_an_app_is_refused_and_you_are_not(
-        self, home, sel_rows, probes, method, template, body
-    ) -> None:
-        reached: list[tuple[str, str]] = []
-        async with _gateway(_stand_ins(reached)) as gw:
-            token = await _installed(gw, home)
-            as_sdk = await gw.call(method, template, body, app_token=token)
-            as_backend = await gw.call(method, template, body, app_token=token, as_backend=True)
-            yours = await gw.call(method, template, body)
-        for status, text in (as_sdk, as_backend):
-            assert status == 403, text
-            assert "owner-only capability, not grantable to an app" in text, text
-        assert (
-            len(_denials(sel_rows, template)) == 2
-        ), "each refusal leaves an SEL row naming the app"
-        assert yours[0] == 200, yours
-        assert reached == [("", method)], "only your request reached the handler"
+def _route_rows(reached: list[tuple[str, str]]) -> list[tuple[str, object]]:
+    """A row per route of :data:`ONBOARDING_ROUTES`, and one for ``HEAD``: the app refused both
+    ways it sends its token, each refusal an SEL row naming it, and only your request reaching the
+    stand-in."""
 
-    @pytest.mark.asyncio
-    async def test_head_is_the_same_read(self, home, sel_rows, probes) -> None:
-        reached: list[tuple[str, str]] = []
-        async with _gateway(_stand_ins(reached)) as gw:
-            token = await _installed(gw, home)
-            status, _text = await gw.call("HEAD", FAMILY, app_token=token)
-            yours, _ = await gw.call("HEAD", FAMILY)
+    def refused(method: str, template: str, body: Any):
+        async def case(r: Row) -> None:
+            reached.clear()
+            as_sdk = await r.gw.call(method, template, body, app_token=r.token)
+            as_backend = await r.gw.call(method, template, body, app_token=r.token, as_backend=True)
+            yours = await r.gw.call(method, template, body)
+            for status, text in (as_sdk, as_backend):
+                assert status == 403, text
+                assert "owner-only capability, not grantable to an app" in text, text
+            assert len(r.denials(template)) == 2, "each refusal leaves an SEL row naming the app"
+            assert yours[0] == 200, yours
+            assert reached == [("", method)], "only your request reached the handler"
+
+        return case
+
+    async def head_is_the_same_read(r: Row) -> None:
+        reached.clear()
+        status, _text = await r.gw.call("HEAD", FAMILY, app_token=r.token)
+        yours, _ = await r.gw.call("HEAD", FAMILY)
         assert status == 403
-        assert _denials(sel_rows, FAMILY)
+        assert r.denials(FAMILY)
         assert yours == 200 and reached == [("", "HEAD")]
+
+    rows = [(f"{m} {t}", refused(m, t, b)) for m, t, b in ONBOARDING_ROUTES]
+    return [*rows, (f"HEAD {FAMILY}", head_is_the_same_read)]
+
+
+@pytest.mark.asyncio
+async def test_an_app_is_refused_every_route_and_you_are_not(
+    subtests, tmp_path_factory, monkeypatch, probes
+) -> None:
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    rows = _route_rows(reached)
+    assert len(rows) == len(ONBOARDING_ROUTES) + 1, "a route was left out of the table"
+    await SHARED.run(subtests, rows, _stand_ins(reached), label="route")
+
+
+@pytest.mark.asyncio
+async def test_a_row_that_leaves_state_behind_fails_the_next_row(
+    tmp_path_factory, monkeypatch, probes
+) -> None:
+    """The table's isolation, shown rather than assumed: a row that leaves the home, the SEL rows
+    or a fenced registry changed is caught, by name, in the row after it."""
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    probe = _route_rows(reached)[0]
+    failed = await planted_rows(SHARED, _stand_ins(reached), probe)
+    name = probe[0]
+    # Reset as every row is, a grant left in the home and an SEL row reach nothing after them.
+    assert failed["home"]["reset"] == {} and failed["sel"]["reset"] == {}, failed
+    # Without the reset, the row after them fails, by name, on the check that guards it.
+    assert "a home other than the installed app's" in failed["home"]["no reset"][name]
+    assert "planted-grant.json" in failed["home"]["no reset"][name]
+    assert "Security Event Log rows" in failed["sel"]["no reset"][name]
+    # A fenced registry is caught in the row that changed it, and again in the row after.
+    assert set(failed["fenced"]["reset"]) == {"planted fenced", name}, failed["fenced"]
+    assert all("left registries" in why for why in failed["fenced"]["reset"].values())
 
 
 # ── 2. What a refusal keeps from an app ─────────────────────────────────────────────────────────
 
 
-class TestWhatAnAppNoLongerGets:
-    @pytest.mark.asyncio
-    async def test_it_does_not_learn_which_model_your_chats_run_on(
-        self, home, sel_rows, probes
-    ) -> None:
-        async with _gateway(_real_routes()) as gw:
-            token = await _installed(gw, home)
-            _your_setup()
-            status_read = await gw.call("GET", FAMILY, app_token=token)
-            model_check_read = await gw.call("GET", "/api/onboarding/model-check", app_token=token)
-            yours = await gw.ok("GET", FAMILY)
-        assert yours["chat_model_refs"] == [YOUR_REF], "you still read your own setup"
-        for status, text in (status_read, model_check_read):
-            assert YOUR_REF not in text, text
-            assert status == 403, text
-        assert _denials(sel_rows, FAMILY)
-        assert _denials(sel_rows, "/api/onboarding/model-check")
+@pytest.mark.asyncio
+async def test_it_does_not_learn_which_model_your_chats_run_on(home, sel_rows, probes) -> None:
+    """The family's end-to-end refusal on an app installed for this test alone."""
+    async with _gateway(_real_routes()) as gw:
+        token = await _installed(gw, home)
+        _your_setup()
+        status_read = await gw.call("GET", FAMILY, app_token=token)
+        model_check_read = await gw.call("GET", "/api/onboarding/model-check", app_token=token)
+        yours = await gw.ok("GET", FAMILY)
+    assert yours["chat_model_refs"] == [YOUR_REF], "you still read your own setup"
+    for status, text in (status_read, model_check_read):
+        assert YOUR_REF not in text, text
+        assert status == 403, text
+    assert _denials(sel_rows, FAMILY)
+    assert _denials(sel_rows, "/api/onboarding/model-check")
 
-    @pytest.mark.asyncio
-    async def test_it_cannot_look_for_model_servers_on_your_machine_or_network(
-        self, home, sel_rows, probes
-    ) -> None:
-        async with _gateway(_real_routes()) as gw:
-            token = await _installed(gw, home)
-            sweep = await gw.call("POST", "/api/onboarding/local-model/scan", app_token=token)
-            probe = await gw.call("GET", "/api/onboarding/local-model", app_token=token)
-            for_the_app = {where: list(ran) for where, ran in probes.items()}
-            await gw.ok("POST", "/api/onboarding/local-model/scan")
-            await gw.ok("GET", "/api/onboarding/local-model")
-        assert for_the_app == {"this machine": [], "your network": []}, "nothing looked for the app"
-        assert probes == {"this machine": ["probed"], "your network": ["swept"]}, "you still can"
-        assert [sweep[0], probe[0]] == [403, 403], (sweep, probe)
-        assert _denials(sel_rows, "/api/onboarding/local-model/scan")
-        assert _denials(sel_rows, "/api/onboarding/local-model")
 
-    @pytest.mark.asyncio
-    async def test_it_cannot_move_your_setups_progress(self, home, sel_rows, probes) -> None:
-        from personalclaw.onboarding import load_onboarding_state
+async def _cannot_look_for_model_servers(r: Row, probes: dict[str, list[str]]) -> None:
+    sweep = await r.gw.call("POST", "/api/onboarding/local-model/scan", app_token=r.token)
+    probe = await r.gw.call("GET", "/api/onboarding/local-model", app_token=r.token)
+    for_the_app = {where: list(ran) for where, ran in probes.items()}
+    await r.gw.ok("POST", "/api/onboarding/local-model/scan")
+    await r.gw.ok("GET", "/api/onboarding/local-model")
+    assert for_the_app == {"this machine": [], "your network": []}, "nothing looked for the app"
+    assert probes == {"this machine": ["probed"], "your network": ["swept"]}, "you still can"
+    assert [sweep[0], probe[0]] == [403, 403], (sweep, probe)
+    assert r.denials("/api/onboarding/local-model/scan")
+    assert r.denials("/api/onboarding/local-model")
 
-        async with _gateway(_real_routes()) as gw:
-            token = await _installed(gw, home)
-            await gw.ok("POST", "/api/onboarding/state", {"step": "import"})
-            moved = await gw.call(
-                "POST",
-                "/api/onboarding/state",
-                {"step": "done", "first_success": {"knowledge": True}},
-                app_token=token,
-            )
-        state = load_onboarding_state()
-        assert state["step"] == "import", "your setup resumes where you left it"
-        assert state["first_success"]["knowledge"] is False
-        assert moved[0] == 403, moved
-        assert _denials(sel_rows, "/api/onboarding/state")
+
+async def _cannot_move_your_setups_progress(r: Row, probes: dict[str, list[str]]) -> None:
+    from personalclaw.onboarding import load_onboarding_state
+
+    await r.gw.ok("POST", "/api/onboarding/state", {"step": "import"})
+    moved = await r.gw.call(
+        "POST",
+        "/api/onboarding/state",
+        {"step": "done", "first_success": {"knowledge": True}},
+        app_token=r.token,
+    )
+    state = load_onboarding_state()
+    assert state["step"] == "import", "your setup resumes where you left it"
+    assert state["first_success"]["knowledge"] is False
+    assert moved[0] == 403, moved
+    assert r.denials("/api/onboarding/state")
+
+
+#: What a refusal keeps from an app, each run through the real handlers on the shared install.
+_LEAKS = [
+    ("it cannot look for model servers on your machine or network", _cannot_look_for_model_servers),
+    ("it cannot move your setup's progress", _cannot_move_your_setups_progress),
+]
+
+
+@pytest.mark.asyncio
+async def test_what_an_app_no_longer_gets(subtests, tmp_path_factory, monkeypatch, probes) -> None:
+    await SHARED.home(tmp_path_factory, monkeypatch)
+
+    def with_probes(case):
+        async def run(r: Row) -> None:
+            for ran in probes.values():
+                ran.clear()
+            await case(r, probes)
+
+        return run
+
+    await SHARED.run(subtests, [(n, with_probes(c)) for n, c in _LEAKS], _real_routes())
 
 
 # ── 3. The route table declares every route in the family ──────────────────────────────────────
@@ -295,17 +348,21 @@ def _census() -> set[str]:
     }
 
 
-class TestTheRouteTableDeclaresYourSetup:
-    def test_the_family_is_declared_reads_included(self) -> None:
-        from personalclaw.apps.permissions import READ_DECLARED_FAMILIES, SECURITY_ROUTE_FAMILIES
+def test_the_route_table_declares_your_setup(subtests) -> None:
+    from personalclaw.apps.permissions import (
+        READ_DECLARED_FAMILIES,
+        ROUTE_AUTHZ,
+        SECURITY_ROUTE_FAMILIES,
+        OwnerOnly,
+        owner_only_api_reason,
+    )
+    from personalclaw.dashboard import handlers
 
+    census = _census()
+    with row(subtests, check="the family is declared, reads included"):
         assert FAMILY in SECURITY_ROUTE_FAMILIES
         assert FAMILY in READ_DECLARED_FAMILIES, "an app reads none of your setup"
-
-    def test_every_route_in_the_family_is_driven_here(self) -> None:
-        from personalclaw.dashboard import handlers
-
-        census = _census()
+    with row(subtests, check="every route in the family is driven here"):
         assert len(census) >= 8, f"only {len(census)} onboarding routes — vacuous"
         driven = {f"{m} {t}" for m, t, _body in ONBOARDING_ROUTES}
         assert census == driven, census ^ driven
@@ -314,15 +371,12 @@ class TestTheRouteTableDeclaresYourSetup:
         # The gateway registers these two through the `handlers` package.
         assert handlers.api_onboarding is handlers_system.api_onboarding
         assert handlers.api_onboarding_state is handlers_system.api_onboarding_state
-
-    def test_no_app_is_granted_any_of_it(self) -> None:
-        """No shipped app calls these routes. One that needs a read gets an ``AppMay`` row saying
-        why it is safe, and a case here."""
-        from personalclaw.apps.permissions import ROUTE_AUTHZ, OwnerOnly, owner_only_api_reason
-
+    with row(subtests, check="no app is granted any of it"):
+        # No shipped app calls these routes. One that needs a read gets an `AppMay` row saying
+        # why it is safe, and a case here.
         granted = sorted(
             key
-            for key in _census()
+            for key in census
             if not owner_only_api_reason(key.split(" ", 1)[1])
             and not isinstance(ROUTE_AUTHZ.get(key), OwnerOnly)
         )
