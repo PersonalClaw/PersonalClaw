@@ -207,7 +207,7 @@ def test_the_doctor_names_both_versions(stand_in, capsys, monkeypatch) -> None:
 
     stand_in.says("git version 2.11.0")
 
-    lines = _doctor_dependencies(cli_doctor, capsys, monkeypatch)
+    lines = _doctor_dependencies(cli_doctor, capsys, monkeypatch, stand_in)
 
     git_line = next(line for line in lines if line.lstrip().startswith("git:"))
     assert "❌" in git_line
@@ -220,7 +220,7 @@ def test_the_doctor_shows_the_version_of_a_git_it_can_use(stand_in, capsys, monk
 
     stand_in.says("git version 2.43.0")
 
-    lines = _doctor_dependencies(cli_doctor, capsys, monkeypatch)
+    lines = _doctor_dependencies(cli_doctor, capsys, monkeypatch, stand_in)
 
     git_line = next(line for line in lines if line.lstrip().startswith("git:"))
     assert "✅" in git_line and git_line.endswith("(git 2.43.0)")
@@ -230,15 +230,16 @@ class _StopAfterDependencies(Exception):
     pass
 
 
-def _doctor_dependencies(cli_doctor, capsys, monkeypatch) -> list[str]:
+def _doctor_dependencies(cli_doctor, capsys, monkeypatch, git: StandInGit) -> list[str]:
     """The doctor's Dependencies block: its first rows, printed before it probes anything else.
-    The first row after git is node's, which is where this stops it."""
-    real_which = cli_doctor.shutil.which
+    Its lookups of git find the stand-in, as the stand-in's place first on ``PATH`` would, and
+    nothing else is looked up on the host's ``PATH``. The first row after git is node's, which
+    is where this stops it."""
 
     def which(name, *args, **kwargs):
         if name == "node":
             raise _StopAfterDependencies
-        return real_which(name, *args, **kwargs)
+        return str(git.path) if name == "git" else None
 
     monkeypatch.setattr(cli_doctor.shutil, "which", which)
     with pytest.raises(_StopAfterDependencies):

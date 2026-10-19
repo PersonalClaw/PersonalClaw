@@ -1042,6 +1042,22 @@ Nothing consults it until `python -m tools.ci run` and `run-job` do.
 - **A dirty run** neither records nor replays: every job runs, and its receipt reads `dirty: true`.
   The receipt's `dirty` and the replay rule come from one reading of the checkout, taken when the
   run began. A job whose inputs name another tree than the checkout's runs.
+- **The host's capabilities** (`tools/ci/capabilities.py`) are the key's `capabilities`: each
+  tool the suite probes, as `absent` or its resolved path and the sha256 of its bytes; the
+  browser the browse proofs would use, found as `tests/browse_chrome.py` finds it, a `~` in its
+  roots being the job's home; and each skip switch (`PERSONALCLAW_TEST_CONTAINER_RUNTIME`,
+  `PERSONALCLAW_REQUIRE_INSTALL_PROOF`, `PERSONALCLAW_REQUIRE_BROWSE_PROOF`,
+  `PERSONALCLAW_REQUIRE_NPM_TREE`, `PERSONALCLAW_TEST_CHROME`) as `unset`, or `set:<value>`, so
+  a switch set to the text `unset` is not one left unset. Nothing is started to read them, never
+  `--version`. The tools come from the suite itself, never a hand-kept list: every
+  `shutil.which` call under `tests/`, read by AST, whatever `PATH` it is given (one a test builds
+  may still hold the host's folders), whose tool is a literal, a loop over literals or a constant
+  of them, or a helper's parameter every call in its own module gives a literal; every candidate
+  a test hands the container runtime's `require`, `available` or `skip_reason`; and the container
+  runtime's `PROGRAMS`, which cover its own lookups. A probe the scan cannot name refuses the
+  fingerprint, and so does `shutil.which` taken as a value, a helper another module names, and a
+  loop over a name bound more than once or over a list or set, so no pass is keyed on a list
+  read short; the rail `tests/rails/test_ci_capabilities_tree.py` holds this tree to it.
 
 ## The quarantine
 
