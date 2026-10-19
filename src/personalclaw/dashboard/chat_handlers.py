@@ -198,14 +198,16 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     # reset, so the send is refused before anything is kept or run.
     reply_style: str | None = None
     if "reply_style" in body:
-        from personalclaw.reply_style import STYLE_IDS, normalize_choice
+        from personalclaw.reply_style import is_available, normalize_choice
 
         raw_style = body.get("reply_style")
         reply_style = normalize_choice(raw_style)
-        if reply_style == "" and raw_style != "":
+        if (reply_style == "" and raw_style != "") or (
+            reply_style and not is_available(reply_style)
+        ):
             return json_error(
                 "bad_request",
-                message=f'reply_style must be "" or one of {list(STYLE_IDS)}',
+                message='reply_style must be "" or a style listed by GET /api/chat/reply-styles',
                 status=400,
             )
     if not isinstance(agent, str) or not (agent == "" or _AGENT_NAME_RE.match(agent)):
@@ -2881,26 +2883,89 @@ def _reply_style_payload(session: _ChatSession) -> dict[str, object]:
     }
 
 
+def _style_row(s) -> dict[str, object]:
+    from personalclaw import reply_style as rs
+
+    row: dict[str, object] = {
+        "id": s.id,
+        "title": s.title,
+        "description": s.description,
+        "source": s.source,
+    }
+    if s.source == "app":
+        row.update(app=s.app, by=s.by, file=s.file)
+    elif s.source == rs.OWN:
+        # Your own style's text, for its editor in Settings. A bundled style's lives in
+        # Settings > Prompts, an app's ships with the app.
+        row.update(file=s.file, text=rs.own_text(s.id))
+    return row
+
+
 async def api_chat_reply_styles(request: web.Request) -> web.Response:
-    """GET /api/chat/reply-styles — the reply styles a conversation or an agent can choose."""
+    """GET /api/chat/reply-styles — the reply styles a conversation or an agent can choose.
+
+    The bundled styles, your own (``own:<name>``) and the ones enabled apps add with the
+    ``replyStyles`` permission (``<app>:<name>``), plus each style file that is not loaded and why.
+    """
     from personalclaw import reply_style as rs
 
     return web.json_response(
         {
-            "styles": [
-                {"id": s.id, "title": s.title, "description": s.description} for s in rs.STYLES
-            ],
+            "styles": [_style_row(s) for s in rs.available_styles()],
+            "refused": rs.refused_styles(),
             "precedence": list(rs.REPLY_STYLE_PRECEDENCE),
+            "size_cap": rs.STYLE_SIZE_CAP,
         }
     )
+
+
+async def api_chat_own_reply_style_put(request: web.Request) -> web.Response:
+    """PUT /api/chat/reply-styles/own/{name} — create or replace one of your own styles.
+
+    Body ``{"title", "description", "text"}``. Written to ``styles/<name>.md`` under the home. The
+    same checks a style file meets at load decide it: a style that would be refused there is a 400
+    naming why, and nothing is written.
+    """
+    from personalclaw import reply_style as rs
+
+    name = request.match_info["name"]
+    try:
+        body = await request.json()
+    except Exception:
+        return json_error("invalid_json", status=400)
+    if not isinstance(body, dict):
+        return json_error("invalid_body", status=400)
+    try:
+        style = rs.save_own_style(
+            name,
+            title=body.get("title"),
+            description=body.get("description"),
+            text=body.get("text"),
+        )
+    except ValueError as refused:
+        return json_error("bad_request", message=str(refused), status=400)
+    return web.json_response({"ok": True, "style": _style_row(style)})
+
+
+async def api_chat_own_reply_style_delete(request: web.Request) -> web.Response:
+    """DELETE /api/chat/reply-styles/own/{name} — remove one of your own styles.
+
+    A chat or agent that chose it keeps the choice and falls back to the next level down, saying
+    so once (the same path an app style that went away takes)."""
+    from personalclaw import reply_style as rs
+
+    if not rs.delete_own_style(request.match_info["name"]):
+        return json_error("not_found", status=404)
+    return web.json_response({"ok": True})
 
 
 async def api_chat_session_reply_style(request: web.Request) -> web.Response:
     """PATCH /api/chat/sessions/{session}/reply-style — set the per-conversation scope.
 
-    Body ``{"reply_style": "" | "default" | "plain" | "terse" | "conversational"}``. ``""`` resets
-    the conversation so it follows its agent (then the platform) again. Responds with the
-    re-resolved state and preview, so the composer shows what actually takes effect.
+    Body ``{"reply_style": "" | <a style id>}``: a style available now (bundled, your own or an
+    enabled app's), or ``""`` to reset the conversation so it follows its agent (then the platform)
+    again. Responds with the re-resolved state and preview, so the composer shows what actually
+    takes effect.
     """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
@@ -2913,7 +2978,7 @@ async def api_chat_session_reply_style(request: web.Request) -> web.Response:
         return json_error("invalid_json", status=400)
     if not isinstance(body, dict):
         return json_error("invalid_body", status=400)
-    from personalclaw.reply_style import STYLE_IDS, normalize_choice
+    from personalclaw.reply_style import is_available, normalize_choice
 
     # ABSENT IS NOT "RESET": an empty body must not drop a choice the owner made (#2970).
     if "reply_style" not in body:
@@ -2924,12 +2989,12 @@ async def api_chat_session_reply_style(request: web.Request) -> web.Response:
         )
     raw = body.get("reply_style")
     choice = normalize_choice(raw)
-    # A value outside the closed set is a client bug, not a reset: refuse it rather than
-    # silently clearing the choice already made.
-    if choice == "" and raw != "":
+    # A value that names no style, or a style that is not available now, is a client bug, not a
+    # reset: refuse it rather than silently clearing the choice already made.
+    if (choice == "" and raw != "") or (choice and not is_available(choice)):
         return json_error(
             "bad_request",
-            message=f'reply_style must be "" or one of {list(STYLE_IDS)}',
+            message='reply_style must be "" or a style listed by GET /api/chat/reply-styles',
             status=400,
         )
     session.reply_style = choice

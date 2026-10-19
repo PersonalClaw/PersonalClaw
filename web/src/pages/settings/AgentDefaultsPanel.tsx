@@ -15,6 +15,8 @@ import { InlineError } from '../../ui/InlineError'
 import { accentChip } from '../../design/accent'
 import { setAgentYolo } from './agentYolo'
 import { APPROVAL_MODE_HINT, APPROVAL_MODES, approvalModeMeans } from './approvalModes'
+import { replyStyleName } from '../../ui/composer/controls'
+import { OwnReplyStyles } from './OwnReplyStyles'
 
 // The editable agent.* fields mirror the backend _EDITABLE_CONFIG allowlist
 // (types + ranges are the server's truth; we surface the same bounds).
@@ -148,6 +150,8 @@ export function AgentDefaultsPanel() {
             hint="How long a tool approval waits for your answer before it is denied — the Inbox then says what was denied. An approval a running subagent or workflow step asks for also ends with that work's own time limit; asking to start a subagent waits this long. A workflow's approval gates wait this long too, except in a run started unattended, where a gate gives up after 45 seconds and the run says so. An automation or a loop allowed to run on its own never waits: a call its grant does not cover is declined at once, since no one is there to ask." />
         </RowGroup>
       </Section>
+
+      <OwnReplyStyles />
 
       <RunnersSection />
 
@@ -484,28 +488,63 @@ function ApprovalModeRow({ cfg, patch }: {
 
 /** The reply style every agent uses unless the agent or the chat chooses its own: the platform
  *  scope of `reply_style.REPLY_STYLE_PRECEDENCE`. A config with no stored style reads as No style,
- *  which is what the backend resolves it to (`reply_style.PLATFORM_FLOOR`). */
-const REPLY_STYLES = [
+ *  which is what the backend resolves it to (`reply_style.PLATFORM_FLOOR`). The bundled four are
+ *  offered until the server's list arrives; your own and an enabled app's styles join them then. */
+const BUNDLED_REPLY_STYLES = [
   { key: 'default', label: 'No style' },
   { key: 'plain', label: 'Plain' },
   { key: 'terse', label: 'Terse' },
   { key: 'conversational', label: 'Conversational' },
 ]
 
+/** The row's pills: what the server lists (the bundled four until it arrives), and a stored style it
+ *  no longer lists, marked and disabled: shown rather than reading as No style, since the backend
+ *  passes over it to No style anyway and the owner should see why, and not pickable again until
+ *  the style is back (the write accepts only a style available now). */
+export function replyStylePills(listed: { key: string; label: string }[] | null, stored: string): { key: string; label: string; disabled?: boolean; title?: string }[] {
+  const options = listed ?? BUNDLED_REPLY_STYLES
+  if (!listed || options.some((s) => s.key === stored)) return options
+  return [...options, {
+    key: stored, label: `${stored} (no longer available)`, disabled: true,
+    title: 'Every agent uses No style until this style is back, unless the agent or the chat chooses its own.',
+  }]
+}
+
 function ReplyStyleRow({ cfg, patch }: {
   cfg: AgentCfg; patch: (k: string, v: unknown, cb: () => void, label?: string) => void
 }) {
   const [saved, flash] = useSavedFlash()
+  const [listed, setListed] = useState<{ key: string; label: string }[] | null>(null)
+  // A failed read is said, with a Retry: the bundled four stay offered, but your own and an app's
+  // styles are missing until a read succeeds, and the row must not pass that off as the whole list.
+  const [readErr, setReadErr] = useState<unknown>(null)
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    let live = true
+    setReadErr(null)
+    api.replyStyles().then((r) => {
+      if (live && r?.styles?.length) {
+        setListed(r.styles.map((s) => ({ key: s.id, label: s.id === 'default' ? 'No style' : replyStyleName(s) })))
+      }
+    }).catch((e) => { if (live) setReadErr(e) })
+    return () => { live = false }
+  }, [attempt])
   const stored = String(cfg.reply_style ?? 'default')
-  const value = REPLY_STYLES.some((s) => s.key === stored) ? stored : 'default'
+  const opts = replyStylePills(listed, stored)
+  const value = opts.some((s) => s.key === stored) ? stored : 'default'
   return (
     <Row label="Reply style"
       hint="How every agent writes its replies, unless the chat or the agent chooses its own. Changes style only, never a fact, a caveat or a refusal.">
       <div className="flex items-center gap-s">
         <SavedToast show={saved} />
         <SegPills ariaLabel="Reply style" value={value} onChange={(v) => patch('reply_style', v, flash, 'reply style')}
-          options={REPLY_STYLES} />
+          options={opts} />
       </div>
+      {readErr != null && (
+        <InlineError icon onRetry={() => setAttempt((n) => n + 1)}>
+          Couldn't read your reply styles, so only the bundled ones are offered until a retry succeeds.
+        </InlineError>
+      )}
     </Row>
   )
 }

@@ -29,6 +29,41 @@ logger = logging.getLogger(__name__)
 
 _ENTITY_PROMPT = "prompt"
 _ENTITY_SNIPPET = "snippet"
+#: A reply style the app adds (``reply_style.register_app_style``). Never written to the prompt
+#: store: it is held in memory while the app is loaded, and only when the app holds
+#: ``replyStyles``, so disabling the app or dropping the grant takes it out of the next turn.
+_ENTITY_STYLE = "style"
+
+
+def _load_style(manifest: Any, app_name: str, rel: str, raw: dict[str, Any]) -> None:
+    from personalclaw import reply_style
+    from personalclaw.apps.permissions import PermissionChecker
+
+    name = str(raw["name"]).strip()
+    granted = PermissionChecker(app_name=app_name, permissions=manifest.permissions)
+    if not granted.can_add_reply_styles():
+        reply_style.refuse_app_style(
+            app_name,
+            name,
+            rel,
+            f"{rel}: the app does not hold the replyStyles permission, so its styles are not "
+            "loaded.",
+        )
+        logger.info(
+            "app %r: style %r not loaded, the app does not hold replyStyles", app_name, name
+        )
+        return
+    reason = reply_style.register_app_style(
+        app_name,
+        str(getattr(manifest, "displayName", "") or app_name),
+        name,
+        str(raw.get("title") or ""),
+        str(raw.get("description") or ""),
+        str(raw.get("content") or ""),
+        rel,
+    )
+    if reason:
+        logger.warning("app %r: style %r refused: %s", app_name, name, reason)
 
 
 def _read_definition(app_dir: Path, rel_path: str) -> dict[str, Any] | None:
@@ -88,6 +123,9 @@ def seed_app_prompts(manifest, app_dir: str | Path) -> None:
             continue
         name = str(raw["name"]).strip()
         entity = _entity_of(raw)
+        if entity == _ENTITY_STYLE:
+            _load_style(manifest, app_name, str(rel), raw)
+            continue
         try:
             if entity == _ENTITY_SNIPPET:
                 path = _snippet_path(name)
@@ -132,7 +170,8 @@ def remove_app_prompts(manifest, app_dir: str | Path) -> None:
     file whose stored ``name`` no longer matches the app's definition is left
     alone (the app didn't ship it)."""
     app_name = getattr(manifest, "name", "") or ""
-    # Always drop the app's use-case registrations (cheap; even if no files).
+    # Always drop the app's use-case registrations (cheap; even if no files). Its reply styles are
+    # dropped by the unload itself (``app_runtime._drop_reply_styles``), manifest or not.
     from personalclaw.apps import prompt_registry
 
     prompt_registry.unregister_app(app_name)
@@ -150,6 +189,8 @@ def remove_app_prompts(manifest, app_dir: str | Path) -> None:
             continue
         name = str(raw["name"]).strip()
         entity = _entity_of(raw)
+        if entity == _ENTITY_STYLE:
+            continue
         try:
             path = _snippet_path(name) if entity == _ENTITY_SNIPPET else _prompt_path(name)
             if path.exists():

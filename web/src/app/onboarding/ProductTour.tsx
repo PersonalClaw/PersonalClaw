@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Inbox, MessageSquare, PanelLeft, ShieldCheck, SlidersHorizontal } from 'lucide-react'
 import { SpotlightTour, type SpotlightStep } from '../../ui/SpotlightTour'
-import { consumeProductTourRequest, onProductTourRequest } from './tourLaunch'
+import { consumeProductTourRequest, noteProductTourRunning, onProductTourRequest } from './tourLaunch'
 
 /** One stop: what to spotlight, and the surface it lives on. */
 interface Stop extends SpotlightStep {
@@ -81,8 +81,11 @@ export function ProductTour({ route, navigate }: {
 
   const start = useCallback(() => {
     launchedFrom.current = routeRef.current
+    noteProductTourRunning(true)
     setIndex(0)
   }, [])
+  // A shell that unmounts mid-tour (a sign-out) leaves no tour running behind it.
+  useEffect(() => () => noteProductTourRunning(false), [])
 
   // Both launch paths. The mount read is for a request left behind by the onboarding done
   // screen, whose `finish()` replaced the flow with this shell; the subscription is for a
@@ -102,6 +105,7 @@ export function ProductTour({ route, navigate }: {
 
   const exit = useCallback(() => {
     const back = launchedFrom.current
+    noteProductTourRunning(false)
     setIndex(null)
     if (back && back !== routeRef.current) navigate(back)
   }, [navigate])

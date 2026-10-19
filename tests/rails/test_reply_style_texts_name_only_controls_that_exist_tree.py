@@ -49,7 +49,7 @@ def _texts() -> dict[str, str]:
         "AgentProfile.reply_style": str(agent_meta),
         "AgentConfig.reply_style": str(platform_meta),
         "agent form": _region(
-            "web/src/pages/agents/AgentForm.tsx", "const REPLY_STYLE_OPTIONS", "]"
+            "web/src/pages/agents/AgentForm.tsx", "/** The agent's reply style choices", "\n}\n"
         ),
         "composer picker": _region(
             "web/src/ui/composer/controls.tsx", "/** Reply-style picker", "\n}\n"

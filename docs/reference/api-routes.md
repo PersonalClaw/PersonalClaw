@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **931 registrations** over **756 distinct paths** — 924 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **934 registrations** over **758 distinct paths** — 927 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -24,7 +24,7 @@ The 128 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
-| `/api/chat` | 82 | 70 |
+| `/api/chat` | 84 | 71 |
 | `/api/knowledge` | 71 | 58 |
 | `/api/memory` | 52 | 44 |
 | `/api/workflows` | 50 | 45 |
@@ -44,10 +44,10 @@ The 128 families the surface divides into, largest first.
 | `/api/dashboard` | 13 | 8 |
 | `/api/packs` | 13 | 13 |
 | `/api/tasks` | 13 | 9 |
+| `/api/onboarding` | 12 | 10 |
 | `/api/providers` | 12 | 8 |
 | `/api/durability` | 11 | 11 |
 | `/api/notifications` | 11 | 8 |
-| `/api/onboarding` | 11 | 9 |
 | `/api/prompts` | 11 | 7 |
 | `/api/lexicon` | 10 | 6 |
 | `/api/model-providers` | 10 | 8 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 924 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 927 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -303,6 +303,8 @@ The 924 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/chat/mode` | set the tool APPROVAL mode (whether tools auto-approve). |
 | `POST` | `/api/chat/nav/resolve-links` | batch-summarize bare links. |
 | `GET` | `/api/chat/reply-styles` | the reply styles a conversation or an agent can choose. |
+| `DELETE` | `/api/chat/reply-styles/own/{name}` | remove one of your own styles. |
+| `PUT` | `/api/chat/reply-styles/own/{name}` | create or replace one of your own styles. |
 | `GET` | `/api/chat/screen-frame` | can this session share its screen? |
 | `POST` | `/api/chat/screen-frame` | stage one screen frame for the next chat turn. |
 | `POST` | `/api/chat/screen-frame/pin` | promote one frame to an ordinary attachment. |
@@ -778,6 +780,7 @@ The 924 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/notifications/trust` | the owner's Allow or Deny on an unknown-sender notification. |
 | `POST` | `/api/notifications/unack` | mark a single notification as unread. |
 | `GET` | `/api/onboarding` | First-run onboarding signal — model readiness plus persisted flow progress. |
+| `POST` | `/api/onboarding/explain` | Answer the one optional question, "How should I explain things?", once. |
 | `GET` | `/api/onboarding/import` | what each source holds, and what importing each item does. |
 | `POST` | `/api/onboarding/import` | start importing the picked items. |
 | `DELETE` | `/api/onboarding/import/job` | stop the running import after the item it is on. |

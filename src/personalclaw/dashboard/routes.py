@@ -179,6 +179,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     # Onboarding progress is ENTITY state (entity_settings/onboarding.json), so it gets its
     # own write path rather than riding the config PATCH allowlist.
     app.router.add_post("/api/onboarding/state", handlers.api_onboarding_state)
+    app.router.add_post("/api/onboarding/explain", handlers.api_onboarding_explain)
     # The onboarding import step's GET (scan) + POST (import). Its own module
     # because the handler owns the client-supplied-items refusal and the report shape.
     from personalclaw.dashboard.handlers.onboarding_import import (
@@ -703,6 +704,8 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_post("/api/chat", chat.api_chat)
     app.router.add_get("/api/chat/sessions", chat.api_chat_sessions)
     app.router.add_get("/api/chat/reply-styles", chat.api_chat_reply_styles)
+    app.router.add_put("/api/chat/reply-styles/own/{name}", chat.api_chat_own_reply_style_put)
+    app.router.add_delete("/api/chat/reply-styles/own/{name}", chat.api_chat_own_reply_style_delete)
     app.router.add_post("/api/chat/sessions", chat.api_chat_session_create)
     app.router.add_post("/api/chat/sessions/cleanup", chat.api_chat_sessions_cleanup)
     app.router.add_get("/api/chat/screen-frame", chat.api_chat_screen_state)

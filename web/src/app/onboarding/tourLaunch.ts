@@ -47,3 +47,18 @@ export function onProductTourRequest(cb: () => void): () => void {
   window.addEventListener(EVENT, cb)
   return () => window.removeEventListener(EVENT, cb)
 }
+
+let running = false
+
+/** Whether the tour is walking the app now. Module state for the same reason the request is: the
+ *  tour has no memory beyond this window. A surface the tour walks past that would otherwise
+ *  ask the owner something reads it and holds the question (a new chat's explain card), so the
+ *  tour neither competes with a question nor makes a request on any step. */
+export function productTourRunning(): boolean {
+  return running
+}
+
+/** Set by the tour as it starts and ends. */
+export function noteProductTourRunning(on: boolean): void {
+  running = on
+}

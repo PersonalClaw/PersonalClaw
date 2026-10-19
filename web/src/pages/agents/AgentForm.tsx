@@ -8,6 +8,7 @@ import { Combobox } from '../../ui/Combobox'
 import { Field, TextInput, TextArea, Segmented, FieldError, Select } from '../../ui/forms'
 import { APPROVAL_MODES, isBuiltinDefaultAgent } from './agentMeta'
 import { ModelUnavailableNote, unavailableModelOption, type ModelUnavailable } from './agentModelStatus'
+import { replyStyleName, type ReplyStyleOption } from '../../ui/composer/controls'
 
 /** A type, not an interface: a refused save is re-applied field by field (`rebaseRecord` in
  *  `lib/staleWrite.ts`), which takes a plain record. */
@@ -21,15 +22,33 @@ export type AgentDraft = {
   specialty: string; route_hints: string
 }
 
-/** The agent's reply style choices. `''` follows the platform default; the ids are the bundled styles
- *  (`reply_style.STYLES`, served at `GET /api/chat/reply-styles`). */
-const REPLY_STYLE_OPTIONS = [
-  { value: '', label: 'Platform default' },
-  { value: 'default', label: 'No style' },
-  { value: 'plain', label: 'Plain' },
-  { value: 'terse', label: 'Terse' },
-  { value: 'conversational', label: 'Conversational' },
+/** The bundled styles, offered until the server's list (`GET /api/chat/reply-styles`) arrives. */
+const BUNDLED_REPLY_STYLES: ReplyStyleOption[] = [
+  { id: 'default', title: 'No style', description: '' },
+  { id: 'plain', title: 'Plain', description: '' },
+  { id: 'terse', title: 'Terse', description: '' },
+  { id: 'conversational', title: 'Conversational', description: '' },
 ]
+
+/** The agent's reply style choices: `''` follows the platform default, then every style the server
+ *  lists (bundled, your own, an enabled app's). A stored style that is no longer listed is kept,
+ *  marked and disabled: it stays selected, so opening and saving the form never clears it without
+ *  the owner choosing to (the save sends it back as stored, which `PUT /api/agents/{name}` keeps),
+ *  and it cannot be picked again until the style is back. */
+export function replyStyleOptions(styles: ReplyStyleOption[], stored: string): { value: string; label: string; disabled?: boolean; title?: string }[] {
+  const list = styles.length ? styles : BUNDLED_REPLY_STYLES
+  const opts: { value: string; label: string; disabled?: boolean; title?: string }[] = [
+    { value: '', label: 'Platform default' },
+    ...list.map((s) => ({ value: s.id, label: s.id === 'default' ? 'No style' : replyStyleName(s) })),
+  ]
+  if (stored && !opts.some((o) => o.value === stored)) {
+    opts.push({
+      value: stored, label: `${stored} (no longer available)`, disabled: true,
+      title: 'This agent keeps the choice and uses Agent defaults until the style is back.',
+    })
+  }
+  return opts
+}
 
 export function emptyDraft(): AgentDraft {
   return { name: '', description: '', model: '', system_prompt: '', voice: '', reply_style: '', approval_mode: '', skills: [], tools: [], triggers: [], default_dir: '', memory_store: '', specialty: '', route_hints: '' }
@@ -133,7 +152,10 @@ export function AgentForm({ draft, onChange, nameLocked, compact, unavailable, r
   const [skillsLoaded, setSkillsLoaded] = useState(false)
   const [toolsLoaded, setToolsLoaded] = useState(false)
   const [lifecycleTriggers, setLifecycleTriggers] = useState<CheckOption[]>([])
+  // Every style the server lists, yours and an enabled app's included; the bundled ones until then.
+  const [replyStyles, setReplyStyles] = useState<ReplyStyleOption[]>([])
   useEffect(() => {
+    api.replyStyles().then((r) => setReplyStyles(r?.styles ?? [])).catch(() => {})
     // A skill in an agent's own folder (`agent-local`) is that agent's whatever its list says, so
     // it is not a choice here: offered, it would read as one this list grants or withholds.
     api.skills().then((s) => {
@@ -191,7 +213,7 @@ export function AgentForm({ draft, onChange, nameLocked, compact, unavailable, r
           conversation that binds it. A conversation can choose its own from the composer;
           doing so never edits this value. */}
       <Field label="Reply style" hint="How this agent writes its replies. Changes style only, never a fact, a caveat or a refusal. Any chat can choose its own from the composer.">
-        <Select value={draft.reply_style} onChange={(v) => set('reply_style', v)} options={REPLY_STYLE_OPTIONS} />
+        <Select value={draft.reply_style} onChange={(v) => set('reply_style', v)} options={replyStyleOptions(replyStyles, draft.reply_style)} />
       </Field>
 
       <Field label="Approval mode" hint="How tool calls are approved during this agent's runs.">

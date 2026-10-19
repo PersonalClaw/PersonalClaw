@@ -3337,7 +3337,12 @@ async def run_chat(
             # instruction to the model, never a second call over the reply (reply_style.py).
             from personalclaw import reply_style as _rs
 
-            _style = _rs.resolve_for(session).style
+            _resolved = _rs.resolve_for(session)
+            _style = _resolved.style
+            if _said := _rs.notice_once(session, _resolved):  # a chosen style that is gone
+                session.append("notice", _said, "msg msg-notice")
+                _say = {"session": session.key, "role": "notice", "content": _said}
+                state.broadcast_ws("chat_message", _say)
             if _style == _rs.DEFAULT:
                 message = _maybe_inject_persona(
                     message, getattr(session, "color_theme", ""), is_new

@@ -502,10 +502,33 @@ style instruction, and whether a chosen style is replacing a personality's voice
 sent** shows the exact text, safety rules included. A brand-new chat has nothing to preview
 until its first message creates it.
 
-**Editing a style.** Each style's wording is a prompt in Settings → Prompts
+**Your own styles.** Settings → Agent defaults → **Your reply styles** adds, edits and deletes
+styles of your own: a title, a one-line description and the text, up to 4 KB. Each is kept as
+`styles/<name>.md` in your PersonalClaw folder and offered everywhere a style is chosen. An app
+can add styles too, but only when it holds the **replyStyles** permission, which its install
+screen names; its styles carry the app's name in the picker. A style file that is refused is
+listed under **Not loaded** with the file and the reason: one over 4 KB, one that opens or closes
+a style section, or one whose text, title or description names tools, permissions, approvals or
+the sandbox, or speaks of the prompt or the rules around it. The bundled styles are held to the
+same list.
+
+**When a style goes away.** If you delete your style, or its app is disabled or loses the
+permission, a chat or agent that chose it keeps the choice but uses the next level down (the
+agent's style, then Agent defaults), and the chat says so once, a restart included. The agent
+form and Agent defaults show the kept choice as no longer available; it can't be picked again,
+and the agent's other fields still save. The style comes back on its own when the file or the
+app does.
+
+**How should I explain things?** After setup, a new chat offers this once, as a card that never
+blocks the composer, and not while the quick tour is showing you around: **Briefly**, **Step by
+step**, **With the background** or **Skip**. An
+answer is kept as a pinned preference, which you can change or forget under Memory; Skip is
+remembered, so the card doesn't return.
+
+**Editing a style.** Each bundled style's wording is a prompt in Settings → Prompts
 (`reply-style-plain`, `reply-style-terse`, `reply-style-conversational`). Its text is sent as
-one bounded section, and the platform's safety rules are sent right after it on every styled
-turn, so no style can have the last word. A style whose text opens or closes a style section
+one bounded section, yours and an app's included, and the platform's safety rules are sent
+right after it on every styled turn, so no style can have the last word. A style whose text opens or closes a style section
 of its own is not sent, and the turn goes without it.
 
 ---

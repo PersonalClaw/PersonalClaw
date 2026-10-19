@@ -238,7 +238,9 @@ export { Toggle } from '../../ui/Toggle'
  *  `<dimension>: <value>` plus `aria-pressed` — and it is required for the same reason SegToggle's is:
  *  typecheck stops an unnamed new call site before a rail has to. The VISIBLE label is untouched. */
 export function SegPills<T extends string>({ value, onChange, options, ariaLabel }: {
-  value: T; onChange: (v: T) => void; options: { key: T; label: string }[]; ariaLabel: string
+  /** `disabled` keeps an option shown (a stored value that is no longer offered) without letting it
+   *  be picked; `title` says why. */
+  value: T; onChange: (v: T) => void; options: { key: T; label: string; disabled?: boolean; title?: string }[]; ariaLabel: string
 }) {
   // Per-instance layoutId so the sliding pill in one SegPills can't fly to another.
   return (
@@ -246,9 +248,9 @@ export function SegPills<T extends string>({ value, onChange, options, ariaLabel
       {options.map((o) => {
         const on = o.key === value
         return (
-          <button key={o.key} type="button" onClick={() => onChange(o.key)}
+          <button key={o.key} type="button" onClick={() => onChange(o.key)} disabled={o.disabled} title={o.title}
             aria-label={`${ariaLabel}: ${o.label}`} aria-pressed={on}
-            data-type="body-s" className="relative rounded-pill px-3 h-7 transition-colors"
+            data-type="body-s" className="relative rounded-pill px-3 h-7 transition-colors disabled:cursor-not-allowed"
             style={{ color: on ? 'var(--color-on-surface)' : 'var(--color-on-surface-low)' }}>
             {/* The active option's fill. It moves to the new option at once: an option change is
                 a high-frequency action, and a pill sliding over says nothing the fill does not. */}

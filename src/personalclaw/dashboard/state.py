@@ -251,6 +251,7 @@ class _ChatSession(ChatQueue):
         "color_index",
         "color_theme",
         "reply_style",
+        "_reply_style_noticed",
         "memory_mode",
         "_ephemeral",
         "_pending_context",
@@ -448,6 +449,10 @@ class _ChatSession(ChatQueue):
         # no style over an agent that asks for one. Choosing here never edits the agent; the
         # order is personalclaw/reply_style.py's REPLY_STYLE_PRECEDENCE.
         self.reply_style: str = ""
+        # The chosen style that went away and that this chat has already said so about, so the
+        # notice is said once (chat_runner), across a restart too (kept in the session's meta
+        # line as `reply_style_noticed`); "" while every chosen style is there.
+        self._reply_style_noticed: str = ""
         if memory_mode not in VALID_MEMORY_MODES:
             raise ValueError(
                 f"invalid memory_mode {memory_mode!r}, must be one of {VALID_MEMORY_MODES}"

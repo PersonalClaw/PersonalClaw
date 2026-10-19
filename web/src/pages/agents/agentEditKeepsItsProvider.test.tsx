@@ -100,6 +100,7 @@ describe('the CREATE path still declares native — dropping the key there is th
         skills: () => Promise.resolve([]),
         tools: () => Promise.resolve([]),
         hooks: () => Promise.resolve([]),
+        replyStyles: () => Promise.resolve({ styles: [], precedence: [] }),
       },
     }))
     // 🪤 SPREAD THE ORIGINAL. A bare replacement here deletes `loadAcpDiscovered`, which
@@ -208,7 +209,10 @@ describe('VACUITY: the server contract and the field semantics this fix relies o
       /async def api_personalclaw_agent_update[\s\S]*?(?=\nasync def |\ndef |$)/,
     )?.[0] ?? ''
     expect(handler, 'found the update handler').not.toBe('')
-    expect(handler, 'it stages the body through the shared validator').toMatch(/staged = _staged_agent_fields\(body\)/)
+    // The update stages with the same table, its reply style checked by shape until the write
+    // (`_AGENT_UPDATE_SPECS`, a copy of `_AGENT_FIELD_SPECS` with that one field relaxed).
+    expect(handler, 'it stages the body through the shared validator').toMatch(/staged = _staged_agent_fields\(body, specs=_AGENT_UPDATE_SPECS\)/)
+    expect(src, 'whose update table is the profile table').toMatch(/_AGENT_UPDATE_SPECS: dict\[str, dict\] = \{\s*\*\*_AGENT_FIELD_SPECS,/)
     // Only the staged (present) fields are written — never an unconditional `agent.provider = …`.
     expect(handler, 'and it applies ONLY the staged fields').toMatch(/for field_name, value in staged\.items\(\):/)
     expect(handler, 'writing each present field, not a hardcoded set').toMatch(/setattr\(agent, field_name, value\)/)

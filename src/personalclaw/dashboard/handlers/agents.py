@@ -42,7 +42,6 @@ from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import consent_required, json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.providers.provider_bridge import agent_model_problem
-from personalclaw.reply_style import STYLE_IDS as REPLY_STYLE_IDS
 from personalclaw.request_validation import json_object_body, string_field
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.stale_write import (
@@ -794,6 +793,26 @@ _WIDER_TOOLS = (
     "run of it."
 )
 
+
+def _reply_style_choices() -> set[str]:
+    """What an agent's reply style can be set to: "" (follow Agent defaults) or a style available
+    now, so a style that is gone cannot be newly chosen."""
+    from personalclaw.reply_style import available_styles
+
+    return {"", *(s.id for s in available_styles())}
+
+
+def _reply_style_shape(value: str) -> str:
+    """An update's reply style by its shape only: "" or a style id
+    (``reply_style.normalize_choice``). Whether it is available is the config transaction's to
+    decide (:func:`_newly_chosen_style`)."""
+    from personalclaw.reply_style import normalize_choice
+
+    if value and normalize_choice(value) != value:
+        raise ConfigValueError("must be a style id or empty", f"reply_style={value}")
+    return value
+
+
 #: The write-side allowlist for an agent profile: every field of
 #: :class:`~personalclaw.config.loader.AgentProfile`, spelled in the ``_EDITABLE_CONFIG``
 #: spec shape so it is checked by the SAME
@@ -822,8 +841,8 @@ _AGENT_FIELD_SPECS: dict[str, dict] = {
     "description": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
     "system_prompt": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
     "voice": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
-    # One of the bundled styles, or "" to follow the platform default (`reply_style.STYLE_IDS`).
-    "reply_style": {"type": "str", "max_len": 32, "values": ["", *REPLY_STYLE_IDS]},
+    # A style available now (`reply_style.available_styles`), or "" to follow Agent defaults.
+    "reply_style": {"type": "str", "max_len": 80, "values_fn": _reply_style_choices},
     "model": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
     # The agent's own approval floor — `auto` is "Always allow for this agent", seeded into
     # every chat with it (`chat_runner`), so it is the approval policy stored per agent and the
@@ -871,6 +890,16 @@ _AGENT_FIELD_SPECS: dict[str, dict] = {
 #: What a profile holds before anything is written — the "current" a created profile, or a
 #: per-file one that omits a key, is compared against when a write could loosen it.
 _PROFILE_DEFAULTS: dict[str, Any] = dataclasses.asdict(AgentProfile())
+
+#: :data:`_AGENT_FIELD_SPECS` as ``PUT /api/agents/{name}`` stages a body: the same table, with
+#: ``reply_style`` checked by its shape only. Whether the style is available is decided in the
+#: config transaction, against the agent as it is at the write (:func:`_newly_chosen_style`): the
+#: style the agent already has is not a new choice, so an agent whose style has since gone away
+#: stays editable from its form, which sends the style back as stored, and keeps the pick.
+_AGENT_UPDATE_SPECS: dict[str, dict] = {
+    **_AGENT_FIELD_SPECS,
+    "reply_style": {"type": "str", "max_len": 80, "sanitize": _reply_style_shape},
+}
 
 #: The keys ``PATCH /api/agents/detail/{name}`` applies to the per-file runtime config.
 #: A subset of :data:`_AGENT_FIELD_SPECS`, so that path validates with the same table
@@ -925,8 +954,10 @@ def _agent_value_too_deep(value: Any) -> bool:
     return False
 
 
-def _staged_agent_fields(body: dict, keys: tuple[str, ...] | None = None) -> dict[str, Any]:
-    """Return the agent-profile fields present in *body*, validated and coerced.
+def _staged_agent_fields(
+    body: dict, keys: tuple[str, ...] | None = None, specs: dict[str, dict] = _AGENT_FIELD_SPECS
+) -> dict[str, Any]:
+    """Return the agent-profile fields present in *body*, validated and coerced by *specs*.
 
     Only keys actually present are returned, so a caller can tell "set this to empty" from
     "leave it alone" — which is what makes one helper serve both the create path (absent →
@@ -937,7 +968,7 @@ def _staged_agent_fields(body: dict, keys: tuple[str, ...] | None = None) -> dic
     body cannot leave a half-applied profile behind.
     """
     staged: dict[str, Any] = {}
-    for key in keys if keys is not None else tuple(_AGENT_FIELD_SPECS):
+    for key in keys if keys is not None else tuple(specs):
         if key not in body:
             continue
         value = body[key]
@@ -952,7 +983,7 @@ def _staged_agent_fields(body: dict, keys: tuple[str, ...] | None = None) -> dic
                 f"{key}=<nested>",
             )
         try:
-            staged[key] = coerce_edit_value(key, value, _AGENT_FIELD_SPECS[key])
+            staged[key] = coerce_edit_value(key, value, specs[key])
         except ConfigValueError as exc:
             # The message names the FIELD: a body can carry seventeen of them, so a bare
             # "must be a string" would not say which one was refused. Same reason
@@ -969,6 +1000,22 @@ def _agent_write_refusal(exc: ConfigValueError) -> web.Response:
     ``coerce_edit_value``'s 500 branch (an unrecognised spec ``type``) unreachable from here.
     """
     return json_error("invalid_request", message=str(exc), status=exc.status)
+
+
+def _newly_chosen_style(staged: dict[str, Any], current: str) -> web.Response | None:
+    """``400`` when *staged* chooses a reply style other than *current* (the agent's, at the
+    write) that is not available now, or ``None``. The closed write the create path's
+    :data:`_AGENT_FIELD_SPECS` holds, for an update: a style that is gone cannot be newly chosen,
+    and the one the agent already has is kept."""
+    style = staged.get("reply_style")
+    if style is None or style == current or style in _reply_style_choices():
+        return None
+    return _agent_write_refusal(
+        ConfigValueError(
+            "reply_style is not a style available now (GET /api/chat/reply-styles)",
+            f"reply_style={style}",
+        )
+    )
 
 
 def _unconsented_agent_loosening(
@@ -1503,7 +1550,7 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
     # write succeeded when it did not is the failure `config/edit_spec.py` exists to stop.
     # Clearing a list stays expressible, by sending `[]`.
     try:
-        staged = _staged_agent_fields(body)
+        staged = _staged_agent_fields(body, specs=_AGENT_UPDATE_SPECS)
     except ConfigValueError as exc:
         return _agent_write_refusal(exc)
     record_write = len(staged) > 1 or any(
@@ -1539,6 +1586,9 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
                     },
                 )
         # Against the agent as it is at the write, in the config transaction.
+        style_refused = _newly_chosen_style(staged, agent.reply_style)
+        if style_refused is not None:
+            raise RefusedInConfigTransaction(style_refused)
         unconsented = _unconsented_agent_loosening(name, staged, dataclasses.asdict(agent), body)
         if unconsented is not None:
             raise RefusedInConfigTransaction(unconsented)

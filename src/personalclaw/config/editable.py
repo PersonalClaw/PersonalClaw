@@ -54,6 +54,16 @@ def _agent_values() -> set[str]:
     return {"", *AppConfig.load().agents}
 
 
+def _reply_style_values() -> set[str]:
+    """The styles Agent defaults can be set to: every style available now (``reply_style``).
+
+    A ``values_fn`` rather than an enum because the set is open: your own styles and the ones an
+    enabled app adds join it, and a style that is gone cannot be newly chosen."""
+    from personalclaw.reply_style import available_styles
+
+    return {s.id for s in available_styles()}
+
+
 def _context_engine_values() -> set[str]:
     """Allowed ``session.context_engine`` values — whatever is REGISTERED right now.
 
@@ -903,10 +913,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # holds exactly what the user typed — load() strips the same characters from a
     # hand-edited file, defense in depth.
     "agent.bot_name": {"type": "str", "max_len": 50, "sanitize": _bot_name_validator},
-    "agent.reply_style": {
-        "type": "enum",
-        "values": ["default", "plain", "terse", "conversational"],
-    },
+    "agent.reply_style": {"type": "str", "max_len": 80, "values_fn": _reply_style_values},
     "agent.log_level": {"type": "enum", "values": ["DEBUG", "INFO", "WARNING", "ERROR"]},
     # Self-QA companion. All four fields are editable,
     # not just the two toggles: a companion you can enable but cannot point at a repo is

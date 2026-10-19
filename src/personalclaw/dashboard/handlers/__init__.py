@@ -18,6 +18,7 @@ from personalclaw.dashboard.handlers_system import (  # noqa: F401
     api_auth_status,
     api_healthz,
     api_onboarding,
+    api_onboarding_explain,
     api_onboarding_state,
     api_status,
     api_system,

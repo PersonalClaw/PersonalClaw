@@ -8,6 +8,7 @@ import { fadeEnter, spring } from '../../../design/motion'
 import { api, type SessionTemplate } from '../../../lib/api'
 import { refreshKinds, useChatSocket } from '../../../lib/useChatSocket'
 import { useQuery, invalidateKeys } from '../../../lib/data'
+import { ExplainCard } from './ExplainCard'
 
 // ── The new chat's hero ────────────────────────────────────────────────────────────────────────
 //
@@ -152,6 +153,7 @@ export function ChatHero({ name, stage, onPickStarter, onPickSuggestion }: {
       </motion.div>
       <div className="flex w-full flex-col items-center gap-2xl" style={{ maxWidth: 'var(--content-width)' }}>
         {stage}
+        <ExplainCard />
         <StarterChips onPick={onPickStarter} />
         <SuggestionChips onPick={onPickSuggestion} />
       </div>

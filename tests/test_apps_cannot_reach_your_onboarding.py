@@ -61,6 +61,7 @@ YOUR_REF = "Yours:vendor-chat-1"
 ONBOARDING_ROUTES: list[tuple[str, str, Any]] = [
     ("GET", "/api/onboarding", None),
     ("POST", "/api/onboarding/state", {"step": "done"}),
+    ("POST", "/api/onboarding/explain", {"answer": "skip"}),
     ("GET", "/api/onboarding/model-check", None),
     ("GET", "/api/onboarding/local-model", None),
     ("POST", "/api/onboarding/local-model/scan", None),
@@ -160,11 +161,12 @@ def _stand_ins(reached: list[tuple[str, str]]) -> list[tuple[str, str, Any]]:
 
 
 def _real_routes() -> list[tuple[str, str, Any]]:
-    """The real handlers of the five routes that were open, at the templates the gateway
-    registers them under (railed against the census below)."""
+    """The real handlers of the five routes that were open, and of the explain question added
+    since, at the templates the gateway registers them under (railed against the census below)."""
     return [
         ("GET", "/api/onboarding", handlers_system.api_onboarding),
         ("POST", "/api/onboarding/state", handlers_system.api_onboarding_state),
+        ("POST", "/api/onboarding/explain", handlers_system.api_onboarding_explain),
         ("GET", "/api/onboarding/model-check", model_check.api_onboarding_model_check),
         ("GET", "/api/onboarding/local-model", local_model.api_local_model_detect),
         ("POST", "/api/onboarding/local-model/scan", local_model.api_local_model_scan),
@@ -368,9 +370,10 @@ def test_the_route_table_declares_your_setup(subtests) -> None:
         assert census == driven, census ^ driven
         real = {f"{m} {t}" for m, t, _handler in _real_routes()}
         assert real <= census, "a real handler at a template nothing registers"
-        # The gateway registers these two through the `handlers` package.
+        # The gateway registers these three through the `handlers` package.
         assert handlers.api_onboarding is handlers_system.api_onboarding
         assert handlers.api_onboarding_state is handlers_system.api_onboarding_state
+        assert handlers.api_onboarding_explain is handlers_system.api_onboarding_explain
     with row(subtests, check="no app is granted any of it"):
         # No shipped app calls these routes. One that needs a read gets an `AppMay` row saying
         # why it is safe, and a case here.

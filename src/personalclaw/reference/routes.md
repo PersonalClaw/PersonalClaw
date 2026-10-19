@@ -150,6 +150,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/mode` — set the tool APPROVAL mode (whether tools auto-approve).
 - `POST /api/chat/nav/resolve-links` — batch-summarize bare links.
 - `GET /api/chat/reply-styles` — the reply styles a conversation or an agent can choose.
+- `DELETE /api/chat/reply-styles/own/{name}` — remove one of your own styles.
+- `PUT /api/chat/reply-styles/own/{name}` — create or replace one of your own styles.
 - `GET /api/chat/screen-frame` — can this session share its screen?
 - `POST /api/chat/screen-frame` — stage one screen frame for the next chat turn.
 - `POST /api/chat/screen-frame/pin` — promote one frame to an ordinary attachment.
@@ -625,6 +627,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/notifications/trust` — the owner's Allow or Deny on an unknown-sender notification.
 - `POST /api/notifications/unack` — mark a single notification as unread.
 - `GET /api/onboarding` — First-run onboarding signal — model readiness plus persisted flow progress.
+- `POST /api/onboarding/explain` — Answer the one optional question, "How should I explain things?", once.
 - `GET /api/onboarding/import` — what each source holds, and what importing each item does.
 - `POST /api/onboarding/import` — start importing the picked items.
 - `DELETE /api/onboarding/import/job` — stop the running import after the item it is on.
