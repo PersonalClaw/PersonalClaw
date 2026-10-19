@@ -5,8 +5,7 @@ import type { SavedAgent } from '../../lib/api'
 import { api } from '../../lib/api'
 import { useActiveChatModelOptions } from '../../lib/agents'
 import { Combobox } from '../../ui/Combobox'
-import { Field, TextInput, TextArea, Segmented, FieldError } from '../../ui/forms'
-import { Toggle } from '../../ui/Toggle'
+import { Field, TextInput, TextArea, Segmented, FieldError, Select } from '../../ui/forms'
 import { APPROVAL_MODES, isBuiltinDefaultAgent } from './agentMeta'
 import { ModelUnavailableNote, unavailableModelOption, type ModelUnavailable } from './agentModelStatus'
 
@@ -14,21 +13,31 @@ import { ModelUnavailableNote, unavailableModelOption, type ModelUnavailable } f
  *  `lib/staleWrite.ts`), which takes a plain record. */
 export type AgentDraft = {
   name: string; description: string; model: string; system_prompt: string; voice: string
-  /** Plainer PROSE — distinct from `voice` (WHO the agent is). */
-  natural_voice: boolean
+  /** HOW it writes: a reply style id, or `''` to follow the platform default. Distinct from `voice`. */
+  reply_style: string
   approval_mode: string; skills: string[]; tools: string[]; triggers: string[]
   default_dir: string; memory_store: string
   // Agent routing — suggest-first specialist routing metadata.
   specialty: string; route_hints: string
 }
 
+/** The agent's reply style choices. `''` follows the platform default; the ids are the bundled styles
+ *  (`reply_style.STYLES`, served at `GET /api/chat/reply-styles`). */
+const REPLY_STYLE_OPTIONS = [
+  { value: '', label: 'Platform default' },
+  { value: 'default', label: 'No style' },
+  { value: 'plain', label: 'Plain' },
+  { value: 'terse', label: 'Terse' },
+  { value: 'conversational', label: 'Conversational' },
+]
+
 export function emptyDraft(): AgentDraft {
-  return { name: '', description: '', model: '', system_prompt: '', voice: '', natural_voice: false, approval_mode: '', skills: [], tools: [], triggers: [], default_dir: '', memory_store: '', specialty: '', route_hints: '' }
+  return { name: '', description: '', model: '', system_prompt: '', voice: '', reply_style: '', approval_mode: '', skills: [], tools: [], triggers: [], default_dir: '', memory_store: '', specialty: '', route_hints: '' }
 }
 export function toDraft(a: SavedAgent): AgentDraft {
   return {
     name: a.name, description: a.description ?? '', model: a.model ?? '', system_prompt: a.system_prompt ?? '', voice: a.voice ?? '',
-    natural_voice: !!a.natural_voice,
+    reply_style: a.reply_style ?? '',
     approval_mode: a.approval_mode ?? '', skills: a.skills ?? [], tools: a.tools ?? [], triggers: a.triggers ?? [],
     default_dir: a.default_dir ?? '', memory_store: a.memory_store ?? '',
     specialty: a.specialty ?? '', route_hints: a.route_hints ?? '',
@@ -89,7 +98,7 @@ export function draftToPayload(d: AgentDraft): Record<string, unknown> {
   // agent side — eligibility is resolved by that scope_ref match at surfacing.
   return {
     name: d.name.trim().replace(/^-+|-+$/g, ''), description: d.description.trim(), model: d.model,
-    system_prompt: d.system_prompt, voice: d.voice, natural_voice: d.natural_voice, approval_mode: d.approval_mode,
+    system_prompt: d.system_prompt, voice: d.voice, reply_style: d.reply_style, approval_mode: d.approval_mode,
     skills: d.skills, tools: d.tools, triggers: d.triggers,
     default_dir: d.default_dir.trim(), memory_store: d.memory_store.trim(),
     specialty: d.specialty.trim(), route_hints: d.route_hints.trim(),
@@ -178,11 +187,11 @@ export function AgentForm({ draft, onChange, nameLocked, compact, unavailable, r
       <Field label="Voice" hint="WHO it is — tone, opinions, bluntness, persona. Kept separate from the rules and injected high-priority so personality survives long prompts.">
         <TextArea value={draft.voice} onChange={(v) => set('voice', v)} rows={compact ? 3 : 4} placeholder="Blunt and witty. Has strong opinions and states them. No hedging or filler." />
       </Field>
-      {/* Natural voice — the PER-AGENT scope, so the preference travels with this
-          agent into every conversation that binds it. A conversation can override it for
-          itself from the composer; doing so never edits this value. */}
-      <Field label="Natural voice" hint="Ask for plainer PROSE — answer first, no filler openers, no summary close, the shortest accurate word. A named set of patterns to avoid, not a persona: it never changes a fact, a caveat or a refusal. Any chat can override this for itself from the composer.">
-        <Toggle on={draft.natural_voice} onChange={(v) => set('natural_voice', v)} label="Natural voice" />
+      {/* Reply style — the PER-AGENT scope, so the style travels with this agent into every
+          conversation that binds it. A conversation can choose its own from the composer;
+          doing so never edits this value. */}
+      <Field label="Reply style" hint="How this agent writes its replies. Changes style only, never a fact, a caveat or a refusal. Any chat can choose its own from the composer.">
+        <Select value={draft.reply_style} onChange={(v) => set('reply_style', v)} options={REPLY_STYLE_OPTIONS} />
       </Field>
 
       <Field label="Approval mode" hint="How tool calls are approved during this agent's runs.">

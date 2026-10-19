@@ -42,11 +42,9 @@ const COMPOSER = strip(COMPOSER_SRC)
 const SELECTION_WRITES = [
   'setSessionAcpAgent', 'setSessionAgent', 'setSessionModel',
   'setApprovalMode', 'setTaskMode', 'setReasoningEffort',
-  // Natural voice — a composer pick like the rest, and one whose failure is
-  // exactly this rail's shape: the pill would read "Plain" while the turn ran without
-  // the instruction. Two sites (the pill's own PATCH + the pre-start pick at create).
-  'setSessionNaturalVoice',
 ]
+// The reply style is a composer pick too, but its state lives in `chat/useReplyStyle.ts`, whose own
+// test holds it to the same rule: a failed PATCH is told, and the picker keeps what it showed.
 
 describe('a selection that fails to persist tells the user', () => {
   it('the reporter exists and carries the server’s message', () => {
@@ -75,12 +73,12 @@ describe('a selection that fails to persist tells the user', () => {
       expect(SELECTION_WRITES, `unexpected call routed: ${m[2]}`).toContain(m[2])
       routed++
     }
-    expect(routed, 'selection writes routed through persistSelection').toBe(13)
+    expect(routed, 'selection writes routed through persistSelection').toBe(11)
   })
 
   it('each report names WHICH pick failed', () => {
     // "Couldn't apply this session" would be useless when five things can fail independently.
-    for (const what of ['this agent', 'this model', 'this approval mode', 'this task mode', 'this reasoning effort', 'this natural-voice setting'])
+    for (const what of ['this agent', 'this model', 'this approval mode', 'this task mode', 'this reasoning effort'])
       expect(COMPOSER, `missing a report for ${what}`).toContain(`persistSelection('${what}'`)
   })
 

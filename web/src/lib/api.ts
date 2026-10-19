@@ -6574,13 +6574,31 @@ export interface OnboardingImportJob {
  *  gateway has them now. `job` is null when this gateway has run none — after a restart too. */
 export interface OnboardingImportStatus { reading: OnboardingImportReading; job: OnboardingImportJob | null }
 export interface ChatModelOption { name: string; model_id: string; provider: string; description?: string }
+/** A bundled reply style, as the picker lists it. */
+export interface ReplyStyle { id: string; title: string; description: string }
+
+/** What the next turn of a chat carries for its voice, read from the backend's resolution:
+ *  the style's section, or the identity's persona when no style is chosen, or nothing. */
+export interface ReplyStylePreview {
+  style: string; source: string; persona: string
+  applies: 'style' | 'persona' | 'none'
+  instruction: string; first_turn_only: boolean; refused: string
+}
+
+/** A chat's reply-style state as the backend resolves it (`reply_style.REPLY_STYLE_PRECEDENCE`). */
+export interface ReplyStyleState {
+  reply_style: string; reply_style_agent_default: string
+  reply_style_effective: string; reply_style_source: string
+  reply_style_preview: ReplyStylePreview
+}
+
 export interface SavedAgent {
   name: string; provider: string; provider_agent?: string; acp_mode?: string; model?: string; approval_mode?: string
   description?: string; system_prompt?: string; voice?: string; skills?: string[]; tools?: string[]; triggers?: string[]; source?: string; default_dir?: string; memory_store?: string
-  /** Plainer, less machine-sounding PROSE — a named set of patterns to avoid.
-   *  Distinct from `voice` (WHO the agent is) and from the voice-profile speech
-   *  surface. Travels with the agent; a conversation can override it for itself. */
-  natural_voice?: boolean
+  /** HOW the agent writes: a reply style id, or `''` to follow the platform default. Distinct from
+   *  `voice` (WHO the agent is) and from the voice-profile speech surface. Travels with the
+   *  agent; a conversation can choose its own. */
+  reply_style?: string
   // Agent routing — suggest-first specialist routing metadata.
   specialty?: string; route_hints?: string
   reserved?: boolean; editable?: boolean
@@ -9005,11 +9023,10 @@ export const api = {
      *  here — not carried in navigation state — so the breadcrumb survives a reload.
      *  `forked_from_title: ''` with a non-empty `forked_from` = the origin is gone. */
     forked_from?: string; forked_from_title?: string
-    /** Natural voice. `natural_voice` is what THIS conversation states
-     *  (`'' | 'on' | 'off'`); the other three are resolved by the backend, which owns
-     *  the order — the composer displays `natural_voice_source`, it never derives it. */
-    natural_voice?: string; natural_voice_agent_default?: boolean
-    natural_voice_effective?: boolean; natural_voice_source?: string
+    /** Reply style. `reply_style` is what THIS conversation states (`''` = follows its agent);
+     *  the rest is resolved by the backend, which owns the order: the composer displays
+     *  `reply_style_source`, it never derives it. */
+  } & Partial<ReplyStyleState> & {
     /** The newest `chat_chunk.seq` these messages hold (read in the same step as them). A
      *  chat resuming the in-flight `streaming` partial drops chunks stamped at or below it. */
     stream_seq?: number
@@ -9028,13 +9045,14 @@ export const api = {
      *  and the app approves none of its calls, so each one that needs approval asks you. */
   } & AppStarted>(`/api/chat/sessions/${encodeURIComponent(key)}`, read),
   deleteChatSession: (key: string) => del(`/api/chat/sessions/${encodeURIComponent(key)}`),
-  /** Set the per-conversation natural-voice scope. `''` clears the override so
-   *  the conversation inherits the bound agent's preference again. The response is the
-   *  RE-RESOLVED state, not an echo — the backend owns the resolution order, so the
-   *  composer shows what actually took effect rather than assuming its click won. */
-  setSessionNaturalVoice: (session: string, choice: '' | 'on' | 'off') =>
-    patch<{ ok: boolean; natural_voice: string; natural_voice_agent_default: boolean; natural_voice_effective: boolean; natural_voice_source: string }>(
-      `/api/chat/sessions/${encodeURIComponent(session)}/natural-voice`, { natural_voice: choice }),
+  /** Set the per-conversation reply style. `''` resets it, so the conversation follows its agent
+   *  (then the platform default) again. The response is the RE-RESOLVED state, not an echo: the
+   *  backend owns the resolution order, so the composer shows what actually took effect. */
+  setSessionReplyStyle: (session: string, style: string) =>
+    patch<{ ok: boolean } & ReplyStyleState>(
+      `/api/chat/sessions/${encodeURIComponent(session)}/reply-style`, { reply_style: style }),
+  /** The reply styles a conversation or an agent can choose, in the picker's order. */
+  replyStyles: () => get<{ styles: ReplyStyle[]; precedence: string[] }>('/api/chat/reply-styles'),
   // ── session lifecycle + bulk ──
   setSessionLifecycle: (session: string, body: { lifecycle?: 'active' | 'archived'; never_archive?: boolean }) =>
     patch<{ ok: boolean; lifecycle: string; never_archive: boolean }>(`/api/chat/sessions/${encodeURIComponent(session)}/lifecycle`, body),

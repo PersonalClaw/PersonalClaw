@@ -496,6 +496,15 @@ defaults flipped, and some routes refuse input they used to accept. Run
   asking you). An app you installed that still declares `"agent": true` runs no agent tasks
   until you update it to a version that names its tier, and that update asks you again in the
   tier's words. Minutes and Growth declare `text`.
+- **Natural voice is now the Plain reply style.** On first start the gateway carries every
+  stored natural-voice choice over, once: a chat or an agent that had it on uses **Plain**, a
+  chat that had it off uses **Default**, and an edit you made to the natural-voice prompt in
+  Settings → Prompts becomes your edit of `reply-style-plain`. Nothing is left to do by hand,
+  except for an agent definition that is a link to a file elsewhere: that file is left as it is,
+  and the gateway's log names it.
+  A script that called `PATCH /api/chat/sessions/{session}/natural-voice` or read the
+  `natural_voice_*` fields uses `PATCH /api/chat/sessions/{session}/reply-style` with
+  `{"reply_style": "plain"}` and the `reply_style_*` fields instead.
 - **Slack asks you to pair once more.** Slack Channel no longer makes the first person to
   message the bot its owner, or keeps an owner id typed into its setup or set in the
   environment: it forgets such an owner when it next starts, and until you pair, the bot does

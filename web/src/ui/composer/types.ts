@@ -116,16 +116,17 @@ export interface ComposerProps {
     disabledReason?: string
     onToggle: () => void
   }
-  /** Natural voice — plainer, less machine-sounding prose, per conversation.
+  /** Reply style — how the agent writes its replies, per conversation.
    *  Absent → no control (the goal composer has no conversation to scope one to).
    *  `effective`/`source` are the BACKEND's resolution; the composer displays them and
    *  never re-derives the order. */
-  naturalVoice?: {
-    choice: '' | 'on' | 'off'
-    effective: boolean
+  replyStyle?: {
+    choice: string
+    effective: string
     source: string
-    agentDefault: boolean
-    onSelect: (choice: '' | 'on' | 'off') => void
+    agentDefault: string
+    styles: { id: string; title: string; description: string }[]
+    onSelect: (style: string) => void
   }
   /** Pills a host owns, drawn in the toolbar after the built-in ones — a choice that belongs to
    *  what the host creates rather than to a conversation (the loop composer's "Runs on"). */

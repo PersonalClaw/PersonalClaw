@@ -106,15 +106,16 @@ def _make_app(state: DashboardState) -> web.Application:
     from personalclaw.dashboard.chat import (
         api_chat,
         api_chat_mode,
+        api_chat_reply_styles,
         api_chat_session_approve,
         api_chat_session_color,
         api_chat_session_delete,
         api_chat_session_detail,
         api_chat_session_fork,
         api_chat_session_map,
-        api_chat_session_natural_voice,
         api_chat_session_regenerate,
         api_chat_session_rename,
+        api_chat_session_reply_style,
         api_chat_session_resume,
         api_chat_session_stop,
         api_chat_session_switch_variant,
@@ -127,6 +128,7 @@ def _make_app(state: DashboardState) -> web.Application:
     app = _api_app(state)
     app.router.add_post("/api/chat", api_chat)
     app.router.add_get("/api/chat/sessions", api_chat_sessions)
+    app.router.add_get("/api/chat/reply-styles", api_chat_reply_styles)
     app.router.add_post("/api/chat/sessions/cleanup", api_chat_sessions_cleanup)
     app.router.add_get("/api/chat/sessions/{session}", api_chat_session_detail)
     app.router.add_get("/api/chat/sessions/{session}/map", api_chat_session_map)
@@ -136,9 +138,7 @@ def _make_app(state: DashboardState) -> web.Application:
     app.router.add_post("/api/chat/sessions/{session}/resume", api_chat_session_resume)
     app.router.add_patch("/api/chat/sessions/{session}/title", api_chat_session_rename)
     app.router.add_patch("/api/chat/sessions/{session}/color", api_chat_session_color)
-    app.router.add_patch(
-        "/api/chat/sessions/{session}/natural-voice", api_chat_session_natural_voice
-    )
+    app.router.add_patch("/api/chat/sessions/{session}/reply-style", api_chat_session_reply_style)
     app.router.add_post("/api/chat/sessions/{session}/regenerate", api_chat_session_regenerate)
     app.router.add_post("/api/chat/sessions/{session}/fork", api_chat_session_fork)
     app.router.add_post("/api/chat/sessions/{session}/undo", api_chat_session_undo)

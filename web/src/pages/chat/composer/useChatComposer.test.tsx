@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   createChatSession: vi.fn(),
   sendChat: vi.fn(),
   setApprovalMode: vi.fn(),
+  setSessionReplyStyle: vi.fn(),
   notify: vi.fn(),
 }))
 
@@ -25,6 +26,7 @@ vi.mock('../../../lib/api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../../lib/api')>()
   const api = new Proxy({
     createChatSession: h.createChatSession, sendChat: h.sendChat, setApprovalMode: h.setApprovalMode,
+    setSessionReplyStyle: h.setSessionReplyStyle,
   } as Record<string, unknown>, {
     get(t, p: string) { return p in t ? t[p] : (t[p] = () => Promise.resolve({})) },
   })
@@ -71,6 +73,7 @@ beforeEach(async () => {
   h.createChatSession.mockResolvedValue({ key: NEW_KEY })
   h.sendChat.mockResolvedValue({ ok: true, session: NEW_KEY })
   h.setApprovalMode.mockResolvedValue({})
+  h.setSessionReplyStyle.mockResolvedValue({ ok: true, reply_style: 'terse', reply_style_effective: 'terse', reply_style_source: 'conversation' })
   ;({ useChatComposer } = await import('./useChatComposer'))
 })
 afterEach(() => cleanup())
@@ -89,6 +92,18 @@ describe('useChatComposer sends', () => {
     expect(m.followNewTurn).toHaveBeenCalled()
     expect(m.result.current.c.input).toBe('')
     expect(m.result.current.turns.map(turnText)).toEqual(['Why does the feed refetch?'])
+  })
+
+  it('writes a reply style picked before the chat existed onto the chat it creates, before the first turn runs', async () => {
+    // The web never sends the style in the send body, so this write at create is the only way the
+    // pick reaches turn 1: without it the pill reads Terse while the first turn runs without it.
+    const m = mount()
+    await act(async () => { await m.result.current.c.replyStyle.pill.onSelect('terse') })
+    expect(h.setSessionReplyStyle, 'no chat yet, so nothing to write').not.toHaveBeenCalled()
+    act(() => m.result.current.c.setInput('Summarize the incident'))
+    await act(async () => { await m.result.current.c.send() })
+    expect(h.setSessionReplyStyle).toHaveBeenCalledWith(NEW_KEY, 'terse')
+    expect(h.setSessionReplyStyle.mock.invocationCallOrder[0]).toBeLessThan(h.sendChat.mock.invocationCallOrder[0])
   })
 
   it('steers a running turn that takes one, and shows the steer until the turn takes it', async () => {
@@ -130,13 +145,13 @@ describe('useChatComposer applies the selection', () => {
     const m = mount({ sessionId: NEW_KEY })
     act(() => m.result.current.c.adoptDetail({
       key: NEW_KEY, title: 'Feed', run_state: runState({ session: NEW_KEY }), task_mode: 'plan', approval: 'trust_reads', memory_mode: 'incognito',
-      natural_voice: 'on', natural_voice_effective: true, natural_voice_source: 'session', natural_voice_agent_default: false,
+      reply_style: 'terse', reply_style_effective: 'terse', reply_style_source: 'conversation', reply_style_agent_default: '',
       messages: [{ role: 'user', content: 'first' }, { role: 'assistant', content: 'ok' }, { role: 'user', content: 'second' }],
     } as never))
     const c = m.result.current.c
     expect(c.selection).toMatchObject({ taskMode: 'plan', approval: 'trust_reads' })
     expect(c.memoryMode).toBe('incognito')
-    expect(c.naturalVoice).toEqual({ choice: 'on', effective: true, source: 'session', agentDefault: false })
+    expect(c.replyStyle.pill).toMatchObject({ choice: 'terse', effective: 'terse', source: 'conversation', agentDefault: '' })
     expect(c.recallPrompt(0)).toBe('first')
     expect(c.recallPrompt(1)).toBe('second')
   })

@@ -903,6 +903,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # holds exactly what the user typed — load() strips the same characters from a
     # hand-edited file, defense in depth.
     "agent.bot_name": {"type": "str", "max_len": 50, "sanitize": _bot_name_validator},
+    "agent.reply_style": {
+        "type": "enum",
+        "values": ["default", "plain", "terse", "conversational"],
+    },
     "agent.log_level": {"type": "enum", "values": ["DEBUG", "INFO", "WARNING", "ERROR"]},
     # Self-QA companion. All four fields are editable,
     # not just the two toggles: a companion you can enable but cannot point at a repo is

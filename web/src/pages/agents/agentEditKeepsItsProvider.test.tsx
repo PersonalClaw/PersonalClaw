@@ -67,7 +67,7 @@ describe('draftToPayload describes no field the form cannot edit', () => {
     // key here has a control in `AgentForm`.
     const body = draftToPayload(toDraft(ACP))
     for (const k of [
-      'name', 'description', 'model', 'system_prompt', 'voice', 'natural_voice', 'approval_mode',
+      'name', 'description', 'model', 'system_prompt', 'voice', 'reply_style', 'approval_mode',
       'skills', 'tools', 'triggers', 'default_dir', 'memory_store', 'specialty', 'route_hints',
     ]) expect(body, `${k} is editable here and must still be sent`).toHaveProperty(k)
   })

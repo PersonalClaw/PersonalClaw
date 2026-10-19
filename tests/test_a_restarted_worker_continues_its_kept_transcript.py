@@ -577,7 +577,7 @@ _RECORD: dict[str, Any] = {
     "pinned": True,
     "color_index": 3,
     "color_theme": "sage",
-    "natural_voice": "on",
+    "reply_style": "plain",
     "tags": ["home", "spring"],
     "lifecycle": "archived",
     "last_activity_at": 1_791_067_183.0,

@@ -149,6 +149,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/chat/image-input` — whether an attached image reaches the model as one.
 - `POST /api/chat/mode` — set the tool APPROVAL mode (whether tools auto-approve).
 - `POST /api/chat/nav/resolve-links` — batch-summarize bare links.
+- `GET /api/chat/reply-styles` — the reply styles a conversation or an agent can choose.
 - `GET /api/chat/screen-frame` — can this session share its screen?
 - `POST /api/chat/screen-frame` — stage one screen frame for the next chat turn.
 - `POST /api/chat/screen-frame/pin` — promote one frame to an ordinary attachment.
@@ -183,7 +184,6 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PATCH /api/chat/sessions/{session}/lifecycle` — archive/restore one session.
 - `GET /api/chat/sessions/{session}/map` — the durable session-map marks.
 - `POST /api/chat/sessions/{session}/model` — set model for a chat session.
-- `PATCH /api/chat/sessions/{session}/natural-voice` — set the per-conversation scope.
 - `GET /api/chat/sessions/{session}/organize` — the chat's proposal now, without waiting.
 - `POST /api/chat/sessions/{session}/organize/accept` — apply the proposal.
 - `POST /api/chat/sessions/{session}/organize/decline` — remember the refusal.
@@ -198,6 +198,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/chat/sessions/{session}/queue/{queue_id}` — cancel a queued message.
 - `POST /api/chat/sessions/{session}/reasoning-effort` — set reasoning effort.
 - `POST /api/chat/sessions/{session}/regenerate` — regenerate the last assistant reply.
+- `PATCH /api/chat/sessions/{session}/reply-style` — set the per-conversation scope.
 - `POST /api/chat/sessions/{session}/resume` — load a history session into a session.
 - `GET /api/chat/sessions/{session}/rewind` — what a rewind would do. Read-only.
 - `POST /api/chat/sessions/{session}/rewind` — restore files to the end of turn N.

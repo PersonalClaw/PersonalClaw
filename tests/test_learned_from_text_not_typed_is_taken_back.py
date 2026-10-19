@@ -123,6 +123,9 @@ def test_memory_history_can_undo_the_retraction(store):
         "Revise the plan with this feedback:\n\nno, keep the cache",
         "The plan below was reviewed and approved. Continue this conversation.\n\n# Plan",
         "thanks, that helps\n[LUMON PERSONA]\nUse a Lumon-inspired persona. Wrong: 'I found it'",
+        "use pnpm\n\n[REPLY STYLE: Plain]\nThe user asked for plainer prose. It's not just X",
+        # What the plain style's block opened with before reply styles: a lesson learned then
+        # still carries it, and taking that lesson back is this module's job.
         "use pnpm\n\n[NATURAL VOICE] The user asked for plainer prose. It's not just X",
     ],
 )
@@ -291,3 +294,14 @@ def test_a_prompt_the_platform_ships_for_its_own_work_is_not_a_source(store):
     assert shipped is not None and shipped.content.strip(), "the precondition: a shipped prompt"
     labels = [label for label, _text in composed_text.composed_sources()]
     assert "the saved prompt @task-title" not in labels
+
+
+def test_each_reply_styles_instructions_are_a_source_to_review_against(store):
+    """A learned line that matches a reply style's text may have come from it, so each bundled
+    style is one of the texts a learned line is checked against."""
+    from personalclaw import reply_style
+
+    labels = [label for label, _text in composed_text.composed_sources()]
+    for style in reply_style.STYLES:
+        if style.id != reply_style.DEFAULT:
+            assert f"the {style.title} reply style's instructions" in labels, style.id

@@ -31,7 +31,7 @@ decision and evidence for it, with real substance on each side.
 **What a person did not type is not theirs.** The per-turn captures read the words the
 person typed this turn (:func:`personalclaw.own_words.own_words`), never the message the
 model was sent, which also holds a saved prompt's text in place of its ``@name``, an
-attached file's text, a theme's persona and natural voice's instructions, or nothing of
+attached file's text, a theme's persona and a reply style's instructions, or nothing of
 theirs at all when an automation started the turn; consolidation reads their saved rows the
 same way (``history.consolidation_line``). Text the user pasted stays trusted for the model,
 since they pasted it on purpose, but it is material for the answer and not a correction or a

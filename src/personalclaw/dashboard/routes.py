@@ -702,6 +702,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     # Chat
     app.router.add_post("/api/chat", chat.api_chat)
     app.router.add_get("/api/chat/sessions", chat.api_chat_sessions)
+    app.router.add_get("/api/chat/reply-styles", chat.api_chat_reply_styles)
     app.router.add_post("/api/chat/sessions", chat.api_chat_session_create)
     app.router.add_post("/api/chat/sessions/cleanup", chat.api_chat_sessions_cleanup)
     app.router.add_get("/api/chat/screen-frame", chat.api_chat_screen_state)
@@ -754,7 +755,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_get("/api/recent-projects", chat.api_recent_projects)
     app.router.add_patch("/api/chat/sessions/{session}/color", chat.api_chat_session_color)
     app.router.add_patch(
-        "/api/chat/sessions/{session}/natural-voice", chat.api_chat_session_natural_voice
+        "/api/chat/sessions/{session}/reply-style", chat.api_chat_session_reply_style
     )
     # Context injection (App Kit — silent background context)
     app.router.add_post("/api/chat/sessions/{session}/context", chat.api_chat_session_context)

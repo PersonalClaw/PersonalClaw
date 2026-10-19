@@ -354,6 +354,7 @@ OWNER_ONLY_READS: list[tuple[str, str]] = [
     ("GET", "/api/chat/folders"),
     ("GET", "/api/chat/tags"),
     ("GET", "/api/chat/tag-columns"),
+    ("GET", "/api/chat/reply-styles"),
     ("GET", "/api/chat/screen-frame"),
     ("GET", "/api/chat/image-input"),
     ("GET", "/api/sessions/context"),

@@ -14,6 +14,7 @@ import { idleRunState } from '../../../lib/workPhase'
 import { rewindPreviewText } from '../../../lib/rewindPreview'
 import { useComposerData } from '../../../lib/useComposerData'
 import { deliverableToOpenSession } from '../sessionDelivery'
+import { useReplyStyle } from '../useReplyStyle'
 import { sessionTemplatePatch } from '../sessionTemplate'
 import { buildOptimizerContext } from '../optimizerContext'
 import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, pruneBlocks, asSent, takeIn } from '../pasteBlocks'
@@ -28,7 +29,7 @@ import { repliesToSpeak } from '../useChatVoice'
 // Everything that decides the next turn and sends it: the draft and its recall history, the
 // mentioned files, knowledge and artifacts, the pasted blocks, the uploads and screen captures,
 // optimize, the slash commands, the agent/model/approval/task-mode selection and its persistence,
-// natural voice, the memory mode and project of a chat not yet started, the routing chip, Stop,
+// the reply style, the memory mode and project of a chat not yet started, the routing chip, Stop,
 // and `send` itself, which creates the session on a new chat. The chat's other regions send
 // through it (follow-up chips, widget actions, a comment on an open file). `ChatComposer.tsx`
 // draws it.
@@ -200,12 +201,7 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
   // Memoizing the promise makes concurrent callers await the SAME creation.
   const ensureInFlightRef = useRef<Promise<string> | null>(null)
   const [selection, setSelection] = useState<ComposerValue>({ agent: initialAgent, model: 'Auto', approval: 'normal', taskMode: 'agent', reasoning: '' })
-  // Natural voice: the per-conversation scope. `choice` is what this
-  // conversation states; `effective`/`source` are the backend's resolution against
-  // the bound agent's definition — never recomputed here. `source: ''` means "no
-  // conversation yet" (a brand-new chat), where the pill shows the choice instead.
-  const [naturalVoice, setNaturalVoice] = useState<{ choice: '' | 'on' | 'off'; effective: boolean; source: string; agentDefault: boolean }>(
-    { choice: '', effective: false, source: '', agentDefault: false })
+  const replyStyle = useReplyStyle(() => sessionRef.current)
 
   // Restore the composer selection from the resumed session's binding, once both
   // the binding (from detail) and the discovered-agent catalog have loaded. ACP
@@ -324,10 +320,7 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
       // Persist a pre-start reasoning-effort pick (applySelection couldn't, since the
       // session didn't exist yet).
       if (selection.reasoning) await persistSelection('this reasoning effort', api.setReasoningEffort(created.key, selection.reasoning))
-      // Natural voice: a pre-start pick lands here for the same reason — without
-      // it the pill would read "Plain" while turn 1 ran without the instruction, which
-      // is the exact "reports itself on while doing nothing" shape.
-      if (naturalVoice.choice) await persistSelection('this natural-voice setting', api.setSessionNaturalVoice(created.key, naturalVoice.choice))
+      await replyStyle.persistOnCreate(created.key)
       return created.key
     })()
     ensureInFlightRef.current = p
@@ -864,27 +857,6 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
   const persistSelection = <T,>(what: string, p: Promise<T>): Promise<T | void> =>
     p.catch((e) => { notify(`Couldn't apply ${what} to this session: ${String((e as Error)?.message || e)}`, 'error') })
 
-  /** Natural voice: set the per-conversation scope, then adopt the backend's
-   *  RE-RESOLVED answer rather than assuming the click won. The resolution order lives
-   *  once, server-side (`natural_voice.NATURAL_VOICE_PRECEDENCE`), so the pill can only
-   *  stay honest by displaying what came back — a locally-computed label would be a
-   *  second copy of that order, free to drift from the one the turn uses.
-   *
-   *  Before the session exists there is nothing to PATCH, so the choice is held locally
-   *  with `source: ''` (the pill then shows the choice, not an effect) and persisted by
-   *  `ensureSession` at create — the same shape as a pre-start reasoning-effort pick. */
-  async function selectNaturalVoice(choice: '' | 'on' | 'off') {
-    const s = sessionRef.current
-    if (!s) { setNaturalVoice((v) => ({ ...v, choice, source: '' })); return }
-    const r = await persistSelection('this natural-voice setting', api.setSessionNaturalVoice(s, choice))
-    if (r) setNaturalVoice({
-      choice: (r.natural_voice || '') as '' | 'on' | 'off',
-      effective: !!r.natural_voice_effective,
-      source: r.natural_voice_source || '',
-      agentDefault: !!r.natural_voice_agent_default,
-    })
-  }
-
   function applySelection(patch: Partial<ComposerValue>) {
     const nextSel = { ...selection, ...patch }
     setSelection(nextSel)
@@ -1048,18 +1020,10 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     // which the backend refuses on a non-persistent session) reflect the real
     // posture of a reopened chat instead of the 'persistent' default.
     setMemoryMode((d.memory_mode || 'persistent') as MemoryMode)
-    // Natural voice — restore the composer pill from the RESOLVED state the
-    // backend sent, so a reopened chat shows what actually takes effect (including
-    // an agent-supplied default) rather than reverting to "agent default, off".
-    setNaturalVoice({
-      choice: ((d.natural_voice || '') as '' | 'on' | 'off'),
-      effective: !!d.natural_voice_effective,
-      source: d.natural_voice_source || '',
-      agentDefault: !!d.natural_voice_agent_default,
-    })
+    replyStyle.restore(d)
   }
 
   return {
-    setRoutingSuggestion, acpFor, activatePlanMode, adoptDetail, applySelection, applyTemplate, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerFocused, composerRef, data, displayCapture, ensureSession, focusComposerSoon, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, naturalVoice, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pasteBlocks, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, quoteToComposer, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selectNaturalVoice, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, setToast, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads,
+    setRoutingSuggestion, acpFor, activatePlanMode, adoptDetail, applySelection, applyTemplate, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerFocused, composerRef, data, displayCapture, ensureSession, focusComposerSoon, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pasteBlocks, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, quoteToComposer, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, setToast, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads,
   }
 }

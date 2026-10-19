@@ -250,7 +250,7 @@ class _ChatSession(ChatQueue):
         "_batch_rejected",
         "color_index",
         "color_theme",
-        "natural_voice",
+        "reply_style",
         "memory_mode",
         "_ephemeral",
         "_pending_context",
@@ -443,12 +443,11 @@ class _ChatSession(ChatQueue):
         self._batch_rejected: str = ""
         self.color_index: int | None = None
         self.color_theme: str = ""
-        # Natural voice, per-conversation scope: a TRI-state
-        # ("" | "on" | "off"), not a bool. "" means this conversation states
-        # nothing and inherits the bound agent's preference; "off" is a deliberate
-        # override of an agent that asks for it. Overriding here never edits the
-        # agent — see personalclaw/natural_voice.py for the resolution order.
-        self.natural_voice: str = ""
+        # Reply style, per-conversation scope: a style id, or "" when this conversation states
+        # nothing and follows its agent (then the platform). "default" is a deliberate choice of
+        # no style over an agent that asks for one. Choosing here never edits the agent; the
+        # order is personalclaw/reply_style.py's REPLY_STYLE_PRECEDENCE.
+        self.reply_style: str = ""
         if memory_mode not in VALID_MEMORY_MODES:
             raise ValueError(
                 f"invalid memory_mode {memory_mode!r}, must be one of {VALID_MEMORY_MODES}"
@@ -873,12 +872,10 @@ class _ChatSession(ChatQueue):
             "never_archive": self.never_archive,
             "color_index": self.color_index,
             "color_theme": self.color_theme,
-            # The per-conversation tri-state only. The RESOLVED pair
-            # (natural_voice_effective / natural_voice_source) is added by the
-            # session-detail and natural-voice handlers, not here: resolving needs
-            # the bound agent's definition, and this method runs once per row of
-            # the session list — one uncached AppConfig.load() per row.
-            "natural_voice": self.natural_voice,
+            # This conversation's own choice only. The RESOLVED style, its source and the
+            # preview are added by the session-detail and reply-style handlers, not here:
+            # resolving reads the config, and this method runs once per row of the session list.
+            "reply_style": self.reply_style,
             "memory_mode": self.memory_mode,
             "forked_from": self.forked_from,
             # The origin tag (a hidden worker's, a channel's, or the name of the app that started
@@ -1472,7 +1469,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         """Write any DIRTY session to its JSONL file — messages or metadata.
 
         The message-count half of this guard (``or not session.messages``) is gone (#2969).
-        ``_dirty`` already means "something changed"; the colour and natural-voice handlers
+        ``_dirty`` already means "something changed"; the colour and reply-style handlers
         set only that and nothing else, so on a conversation with no turns yet their writes
         were accepted `200 {"ok": true}` and then dropped. Whether the change was a turn or
         a piece of metadata is ``save_session_to_history``'s question, not this loop's — and

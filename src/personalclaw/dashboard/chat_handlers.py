@@ -192,6 +192,22 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
 
     if not isinstance(color_theme, str) or color_theme not in {"", *persona_themes()}:
         color_theme = ""
+    # Reply style, per-conversation scope. Accepted on the send body as well as on its own
+    # PATCH so a choice made in the composer BEFORE the first send lands with that first turn,
+    # and held to the PATCH route's rule: a value outside the closed set is a client bug, not a
+    # reset, so the send is refused before anything is kept or run.
+    reply_style: str | None = None
+    if "reply_style" in body:
+        from personalclaw.reply_style import STYLE_IDS, normalize_choice
+
+        raw_style = body.get("reply_style")
+        reply_style = normalize_choice(raw_style)
+        if reply_style == "" and raw_style != "":
+            return json_error(
+                "bad_request",
+                message=f'reply_style must be "" or one of {list(STYLE_IDS)}',
+                status=400,
+            )
     if not isinstance(agent, str) or not (agent == "" or _AGENT_NAME_RE.match(agent)):
         _emit_agent_assignment(str(session_name or ""), str(agent), outcome="denied_invalid")
         return web.json_response({"error": "invalid agent name"}, status=400)
@@ -255,13 +271,8 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
 
     if "color_theme" in body:
         session.color_theme = color_theme
-    # Natural voice, per-conversation scope. Accepted on the send body as
-    # well as on its own PATCH so a choice made in the composer BEFORE the first
-    # send lands with that first turn (the session does not exist yet to PATCH).
-    if "natural_voice" in body:
-        from personalclaw.natural_voice import normalize_conversation_choice
-
-        session.natural_voice = normalize_conversation_choice(body.get("natural_voice"))
+    if reply_style is not None:
+        session.reply_style = reply_style
 
     # The user's message is taken in here, whether it runs now, steers the running turn or waits
     # in the queue: the links written or pasted into it are the user's for this chat's web_fetch.
@@ -1110,11 +1121,10 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             # fork temporary/incognito). The session-list endpoint already returns
             # this; the detail endpoint must too, or a reopened chat looks persistent.
             "memory_mode": getattr(session, "memory_mode", "persistent") or "persistent",
-            # Natural voice — the RESOLVED pair, for the same reason as
-            # memory_mode: the composer pill must restore to what actually takes
-            # effect (including an agent-supplied default), and it must not
-            # re-derive the resolution order to work that out.
-            **_natural_voice_payload(session),
+            # Reply style — the RESOLVED style and its preview, for the same reason as
+            # memory_mode: the composer must restore to what actually takes effect, and it must
+            # not re-derive the resolution order to work that out.
+            **_reply_style_payload(session),
             # Branch lineage — see the resolution block above the return.
             "forked_from": forked_from,
             "forked_from_title": forked_from_title,
@@ -1212,10 +1222,9 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
     # out of the box.
     if not session.workspace_dir:
         session.workspace_dir = default_workspace_dir()
-    # Natural voice: the list-row `to_dict()` carries only the conversation's
-    # own tri-state, so the composer gets the RESOLVED pair here — one config read
-    # for the one session actually open, not one per row of the session list.
-    return web.json_response({**session.to_dict(), **_natural_voice_payload(session)})
+    # Reply style: the list-row `to_dict()` carries only the conversation's own choice, so the
+    # composer gets the RESOLVED style here: one config read for the one session open.
+    return web.json_response({**session.to_dict(), **_reply_style_payload(session)})
 
 
 def _stop_reach_report(session: _ChatSession) -> dict:
@@ -2826,7 +2835,7 @@ async def api_chat_session_color(request: web.Request) -> web.Response:
     # exactly why a body that never mentions `color_index` must not be read as the same
     # request: an agent that PATCHes with the wrong key name ("colour") used to get
     # `200 {"ok": true}` and have silently erased the colour the user picked (#2970).
-    # The house rule is already stated thirty lines below, at api_chat_session_natural_voice:
+    # The house rule is already stated thirty lines below, at api_chat_session_reply_style:
     # a value outside the closed set is a client bug, not "inherit". So is a missing one.
     # Same shape as the `nothing_to_set` refusal the /lifecycle sibling already returns.
     if "color_index" not in body:
@@ -2847,34 +2856,46 @@ async def api_chat_session_color(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "color_index": ci})
 
 
-def _natural_voice_payload(session: _ChatSession) -> dict[str, object]:
-    """The composer's natural-voice state for *session*, resolved server-side.
+def _reply_style_payload(session: _ChatSession) -> dict[str, object]:
+    """The composer's reply-style state for *session*, resolved server-side.
 
-    Carries what this conversation states, what the bound agent's definition
-    carries, and the RESOLVED pair (effective + which scope decided). Resolved
-    here rather than in the frontend on purpose: the resolution order exists
-    exactly once, in ``natural_voice.NATURAL_VOICE_PRECEDENCE``, and a frontend
-    that re-derived it would be a second statement of it, free to drift.
+    What this conversation states, what its agent states, the RESOLVED style with the scope that
+    decided it, and the preview of what the next turn carries for its voice. Resolved here, not
+    in the frontend: the order exists once, in ``reply_style.REPLY_STYLE_PRECEDENCE``.
     """
-    from personalclaw import natural_voice as nv
+    from personalclaw import reply_style as rs
+    from personalclaw.dashboard.chat_utils import persona_block
 
-    agent_on = nv.agent_default(session.agent or "")
-    resolved = nv.resolve(session.natural_voice, agent_on)
+    preview = rs.preview(session, persona_block)
     return {
-        "natural_voice": session.natural_voice,
-        "natural_voice_agent_default": agent_on,
-        "natural_voice_effective": resolved.enabled,
-        "natural_voice_source": resolved.source,
+        "reply_style": session.reply_style,
+        "reply_style_agent_default": rs.agent_default(session.agent or ""),
+        "reply_style_effective": preview["style"],
+        "reply_style_source": preview["source"],
+        "reply_style_preview": preview,
     }
 
 
-async def api_chat_session_natural_voice(request: web.Request) -> web.Response:
-    """PATCH /api/chat/sessions/{session}/natural-voice — set the per-conversation scope.
+async def api_chat_reply_styles(request: web.Request) -> web.Response:
+    """GET /api/chat/reply-styles — the reply styles a conversation or an agent can choose."""
+    from personalclaw import reply_style as rs
 
-    Body ``{"natural_voice": "" | "on" | "off"}``. ``""`` clears the override so
-    the conversation inherits the bound agent's preference again. Responds with
-    the re-resolved state so the composer shows what actually takes effect
-    instead of assuming its own click won.
+    return web.json_response(
+        {
+            "styles": [
+                {"id": s.id, "title": s.title, "description": s.description} for s in rs.STYLES
+            ],
+            "precedence": list(rs.REPLY_STYLE_PRECEDENCE),
+        }
+    )
+
+
+async def api_chat_session_reply_style(request: web.Request) -> web.Response:
+    """PATCH /api/chat/sessions/{session}/reply-style — set the per-conversation scope.
+
+    Body ``{"reply_style": "" | "default" | "plain" | "terse" | "conversational"}``. ``""`` resets
+    the conversation so it follows its agent (then the platform) again. Responds with the
+    re-resolved state and preview, so the composer shows what actually takes effect.
     """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
@@ -2887,32 +2908,29 @@ async def api_chat_session_natural_voice(request: web.Request) -> web.Response:
         return json_error("invalid_json", status=400)
     if not isinstance(body, dict):
         return json_error("invalid_body", status=400)
-    from personalclaw.natural_voice import normalize_conversation_choice
+    from personalclaw.reply_style import STYLE_IDS, normalize_choice
 
-    # ABSENT IS NOT "INHERIT". The rule stated below is the whole point of this handler,
-    # and it did not cover its own missing-field case: `body.get("natural_voice", "")`
-    # turned `{}` into the explicit-clear value, so an empty body silently dropped the
-    # override at `200 ok` — the same defect as /color, /pin and /folder (#2970).
-    if "natural_voice" not in body:
+    # ABSENT IS NOT "RESET": an empty body must not drop a choice the owner made (#2970).
+    if "reply_style" not in body:
         return json_error(
             "bad_request",
-            message="body must include 'natural_voice' (use \"\" to inherit the agent default)",
+            message="body must include 'reply_style' (use \"\" to follow the agent's style)",
             status=400,
         )
-    raw = body.get("natural_voice", "")
-    choice = normalize_conversation_choice(raw)
-    # A value outside the closed set is a client bug, not "inherit" — reject it
-    # rather than silently clearing an override the user set earlier.
-    if choice == "" and str(raw or "").strip() != "":
+    raw = body.get("reply_style")
+    choice = normalize_choice(raw)
+    # A value outside the closed set is a client bug, not a reset: refuse it rather than
+    # silently clearing the choice already made.
+    if choice == "" and raw != "":
         return json_error(
             "bad_request",
-            message='natural_voice must be "", "on" or "off"',
+            message=f'reply_style must be "" or one of {list(STYLE_IDS)}',
             status=400,
         )
-    session.natural_voice = choice
+    session.reply_style = choice
     session._dirty = True
     state.push_sessions_update()
-    return web.json_response({"ok": True, **_natural_voice_payload(session)})
+    return web.json_response({"ok": True, **_reply_style_payload(session)})
 
 
 _MAX_CONTEXT_PER_SOURCE = 10

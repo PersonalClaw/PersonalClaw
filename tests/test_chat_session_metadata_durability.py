@@ -242,7 +242,7 @@ def test_an_empty_buffer_never_overwrites_a_persisted_transcript(tmp_path):
 
 
 def test_the_flush_loop_no_longer_gates_on_message_count(tmp_path):
-    """The colour and natural-voice handlers set ``_dirty`` and nothing else."""
+    """The colour and reply-style handlers set ``_dirty`` and nothing else."""
     state = _make_state(tmp_path)
     session = state.get_or_create_session(_NAME)
     session.color_index = 5

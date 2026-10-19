@@ -649,12 +649,12 @@ def continue_kept_chat(
         session.color_index = meta["color_index"]
     if meta.get("color_theme"):
         session.color_theme = meta["color_theme"]
-    # Natural voice, per-conversation scope. Re-normalized on read so a
-    # hand-edited meta line can only ever yield a member of the closed tri-state.
-    if meta.get("natural_voice"):
-        from personalclaw.natural_voice import normalize_conversation_choice
+    # Reply style, per-conversation scope. Re-normalized on read so a hand-edited meta line
+    # can only ever yield one of the bundled styles.
+    if meta.get("reply_style"):
+        from personalclaw.reply_style import normalize_choice
 
-        session.natural_voice = normalize_conversation_choice(meta["natural_voice"])
+        session.reply_style = normalize_choice(meta["reply_style"])
     raw_tags = meta.get("tags")
     if isinstance(raw_tags, list):
         session.tags = [str(t) for t in raw_tags if isinstance(t, str) and t]
@@ -1011,10 +1011,10 @@ def save_session_to_history(
             meta_line["color_index"] = session.color_index
         if session.color_theme:
             meta_line["color_theme"] = session.color_theme
-        # Written only when the conversation actually states something ("on"/"off"),
-        # matching every field above — an inheriting session adds no key.
-        if session.natural_voice:
-            meta_line["natural_voice"] = session.natural_voice
+        # Written only when the conversation states a style, matching every field above: an
+        # inheriting session adds no key.
+        if session.reply_style:
+            meta_line["reply_style"] = session.reply_style
         if session.tags:
             meta_line["tags"] = list(session.tags)
         # Lifecycle. Written only when non-default, matching every field above —

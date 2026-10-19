@@ -292,6 +292,9 @@ _SPECIAL = {
     ("agent", "log_level"): "DEBUG",
     ("agent", "provider"): "acp:claude-code",
     ("agent", "bot_name"): "TestBot",
+    # agent.reply_style is enum-constrained (reply_style.STYLE_IDS): a generated "default-x"
+    # reads back as `default`. `terse` is a real non-default that proves the field round-trips.
+    ("agent", "reply_style"): "terse",
     ("agent", "soft_stop_budget_secs"): 12.5,
     ("dashboard", "widget_density"): "less",
     # stream_reveal is enum-constrained (smooth|immediate) — a generated "smooth-x"

@@ -1,4 +1,4 @@
-[NATURAL VOICE] The user asked for plainer prose. This changes HOW you write. It
+The user asked for plainer prose. This changes HOW you write. It
 changes nothing about WHAT you say.
 
 Write the way a knowledgeable colleague writes when they are trying to be clear:
@@ -33,4 +33,3 @@ WHAT DOES NOT CHANGE
   safety warning written plainly is still the whole warning.
 - If the shorter sentence would be ambiguous, or would drop a condition the reader
   needs, write the longer, clearer one. Clarity outranks brevity every time.
-[END NATURAL VOICE]

@@ -124,7 +124,7 @@ SESSION_WRITES: list[tuple[str, str, dict]] = [
     ("POST", "/api/chat/sessions/{session}/reasoning-effort", {"reasoning_effort": "high"}),
     ("POST", "/api/chat/sessions/{session}/workspace-dir", {"workspace_dir": "/"}),
     ("PATCH", "/api/chat/sessions/{session}/color", {"color_index": 1}),
-    ("PATCH", "/api/chat/sessions/{session}/natural-voice", {"natural_voice": "on"}),
+    ("PATCH", "/api/chat/sessions/{session}/reply-style", {"reply_style": "terse"}),
     ("PATCH", "/api/chat/sessions/{session}/title", {"title": "pwned"}),
     ("PATCH", "/api/chat/sessions/{session}/pin", {"pinned": True}),
     ("PATCH", "/api/chat/sessions/{session}/folder", {"folder_id": ""}),

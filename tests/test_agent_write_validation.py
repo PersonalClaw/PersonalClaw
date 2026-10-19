@@ -53,7 +53,7 @@ def _declared(kind: type) -> tuple[str, ...]:
     return tuple(f.name for f in dataclasses.fields(AgentProfile) if f.type is kind)
 
 
-# 13 declared-string fields, 1 declared-bool field, 3 declared-list fields.
+# 14 declared-string fields and 3 declared-list fields; no declared-bool field.
 _STR_FIELDS = _declared(str)
 _LIST_FIELDS = _declared(list)
 
@@ -61,7 +61,6 @@ _LIST_FIELDS = _declared(list)
 #: bare truthiness coercion is how a JSON `true` becomes the number 1 (or the string "True")
 #: for a field that declares neither.
 _NOT_A_STRING = (12345, {"a": 1}, [1, 2], None, True, 3.5)
-_NOT_A_BOOL = (12345, "true", "false", {"a": 1}, [1], None)
 _NOT_A_STR_LIST = (12345, "notalist", {"a": 1}, None, True, [1, 2], [{"a": 1}], ["ok", 5])
 
 
@@ -205,15 +204,14 @@ class TestScalarTypesOnCreate:
         assert "zz-probe" not in _agents_on_disk(home), "a refused create persisted the agent"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("bad", _NOT_A_BOOL, ids=repr)
-    async def test_natural_voice_requires_a_real_boolean(self, home, bad):
-        """`bool("false")` is True, so coercing a bool would turn a request to switch a
-        behaviour OFF into one that switches it ON — the defect `config/edit_spec.py` exists
-        to stop re-deriving. The handler previously did exactly `bool(body[...])`."""
-        resp = await _create({"name": "zz-nv", "natural_voice": bad})
+    @pytest.mark.parametrize("bad", ("shouty", "on", "Terse!", "x" * 40), ids=repr)
+    async def test_reply_style_must_be_a_known_style(self, home, bad):
+        """A reply style is one of a closed set (or "" to state none): a string that names no
+        style is refused rather than stored as a choice that resolves to nothing."""
+        resp = await _create({"name": "zz-rs", "reply_style": bad})
         assert resp.status == 400
-        assert "natural_voice" in _error_text(resp)
-        assert "zz-nv" not in _agents_on_disk(home)
+        assert "reply_style" in _error_text(resp)
+        assert "zz-rs" not in _agents_on_disk(home)
 
 
 class TestListTypesOnCreate:
@@ -489,7 +487,7 @@ _FULL_BODY = {
     "description": "a real agent",
     "system_prompt": "be helpful",
     "voice": "dry",
-    "natural_voice": True,
+    "reply_style": "terse",
     "model": "m1",
     "approval_mode": "auto",
     "skills": ["s1", "s2"],

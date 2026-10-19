@@ -1078,10 +1078,16 @@ def _boot_config() -> AppConfig:
         print(f"Created default config: {config_path()}")
 
     from personalclaw.config.migrations import load_and_persist_migrations
+    from personalclaw.reply_style import backfill_home
     from personalclaw.routing.rates import adopt_prices_set_before
 
     # The prices set before in a file of their own join the config before it is loaded.
     adopt_prices_set_before()
+    # Natural voice's stored choices become reply styles before anything reads them.
+    try:
+        backfill_home()
+    except Exception:  # noqa: BLE001 - a backfill that cannot run never blocks startup
+        logging.getLogger(__name__).warning("Reply style backfill failed", exc_info=True)
     return load_and_persist_migrations()
 
 

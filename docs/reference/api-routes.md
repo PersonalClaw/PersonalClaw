@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **930 registrations** over **755 distinct paths** — 923 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **931 registrations** over **756 distinct paths** — 924 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -24,7 +24,7 @@ The 128 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
-| `/api/chat` | 81 | 69 |
+| `/api/chat` | 82 | 70 |
 | `/api/knowledge` | 71 | 58 |
 | `/api/memory` | 52 | 44 |
 | `/api/workflows` | 50 | 45 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 924 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -302,6 +302,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/chat/image-input` | whether an attached image reaches the model as one. |
 | `POST` | `/api/chat/mode` | set the tool APPROVAL mode (whether tools auto-approve). |
 | `POST` | `/api/chat/nav/resolve-links` | batch-summarize bare links. |
+| `GET` | `/api/chat/reply-styles` | the reply styles a conversation or an agent can choose. |
 | `GET` | `/api/chat/screen-frame` | can this session share its screen? |
 | `POST` | `/api/chat/screen-frame` | stage one screen frame for the next chat turn. |
 | `POST` | `/api/chat/screen-frame/pin` | promote one frame to an ordinary attachment. |
@@ -336,7 +337,6 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PATCH` | `/api/chat/sessions/{session}/lifecycle` | archive/restore one session. |
 | `GET` | `/api/chat/sessions/{session}/map` | the durable session-map marks. |
 | `POST` | `/api/chat/sessions/{session}/model` | set model for a chat session. |
-| `PATCH` | `/api/chat/sessions/{session}/natural-voice` | set the per-conversation scope. |
 | `GET` | `/api/chat/sessions/{session}/organize` | the chat's proposal now, without waiting. |
 | `POST` | `/api/chat/sessions/{session}/organize/accept` | apply the proposal. |
 | `POST` | `/api/chat/sessions/{session}/organize/decline` | remember the refusal. |
@@ -351,6 +351,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/chat/sessions/{session}/queue/{queue_id}` | cancel a queued message. |
 | `POST` | `/api/chat/sessions/{session}/reasoning-effort` | set reasoning effort. |
 | `POST` | `/api/chat/sessions/{session}/regenerate` | regenerate the last assistant reply. |
+| `PATCH` | `/api/chat/sessions/{session}/reply-style` | set the per-conversation scope. |
 | `POST` | `/api/chat/sessions/{session}/resume` | load a history session into a session. |
 | `GET` | `/api/chat/sessions/{session}/rewind` | what a rewind would do. Read-only. |
 | `POST` | `/api/chat/sessions/{session}/rewind` | restore files to the end of turn N. |

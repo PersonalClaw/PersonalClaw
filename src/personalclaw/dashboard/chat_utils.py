@@ -807,17 +807,26 @@ def _maybe_inject_persona(message: str, color_theme: str, is_new: bool) -> str:
     if the user switches themes mid-session, so injecting once is correct rather
     than a limitation.
     """
-    if not is_new or color_theme not in _PERSONA_THEMES:
+    if not is_new:
         return message
+    return message + persona_block(color_theme)
+
+
+def persona_block(color_theme: str) -> str:
+    """What a new chat's first turn appends for *color_theme*'s persona, exactly; ``""`` for a
+    theme with none or when its snippet cannot be rendered. Read by the turn and by the reply
+    style preview (``reply_style.preview``), so the preview shows what the turn sends."""
+    if color_theme not in _PERSONA_THEMES:
+        return ""
     try:
         text = _cached_persona(color_theme)
-        if text:
-            tag = f"{color_theme.upper().replace('-', ' ')} PERSONA"
-            return message + f"\n[{tag}]\n{text}\n[END {tag}]\n\n"
-        return message
     except Exception:
         logger.warning("Persona injection failed for theme %r", color_theme, exc_info=True)
-        return message
+        return ""
+    if not text:
+        return ""
+    tag = f"{color_theme.upper().replace('-', ' ')} PERSONA"
+    return f"\n[{tag}]\n{text}\n[END {tag}]\n\n"
 
 
 @functools.lru_cache(maxsize=len(_PERSONA_THEMES) or 1)
