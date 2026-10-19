@@ -314,6 +314,60 @@ A local run's reuse of a recorded pass is under [Verdict reuse](#verdict-reuse).
 A workflow command changed without its entry, or an entry changed without its workflow, fails
 the row.
 
+### Planning a run
+
+`tools/ci/plan.py` (`python -m tools.ci plan <tier>`, changed paths on stdin or `--paths`, `-z`
+for NUL-separated) turns a diff into the jobs to run and prints them as JSON: `tier`, `full`,
+`jobs`, `reasons` (why each job is in), `full_reasons` and `rails_floor`. The area map is
+generated from the catalogue's declared inputs; `tools/ci/areas.toml` holds only the explicit
+overrides (`--areas`, beside the catalogue by default):
+
+- **A declared input schedules its job.** A changed path a job's `inputs` reach schedules that
+  job. So does a path one of its steps runs: a script or folder a step names, and a sibling
+  script that script imports.
+- **Only an input names a path.** A path is known when an input other than the whole tree
+  names it: an include selects it, or an exclude leaves it out by name. A step or an override
+  schedules a job but makes no path known.
+- **An `[[override]]` only adds.** Each names its `paths`, the catalogue `jobs` it adds (or
+  `whole_tier = true`) and a `reason`. The loader refuses an override with no reason or one
+  naming a job the catalogue lacks. Since it makes no path known, an override never takes a
+  job out of a plan: a path no input names still plans the whole tier, the override's jobs and
+  reason in it. The overrides today are the workflows (`.github/workflows/`), `tools/ci/`, the
+  locks and manifests and the image smoke's own inputs (all whole-tier), the installer
+  (`static`) and the SDK snapshot script (`apps-contract`).
+- **Always planned:** the `rails` job, every `security` job, every `live` job, and each job an
+  `after` of a planned one names.
+- **Fail-safe: the whole tier.** An empty diff, a path no input but the whole tree names, a
+  path that is not a plain path inside the repository (empty, absolute, `..`, not in its
+  normal form, a newline, a carriage return or a NUL in it, not a string), a list that cannot
+  be read, `--full`, and any error inside the planner. A pathspec that matches every path
+  (`:(glob)**`, `:/`, `*`) still schedules its job but names no path, so a path only such
+  inputs reach runs the whole tier: a forgotten path runs everything, never nothing.
+- **Pathspecs are read as git reads them.** The loader takes a pathspec only in git's normal
+  form (no `.` or empty part, since git reads `.` as the tree but `:(top).` as nothing) and
+  refuses a wildcard the planner would read otherwise than git: a backslash, a `[` it never
+  closes, a `/` or a `[:name:]` in a class, `literal` with `glob`. A test holds the matcher to
+  `git ls-files` over the forms it accepts.
+- **The rails floor** is the median minutes of `ci.yml`'s passing `rails` job over a folder of
+  telemetry history (`--history`). A head it cannot measure from (no job list, minutes that
+  are not a finite positive number) is skipped; with none it reads
+  `{"minutes": null, "runs": 0}`, never a guessed number.
+- **Exit codes:** 0 with a plan; 2, printing nothing, when the tier has no job in the catalogue
+  (`weekly` and `release` have none yet) or the catalogue or its overrides cannot be read, so a
+  caller plans everything.
+
+`run --changed` plans the same way, from `git diff --name-only --no-renames -z` against the
+base, so a move names both the path it left and the path it reached.
+
+Every job but `e2e` and `apps-contract` declares the whole tree today. `e2e`'s inputs are the
+whole tree less the paths that cannot reach the browser run, each exclusion carrying its reason
+in the catalogue. Narrowing another job is a change of its own: its inputs, the reason, and a
+planted path in `tests/rails/test_ci_plan_tree.py`, which also plants a path per override and
+finds the override's reason in its plan.
+
+To add a rule, prefer a declared input of the job it affects; use an override only for a path
+that is no job's input but changes a job's result, and give it a reason that says how.
+
 ## The verdict
 
 `tools/ci/verdict.py` is the one function that turns a plan's job results into green or red. It
@@ -821,10 +875,8 @@ runs no `test-macos`). It reads only the file it is given, and no workflow runs 
 - **`run`** goes in catalogue order, each job after the jobs its `after` names, every shard of
   each, and judges each job's records with `verdict.decide` against the head and the partner
   revisions that job reads. It keeps going after a red unless `--fail-fast` is given, and runs
-  nothing more after an interrupted job. `--changed` runs only the jobs whose inputs the diff
-  from the base touches, plus every security job and every job an `after` of a chosen one names.
-  A changed path that no job's inputs cover runs the whole tier. `run-job` always runs the job
-  it is given.
+  nothing more after an interrupted job. `--changed` runs the jobs `tools/ci/plan.py` plans for
+  the diff from the base (see "Planning a run"). `run-job` always runs the job it is given.
 - **Exit codes:** 0 every planned job ran here and passed; 1 a job ran and failed, git asked
   for a credential, or a job made the real home's `.personalclaw`; 2 a job could not run here,
   was interrupted or left no record, or the input could not be read: an unknown job or tier, a

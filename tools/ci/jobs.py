@@ -27,9 +27,8 @@ revision it would name is not what it ran.
 against the head and the partner revisions that job reads. A tier with no job is input it cannot
 run. A job for another platform family, in a container, or needing a toolchain or partner
 checkout this machine lacks, cannot run here: it is named, and the run is PARTIAL, never green.
-After an interrupted job nothing more runs. ``--changed`` runs only the jobs whose inputs the
-diff touches; a security job is never left out, and a changed path no job's inputs cover runs the
-whole tier.
+After an interrupted job nothing more runs. ``--changed`` runs the jobs
+:func:`tools.ci.plan.plan` plans for the diff from the base.
 
 Exit codes are :mod:`tools.ci.run`'s: 0 every planned job ran here and passed; 1 a job ran and
 failed, or broke its isolation; 2 a job could not run here, was interrupted, or left no record,
@@ -60,7 +59,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import catalogue, run, shards, verdict
+from . import catalogue, plan, run, shards, verdict
 from .catalogue import Catalogue, Job, Step
 
 #: What a GitHub-hosted runner gives every step that a step run here gets too: ``CI``, which the
@@ -497,43 +496,11 @@ def ordered(jobs: Sequence[Job]) -> list[Job]:
     return done
 
 
-def select(
-    jobs: Sequence[Job], changed: Sequence[str], matches: Callable[[Job], bool]
-) -> list[Job]:
-    """The jobs a change runs: each whose inputs it touches (``matches``), every security job,
-    and every job an ``after`` of a selected one names. A changed path no job's inputs cover
-    runs them all; so does a change of nothing, which proves nothing about what to leave out."""
-    if not changed:
-        return list(jobs)
-    chosen = {j.id for j in jobs if j.security == "security" or matches(j)}
-    by_id = {j.id: j for j in jobs}
-    grew = True
-    while grew:
-        grew = False
-        for job_id in list(chosen):
-            for other in by_id[job_id].after:
-                if other in by_id and other not in chosen:
-                    chosen.add(other)
-                    grew = True
-    return [j for j in jobs if j.id in chosen]
-
-
 def _changed(host: Host, base: str) -> list[str]:
-    return [p for p in _git(host, "diff", "--name-only", base).splitlines() if p]
-
-
-def _matcher(host: Host, base: str) -> Callable[[Job], bool]:
-    def matches(job: Job) -> bool:
-        return bool(_git(host, "diff", "--name-only", base, "--", *job.inputs).strip())
-
-    return matches
-
-
-def _uncovered(host: Host, base: str, jobs: Sequence[Job], changed: Sequence[str]) -> bool:
-    covered: set[str] = set()
-    for job in jobs:
-        covered |= set(_git(host, "diff", "--name-only", base, "--", *job.inputs).splitlines())
-    return bool(set(changed) - covered)
+    """Every path the diff from ``base`` touches: both sides of a move, since the job whose
+    inputs lost the file changed too, and each name as it is, never quoted."""
+    out = _git(host, "diff", "--name-only", "--no-renames", "-z", base)
+    return [p for p in out.split("\0") if p]
 
 
 def run_tier(
@@ -544,20 +511,23 @@ def run_tier(
     work: Path,
     *,
     changed: bool = False,
+    overrides: Sequence[catalogue.Override] = (),
     fail_fast: bool = False,
 ) -> tuple[int, list[Outcome], verdict.Verdict]:
     """Run every job of ``tier`` here, and judge each job's records against the head and the
-    partner revisions it reads."""
+    partner revisions it reads. ``changed``: only the jobs the diff from the base plans, with
+    the area map's ``overrides``."""
     jobs = list(cat.tier(tier))
     if not jobs:
         raise Unreadable(f"the {tier} tier has no job in the catalogue, so a run proves nothing")
     for job in jobs:
         _owned_env(job)
     if changed:
-        base = _base(host, options)
-        paths = _changed(host, base)
-        if not _uncovered(host, base, jobs, paths):
-            jobs = select(jobs, paths, _matcher(host, base))
+        paths = _changed(host, _base(host, options))
+        chosen = plan.plan(cat, tier, paths, overrides=overrides, root=host.root)
+        for reason in chosen.full_reasons:
+            print(f"plan: the whole tier: {reason}", file=sys.stderr)
+        jobs = [j for j in jobs if j.id in chosen.jobs]
     jobs = ordered(jobs)
     head, _ = _state(host)
     # What each job's records must name: the head, and the partner revisions that job reads.
@@ -618,9 +588,13 @@ def _parser(prog: str, description: str) -> argparse.ArgumentParser:
     return parser
 
 
+def _catalogue_path(args: argparse.Namespace) -> Path:
+    return Path(args.catalogue or catalogue.REPO / catalogue.CATALOGUE)
+
+
 def _setup(args: argparse.Namespace) -> tuple[Catalogue, Host, Options, Path]:
     root = catalogue.REPO
-    path = args.catalogue or root / catalogue.CATALOGUE
+    path = _catalogue_path(args)
     cat = catalogue.load(catalogue._text(path, str(path)), str(path))
     host = Host.this(root)
     if args.workers is not None and args.workers < 1:
@@ -698,8 +672,16 @@ def run_main(argv: list[str]) -> int:
         if args.tier not in catalogue.TIERS:
             raise Unreadable(f"{args.tier!r} is not a tier: one of {', '.join(catalogue.TIERS)}")
         cat, host, options, work = _setup(args)
+        overrides = plan.read_beside(_catalogue_path(args), cat) if args.changed else ()
         code, outcomes, judged = run_tier(
-            cat, args.tier, host, options, work, changed=args.changed, fail_fast=args.fail_fast
+            cat,
+            args.tier,
+            host,
+            options,
+            work,
+            changed=args.changed,
+            overrides=overrides,
+            fail_fast=args.fail_fast,
         )
     except (Unreadable, catalogue.CatalogueError, ValueError, OSError) as exc:
         problems = exc.problems if isinstance(exc, catalogue.CatalogueError) else [str(exc)]
