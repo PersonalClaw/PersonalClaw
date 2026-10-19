@@ -1261,6 +1261,14 @@ change to one region touches that region's files:
   (`TagBoard.tsx`), with a row's folder and tag menu, and `SessionPeek.tsx` is
   the peek panel a row opens. `ChatHistorySidePanel.tsx` is the recent-chats
   panel a new chat opens.
+- **The panes** — `web/src/pages/chat/panes/`. `useChatPanes.ts` keeps the
+  panels docked beside the chat, each on the URL so Back closes it and a reload
+  reopens it: the Activity rail (`?activity`) with the files and links the
+  transcript touched, the cancel for a fan-out's subagents and the side chat;
+  the open file (`?file`); the new chat's history panel (`?history`); and a
+  tool's full result (`?result`), fetched from the session when its card asks.
+  `ChatPanes.tsx` draws the docked panels, the Session Map's drawer on the
+  mobile form among them, and `ToolResultModal` the full result.
 
 ## Prompt entities
 

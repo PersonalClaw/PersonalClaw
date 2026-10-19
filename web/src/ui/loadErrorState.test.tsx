@@ -771,8 +771,8 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // fell back to title matches in silence. It now says the search failed and offers a retry. A
   // fifth, Regenerate title's answer, read a failed request as no answer; it now says so.
   // 3 → 2: the knowledge picker's search moved with the composer to
-  // `pages/chat/composer/ContextPickers.tsx`, below.
-  'pages/ChatPage.tsx': 2,
+  // `pages/chat/composer/ContextPickers.tsx`, below. `pages/ChatPage.tsx` then left this budget: its
+  // last two moved with the docked panes to `pages/chat/panes/useChatPanes.ts`, below, still owed.
   // 3 → 2: the lifecycle-hooks read stopped answering `{}` on a failure (#3725). It now says "Could
   // not read the agent's hooks." The two left are the trigger-name lookup and the active-MCP list.
   'pages/agents/AgentDetail.tsx': 2,
@@ -781,6 +781,8 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // The knowledge picker's search, moved out of `ChatPage` with the composer: a failed search reads
   // as "No matches", the same debt under its new address.
   'pages/chat/composer/ContextPickers.tsx': 1,
+  // The two that moved out of `ChatPage` with the docked panes, the same debt under their new address.
+  'pages/chat/panes/useChatPanes.ts': 2,
   'pages/chat/SessionSkillsReview.tsx': 1,
   // Includes the one this file already documented as a deliberate keep: an instant-paint seed that
   // only ever SETS `project` when it has data, so a failed seed cannot mask the page's real `loadErr`.

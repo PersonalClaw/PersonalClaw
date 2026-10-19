@@ -79,7 +79,9 @@ describe('the terminal close reports a failure instead of dropping the tab', () 
 
 describe('no surface flips local state on a write it discarded', () => {
   const SRC = join(process.cwd(), 'src')
-  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\./.test(n))
+  // `.ts` too: a page's handlers can live in a controller hook (the chat's regions are `use*.ts`), and
+  // a census that read only `.tsx` would lose a member the moment one moved there.
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n))
   const codeOf = (f: string) => readSource(f)
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
@@ -135,8 +137,9 @@ describe('no surface flips local state on a write it discarded', () => {
     }
     expect(found.sort()).toEqual([
       // A UI preference. A failed persist means the panel simply is not remembered next time;
-      // nothing on screen claims otherwise and there is no server-side resource involved.
-      'pages/ChatPage.tsx:sideOpen',
+      // nothing on screen claims otherwise and there is no server-side resource involved. (Moved
+      // out of ChatPage with the chat's docked panes.)
+      'pages/chat/panes/useChatPanes.ts:sideOpen',
       // `KnowledgeDetailPage.deleteKnowledgeAnnotation` is GONE from this list, and the row it used
       // to carry was wrong rather than merely stale. It read: "Reconciles instead of asserting: the
       // delete is followed by `reloadAnnotations()`, so a failed one brings the row back. The

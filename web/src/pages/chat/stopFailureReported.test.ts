@@ -23,7 +23,7 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 // that cancel failed silently, the original sends anyway — so the user gets BOTH their revision and
 // the message they thought they had replaced. A duplicate send, from a control that reported nothing.
 //
-// Six sites, across the page and its composer and history regions, one reporter. The reporter is at MODULE scope for
+// Six sites, across the chat's composer, history and panes regions, one reporter. The reporter is at MODULE scope for
 // exactly that reason: a per-component copy is the drift this converges away from, and TypeScript
 // caught the second scope when the first draft made it a closure.
 //
@@ -42,11 +42,13 @@ const COMPOSER = join(process.cwd(), 'src', 'pages', 'chat', 'composer', 'useCha
 const COMPOSER_VIEW = join(process.cwd(), 'src', 'pages', 'chat', 'composer', 'ChatComposer.tsx')
 /** The chat history page's controller, where the retag run is cancelled. */
 const HISTORY = join(process.cwd(), 'src', 'pages', 'chat', 'history', 'useChatHistory.ts')
+/** The chat's docked panes, where the Activity rail cancels a fan-out's subagents. */
+const PANES = join(process.cwd(), 'src', 'pages', 'chat', 'panes', 'useChatPanes.ts')
 const page = readSource(SRC)
 const composer = readSource(COMPOSER)
 const history = readSource(HISTORY)
-// The page and its composer and history regions, read as one: the six sites are split between them.
-const raw = [page, composer, readSource(COMPOSER_VIEW), history].join('\n')
+// The page and its composer, history and panes regions, read as one: the six sites are split between them.
+const raw = [page, composer, readSource(COMPOSER_VIEW), history, readSource(PANES)].join('\n')
 // `=>` neutralised before any bounded scan: the catch bodies ARE arrow functions.
 const scan = raw.replace(/=>/g, '⇒')
 
