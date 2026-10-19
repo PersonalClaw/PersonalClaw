@@ -26,6 +26,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The desktop app's icon, menu-bar image and loading mark are the PersonalClaw gradient mark.**
 - **CI runs once per pull request push instead of twice: a push to a branch other than main no longer starts its own CI run, so a branch is checked once it has a pull request.**
 - **A burst of merges runs the suite once, on its newest commit, instead of once per commit; a commit whose suite was replaced by a newer one stays red, marked "superseded by" that commit.**
+- **`make check` and `make gate` run the change and merge tiers' CI jobs on this machine, as CI runs them, and `python -m tools.ci run-job <id>` runs one of them.**
 
 ### Security
 

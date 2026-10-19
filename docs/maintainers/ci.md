@@ -157,9 +157,10 @@ candidate's own suite, so a candidate could delete one.
 ## The catalogue
 
 `tools/ci/catalogue.toml` lists CI's validation jobs, one `[[job]]` entry each, and
-`tools/ci/catalogue.py` reads it into typed jobs. Nothing runs from it yet: `ci.yml` still runs
-its own `run:` lines. The contract table's row "every catalogue command is the workflow's" holds
-each entry to the `ci.yml` jobs it maps to, in both directions:
+`tools/ci/catalogue.py` reads it into typed jobs. `python -m tools.ci run-job` and `run` run its
+jobs on a maintainer's machine (see "Local runs"); `ci.yml` still runs its own `run:` lines. The
+contract table's row "every catalogue command is the workflow's" holds each entry to the `ci.yml`
+jobs it maps to, in both directions:
 
 - Each step is one of those jobs' `run:` lines, token for token, from the same working directory
   and with the same step `env`. An entry's steps come in `ci.yml`'s order, and none comes twice.
@@ -168,8 +169,11 @@ each entry to the `ci.yml` jobs it maps to, in both directions:
   toolchain names, the shell around a step (its options, and the branch on which base there is,
   with the scan's arm that has none), the fetch of that base, a value set through `GITHUB_ENV`,
   and the lint job's wrapper and feedback relay. A listed line that no mapped job runs any more
-  fails the row too, so the list holds only lines that exist. One line may be a step of more
-  than one entry on a job: `npm ci`, which each of them needs when it runs alone.
+  fails the row too, so the list holds only lines that exist. No line is a step of two entries.
+- An install is toolchain, never a step: `uv sync`, `npm ci` and the Playwright browser install
+  are refused as steps, and each install an entry's toolchain names (`uv-sync`, `npm-ci`,
+  `chromium`) is one its `ci.yml` jobs run. Each entry names every install it needs, so one that
+  shares a `ci.yml` job with another (`browse-live` with `e2e`) does not lean on the other's.
 - The cap, the runner, the Python (the one `setup-uv` sets before the entry's steps), the
   environment, the JUnit reports and the shard count are the jobs'.
 - An entry whose pytest steps name a security-marked module, by its file or by a folder that
@@ -197,12 +201,18 @@ Every entry declares:
   the advisory feed, the package index or the shard history;
 - `toolchain` and `cache`;
 - `security`: `security` when its result is security evidence, else `ordinary`;
-- `timeout_min`.
+- `timeout_min`, 2 or more, since a local run stops a job a minute before its cap.
 
-An entry may also set `platform`, `python`, `live`, `reuse`, `env`, `workers`, `mem_gb`,
-`junit`, `shards`, `needs_node`, `needs_browser`, `full_history`, `after` (the jobs whose output
-it uses) and `install_exemptions`, each exemption with its reason. A key the reader does not
-know is refused, so a misspelt field fails rather than being ignored.
+An entry may also set `platform`, `python`, `live`, `reuse`, `env`, `workers`, `workers_env`,
+`mem_gb`, `junit`, `shards`, `needs_node`, `needs_browser`, `full_history`, `after` (the jobs
+whose output it uses) and `install_exemptions`, each exemption with its reason. A key the reader
+does not know is refused, so a misspelt field fails rather than being ignored.
+
+`workers` is the job's worker count, a whole number or `auto`. Every pytest step's `-n` must equal
+it, and a step that passes `-n` needs it. `workers_env` names the variable through which another
+tool reads it: `web-unit`'s `VITEST_MAX_WORKERS`, which `ci.yml` sets to the runner's core count.
+A job that sets `workers` passes it through a pytest `-n` or a `workers_env`. `workers_env` may
+not name a variable the runner owns.
 
 A job has either a `command` or a `script` with its `container`, never both. A command is a list
 of steps. Each step is an argv run from the repository root, or from `workdir` under it, with its
@@ -210,7 +220,9 @@ own `env` set on top of the job's: the workflow step's own `env:`, such as a fla
 skip into a failure. A value only the runner knows is written as a placeholder: `{runner_temp}`,
 `{shard}` or `{base}` (the commit a diff is taken against). An argument or an `env` value
 containing `$`, or a placeholder the catalogue does not have, is refused, so no step reads the
-environment around the catalogue. An `env` name is a variable name (`[A-Z_][A-Z0-9_]*`), and a
+environment around the catalogue. An `env` name is a variable name (`[A-Z_][A-Z0-9_]*`), and not
+one the runner owns (`tools.ci.run.runner_owns`: `PATH`, `HOME`, `TMPDIR`, the locale, git's
+variables and `PERSONALCLAW_HOME`), so no entry the loader reads is refused when it runs. A
 `workdir` holds no `$` and no placeholder. A sharded job's steps name `{shard}`; an unsharded
 job's do not.
 
@@ -228,9 +240,17 @@ that leaves the repository is refused in either form.
 - `ttl:<hours>`: within that many hours, the hours a positive whole number.
 
 A `security` job or a `live` job is never reused, by TTL or by tree: its evidence is about the
-run, not the tree. A job that reads the advisory feed is live, because what the feed says
-changes with the time of the run and not with the tree, so the reader refuses one without
-`live = true`. `catalogue.parse_reuse` is the one parser of these values; any other reader
+run, not the tree. Each external input has a kind (`catalogue.EXTERNAL_INPUT_KINDS`), and the
+reader holds a job's reuse to it:
+
+- `revision` (`apps-partner`): its commit is part of the result's identity, so tree reuse is
+  allowed.
+- `plan-only` (`shard-history`): it decides which shard runs a file, never what is tested, so
+  tree reuse is allowed.
+- `unpinned` (`package-index`, `browser-download`): what it fetches can change while the tree
+  does not, so a job that reads one is never reused by tree. A TTL is allowed.
+- `live` (`advisory-feed`): it changes with the time of the run and not with the tree, so the
+  reader refuses a job that reads it without `live = true`. `catalogue.parse_reuse` is the one parser of these values; any other reader
 imports it.
 
 A local run's reuse of a recorded pass is under [Verdict reuse](#verdict-reuse).
@@ -242,7 +262,10 @@ A local run's reuse of a recorded pass is under [Verdict reuse](#verdict-reuse).
   refused if this tier lacks the `rails` job, lacks either suite, holds either as anything but
   `security`, or runs either off its own platform: `python-suite` runs on an `ubuntu-` runner
   and `python-suite-macos` on a `macos-` one. So no other security job stands in for the suite's
-  run, and neither platform's run is lost.
+  run, and neither platform's run is lost. `[tier.merge] jobs` lists the tier's jobs, checked
+  both ways: every job whose tiers claim `merge` is in the list, and the list names only such
+  jobs, so dropping a job from the merge tier takes two edits. A catalogue without the list is
+  refused.
 - **change:** the fast jobs, run before a commit.
 - **breadth:** the checks run on `main` that are too slow or too wide for every pull request,
   among them the adversarial security corpus.
@@ -720,17 +743,72 @@ and to the job summary, and `--json` writes the figures:
 
 ## Local runs
 
-`tools/ci/run.py` runs one CI job on a maintainer's machine from an empty environment (#3920). It
-has no command yet; the catalogue's `run-job` and `run` verbs will call it.
+`python -m tools.ci run-job <id> [--shard i/N]` runs one catalogue job here, and
+`python -m tools.ci run <tier> [--changed] [--fail-fast]` runs every job of a tier
+(`tools/ci/jobs.py`). `make check` is `run change` and `make gate` is `run merge`.
+
+- **CI's commands.** A job's toolchain installs run first, as `ci.yml` runs them, then each step,
+  word for word. A step's environment is built from nothing: what a GitHub runner gives every
+  step (`CI=true`, which the e2e job's Playwright config reads for its JSON report, retries and
+  server; never `GITHUB_ACTIONS`, which says the run is on GitHub), then the workflow's
+  (`UV_PYTHON_PREFERENCE`), then the job's, then the step's; of the caller's it gets only
+  `PATH`. `{runner_temp}` is the job's own temporary folder, `{shard}` the shard asked for, and
+  `{base}` `--base` or the merge base with `origin/main`.
+- **Caches, managed Pythons and the project venv** go under `.local/run-job/cache`, never the
+  caller's own: uv's cache and Pythons, the venv `uv sync` installs, npm's cache and the
+  Playwright browsers. `npm ci` reinstalls the checkout's own `node_modules`, as it does on CI,
+  and `uv venv` replaces a venv an earlier run left in the checkout (`UV_VENV_CLEAR`), where
+  CI's checkout is new each run.
+- **The job's time** is its `timeout_min` less a minute, shared by every step, so the loader
+  refuses a `timeout_min` under 2. A pytest step still running when it runs out prints
+  `possible xdist hang` and lists its group's live processes before the group is stopped.
+- **Its reports.** Each JUnit report the job declares must exist and be newer than the job's
+  start, or the job is red: a pytest that died before writing one is red, not green.
+- **One record per job, or per shard.** `verdict.job_record` writes its key, result, head,
+  partner revisions, attempt, whether it needed a rerun (never, here), which quarantined tests
+  failed (read from the reports' `quarantine_issue` property), where a shard plan came from, a
+  local worker count, and each step's argv, exit and seconds. The partner revisions are those
+  of the partners the job's own external inputs name. `verdict.from_job_records` reads records
+  back and refuses any other shape, NaN and Infinity among them. A checkout that was not clean
+  at one head before and after the job leaves no record, since the head it would name is not
+  the tree it ran; so does a partner checkout the job reads that was not at one head before and
+  after it. The partner checkout (`.ci-apps`) and the e2e job's reports (`web/e2e-report.json`,
+  `web/blob-report/`) are git-ignored, so they leave the checkout clean.
+- **What runs here.** A job for the other platform family, in a container, or needing a
+  toolchain or a partner checkout (`.ci-apps`) this machine lacks is named and not run. A
+  sharded job run here plans its shards with equal weights, since `shards plan` reads CI's
+  telemetry through the API; its record says `plan: offline`, and on GitHub that path is never
+  taken. `--workers N` replaces the catalogue's count, is written in the record, and is refused
+  when `GITHUB_ACTIONS` is set.
+- **`run`** goes in catalogue order, each job after the jobs its `after` names, every shard of
+  each, and judges each job's records with `verdict.decide` against the head and the partner
+  revisions that job reads. It keeps going after a red unless `--fail-fast` is given, and runs
+  nothing more after an interrupted job. `--changed` runs only the jobs whose inputs the diff
+  from the base touches, plus every security job and every job an `after` of a chosen one names.
+  A changed path that no job's inputs cover runs the whole tier. `run-job` always runs the job
+  it is given.
+- **Exit codes:** 0 every planned job ran here and passed; 1 a job ran and failed, or git asked
+  for a credential; 2 a job could not run here, was interrupted or left no record, or the input
+  could not be read: an unknown job or tier, a tier with no job (`weekly` and `release` have
+  none yet), an option given twice, or a job env naming a variable the runner owns, which the
+  loader refuses too.
+- **Not yet:** nothing reuses a recorded pass, so `run` runs every job; and nothing reads these
+  records on GitHub.
+
+Each step runs through `tools/ci/run.py`, which runs one command from an empty environment
+(#3920):
 
 - **A folder of its own.** Each job gets a new scratch folder, which only its owner can open, with
-  its own home, PersonalClaw home and temporary folder. A folder that already exists is refused,
-  so no earlier job's home or record is reused.
-- **An environment built from nothing.** The job sees only its `PATH`, the scratch `HOME`,
-  `PERSONALCLAW_HOME` and `TMPDIR`, a fixed locale (`LANG` and `LC_ALL` are `C.UTF-8`), git's
-  variables, and what the job declares. No token, ssh agent or `GIT_DIR` of the caller's reaches
-  it. A declared variable that would replace one the runner sets, the locale among them, or any
-  `GIT_CONFIG*` one, is refused.
+  its own home and temporary folder. A folder that already exists is refused, so no earlier job's
+  home or record is reused.
+- **An environment built from nothing.** The job sees only its `PATH`, the scratch `HOME` and
+  `TMPDIR`, a fixed locale (`LANG` and `LC_ALL` are `C.UTF-8`), git's variables, and what the job
+  declares. No token, ssh agent or `GIT_DIR` of the caller's reaches it. A declared variable that
+  would replace one the runner sets, the locale among them, or any `GIT_CONFIG*` one, is refused.
+- **The default PersonalClaw home.** Nothing sets `PERSONALCLAW_HOME`, as on a CI runner, so the
+  job's PersonalClaw home is the default one, `~/.personalclaw` under its scratch `HOME`. A job
+  may not declare `PERSONALCLAW_HOME` either, so no catalogue entry points a job at a home
+  outside its scratch folder.
 - **A git of its own.** git reads no system file, and its global file is the scratch one. An empty
   `credential.helper` on git's command line clears every helper a file names, so no helper of the
   caller's or of any file runs. The helper git does run first is a tripwire. It answers nothing,

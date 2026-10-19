@@ -484,6 +484,19 @@ def _plant(
     return Control(name, plant, fails, expect)
 
 
+def _plants(name: str, rel: str, edits: tuple[tuple[str, str], ...], expect: str = "") -> Control:
+    """A violation planted by several edits of one file, each of which must find its text."""
+
+    def plant(root: Path) -> None:
+        text = (root / rel).read_text(encoding="utf-8")
+        for old, new in edits:
+            assert old in text, f"the plant {name!r} found no {old!r} in {rel}"
+            text = text.replace(old, new, 1)
+        _write(root, rel, text)
+
+    return Control(name, plant, True, expect)
+
+
 def _toolchain_row(
     name: str, check: Callable[[Tree], list[str]], controls: tuple[Control, ...]
 ) -> Row:
@@ -5232,9 +5245,10 @@ ROWS = (*ROWS, SUITE_TEMP_STAYS_OUT_OF_THE_HOME)
 # in ci.yml's order, none twice. The other way, every run: line of a mapped job is one entry's
 # step, except the closed set of lines below that validate nothing. Its cap, runner, Python,
 # environment, reports and shard count are the jobs'; an entry whose steps run a security-marked
-# module is security posture; and its posture and tiers are the ones this table gives it. Every
-# ci.yml job is an entry's or orchestration. The table is the one a reader of the catalogue goes
-# by.
+# module is security posture; and its posture and tiers are the ones this table gives it. An
+# install is toolchain, never a step: each install an entry's toolchain names is one its ci.yml
+# jobs run. Every ci.yml job is an entry's or orchestration. The table is the one a reader of the
+# catalogue goes by.
 
 
 @dataclass(frozen=True)
@@ -5287,6 +5301,8 @@ _NOT_COMMANDS: dict[str, str] = {
     """,  # noqa: E501
     "an install the job's toolchain names": r"""
         uv sync --locked --extra dev
+        npm ci
+        npx playwright install --with-deps chromium
         sudo apt-get update -qq
         sudo apt-get install -y --no-install-recommends tmux
         if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
@@ -5356,10 +5372,6 @@ _NOT_COMMANDS: dict[str, str] = {
         wc -c /tmp/lint-feedback/violations.md /tmp/lint-feedback/pr.txt
     """,  # noqa: E501
 }
-
-#: The one line more than one entry on a ci.yml job may hold as a step: the install each of them
-#: needs when it runs alone, which the job runs once for all of them.
-_SHARED_SETUP = frozenset({("npm", "ci")})
 
 
 def _run_lines(run: str) -> Iterator[tuple[str, list[str] | None]]:
@@ -5501,6 +5513,22 @@ def _claim(
             )
 
 
+def _installs(job: catalogue.Job, ci_jobs: list[Any], bad: list[str]) -> None:
+    """Each install the entry's toolchain names is one its ci.yml jobs run."""
+    ran = {
+        tool
+        for ci_job in ci_jobs
+        for step in ci_job.get("steps") or []
+        if "run" in step
+        for _, words in _run_lines(str(step["run"]))
+        if words
+        for prefix, tool in catalogue.INSTALLS
+        if tuple(words[: len(prefix)]) == prefix
+    }
+    for tool in sorted({t for _, t in catalogue.INSTALLS} & set(job.toolchain) - ran):
+        bad.append(f"{job.id}: toolchain names {tool}, and none of its ci.yml jobs installs it")
+
+
 def _same_job(job: catalogue.Job, jobs: dict[str, Any], mine: list[_Line], bad: list[str]) -> None:
     """The entry's cap, runner, Python, env, reports and shards are its ci.yml jobs'."""
     ci_jobs = _CATALOGUE_JOBS[job.id].ci_jobs
@@ -5609,6 +5637,7 @@ def _catalogue_check(root: Path) -> list[str]:
         if missing:
             continue
         _claim(job, [line for c in entry.ci_jobs for line in lines[c]], claims, bad)
+        _installs(job, [jobs[c] for c in entry.ci_jobs], bad)
         mine = [line for line, holders in claims.items() if job.id in holders]
         _same_job(job, jobs, mine, bad)
         _posture(job, marked, bad)
@@ -5618,7 +5647,7 @@ def _catalogue_check(root: Path) -> list[str]:
                 f"ci.yml job {line.job} runs {line.text()} ({line.name!r}),"
                 " and no entry's command holds it"
             )
-        elif len(holders) > 1 and line.argv not in _SHARED_SETUP:
+        elif len(holders) > 1:
             bad.append(
                 f"ci.yml job {line.job} runs {line.text()} once, and it is a step of"
                 f" {', '.join(holders)}"
@@ -5633,6 +5662,15 @@ def _catalogue_scaffold(root: Path) -> None:
         _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
     for rel in _tree_marked():
         _write(root, rel, _MARKED)
+
+
+def _without_merge_list(root: Path) -> None:
+    """The tree's catalogue with its [tier.merge] table, the header and its list, removed."""
+    path = root / catalogue.CATALOGUE
+    text = path.read_text(encoding="utf-8")
+    start = text.index("[tier.merge]\n")
+    end = text.index("]\n", text.index("jobs = [", start)) + 2
+    _write(root, catalogue.CATALOGUE, text[:start] + text[end:])
 
 
 EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
@@ -5664,8 +5702,8 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a command one token off the workflow's",
             catalogue.CATALOGUE,
-            '"-n", "4", "--dist"',
-            '"-n", "8", "--dist"',
+            '"worksteal", "-q", "tests/rails"',
+            '"worksteal", "-qq", "tests/rails"',
             expect="rails: command step 1",
         ),
         _plant(
@@ -5680,7 +5718,7 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             catalogue.CATALOGUE,
             '"@visual"], workdir = "web", env',
             '"@visual"], env',
-            expect="e2e: command step 3",
+            expect="e2e: command step 1",
         ),
         _plant(
             "an entry naming a ci.yml job that does not exist",
@@ -5743,13 +5781,18 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         ),
         Control("the catalogue removed", _remove(catalogue.CATALOGUE), expect="is missing"),
         # Both directions, in order: every validating run: line is one entry's step.
-        _plant(
+        _plants(
             "an entry missing a step ci.yml runs: the suite without its pytest",
             catalogue.CATALOGUE,
-            '  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests",'
-            ' "--shard-list", "{runner_temp}/shard.txt",'
-            ' "--junitxml=reports/junit-test-shard-{shard}.xml"] },\n',
-            "",
+            (
+                (
+                    '  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q",'
+                    ' "tests", "--shard-list", "{runner_temp}/shard.txt",'
+                    ' "--junitxml=reports/junit-test-shard-{shard}.xml"] },\n',
+                    "",
+                ),
+                ('timeout_min = 55\nworkers = "auto"\n', "timeout_min = 55\n"),
+            ),
             expect="ci.yml job test-shard runs uv run pytest -n auto --dist worksteal -q tests",
         ),
         _plant(
@@ -5780,7 +5823,7 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             ' workdir = "web" },\n'
             '  { argv = ["npx", "playwright", "test", "--grep-invert", "@visual"], workdir = "web",'
             ' env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report.json" } },\n',
-            expect="e2e: command step 4 is out of ci.yml's order",
+            expect="e2e: command step 2 is out of ci.yml's order",
         ),
         _plant(
             "a step listed twice",
@@ -5857,11 +5900,13 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             expect="security: security is ordinary, but its steps run security-marked modules",
         ),
         # The posture and tiers this row holds each entry to.
-        _plant(
-            "an entry out of the merge tier",
+        _plants(
+            "an entry out of the merge tier, and out of its list",
             catalogue.CATALOGUE,
-            'id = "audit"\ntiers = ["merge"]',
-            'id = "audit"\ntiers = ["breadth"]',
+            (
+                ('  "audit",\n]', "]"),
+                ('id = "audit"\ntiers = ["merge"]', 'id = "audit"\ntiers = ["breadth"]'),
+            ),
             expect="audit: tiers are breadth, and this row says merge",
         ),
         _plant(
@@ -5883,9 +5928,67 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "an entry reused that this row says is never",
             catalogue.CATALOGUE,
+            'timeout_min = 45\nafter = ["web-build"]\n',
+            'reuse = "tree"\ntimeout_min = 45\nafter = ["web-build"]\n',
+            expect="package: reuse is tree, and this row says never",
+        ),
+        # The loader's rules on what the tree does not pin, the merge tier's list, the worker
+        # count and installs, each failing on the real catalogue.
+        _plant(
+            "a job that reads an unpinned input reused by tree",
+            catalogue.CATALOGUE,
             'security = "ordinary"\npython = "3.12.15"\ntimeout_min = 5\n',
             'security = "ordinary"\nreuse = "tree"\npython = "3.12.15"\ntimeout_min = 5\n',
-            expect="client: reuse is tree, and this row says never",
+            expect="client: reuse is tree, but it reads package-index, which the tree does not pin",
+        ),
+        _plant(
+            "a merge job the merge tier's list leaves out",
+            catalogue.CATALOGUE,
+            '  "package",\n',
+            "",
+            expect="package: its tiers claim merge, and [tier.merge] does not list it",
+        ),
+        _plant(
+            "the merge tier's list naming a job that does not claim merge",
+            catalogue.CATALOGUE,
+            '  "static",\n',
+            '  "static",\n  "security",\n',
+            expect="security: [tier.merge] lists it, and it is no job whose tiers claim merge",
+        ),
+        Control(
+            "no merge tier list",
+            _without_merge_list,
+            expect="the catalogue has no [tier.merge] jobs list",
+        ),
+        _plant(
+            "a pytest -n that is not the job's workers",
+            catalogue.CATALOGUE,
+            '"-n", "4", "--dist"',
+            '"-n", "8", "--dist"',
+            expect="rails: a step passes pytest -n 8, and workers is 4",
+        ),
+        _plant(
+            "a pytest -n with no workers declared",
+            catalogue.CATALOGUE,
+            "timeout_min = 10\nworkers = 4\n",
+            "timeout_min = 10\n",
+            expect="rails: a step passes pytest -n, so workers is required",
+        ),
+        _plant(
+            "an install as a step",
+            catalogue.CATALOGUE,
+            '  { argv = ["npm", "run", "typecheck:web"] },\n',
+            '  { argv = ["npm", "ci"] },\n  { argv = ["npm", "run", "typecheck:web"] },\n',
+            expect="web-unit: command step 1 is an install (npm ci)",
+        ),
+        _plant(
+            "a toolchain install no ci.yml job of the entry runs",
+            catalogue.CATALOGUE,
+            'id = "package"\ntiers = ["merge"]\ninputs = [":(glob)**"]\nexternal_inputs = []\n'
+            'toolchain = ["uv"]',
+            'id = "package"\ntiers = ["merge"]\ninputs = [":(glob)**"]\nexternal_inputs = []\n'
+            'toolchain = ["uv", "uv-sync"]',
+            expect="package: toolchain names uv-sync, and none of its ci.yml jobs installs it",
         ),
         _plant(
             "the audit not live, and reused by tree",

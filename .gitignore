@@ -27,6 +27,10 @@ htmlcov/
 # breadth.yml). Ignored so copying a CI invocation locally cannot leave a report a
 # `git add -A` would sweep into a commit.
 /reports/
+# The partner checkout of the apps repository, where CI checks it out (ci.yml's apps-contract
+# job) and where `python -m tools.ci run-job apps-contract` reads it. An embedded repository,
+# never this tree's content; ignored so its presence leaves the checkout clean for run-job.
+/.ci-apps/
 
 # Virtualenvs (lives at the repo root: .venv/)
 venv/

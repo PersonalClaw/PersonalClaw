@@ -32,6 +32,10 @@ would exit 0 having judged nothing, and an option given twice is refused, not la
 ``$GITHUB_STEP_SUMMARY`` is set, the verdict's reasons, or why the input could not be read, are
 appended to it.
 
+:func:`job_record` writes, and :func:`from_job_records` reads, the per-job record a local run of a
+catalogue job leaves (``python -m tools.ci run-job``): its key, result, identity, attempt, whether
+it needed a rerun, which quarantined tests failed, and each step's argv, exit and seconds.
+
 Standard library only, with no relative imports, so a trusted job can run it as a script.
 """
 
@@ -39,10 +43,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import NoReturn
 
@@ -250,15 +255,23 @@ def decide_main_push(
     return Verdict(green=False, reasons=reasons, superseded_by=by.pop() if whole else "")
 
 
-def _no_repeats(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    # JSON would keep a repeated key's last value, so a job's failure could be followed by its
-    # success. GitHub never writes a key twice.
-    out: dict[str, object] = {}
-    for key, value in pairs:
-        if key in out:
-            raise Refused(f"needs repeats the key {key!r}")
-        out[key] = value
-    return out
+def _no_repeats_in(what: str) -> Callable[[list[tuple[str, object]]], dict[str, object]]:
+    """A JSON object reader that refuses a repeated key, naming *what* it reads."""
+
+    def no_repeats(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        # JSON would keep a repeated key's last value, so a job's failure could be followed by
+        # its success. GitHub never writes a key twice.
+        out: dict[str, object] = {}
+        for key, value in pairs:
+            if key in out:
+                raise Refused(f"{what} repeats the key {key!r}")
+            out[key] = value
+        return out
+
+    return no_repeats
+
+
+_no_repeats = _no_repeats_in("needs")
 
 
 def from_needs(text: str, identity: Identity, attempt: int = 1) -> list[JobResult]:
@@ -291,6 +304,169 @@ def from_needs(text: str, identity: Identity, attempt: int = 1) -> list[JobResul
         if not isinstance(job["outputs"], dict):
             raise Refused(f"needs.{key}.outputs must be an object")
         out.append(JobResult(key, job["result"], identity, attempt))
+    return out
+
+
+#: The per-job record ``python -m tools.ci run-job`` writes: its schema name, and its fields.
+JOB_RECORD_SCHEMA = "personalclaw.ci.job-record/1"
+_RECORD_KEYS = frozenset(
+    {
+        "schema",
+        "key",
+        "result",
+        "head_sha",
+        "external_revisions",
+        "attempt",
+        "rerun",
+        "quarantined",
+        "plan",
+        "workers",
+        "steps",
+    }
+)
+_STEP_RECORD_KEYS = frozenset({"argv", "exit", "seconds"})
+#: Where a sharded job's file list came from: CI's own plan, or a local run's even split.
+PLANS = frozenset({"ci", "offline"})
+
+
+def job_record(
+    *,
+    key: str,
+    result: str,
+    identity: Identity,
+    steps: Sequence[tuple[Sequence[str], int, float]],
+    attempt: int = 1,
+    rerun: bool = False,
+    quarantined: Sequence[str] = (),
+    plan: str | None = None,
+    workers: int | None = None,
+) -> str:
+    """One job's (or one shard's) result as the JSON :func:`from_job_records` reads.
+
+    ``steps`` are each step's argv as run, its exit status and its seconds. ``rerun`` and
+    ``quarantined`` say whether the pass needed a rerun and which quarantined tests failed, for a
+    reader that keeps only a clean pass. ``plan`` is where a sharded job's list came from (one of
+    :data:`PLANS`), ``workers`` a worker count a local run set in place of the catalogue's.
+    """
+    record: dict[str, object] = {
+        "schema": JOB_RECORD_SCHEMA,
+        "key": key,
+        "result": result,
+        "head_sha": identity.head_sha,
+        "external_revisions": dict(sorted(identity.external_revisions.items())),
+        "attempt": attempt,
+        "rerun": rerun,
+        "quarantined": list(quarantined),
+        "plan": plan,
+        "workers": workers,
+        "steps": [
+            {"argv": list(argv), "exit": code, "seconds": round(seconds, 3)}
+            for argv, code, seconds in steps
+        ],
+    }
+    # Written as JSON a reader in any language takes (no NaN or Infinity), then read back: a
+    # record this module would refuse is never written.
+    try:
+        text = json.dumps(record, sort_keys=True, indent=1, allow_nan=False) + "\n"
+    except ValueError as exc:
+        raise Refused(f"job record {key!r} is not JSON: {exc}") from None
+    from_job_records([text])
+    return text
+
+
+def _whole(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _finite(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _no_constant_in(what: str) -> Callable[[str], object]:
+    """A reader of JSON's non-standard constants that refuses each, naming *what* it reads."""
+
+    def no_constant(name: str) -> object:
+        raise Refused(f"{what} holds {name}, which is not JSON")
+
+    return no_constant
+
+
+def _one_record(text: str, n: int) -> JobResult:
+    where = f"job record {n}"
+    try:
+        data = json.loads(
+            text, object_pairs_hook=_no_repeats_in(where), parse_constant=_no_constant_in(where)
+        )
+    except Refused:
+        raise
+    except RecursionError:
+        raise Refused(f"{where} is nested too deeply to read") from None
+    except ValueError as exc:
+        raise Refused(f"{where} is not JSON: {exc}") from None
+    if not isinstance(data, dict):
+        raise Refused(f"{where} must be an object, got {type(data).__name__}")
+    if set(data) != _RECORD_KEYS:
+        raise Refused(f"{where} must hold exactly {sorted(_RECORD_KEYS)}, got {sorted(data)}")
+    if data["schema"] != JOB_RECORD_SCHEMA:
+        raise Refused(f"{where} has schema {data['schema']!r}, not {JOB_RECORD_SCHEMA!r}")
+    key = data["key"]
+    if not isinstance(key, str) or not key:
+        raise Refused(f"{where} names no job key")
+    where = f"job record {key!r}"
+    if data["result"] not in WORDS:
+        raise Refused(f"{where} has the result {data['result']!r}, which is no job's")
+    revisions = data["external_revisions"]
+    if not isinstance(revisions, dict):
+        raise Refused(f"{where}: external_revisions must be an object")
+    identity = Identity(data["head_sha"], revisions)
+    if not _whole(data["attempt"]) or data["attempt"] < 1:
+        raise Refused(f"{where}: attempt must be a whole number from 1")
+    if not isinstance(data["rerun"], bool):
+        raise Refused(f"{where}: rerun must be true or false")
+    quarantined = data["quarantined"]
+    if not isinstance(quarantined, list) or not all(isinstance(q, str) and q for q in quarantined):
+        raise Refused(f"{where}: quarantined must be a list of test ids")
+    if data["plan"] is not None and data["plan"] not in PLANS:
+        raise Refused(f"{where}: plan is {data['plan']!r}, not one of {sorted(PLANS)} or null")
+    workers = data["workers"]
+    if workers is not None and (not _whole(workers) or workers < 1):
+        raise Refused(f"{where}: workers must be a whole number from 1, or null")
+    steps = data["steps"]
+    if not isinstance(steps, list):
+        raise Refused(f"{where}: steps must be a list")
+    for step in steps:
+        if not isinstance(step, dict) or set(step) != _STEP_RECORD_KEYS:
+            raise Refused(f"{where}: each step holds exactly argv, exit and seconds")
+        argv = step["argv"]
+        if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
+            raise Refused(f"{where}: a step's argv must be a non-empty list of strings")
+        if not _whole(step["exit"]):
+            raise Refused(f"{where}: a step's exit must be a whole number")
+        seconds = step["seconds"]
+        if not _finite(seconds) or seconds < 0:
+            raise Refused(f"{where}: a step's seconds must be a number, finite and 0 or more")
+    if data["result"] == SUCCESS and any(step["exit"] != 0 for step in steps):
+        raise Refused(f"{where} says success, and a step exited non-zero")
+    return JobResult(key, data["result"], identity, data["attempt"])
+
+
+def from_job_records(texts: Iterable[str]) -> list[JobResult]:
+    """The results in the per-job records :func:`job_record` writes, one text per record.
+
+    Like :func:`from_needs` it refuses what it cannot read as a record: a repeated key, NaN or
+    Infinity, a field missing or unknown, a result word that is no job's, an object id that is
+    not a full one, a step's seconds that are not a finite number, or a success with a step that
+    failed. Two records for the same key and attempt are refused, so
+    a failure cannot be followed by a success that hides it.
+    """
+    out: list[JobResult] = []
+    seen: set[tuple[str, int]] = set()
+    for n, text in enumerate(texts, 1):
+        result = _one_record(text, n)
+        if (result.key, result.attempt) in seen:
+            raise Refused(f"two job records for {result.key!r} on attempt {result.attempt}")
+        seen.add((result.key, result.attempt))
+        out.append(result)
     return out
 
 

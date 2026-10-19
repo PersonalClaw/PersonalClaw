@@ -4,7 +4,10 @@ This is the isolation a local run of a CI job stands on (#3920); it holds no sch
 plan or reuse receipt. A job gets a scratch folder of its own (:class:`Scratch`) and an
 environment built from nothing (:func:`job_env`), never from the caller's, so it sees no home,
 PersonalClaw home, temporary folder, token, ssh agent or git repository variable of whoever runs
-it. Its git reads no system file and no global file but the scratch one, and every credential
+it. Its ``HOME`` is the scratch home and nothing sets ``PERSONALCLAW_HOME``, as on a CI runner, so
+its PersonalClaw home is the default one, ``~/.personalclaw`` under that scratch home; a job may
+not declare ``PERSONALCLAW_HOME``, so none points at a home outside its scratch folder. Its git
+reads no system file and no global file but the scratch one, and every credential
 helper a file names is cleared, so no helper of the caller's or of any file runs. The helper git
 does run first is a tripwire: it answers nothing, and each credential request git makes fails the
 run naming what was asked (:func:`run_job`), even when a helper the job names on its own git
@@ -34,7 +37,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import FrameType
@@ -49,6 +52,15 @@ GRACE = 5.0
 #: The prefix of git's configuration variables, which could name a file or a helper of the
 #: caller's. A job's declared env may set none of them, nor any variable the runner sets.
 _GIT_CONFIG = "GIT_CONFIG"
+
+#: The variables a job's declared env may not set although the runner does not set them either:
+#: ``PERSONALCLAW_HOME`` would point the job at a home outside its scratch folder, where the
+#: default one (``~/.personalclaw`` under the scratch ``HOME``) is inside it.
+_REFUSED = frozenset({"PERSONALCLAW_HOME"})
+
+#: The variables :func:`job_env` sets, besides git's configuration ones.
+_RUNNER_SETS = frozenset({"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "GIT_TERMINAL_PROMPT"})
+
 
 #: The longest value the tripwire records of a request's field.
 _FIELD = 200
@@ -81,8 +93,9 @@ with os.fdopen(fd, "a") as out:
 
 @dataclass(frozen=True)
 class Scratch:
-    """A job's own folder: its home, PersonalClaw home and temporary folder, the global git file
-    git makes on its first write, and the tripwire with what it recorded."""
+    """A job's own folder: its home (which holds its PersonalClaw home, the default
+    ``~/.personalclaw``, once the job makes it) and temporary folder, the global git file git makes
+    on its first write, and the tripwire with what it recorded."""
 
     root: Path
 
@@ -95,7 +108,7 @@ class Scratch:
         root.mkdir(mode=0o700)
         root.chmod(0o700)
         scratch = cls(root)
-        for folder in (scratch.home, scratch.personalclaw_home, scratch.tmp):
+        for folder in (scratch.home, scratch.tmp):
             folder.mkdir(mode=0o700)
         fd = os.open(scratch.tripwire, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700)
         with os.fdopen(fd, "w") as out:
@@ -105,10 +118,6 @@ class Scratch:
     @property
     def home(self) -> Path:
         return self.root / "home"
-
-    @property
-    def personalclaw_home(self) -> Path:
-        return self.root / "personalclaw-home"
 
     @property
     def tmp(self) -> Path:
@@ -133,16 +142,22 @@ class Scratch:
         return f"!{shlex.quote(sys.executable)} -I {shlex.quote(str(self.tripwire))}"
 
 
+def runner_owns(name: str) -> bool:
+    """Whether a job's declared env may not set *name*: a variable :func:`job_env` sets, any of
+    git's configuration variables, or one refused though nothing sets it. The catalogue's loader
+    refuses the same names, so an entry it loads never names one."""
+    return name in _RUNNER_SETS or name in _REFUSED or name.startswith(_GIT_CONFIG)
+
+
 def job_env(scratch: Scratch, *, path: str, env: Mapping[str, str] | None = None) -> dict[str, str]:
     """The whole environment of a job: built from nothing, never from ``os.environ``.
 
     *path* is the job's ``PATH``. *env* is what the job declares; it may not replace any variable
-    the runner sets (the locale among them) or set any of git's configuration variables, so a job
-    can't undo the scrub."""
+    the runner sets (the locale among them), set any of git's configuration variables, or set
+    ``PERSONALCLAW_HOME``, so a job can't undo the scrub or leave its scratch home."""
     built = {
         "PATH": path,
         "HOME": str(scratch.home),
-        "PERSONALCLAW_HOME": str(scratch.personalclaw_home),
         "TMPDIR": str(scratch.tmp),
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
@@ -157,7 +172,7 @@ def job_env(scratch: Scratch, *, path: str, env: Mapping[str, str] | None = None
     }
     declared = dict(env or {})
     for key in declared:
-        if key in built or key.startswith(_GIT_CONFIG):
+        if key in built or runner_owns(key):
             raise ValueError(f"a job's declared env may not set {key}: the runner owns it")
     built.update(declared)
     return built
@@ -166,11 +181,14 @@ def job_env(scratch: Scratch, *, path: str, env: Mapping[str, str] | None = None
 @dataclass(frozen=True)
 class Result:
     """How a job's run ended: :data:`OK`, :data:`RED` or :data:`PARTIAL`, the job's own exit
-    status (negative for a signal, as :mod:`subprocess` gives it), and each reason it isn't OK."""
+    status (negative for a signal, as :mod:`subprocess` gives it), each reason it isn't OK, and
+    whether the runner got SIGINT or SIGTERM meanwhile (so a caller stops, even when a credential
+    git asked for made the run RED)."""
 
     code: int
     returncode: int
     violations: tuple[str, ...]
+    interrupted: bool = False
 
 
 class _Noted:
@@ -265,6 +283,7 @@ def run_job(
     path: str,
     env: Mapping[str, str] | None = None,
     grace: float = GRACE,
+    before_stop: Callable[[int], None] | None = None,
 ) -> Result:
     """Run *argv* in *cwd* with :func:`job_env`, in a process group of its own, and say how it
     ended.
@@ -277,6 +296,10 @@ def run_job(
     A timeout or a signal stops the group (:func:`_stop`), and once the job's own process has
     ended, whatever is left of its group gets SIGKILL: whatever the ending, no process of the
     group is left behind.
+
+    *before_stop*, when given, is called with the group's id once the job has run out of time,
+    before the group is stopped, so a caller can say what was still running; what it raises is
+    the caller's, and the group is stopped all the same.
 
     Only the main thread can take SIGINT and SIGTERM, so on any other thread this raises
     :class:`RuntimeError` and starts nothing. *timeout* must be a finite number of seconds above
@@ -303,7 +326,12 @@ def run_job(
         )
         try:
             timed_out = _wait(proc, timeout, noted)
-            if timed_out or noted.signals:
+            if timed_out and before_stop is not None and proc.poll() is None:
+                try:
+                    before_stop(proc.pid)
+                finally:
+                    _stop(proc, grace, noted)
+            elif timed_out or noted.signals:
                 _stop(proc, grace, noted)
         finally:
             _signal_group(proc.pid, signal.SIGKILL)
@@ -326,4 +354,9 @@ def run_job(
         code = PARTIAL
     else:
         code = RED if violations else OK
-    return Result(code=code, returncode=proc.returncode, violations=tuple(violations))
+    return Result(
+        code=code,
+        returncode=proc.returncode,
+        violations=tuple(violations),
+        interrupted=bool(noted.signals),
+    )

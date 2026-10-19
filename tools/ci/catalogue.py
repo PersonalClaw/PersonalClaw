@@ -10,7 +10,8 @@ those jobs that validates something is one entry's step.
 A command is a list of steps, each an argv run from the repository root (or from ``workdir``
 under it), with its own ``env`` set on top of its job's. A value only the runner knows is spelled
 with a placeholder from :data:`PLACEHOLDERS`; a ``$`` in an argument is refused, so no step reads
-the environment behind the catalogue's back.
+the environment behind the catalogue's back. No env names a variable the runner owns
+(:func:`tools.ci.run.runner_owns`), so an entry the loader reads is never refused as it runs.
 
 Reuse is one of ``never``, ``tree`` (the result stands for any run of the same tree and
 external inputs) and ``ttl:<hours>``. :func:`parse_reuse` is the one parser of it. A security
@@ -34,6 +35,8 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from . import run
 
 #: The catalogue, relative to the repository root.
 CATALOGUE = "tools/ci/catalogue.toml"
@@ -79,20 +82,37 @@ TOOLCHAINS = frozenset(
 #: The caches a job restores.
 CACHES = frozenset({"uv", "npm"})
 
-#: What a job reads that the tree does not pin.
-EXTERNAL_INPUTS = frozenset(
-    {
-        "apps-partner",  # the apps repository's checkout
-        "advisory-feed",  # the vulnerability advisories published at the time of the run
-        "package-index",  # an install the lock does not pin
-        "browser-download",  # the browser build the install step fetches
-        "shard-history",  # the telemetry the shard plan is drawn from
-    }
-)
+#: What a job reads that the tree does not pin, by kind:
+#:
+#: - ``revision``: a partner repository's checkout, whose commit is part of the result's identity,
+#:   so a result for one partner commit never stands for another.
+#: - ``plan-only``: it decides which shard runs a file, never what is tested.
+#: - ``unpinned``: what it fetches can change while the tree does not, so a job that reads one is
+#:   never reused by tree (a TTL still bounds how long its result stands).
+#: - ``live``: it is about the time of the run, so a job that reads one is live and never reused.
+EXTERNAL_INPUT_KINDS: dict[str, str] = {
+    "apps-partner": "revision",  # the apps repository's checkout
+    "advisory-feed": "live",  # the vulnerability advisories published at the time of the run
+    "package-index": "unpinned",  # an install the lock does not pin
+    "browser-download": "unpinned",  # the browser build the install step fetches
+    "shard-history": "plan-only",  # the telemetry the shard plan is drawn from
+}
+EXTERNAL_INPUTS = frozenset(EXTERNAL_INPUT_KINDS)
 
 #: The external inputs that are about the time of the run, not the tree: a job that reads one
 #: is ``live``, so its evidence is never reused.
-LIVE_INPUTS = frozenset({"advisory-feed"})
+LIVE_INPUTS = frozenset(k for k, kind in EXTERNAL_INPUT_KINDS.items() if kind == "live")
+
+#: The external inputs a tree does not pin: a job that reads one is never reused by tree.
+UNPINNED_INPUTS = frozenset(k for k, kind in EXTERNAL_INPUT_KINDS.items() if kind == "unpinned")
+
+#: The installs that are a job's toolchain, never one of its steps, each by the start of its
+#: argv and the toolchain word that names it. Whatever runs a job installs its toolchain first.
+INSTALLS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("uv", "sync"), "uv-sync"),
+    (("npm", "ci"), "npm-ci"),
+    (("npx", "playwright", "install"), "chromium"),
+)
 
 #: What a toolchain installs that a job's ``needs_*`` flag says it needs: the two agree.
 NEEDS: dict[str, str] = {"needs_node": "node", "needs_browser": "chromium"}
@@ -106,6 +126,10 @@ PLACEHOLDERS: dict[str, tuple[str, ...]] = {
     "shard": ("${{ matrix.shard }}",),
     "base": ("${{ steps.base.outputs.ref }}", "$BASE_SHA", "$BEFORE"),
 }
+
+#: The smallest cap a job may have: a local run stops a job a minute before its cap, so CI's
+#: own timeout never decides it, and a one-minute cap would leave it no time at all.
+MIN_TIMEOUT_MIN = 2
 
 #: The fields every entry declares.
 REQUIRED: tuple[str, ...] = (
@@ -131,6 +155,7 @@ _KEYS = frozenset(
         "container",
         "env",
         "workers",
+        "workers_env",
         "mem_gb",
         "junit",
         "shards",
@@ -151,6 +176,10 @@ _VARIABLE = re.compile(r"[A-Z_][A-Z0-9_]*")
 #: Git's short pathspec magic: a colon, the signs for top (``/``) and exclude (``!``, ``^``),
 #: and an optional colon that ends them.
 _SHORT_MAGIC = re.compile(r"\A:[/!^]*:?")
+
+#: The catalogue's tables besides its jobs, and what each may hold.
+_TIER_TABLES = frozenset({"merge"})
+_TIER_KEYS = frozenset({"jobs"})
 
 #: The job that holds every rail. A merge tier without it is refused, so no rail is skipped.
 MERGE_NEEDS_JOB = "rails"
@@ -270,6 +299,7 @@ class Job:
     container: str | None = None
     env: Env = field(default_factory=Env)
     workers: int | str | None = None
+    workers_env: str | None = None
     mem_gb: float | None = None
     junit: tuple[str, ...] = ()
     shards: int = 1
@@ -283,6 +313,8 @@ class Job:
 @dataclass(frozen=True)
 class Catalogue:
     jobs: tuple[Job, ...]
+    #: ``[tier.merge] jobs``: the jobs the merge tier must run, held against each job's tiers.
+    merge_jobs: tuple[str, ...] = ()
 
     def job(self, job_id: str) -> Job:
         for job in self.jobs:
@@ -389,6 +421,8 @@ def _env(fields: _Fields, where: str, raw: object) -> Env:
     for name, value in raw.items():
         if not _VARIABLE.fullmatch(name):
             fields.fault(where, f"name {name!r} is not a variable name ([A-Z_][A-Z0-9_]*)")
+        elif run.runner_owns(name):
+            fields.fault(where, f"name {name!r} is the runner's: a job may not set it")
         for fault in _value_faults(value):
             fields.fault(f"{where} {name}", fault)
     return Env(raw)
@@ -415,6 +449,12 @@ def _steps(fields: _Fields) -> tuple[Step, ...]:
             continue
         if not argv[0]:
             fields.fault(where, "argv[0] is the program to run, so it is not empty")
+        for prefix, tool in INSTALLS:
+            if tuple(argv[: len(prefix)]) == prefix:
+                fields.fault(
+                    where,
+                    f"is an install ({shlex.join(argv)}): it is toolchain {tool!r}, never a step",
+                )
         for arg in argv:
             if "$" in arg:
                 fields.fault(where, f"argument {arg!r} reads the environment: use a placeholder")
@@ -474,6 +514,11 @@ def _job(raw: object, n: int, problems: list[str]) -> Job | None:
     if "security" in raw and security not in SECURITY:
         fields.fault("security", f"is one of {', '.join(SECURITY)}")
     timeout = fields.count("timeout_min", None) if "timeout_min" in raw else None
+    if timeout is not None and timeout < MIN_TIMEOUT_MIN:
+        fields.fault(
+            "timeout_min",
+            f"is {MIN_TIMEOUT_MIN} or more: a local run stops a job a minute before its cap",
+        )
     platform = fields.string("platform", "ubuntu-24.04") or "ubuntu-24.04"
     python = fields.string("python")
     if python is not None and not _PYTHON.fullmatch(python):
@@ -487,6 +532,13 @@ def _job(raw: object, n: int, problems: list[str]) -> Job | None:
     workers = raw.get("workers")
     if workers is not None and workers != "auto" and fields.count("workers", None) is None:
         workers = None
+    workers_env = fields.string("workers_env")
+    if workers_env is not None and not _VARIABLE.fullmatch(workers_env):
+        fields.fault("workers_env", "is an environment variable's name")
+        workers_env = None
+    elif workers_env is not None and run.runner_owns(workers_env):
+        fields.fault("workers_env", f"{workers_env!r} is the runner's: a job may not set it")
+        workers_env = None
     mem_gb = raw.get("mem_gb")
     if mem_gb is not None and (
         isinstance(mem_gb, bool) or not isinstance(mem_gb, (int, float)) or mem_gb <= 0
@@ -526,6 +578,7 @@ def _job(raw: object, n: int, problems: list[str]) -> Job | None:
         container=fields.string("container"),
         env=env,
         workers=workers,
+        workers_env=workers_env,
         mem_gb=float(mem_gb) if mem_gb is not None else None,
         junit=fields.strings("junit"),
         shards=fields.count("shards", 1) or 1,
@@ -544,7 +597,10 @@ def load(text: str, source: str = CATALOGUE) -> Catalogue:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         raise CatalogueError([f"{source} is not TOML: {exc}"]) from None
-    problems: list[str] = [f"{source}: unknown table {key!r}" for key in data if key != "job"]
+    problems: list[str] = [
+        f"{source}: unknown table {key!r}" for key in data if key not in ("job", "tier")
+    ]
+    merge_jobs = _tier_merge(data.get("tier"), source, problems)
     raw_jobs = data.get("job")
     if not isinstance(raw_jobs, list) or not raw_jobs:
         raise CatalogueError([*problems, f"{source} has no [[job]] entries"])
@@ -552,10 +608,51 @@ def load(text: str, source: str = CATALOGUE) -> Catalogue:
     for job_id in sorted({i for i in ids if isinstance(i, str) and ids.count(i) > 1}):
         problems.append(f"{job_id}: the id is used by {ids.count(job_id)} entries")
     jobs = [job for n, raw in enumerate(raw_jobs, 1) if (job := _job(raw, n, problems))]
-    problems += validate(Catalogue(tuple(jobs)), complete=not problems)
+    cat = Catalogue(tuple(jobs), merge_jobs)
+    problems += validate(cat, complete=not problems)
     if problems:
         raise CatalogueError(list(dict.fromkeys(problems)))
-    return Catalogue(tuple(jobs))
+    return cat
+
+
+def _tier_merge(raw: object, source: str, problems: list[str]) -> tuple[str, ...]:
+    """``[tier.merge] jobs``, the merge tier's job list; a fault is a problem naming it."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, dict):
+        problems.append(f"{source}: tier is a table of tiers")
+        return ()
+    for key in sorted(set(raw) - _TIER_TABLES):
+        problems.append(f"{source}: unknown table 'tier.{key}'")
+    merge = raw.get("merge")
+    if not isinstance(merge, dict):
+        problems.append(f"{source}: tier.merge is a table holding jobs")
+        return ()
+    for key in sorted(set(merge) - _TIER_KEYS):
+        problems.append(f"{source}: tier.merge has unknown key {key!r}")
+    jobs = merge.get("jobs")
+    if not isinstance(jobs, list) or not jobs or not all(isinstance(j, str) and j for j in jobs):
+        problems.append(f"{source}: tier.merge jobs is a non-empty list of job ids")
+        return ()
+    if len(set(jobs)) != len(jobs):
+        problems.append(f"{source}: tier.merge jobs names a job twice")
+    return tuple(jobs)
+
+
+def pytest_workers(step: Step) -> list[str]:
+    """Each worker count a pytest step passes (``-n N``, ``-nN``, ``--numprocesses[=]N``)."""
+    if "pytest" not in step.argv:
+        return []
+    args = list(step.argv[step.argv.index("pytest") + 1 :])
+    found = []
+    for i, arg in enumerate(args):
+        if arg in ("-n", "--numprocesses"):
+            found.append(args[i + 1] if i + 1 < len(args) else "")
+        elif arg.startswith("--numprocesses="):
+            found.append(arg.partition("=")[2])
+        elif arg.startswith("-n") and len(arg) > 2 and not arg.startswith("--"):
+            found.append(arg[2:])
+    return found
 
 
 def validate(catalogue: Catalogue, complete: bool = True) -> list[str]:
@@ -569,6 +666,13 @@ def validate(catalogue: Catalogue, complete: bool = True) -> list[str]:
         if job.reuse != NEVER and (job.security == "security" or job.live):
             what = "a security job's" if job.security == "security" else "a live job's"
             problems.append(f"{job.id}: reuse is {job.reuse}, but {what} evidence is never reused")
+        if job.reuse.kind == "tree":
+            for unpinned in sorted(UNPINNED_INPUTS & set(job.external_inputs)):
+                problems.append(
+                    f"{job.id}: reuse is tree, but it reads {unpinned}, which the tree does not"
+                    " pin, so a result for one fetch could stand for another"
+                )
+        _workers_faults(job, problems)
         for feed in sorted(LIVE_INPUTS & set(job.external_inputs)):
             if not job.live:
                 problems.append(
@@ -598,6 +702,22 @@ def validate(catalogue: Catalogue, complete: bool = True) -> list[str]:
                 problems.append(f"{job.id}: after names {other!r}, which is not another job")
     if complete:
         merge = {j.id: j for j in catalogue.tier("merge")}
+        if not catalogue.merge_jobs:
+            problems.append(
+                "the catalogue has no [tier.merge] jobs list, so the merge tier's jobs are"
+                " held by no list"
+            )
+        else:
+            for job_id in catalogue.merge_jobs:
+                if job_id not in merge:
+                    problems.append(
+                        f"{job_id}: [tier.merge] lists it, and it is no job whose tiers claim merge"
+                    )
+            for job_id in merge:
+                if job_id not in catalogue.merge_jobs:
+                    problems.append(
+                        f"{job_id}: its tiers claim merge, and [tier.merge] does not list it"
+                    )
         if MERGE_NEEDS_JOB not in merge:
             problems.append(
                 f"the merge tier lacks the {MERGE_NEEDS_JOB} job, so a rail can be skipped"
@@ -620,6 +740,28 @@ def validate(catalogue: Catalogue, complete: bool = True) -> list[str]:
                     f" evidence is this suite's run on a {family}* runner"
                 )
     return problems
+
+
+def _workers_faults(job: Job, problems: list[str]) -> None:
+    """``workers`` is the job's worker count: each pytest step's ``-n`` is it, and
+    ``workers_env`` names the variable through which its other tools read it."""
+    passed = [n for step in job.command for n in pytest_workers(step)]
+    if job.workers is None:
+        if passed:
+            problems.append(f"{job.id}: a step passes pytest -n, so workers is required")
+        if job.workers_env is not None:
+            problems.append(f"{job.id}: workers_env is set, so workers is required")
+        return
+    for value in passed:
+        if value != str(job.workers):
+            problems.append(
+                f"{job.id}: a step passes pytest -n {value}, and workers is {job.workers}"
+            )
+    if not passed and job.workers_env is None:
+        problems.append(
+            f"{job.id}: workers is {job.workers}, and no step passes pytest -n nor does"
+            " workers_env name a variable it reaches"
+        )
 
 
 def _text(path: Path, source: str) -> str:

@@ -7,6 +7,7 @@ than test_harness_specs.py (they shell out to pytest once), but there are only a
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -188,3 +189,39 @@ def test_cli_validate_has_no_scanner_warnings_now() -> None:
         rc = cli.main(["validate", "--fast"])
     assert rc == 0
     assert "0 warning(s)" in buf.getvalue()
+
+
+def test_the_web_profile_passes_on_an_uncommitted_tree(tmp_path: Path, monkeypatch) -> None:
+    # `harness run --diff` runs before the executor commits, so the web gate must pass on a
+    # checkout with uncommitted changes, on either platform. A planted checkout, dirty, with
+    # this tree's tools/ci in it (what a profile that ran a catalogue job would run) and an
+    # npm that exits 0 after writing down what it was asked.
+    import shutil
+    import subprocess
+
+    from harness.profiles import resolve_commands
+
+    root = tmp_path / "tree"
+    shutil.copytree(
+        Path(cli.__file__).resolve().parent.parent / "tools" / "ci",
+        root / "tools" / "ci",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    git = ["git", "-C", str(root), "-c", "user.name=Planted", "-c", "user.email=p@example.invalid"]
+    subprocess.run([*git, "init", "-q", "-b", "main"], check=True)
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "planted"], check=True)
+    (root / "uncommitted.txt").write_text("a change not yet committed\n")
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    asked = tmp_path / "asked"
+    for name in ("npm", "npx", "node"):
+        stub = stubs / name
+        stub.write_text(f'#!/bin/sh\necho "{name} $*" >> "{asked}"\nexit 0\n')
+        stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{stubs}:{os.environ['PATH']}")
+    monkeypatch.setattr(cli, "_repo_root", lambda: root)
+
+    commands = [c.command for c in resolve_commands(["web"])]
+    assert cli._execute(commands, dry_run=False) == 0
+    assert asked.read_text().splitlines() == ["npm run typecheck:web", "npm run test:web"]

@@ -122,7 +122,8 @@ def _kill_group(pgid: int) -> None:
         os.killpg(pgid, signal.SIGKILL)
 
 
-# (a) the home, the PersonalClaw home and the temporary folder are the scratch ones
+# (a) the home and the temporary folder are the scratch ones, and the PersonalClaw home is the
+# default one under that home
 
 
 def test_a_job_sees_the_scratch_home_and_temp_folder_not_the_callers(tmp_path, monkeypatch):
@@ -145,11 +146,28 @@ def test_a_job_sees_the_scratch_home_and_temp_folder_not_the_callers(tmp_path, m
     real = os.path.realpath
     assert real(seen["env"]["HOME"]) == real(scratch.home)
     assert real(seen["home"]) == real(scratch.home)
-    assert real(seen["env"]["PERSONALCLAW_HOME"]) == real(scratch.personalclaw_home)
+    assert "PERSONALCLAW_HOME" not in seen["env"], "the default home, under HOME, is the job's"
     assert real(seen["env"]["TMPDIR"].rstrip("/")) == real(scratch.tmp)
     assert real(seen["tmp"]) == real(scratch.tmp)
     assert (seen["env"]["LANG"], seen["env"]["LC_ALL"]) == ("C.UTF-8", "C.UTF-8")
     assert str(planted) not in json.dumps(seen)
+
+
+def test_a_jobs_personalclaw_home_is_the_default_one_inside_its_scratch_folder(
+    tmp_path, monkeypatch
+):
+    planted = tmp_path / "callers-home"
+    monkeypatch.setenv("HOME", str(planted))
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(planted / ".personalclaw"))
+    scratch = _scratch(tmp_path)
+    out = tmp_path / "default-home.txt"
+    printer = f"import os; open({str(out)!r}, 'w').write(os.path.expanduser('~/.personalclaw'))"
+    assert _run(tmp_path, [sys.executable, "-c", printer], scratch=scratch).code == run.OK
+    real = os.path.realpath
+    seen = real(out.read_text())
+    assert seen == real(scratch.home / ".personalclaw")
+    assert seen.startswith(real(scratch.root) + os.sep)
+    assert str(planted) not in seen
 
 
 # (b) the caller's variables are not passed through
@@ -362,6 +380,17 @@ def test_a_declared_env_that_would_undo_the_scrub_is_refused(tmp_path, key):
 def test_a_declared_env_of_the_jobs_own_is_kept(tmp_path):
     env = run.job_env(_scratch(tmp_path), path=PATH, env={"PC_JOB_SETTING": "kept"})
     assert env["PC_JOB_SETTING"] == "kept"
+
+
+def test_every_variable_the_runner_sets_or_refuses_is_one_it_says_it_owns(tmp_path):
+    # The catalogue's loader refuses what run.runner_owns names, so a job env it loads is one
+    # job_env accepts.
+    assert all(run.runner_owns(name) for name in run.job_env(_scratch(tmp_path), path=PATH))
+    for name in ("PERSONALCLAW_HOME", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_KEY_9"):
+        assert run.runner_owns(name), name
+        with pytest.raises(ValueError, match="the runner owns it"):
+            run.job_env(_scratch(tmp_path, name), path=PATH, env={name: "x"})
+    assert not run.runner_owns("PC_JOB_SETTING") and not run.runner_owns("CI")
 
 
 # (f) an interrupted run is partial, and its whole process group is gone
@@ -639,6 +668,86 @@ def test_a_job_past_its_time_is_red_and_its_group_is_killed(tmp_path):
         _kill_group(job_pid)
 
 
+def test_before_stop_is_given_the_group_of_a_job_past_its_time_while_it_still_runs(tmp_path):
+    pids = tmp_path / "pids"
+    job = [sys.executable, "-c", BLOCKED_WRITING_PIDS, str(pids)]
+    seen: list[tuple[int, bool]] = []
+
+    def before_stop(pgid: int) -> None:
+        seen.append((pgid, not _gone_now(pgid)))
+
+    result = _run(tmp_path, job, timeout=3.0, grace=0.5, before_stop=before_stop)
+    job_pid = int(pids.read_text().split()[0])
+    try:
+        assert seen == [(job_pid, True)], "before_stop never saw the live group"
+        assert result.code == run.RED
+        assert result.violations == ("the job timed out after 3s",)
+        assert _gone(job_pid), "a process of the job's group outlived the stop"
+    finally:
+        _kill_group(job_pid)
+
+
+def test_a_before_stop_that_raises_still_leaves_no_process_of_the_group(tmp_path):
+    pids = tmp_path / "pids"
+    job = [sys.executable, "-c", BLOCKED_WRITING_PIDS, str(pids)]
+
+    def before_stop(pgid: int) -> None:
+        raise OSError("the lister broke")
+
+    with pytest.raises(OSError, match="the lister broke"):
+        _run(tmp_path, job, timeout=3.0, grace=0.5, before_stop=before_stop)
+    job_pid = int(pids.read_text().split()[0])
+    try:
+        assert _gone(job_pid), "a raising before_stop left the group running"
+    finally:
+        _kill_group(job_pid)
+
+
+#: A job that writes its pid to the file its first argument names and, on SIGTERM, writes
+#: "terminated" to the file its second argument names before it exits.
+MARKS_SIGTERM = (
+    "import os, signal, sys\n"
+    "def marked(*_):\n"
+    "    open(sys.argv[2], 'w').write('terminated')\n"
+    "    sys.exit(0)\n"
+    "signal.signal(signal.SIGTERM, marked)\n"
+    "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
+    "signal.pause()\n"
+)
+
+
+def test_a_before_stop_that_raises_is_followed_by_the_stop_sigterm_first(tmp_path):
+    pids, marker = tmp_path / "pids", tmp_path / "terminated"
+    job = [sys.executable, "-c", MARKS_SIGTERM, str(pids), str(marker)]
+
+    def before_stop(pgid: int) -> None:
+        raise OSError("the lister broke")
+
+    with pytest.raises(OSError, match="the lister broke"):
+        _run(tmp_path, job, timeout=3.0, grace=5.0, before_stop=before_stop)
+    job_pid = int(pids.read_text())
+    try:
+        assert marker.read_text() == "terminated", "the group got SIGKILL with no SIGTERM first"
+    finally:
+        _kill_group(job_pid)
+
+
+def test_before_stop_is_not_called_for_a_job_that_ends_in_time(tmp_path):
+    seen: list[int] = []
+    result = _run(tmp_path, [sys.executable, "-c", "pass"], before_stop=seen.append)
+    assert result.code == run.OK
+    assert seen == []
+
+
+def _gone_now(pgid: int) -> bool:
+    """One look: whether group *pgid* holds no process the test can signal."""
+    try:
+        os.killpg(pgid, 0)
+    except (ProcessLookupError, PermissionError):
+        return True
+    return False
+
+
 def test_a_job_that_ignores_sigterm_past_its_time_is_killed_after_the_grace(tmp_path):
     kw = {"timeout": 3.0, "grace": 0.5}
     with _runner(tmp_path, [sys.executable, "-c", DEAF], kw) as (runner, out, groups):
@@ -714,7 +823,8 @@ def test_the_jobs_git_variables_are_the_suites_neutral_ones_plus_the_tripwire(tm
 def test_a_scratch_folder_is_new_and_private(tmp_path):
     scratch = _scratch(tmp_path)
     assert (scratch.root.stat().st_mode & 0o777) == 0o700
-    for folder in (scratch.home, scratch.personalclaw_home, scratch.tmp):
+    assert not hasattr(scratch, "personalclaw_home"), "the PersonalClaw home is the default one"
+    for folder in (scratch.home, scratch.tmp):
         assert folder.is_dir()
         assert (folder.stat().st_mode & 0o777) == 0o700, folder
     with pytest.raises(FileExistsError):
