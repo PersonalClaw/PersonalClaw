@@ -26,6 +26,12 @@ paths = [".github/workflows/"]
 whole_tier = true
 reason = "the workflows define the jobs and when each runs: editing one must re-validate them, or a broken job definition would be waved through by the very gate it broke"
 
+# The local actions the workflows' jobs call.
+[[override]]
+paths = [".github/actions/"]
+whole_tier = true
+reason = "a local action's steps run inside each job that calls it, so it defines those jobs as the workflows do: editing one must re-validate them, or a broken setup step would be waved through by the very gate it broke"
+
 # The catalogue, these overrides and the planner decide what runs.
 [[override]]
 paths = ["tools/ci/"]

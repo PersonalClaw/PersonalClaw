@@ -8,9 +8,12 @@ on a planted catalogue.
 from __future__ import annotations
 
 import ast
+import posixpath
 import textwrap
 
+import local_actions
 import pytest
+import yaml
 from rails_repo import REPO
 
 from tools.ci import catalogue
@@ -49,6 +52,8 @@ MUST_RUN_E2E = (
     ".github/workflows/ci.yml",
     ".github/workflows/release.yml",
     ".github/workflows/breadth.yml",
+    # The local action the jobs set their toolchain up with, which defines them as ci.yml does.
+    ".github/actions/setup/action.yml",
     # A path in no rule at all.
     "an-unheard-of-top-level-dir/thing.ts",
     "Makefile",
@@ -164,6 +169,7 @@ def test_a_declared_input_schedules_its_job(job_id: str) -> None:
 _OVERRIDE_ROWS = {
     ".github/workflows/ci.yml": "whole",
     ".github/workflows/release.yml": "whole",
+    ".github/actions/setup/action.yml": "whole",
     "tools/ci/plan.py": "whole",
     "tools/ci/catalogue.toml": "whole",
     "tools/ci/areas.toml": "whole",
@@ -199,6 +205,23 @@ def test_an_overrides_path_plans_what_it_says(path: str) -> None:
         assert set(want) <= set(p.jobs), (path, p.full_reasons)
         for job_id in want:
             assert any(o.reason in r for o in mine for r in p.reasons[job_id]), (path, job_id)
+
+
+def test_a_local_action_a_job_calls_plans_the_whole_tier() -> None:
+    """A local action's steps run inside each ci.yml job that calls it, and inside each action
+    that calls it, so it defines those jobs as the workflow does: a change to any of its files
+    plans the whole tier, as a change to ci.yml does."""
+    jobs = yaml.safe_load((REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8"))["jobs"]
+    actions = local_actions.actions_at(REPO)
+    folders = sorted(
+        {f for job in jobs.values() for f in local_actions.called(job.get("steps") or [], actions)}
+    )
+    assert folders, "ci.yml calls no local action, so this check read nothing"
+    for folder in folders:
+        for name in (*local_actions.ACTION_FILES, "run.sh"):
+            rel = posixpath.normpath(f"{folder}/{name}")
+            p = _plan(rel)
+            assert p.full and set(p.jobs) == _MERGE, (rel, p.full_reasons)
 
 
 def test_every_overrides_paths_have_a_planted_row() -> None:

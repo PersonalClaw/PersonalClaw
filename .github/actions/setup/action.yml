@@ -1,0 +1,37 @@
+name: Set up the toolchain
+description: >-
+  uv with the job's exact Python, and Node from .nvmrc, for a ci.yml job. The job checks out
+  the repository first (a local action loads only from a checkout) and keeps its own installs
+  (`uv sync`, `npm ci`) and its junit upload, which runs after its tests: a composite action
+  has no post step.
+inputs:
+  python-version:
+    description: The exact Python (X.Y.Z) setup-uv installs. Empty sets up no uv.
+    default: ""
+  node:
+    description: '"true" sets up Node from .nvmrc.'
+    default: "false"
+  node-cache:
+    description: >-
+      setup-node's `cache`. Empty passes none, which leaves setup-node's own default: that caches
+      npm too, because package.json's packageManager names npm.
+    default: npm
+runs:
+  using: composite
+  steps:
+    # The one uv release pyproject's [tool.uv] required-version names, with its cache pruned
+    # before it is saved (tests/rails/test_ci_uv_cache_is_pruned.py).
+    - name: Install uv
+      if: inputs.python-version != ''
+      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      with:
+        version: "0.13.1"
+        python-version: ${{ inputs.python-version }}
+        enable-cache: true
+        prune-cache: true
+    - name: Install Node
+      if: inputs.node == 'true'
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version-file: .nvmrc
+        cache: ${{ inputs.node-cache }}

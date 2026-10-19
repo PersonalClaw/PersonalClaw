@@ -315,13 +315,10 @@ jobs:
             git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/origin/main"
             echo "ref=origin/main" >> "$GITHUB_OUTPUT"
           fi
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
         with:
-          version: "0.13.1"
           python-version: "3.12.15"
-          enable-cache: true
-          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: the apps' SDK contract, against this core
@@ -350,13 +347,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
         with:
-          version: "0.13.1"
           python-version: "3.12.15"
-          enable-cache: true
-          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
       # `harness/` and `scripts/` are repo-inner dev infra beside src/ (self-verification,
@@ -617,13 +611,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
         with:
-          version: "0.13.1"
           python-version: "3.12.15"
-          enable-cache: true
-          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
       # The real-daemon leg (tests/test_durable_spawn.py::TestRealTmux) is
@@ -858,13 +849,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
         with:
-          version: "0.13.1"
           python-version: "3.13.16"
-          enable-cache: true
-          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: Install tmux (durable sessions — real-daemon test leg)
@@ -1001,10 +989,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
         with:
-          node-version-file: .nvmrc
-          cache: npm
+          node: "true"
       # npm runs from the REPO ROOT (single-root workspace lockfile — npm/cli#4828);
       # never `cd web && npm ci`. typecheck + vitest + build all run against the web workspace.
       - name: npm ci (root)
@@ -1095,13 +1083,10 @@ jobs:
       # its wheel: the contents against this checkout, then an install from the wheel alone
       # into a scratch venv, a boot and its probes. It uses the standard library only, so it
       # runs on uv's Python with `--no-project`, and no project environment is installed.
-      - name: Install uv (wheel)
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Set up uv (wheel)
+        uses: ./.github/actions/setup
         with:
-          version: "0.13.1"
           python-version: "3.12.15"
-          enable-cache: true
-          prune-cache: true
       - name: build the wheel (with the SPA above)
         run: uv build --wheel --out-dir dist
       - name: verify the wheel contract (contents · install from the wheel alone · boot · serve)
@@ -1154,17 +1139,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
         with:
-          node-version-file: .nvmrc
-          cache: npm
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: "0.13.1"
           python-version: "3.12.15"
-          enable-cache: true
-          prune-cache: true
+          node: "true"
       # The harness starts `../.venv/bin/personalclaw`, and the browse proof is pytest.
       - name: Install (locked)
         run: uv sync --locked --extra dev
@@ -1254,16 +1233,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
         with:
-          version: "0.13.1"
           python-version: "3.12.15"
-          enable-cache: true
-          prune-cache: true
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
+          node: "true"
+          node-cache: ""
       # pip-audit is not in uv.lock, so it is named as an exact release, in a venv of its own:
       # the project is never installed into it, so what it audits is only the exported locks.
       - name: pip-audit, in a venv of its own
@@ -1295,13 +1270,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
         with:
-          version: "0.13.1"
           python-version: "3.12.15"
-          enable-cache: true
-          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: pytest (adversarial scanner corpus)
@@ -1346,13 +1318,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
         with:
-          version: "0.13.1"
           python-version: "3.12.15"
-          enable-cache: true
-          prune-cache: true
+          node: "true"
       - name: Install (locked)
         run: uv sync --locked --extra dev
       # Every module the census places in tests/rails, on four workers. Its junit lists every rail
@@ -1387,10 +1357,6 @@ jobs:
       # `test` shards install no node_modules, so there that half skips. Here the tree is installed
       # and PERSONALCLAW_REQUIRE_NPM_TREE turns a missing one into a failure: a skip reads as a pass.
       # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828).
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
-          cache: npm
       - name: npm ci (root)
         run: npm ci
       - name: npm advisory floors, copies kept inside packages included
@@ -1438,13 +1404,10 @@ jobs:
           # scan --diff diffs against the base named below, or the commit a push to main
           # replaced; full history so either resolves.
           fetch-depth: 0
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
         with:
-          version: "0.13.1"
           python-version: "3.12.15"
-          enable-cache: true
-          prune-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: harness validate (spec shape + reference resolution)
@@ -1488,13 +1451,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
         with:
-          version: "0.13.1"
           python-version: "3.12.15"
-          enable-cache: true
-          prune-cache: true
       - name: Build the client (proves packaging metadata is valid)
         # `uv build` runs the build backend in its own isolated env — no
         # `pip install --system` against the runner's PEP-668 /usr (which errors).

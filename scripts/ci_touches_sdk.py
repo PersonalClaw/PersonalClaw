@@ -12,8 +12,10 @@ update it, including a change to a core function the SDK only RE-EXPORTS: #3599 
 job checks, which is why this can be a trigger-list where ``ci_touches_frontend.py`` must be an
 ignore-list.
 
-The job's own machinery triggers it too, so a change to the check is checked by it. An EMPTY
-path list means the enumeration failed, and an unanswered question runs the job.
+The job's own machinery triggers it too, so a change to the check is checked by it: ci.yml,
+which defines the job, and the local actions under ``.github/actions/``, whose steps the job
+runs where it calls one. An EMPTY path list means the enumeration failed, and an unanswered
+question runs the job.
 
 Usage — one path per line on stdin, ``sdk=true|false`` on stdout:
     git diff --name-only origin/main... | python3 scripts/ci_touches_sdk.py
@@ -31,6 +33,7 @@ TRIGGERS: tuple[str, ...] = (
     "scripts/ci_touches_sdk.py",
     "scripts/sdk_signature_snapshot.py",
     ".github/workflows/ci.yml",
+    ".github/actions/",
 )
 
 

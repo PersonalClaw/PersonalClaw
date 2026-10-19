@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import ci_masking
+import local_actions
 import private_walkers
 import pytest
 import quarantine
@@ -49,6 +50,7 @@ Tree = dict[str, str]
 def _read_paths(root: Path) -> list[Path]:
     return [
         *sorted(root.glob(".github/workflows/*.yml")),
+        *local_actions.action_paths(root),
         *sorted(root.glob("deploy/docker/Dockerfile*")),
         root / "package.json",
         *sorted(root.glob("*/package.json")),
@@ -83,9 +85,17 @@ def _jobs(tree: Tree) -> Iterator[tuple[str, str, dict[str, Any]]]:
             yield name, job_id, job
 
 
+def _job_steps(tree: Tree, job: dict[str, Any]) -> list[dict[str, Any]]:
+    """A job's steps as it runs them: each call of a local composite action is followed by the
+    action's steps that call runs, its ``inputs`` filled in (``tests/rails/local_actions.py``).
+    A call of a local action the tree does not hold raises, so no row passes without its steps."""
+    actions = local_actions.action_files(tree)
+    return [step for _index, step in local_actions.expand(job.get("steps") or [], actions)]
+
+
 def _steps(tree: Tree) -> Iterator[tuple[str, str, dict[str, Any], dict[str, Any]]]:
     for name, job_id, job in _jobs(tree):
-        for step in job.get("steps") or []:
+        for step in _job_steps(tree, job):
             yield name, job_id, job, step
 
 
@@ -251,7 +261,7 @@ def uv_python_preference_violations(tree: Tree) -> list[str]:
         top = workflow.get("env") or {}
         for job_id, job in (workflow.get("jobs") or {}).items():
             job_env = job.get("env") or {}
-            for step in job.get("steps") or []:
+            for step in _job_steps(tree, job):
                 if not _runs_uv(step):
                     continue
                 found += 1
@@ -321,16 +331,29 @@ def runner_label_violations(tree: Tree) -> list[str]:
 
 
 def runner_identity_violations(tree: Tree) -> list[str]:
-    """Every job logs the image it ran on: a ``Runner identity`` step that reads the runner
-    image's name and version, or the container's own ``/etc/os-release``."""
+    """Every job logs the image it ran on: a ``Runner identity`` step of its own that reads the
+    runner image's name and version, or the container's own ``/etc/os-release``. The step is
+    never a local action's: an action loads only from the checkout, so one there logs nothing
+    when the checkout fails."""
     bad: list[str] = []
     for name, job_id, job in _jobs(tree):
         if "steps" not in job:
             continue
-        runs = [str(s.get("run", "")) for s in job["steps"] if s.get("name") == "Runner identity"]
+        own = [s for s in job["steps"] if isinstance(s, dict)]
+        runs = [str(s.get("run", "")) for s in own if s.get("name") == "Runner identity"]
         wants = ("/etc/os-release",) if "container" in job else ("ImageOS", "ImageVersion")
         if not any(all(word in run for word in wants) for run in runs):
             bad.append(f"{name}:{job_id}: no Runner identity step reading {' and '.join(wants)}")
+        inside = [
+            s
+            for s in _job_steps(tree, job)
+            if s.get("name") == "Runner identity" and not any(s is o for o in own)
+        ]
+        if inside:
+            bad.append(
+                f"{name}:{job_id}: a Runner identity step inside a local action it calls, "
+                "which runs only after the checkout: the job's own step logs the image"
+            )
     return bad
 
 
@@ -2559,6 +2582,8 @@ FIXED_WAITS = Row(
 
 _CI = ".github/workflows/ci.yml"
 _BREADTH = ".github/workflows/breadth.yml"
+#: The composite action ci.yml's jobs set up their toolchain with.
+_SETUP_ACTION = ".github/actions/setup/action.yml"
 _DOCKER = ".github/workflows/docker-single-container.yml"
 _TESTED_IF = "if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}"
 _MACOS_RUN = "uv run pytest -n 2 --dist worksteal -q"
@@ -2714,17 +2739,75 @@ NO_TEST_WALKS_A_SOURCE_ROOT_ITSELF = Row(
 )
 
 
+def _every(rel: str, old: str, new: str) -> Callable[[Path], None]:
+    """Every *old* in *rel* replaced, so no copy keeps the shape the plant moves the file off."""
+
+    def plant(root: Path) -> None:
+        text = (root / rel).read_text(encoding="utf-8")
+        assert old in text, f"the plant's anchor is not in {rel}: {old!r}"
+        _write(root, rel, text.replace(old, new))
+
+    return plant
+
+
+def _node_on_a_literal(root: Path) -> None:
+    """The setup action's setup-node on a literal version, not ``.nvmrc``."""
+    _plant("", _SETUP_ACTION, "node-version-file: .nvmrc", 'node-version: "24"').plant(root)
+
+
+def _uv_step_env(line: str) -> Callable[[Path], None]:
+    """The setup action's uv step given an ``env:`` of one *line*."""
+    return _plant(
+        "",
+        _SETUP_ACTION,
+        "        prune-cache: true\n",
+        f"        prune-cache: true\n      env:\n        {line}\n",
+    ).plant
+
+
+def _first_call_env(line: str) -> Callable[[Path], None]:
+    """ci.yml's first call of the setup action, apps-contract's, given an ``env:`` of one *line*."""
+    return _plant(
+        "",
+        _CI,
+        "        uses: ./.github/actions/setup\n",
+        f"        uses: ./.github/actions/setup\n        env:\n          {line}\n",
+    ).plant
+
+
+def _setup_action_as_yaml(root: Path) -> None:
+    """The setup action in ``action.yaml``, which GitHub loads as it loads ``action.yml``, with
+    no uv version."""
+    old = '        version: "0.13.1"\n'
+    text = (root / _SETUP_ACTION).read_text(encoding="utf-8")
+    assert old in text, f"the plant's anchor is not in {_SETUP_ACTION}: {old!r}"
+    (root / _SETUP_ACTION).unlink()
+    _write(root, _SETUP_ACTION.replace("action.yml", "action.yaml"), text.replace(old, ""))
+
+
 ROWS: tuple[Row, ...] = (
     SECURITY_MARKER,
     _toolchain_row(
         "python",
         python_violations,
         (
+            # ci.yml's jobs set up uv through the setup action, so the plant is inside it.
             _plant(
                 "setup-uv without python-version",
-                ".github/workflows/ci.yml",
-                '          python-version: "3.12.15"\n',
+                _SETUP_ACTION,
+                "        python-version: ${{ inputs.python-version }}\n",
                 "",
+                expect="names no python-version",
+            ),
+            # Text outside one ${{ }}, here a block scalar's newline, makes the condition a
+            # string GitHub fills in, which is always true: web's Node call then runs setup-uv
+            # with no Python.
+            _plant(
+                "the setup action's uv `if:` as a block scalar, which GitHub always runs",
+                _SETUP_ACTION,
+                "      if: inputs.python-version != ''\n",
+                "      if: |\n        ${{ inputs.python-version != '' }}\n",
+                expect="ci.yml:web: astral-sh/setup-uv names no python-version",
             ),
             _plant(
                 "a minor, not a patch",
@@ -2760,9 +2843,15 @@ ROWS: tuple[Row, ...] = (
         (
             _plant(
                 "setup-uv installs the newest uv",
-                ".github/workflows/ci.yml",
-                '          version: "0.13.1"\n',
+                _SETUP_ACTION,
+                '        version: "0.13.1"\n',
                 "",
+                expect="ci.yml:lint: uv (newest) is not an exact X.Y.Z",
+            ),
+            Control(
+                "the setup action read from action.yaml installs the newest uv",
+                _setup_action_as_yaml,
+                expect="ci.yml:lint: uv (newest) is not an exact X.Y.Z",
             ),
             _plant(
                 "an interpreter installed apart",
@@ -2813,6 +2902,35 @@ ROWS: tuple[Row, ...] = (
                 "        env:\n          UV_PYTHON_PREFERENCE: managed\n"
                 "        run: uv sync --locked --extra dev\n",
             ),
+            _plant(
+                "the setup action's uv step overrides it",
+                _SETUP_ACTION,
+                "        prune-cache: true\n",
+                "        prune-cache: true\n      env:\n        UV_PYTHON_PREFERENCE: system\n",
+                expect="ci.yml:lint:Install uv: UV_PYTHON_PREFERENCE is 'system'",
+            ),
+            _plant(
+                "a call of the setup action overrides it",
+                _CI,
+                "        uses: ./.github/actions/setup\n",
+                "        uses: ./.github/actions/setup\n"
+                "        env:\n          UV_PYTHON_PREFERENCE: system\n",
+                expect="ci.yml:apps-contract:Install uv: UV_PYTHON_PREFERENCE is 'system'",
+            ),
+            # The call's env sits beneath the action step's own, in both directions.
+            Control(
+                "the setup action's uv step overrides a call that sets it",
+                _both(
+                    _uv_step_env("UV_PYTHON_PREFERENCE: system"),
+                    _first_call_env("UV_PYTHON_PREFERENCE: only-managed"),
+                ),
+                expect="ci.yml:apps-contract:Install uv: UV_PYTHON_PREFERENCE is 'system'",
+            ),
+            Control(
+                "a call overrides it over a uv step with an env of its own",
+                _both(_uv_step_env("OTHER: x"), _first_call_env("UV_PYTHON_PREFERENCE: system")),
+                expect="ci.yml:apps-contract:Install uv: UV_PYTHON_PREFERENCE is 'system'",
+            ),
             Control(
                 "set on one uv job of several, not the workflow, fails",
                 lambda root: _job_level_preference(root, only_first=True),
@@ -2835,9 +2953,25 @@ ROWS: tuple[Row, ...] = (
         (
             _plant(
                 "setup-node with a literal version",
-                ".github/workflows/ci.yml",
+                _SETUP_ACTION,
                 "node-version-file: .nvmrc",
                 'node-version: "24"',
+                expect="ci.yml:web: setup-node does not read .nvmrc alone",
+            ),
+            # GitHub compares strings ignoring case, and only the runner evaluates an
+            # expression, so either call still runs the action's setup-node.
+            Control(
+                "a call that asks for Node in capitals",
+                _both(_every(_CI, 'node: "true"', 'node: "TRUE"'), _node_on_a_literal),
+                expect="ci.yml:web: setup-node does not read .nvmrc alone",
+            ),
+            Control(
+                "a call whose node input is an expression",
+                _both(
+                    _every(_CI, 'node: "true"', "node: ${{ github.event_name != '' }}"),
+                    _node_on_a_literal,
+                ),
+                expect="ci.yml:web: setup-node does not read .nvmrc alone",
             ),
             _plant(".nvmrc a major", ".nvmrc", _NVMRC, _NVMRC.split(".")[0]),
             _plant(
@@ -2854,6 +2988,15 @@ ROWS: tuple[Row, ...] = (
         (
             _plant("no packageManager", "package.json", '  "packageManager": "npm@11.19.0",\n', ""),
             _plant("a floating npm", "package.json", '"npm@11.19.0"', '"npm@11"'),
+            _plant(
+                "npm ci inside the setup action, from a folder with no exact npm",
+                _SETUP_ACTION,
+                "        cache: ${{ inputs.node-cache }}\n",
+                "        cache: ${{ inputs.node-cache }}\n"
+                "    - name: npm ci\n      if: inputs.node == 'true'\n      shell: bash\n"
+                "      working-directory: elsewhere\n      run: npm ci\n",
+                expect="elsewhere/package.json: packageManager is ''",
+            ),
         ),
     ),
     _toolchain_row(
@@ -2886,6 +3029,14 @@ ROWS: tuple[Row, ...] = (
                 ".github/workflows/breadth.yml",
                 "          . /etc/os-release\n",
                 '          echo "$ImageOS $ImageVersion"\n',
+            ),
+            _plant(
+                "a Runner identity step inside the setup action",
+                _SETUP_ACTION,
+                "  steps:\n",
+                "  steps:\n    - name: Runner identity\n      shell: bash\n"
+                '      run: echo "runner image ${ImageOS:?no image} ${ImageVersion:?no version}"\n',
+                expect="ci.yml:lint: a Runner identity step inside a local action",
             ),
         ),
     ),
@@ -5529,8 +5680,15 @@ def _installs(job: catalogue.Job, ci_jobs: list[Any], bad: list[str]) -> None:
         bad.append(f"{job.id}: toolchain names {tool}, and none of its ci.yml jobs installs it")
 
 
-def _same_job(job: catalogue.Job, jobs: dict[str, Any], mine: list[_Line], bad: list[str]) -> None:
-    """The entry's cap, runner, Python, env, reports and shards are its ci.yml jobs'."""
+def _same_job(
+    job: catalogue.Job,
+    jobs: dict[str, Any],
+    mine: list[_Line],
+    bad: list[str],
+    actions: dict[str, dict[str, Any]] | None = None,
+) -> None:
+    """The entry's cap, runner, Python, env, reports and shards are its ci.yml jobs'. A setup
+    step inside a local action counts at the index of the step that calls the action."""
     ci_jobs = _CATALOGUE_JOBS[job.id].ci_jobs
     cap = max(int(jobs[c].get("timeout-minutes") or 0) for c in ci_jobs)
     if job.timeout_min != cap:
@@ -5546,7 +5704,7 @@ def _same_job(job: catalogue.Job, jobs: dict[str, Any], mine: list[_Line], bad: 
         first = min((line.step for line in mine if line.job == c), default=None)
         pythons |= {
             str((s.get("with") or {}).get("python-version"))
-            for index, s in enumerate(jobs[c].get("steps") or [])
+            for index, s in local_actions.expand(jobs[c].get("steps") or [], actions or {})
             if _action(s) == "astral-sh/setup-uv" and (first is None or index < first)
         }
     if pythons and job.python not in pythons:
@@ -5606,6 +5764,7 @@ def _catalogue_check(root: Path) -> list[str]:
         return exc.problems
     workflow = yaml.safe_load((root / _CI).read_text(encoding="utf-8")) or {}
     jobs: dict[str, Any] = workflow.get("jobs") or {}
+    actions = local_actions.actions_at(root)
     bad: list[str] = []
     mapped = {c for entry in _CATALOGUE_JOBS.values() for c in entry.ci_jobs}
     for ci_job in sorted(set(jobs) - mapped - _ORCHESTRATION):
@@ -5639,7 +5798,7 @@ def _catalogue_check(root: Path) -> list[str]:
         _claim(job, [line for c in entry.ci_jobs for line in lines[c]], claims, bad)
         _installs(job, [jobs[c] for c in entry.ci_jobs], bad)
         mine = [line for line, holders in claims.items() if job.id in holders]
-        _same_job(job, jobs, mine, bad)
+        _same_job(job, jobs, mine, bad, actions)
         _posture(job, marked, bad)
     for line, holders in claims.items():
         if not holders:
@@ -5658,7 +5817,7 @@ def _catalogue_check(root: Path) -> list[str]:
 def _catalogue_scaffold(root: Path) -> None:
     """The tree's own ci.yml and catalogue, which agree, and a marked stand-in for each module
     the tree marks security, so the census finds what the entries' steps run."""
-    for rel in (_CI, catalogue.CATALOGUE):
+    for rel in (_CI, catalogue.CATALOGUE, _SETUP_ACTION):
         _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
     for rel in _tree_marked():
         _write(root, rel, _MARKED)
@@ -5678,6 +5837,13 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
     check=_catalogue_check,
     scaffold=_catalogue_scaffold,
     controls=(
+        _plant(
+            "the setup action sets a Python of its own",
+            _SETUP_ACTION,
+            "        python-version: ${{ inputs.python-version }}\n",
+            '        python-version: "3.13.16"\n',
+            expect="python is 3.12.15, and ci.yml's setup-uv sets 3.13.16 before its steps",
+        ),
         _plant(
             "an entry without timeout_min",
             catalogue.CATALOGUE,

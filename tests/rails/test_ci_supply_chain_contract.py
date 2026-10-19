@@ -24,6 +24,7 @@ from test_ci_contract import (
     _NVMRC,
     _PREFERENCE,
     _PYTHON,
+    _SETUP_ACTION,
     _UBUNTU,
     REPO,
     Control,
@@ -654,14 +655,21 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
         "setup-floating",
         ("setup-floating",),
         (
+            # ci.yml's jobs set up uv and Node through the setup action, so these plants edit
+            # the action's own steps.
             _plant(
                 "setup-node with check-latest",
-                _CI,
+                _SETUP_ACTION,
                 "node-version-file: .nvmrc\n",
-                "node-version-file: .nvmrc\n          check-latest: true\n",
+                "node-version-file: .nvmrc\n        check-latest: true\n",
             ),
-            _plant("setup-uv with no version", _CI, '          version: "0.13.1"\n', ""),
-            _plant("setup-node with no version", _CI, "          node-version-file: .nvmrc\n", ""),
+            _plant("setup-uv with no version", _SETUP_ACTION, '        version: "0.13.1"\n', ""),
+            _plant(
+                "setup-node with no version",
+                _SETUP_ACTION,
+                "        node-version-file: .nvmrc\n",
+                "",
+            ),
             _line(
                 "setup-qemu with no image", _RELEASE_YML, "          image: docker.io/tonistiigi"
             ),
@@ -699,10 +707,10 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             ),
             _plant(
                 "setup-node with check-latest from an expression",
-                _CI,
+                _SETUP_ACTION,
                 "node-version-file: .nvmrc\n",
                 "node-version-file: .nvmrc\n"
-                "          check-latest: ${{ github.event_name == 'schedule' }}\n",
+                "        check-latest: ${{ github.event_name == 'schedule' }}\n",
                 expect="sets check-latest",
             ),
             _planted_workflow(

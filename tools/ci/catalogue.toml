@@ -236,11 +236,14 @@ command = [
 # - packages/personalclaw-client-py/**: independently versioned/published client, NOT part of the
 #   core uv workspace (ci.yml's `client` job builds it in its own venv) and not imported by
 #   src/personalclaw/.
-# - .github/** except workflows/ci.yml: issue templates, dependabot config and the other workflows
-#   cannot change a rendered pixel. ci.yml is EXCLUDED from this exemption because it defines the
-#   `e2e` job itself: editing it must re-validate it, or a broken job definition would be waved
+# - .github/** except workflows/ci.yml and actions/**: issue templates, dependabot config and the
+#   other workflows cannot change a rendered pixel. ci.yml and the local actions under
+#   .github/actions/ are EXCLUDED from this exemption because they define the `e2e` job itself:
+#   ci.yml writes its steps, and a local action runs its own steps inside the job wherever the job
+#   calls it. Editing either must re-validate the job, or a broken job definition would be waved
 #   through by the very gate it broke.
-# That exception is tools/ci/areas.toml's override of every workflow, which plans the whole tier.
+# Those exceptions are tools/ci/areas.toml's overrides of every workflow and every local action,
+# which plan the whole tier.
 [[job]]
 id = "e2e"
 tiers = ["merge"]
@@ -299,6 +302,7 @@ inputs = [
   "scripts/ci_touches_sdk.py",
   "scripts/sdk_signature_snapshot.py",
   ".github/workflows/ci.yml",
+  ".github/actions/",
 ]
 external_inputs = ["apps-partner", "package-index"]
 toolchain = ["uv-sync"]

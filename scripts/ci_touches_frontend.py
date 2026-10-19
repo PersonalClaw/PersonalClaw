@@ -74,25 +74,29 @@ IGNORABLE: tuple[tuple[str, str], ...] = (
         "`client` job builds it in its own venv) and not imported by src/personalclaw/.",
     ),
     (
-        ".github/** except workflows/ci.yml",
+        ".github/** except workflows/ci.yml and actions/**",
         "issue templates, dependabot config and the other workflows cannot change a rendered "
-        "pixel. ci.yml is EXCLUDED from this exemption because it defines the `e2e` job "
-        "itself: editing it must re-validate it, or a broken job definition would be "
-        "waved through by the very gate it broke.",
+        "pixel. ci.yml and the local actions under .github/actions/ are EXCLUDED from this "
+        "exemption because they define the `e2e` job itself: ci.yml writes its steps, and a "
+        "local action runs its own steps inside the job wherever the job calls it. Editing "
+        "either must re-validate the job, or a broken job definition would be waved through "
+        "by the very gate it broke.",
     ),
 )
 
-#: The one path inside `.github/` that still pays — it defines the gated jobs.
+#: The paths inside `.github/` that still pay — they define the gated jobs: the workflow, and
+#: the local actions its jobs call.
 _SELF = ".github/workflows/ci.yml"
+_ACTIONS = ".github/actions/"
 
 
 def _is_ignorable(path: str) -> bool:
     """True when `path` provably cannot affect the browser-driven gates.
 
     Mirrors IGNORABLE above one-to-one. Kept as explicit branches rather than a glob table so
-    the `ci.yml` carve-out is impossible to express by accident.
+    the `ci.yml` and `.github/actions/` carve-outs are impossible to express by accident.
     """
-    if path == _SELF:
+    if path == _SELF or path.startswith(_ACTIONS):
         return False
     if path.startswith("docs/"):
         return True
