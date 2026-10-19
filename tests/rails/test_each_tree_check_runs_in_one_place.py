@@ -262,9 +262,7 @@ KNOWN_DOCS_READERS: frozenset[str] = frozenset(
         "tests/security/test_scanner_adversarial.py",
         "tests/test_architecture_docs_match_the_tree.py",
         "tests/test_browse_cdp_preflight.py",
-        "tests/test_config_roundtrip.py",
         "tests/test_website_installer.py",
-        "tests/test_workflows_hardening.py",
     }
 )
 

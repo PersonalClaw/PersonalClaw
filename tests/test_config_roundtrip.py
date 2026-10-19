@@ -623,56 +623,11 @@ def test_every_apps_field_is_patchable_or_has_a_write_path():
     assert _EDITABLE_CONFIG["apps.registry_source_enabled"]["type"] == "bool"
 
 
-def test_no_agent_sandbox_config_field_on_any_surface():
-    """#364 — the Settings → Agent defaults → "Sandbox" control was removed, and the
-    removal has to be complete on EVERY surface, not just the dataclass.
-
-    The control wrote `agent.sandbox` ("auto"/"off") and nothing read it: sandboxing is
-    decided by the `mode` argument threaded into `sandbox.wrap_argv`, which arrives from
-    per-provider options or a literal at each of its call sites — `AppConfig.agent.sandbox`
-    never entered that chain. A settings switch labelled "Sandbox" that makes no sandbox
-    decision is a false promise about a security control, so the field, its PATCH allowlist
-    entry, its frontend control, its docs row and the docstring that claimed the wiring
-    existed all go together. Wiring it instead would have required choosing which of
-    `wrap_argv`'s five call sites a global toggle overrides — including two deliberately
-    hardcoded boundaries (`knowledge_providers/pack_parse.py`'s "strict" for untrusted
-    pack parsing, `schedule_script.py`'s "standard") — which is a policy this codebase has
-    not decided and a test may not mint.
-
-    Asserted across all five surfaces in one rail on purpose: a per-surface check passes
-    while any single surface still carries the field, which is the exact shape that leaves
-    a "removed" control still reachable.
-    """
-    from pathlib import Path
-
-    from personalclaw.config.editable import _EDITABLE_CONFIG
-    from personalclaw.config.loader import AgentConfig
-
-    repo = Path(__file__).resolve().parent.parent
-
-    assert "sandbox" not in {
-        f.name for f in fields(AgentConfig)
-    }, "AgentConfig.sandbox is back: a config field nothing reads, under a security label"
-    assert "agent.sandbox" not in _EDITABLE_CONFIG, "agent.sandbox is PATCH-writable again"
-    assert "sandbox" not in AppConfig().to_dict()["agent"], "agent.sandbox is serialized again"
-
-    panel = (repo / "web/src/pages/settings/AgentDefaultsPanel.tsx").read_text(encoding="utf-8")
-    assert 'field="sandbox"' not in panel, "the Agent defaults Sandbox control is back"
-
-    docs = (repo / "docs/reference/configuration.md").read_text(encoding="utf-8")
-    assert "agent.sandbox" not in docs, "docs still document agent.sandbox as a real setting"
-
-    sandbox_src = (repo / "src/personalclaw/sandbox.py").read_text(encoding="utf-8")
-    assert "agent.sandbox" not in sandbox_src, (
-        "sandbox.py still claims agent.sandbox governs the backend — the docstring that "
-        "made this field look wired in the first place"
-    )
-
-
 def test_the_sandbox_decision_has_exactly_one_input():
-    """The positive half of the rail above: `wrap_argv`'s `mode` is the single input to the
-    sandbox decision, and it reaches `detect_backend` as `config_mode`. Without this, the
-    absence rail above could be satisfied by deleting the field AND the enforcement."""
+    """The positive half of `test_no_agent_sandbox_config_field_on_any_surface`
+    (``tests/rails/test_config_roundtrip_tree.py``): `wrap_argv`'s `mode` is the single input to
+    the sandbox decision, and it reaches `detect_backend` as `config_mode`. Without this, the
+    absence rail could be satisfied by deleting the field AND the enforcement."""
     import inspect
 
     from personalclaw import sandbox
@@ -682,60 +637,9 @@ def test_the_sandbox_decision_has_exactly_one_input():
     assert sandbox.wrap_argv(["true"], mode="off") == (["true"], None)
 
 
-def test_no_dashboard_layout_config_field_on_any_surface():
-    """#529 — the second half of a clean break that only removed one side.
-
-    The customizable-bento dashboard was retired in the v2 launcher-forward redesign and
-    the frontend half was deleted with it. The backend half outlived it by 46 days: a
-    10-id widget registry, a 45-line validator clamping to a "12-col grid" that no longer
-    existed, a PUT allowlist entry, a write branch, a GET echo, the config field, and the
-    typed client member. Measured before deleting, `dashboard_layout` had **nine** live
-    sites across `src/` and `web/src` and **zero readers** — no code positioned, sized or
-    hid anything from it. So `PUT {"dashboard_layout": {"widgets": [{"id": "tasks", …,
-    "hidden": true}], "v": 1}}` returned 200, persisted, round-tripped — and the Tasks
-    widget stayed visible. That is worse than an absent field: the stored data looks
-    authoritative, so an app or MCP tool reading it would trust a layout the dashboard
-    demonstrably ignores.
-
-    One rail across every surface on purpose, following
-    :func:`test_no_agent_sandbox_config_field_on_any_surface`: a per-surface check passes
-    while any single surface still carries the field, which is the exact shape that left
-    a "retired" mechanism fully writable for 46 days.
-    """
-    from pathlib import Path
-
-    from personalclaw.config.editable import _EDITABLE_CONFIG
-    from personalclaw.config.loader import DashboardConfig
-    from personalclaw.dashboard.handlers import files as F
-
-    repo = Path(__file__).resolve().parent.parent
-
-    assert "dashboard_layout" not in {
-        f.name for f in fields(DashboardConfig)
-    }, "DashboardConfig.dashboard_layout is back: a persisted grid layout with no renderer"
-    assert (
-        "dashboard_layout" not in AppConfig().to_dict()["dashboard"]
-    ), "dashboard.dashboard_layout is serialized into config.json again"
-    assert (
-        "dashboard.dashboard_layout" not in _EDITABLE_CONFIG
-    ), "dashboard.dashboard_layout is PATCH-writable again"
-    for gone in ("_sanitize_dashboard_layout", "_DASHBOARD_WIDGET_IDS"):
-        assert not hasattr(F, gone), f"{gone} is back — the validator without a consumer"
-
-    handlers = (repo / "src/personalclaw/dashboard/handlers/files.py").read_text(encoding="utf-8")
-    assert (
-        "dashboard_layout" not in handlers
-    ), "the dashboard-config PUT allowlist or its GET echo names dashboard_layout again"
-    client = (repo / "web/src/lib/api.ts").read_text(encoding="utf-8")
-    assert "dashboard_layout?" not in client, "the typed client field is back"
-    docs = (repo / "docs/reference/configuration.md").read_text(encoding="utf-8")
-    assert (
-        "dashboard.dashboard_layout" not in docs
-    ), "docs still document dashboard.dashboard_layout as a real setting"
-
-
 def test_the_dashboard_config_put_still_rejects_an_unknown_field():
-    """The positive half of the rail above. Deleting the allowlist ENTRY must not be
+    """The positive half of `test_no_dashboard_layout_config_field_on_any_surface`
+    (``tests/rails/test_config_roundtrip_tree.py``). Deleting the allowlist ENTRY must not be
     confused with deleting the allowlist: the endpoint's refusal of unknown keys is what
     makes a re-added `dashboard_layout` a 400 rather than a silently ignored write."""
     import asyncio
