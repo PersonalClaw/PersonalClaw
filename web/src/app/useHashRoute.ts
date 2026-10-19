@@ -19,7 +19,9 @@ import { viewTransition } from '../design/motion'
  *  `navigate(path, { replace })` sets the full `#/<path>` (path may include its
  *  own `?query`). `setQuery(patch, { replace })` merges query params onto the
  *  CURRENT route+sub without touching the path. Default is push (a history
- *  entry); pass `replace: true` to overwrite the current entry instead. */
+ *  entry); pass `replace: true` to overwrite the current entry instead. Pass
+ *  `remount: true` when the update is a navigation for the page: it bumps
+ *  `navEpoch` as `navigate` does, so a page keyed on it mounts afresh. */
 interface HashRoute {
   route: string
   sub: string
@@ -30,7 +32,7 @@ interface HashRoute {
   navEpoch: number
   navigate: (path: string, opts?: { replace?: boolean }) => void
   /** merge query params onto the current route+sub; null/'' value removes a key. */
-  setQuery: (patch: Record<string, string | null | undefined>, opts?: { replace?: boolean }) => void
+  setQuery: (patch: Record<string, string | null | undefined>, opts?: { replace?: boolean; remount?: boolean }) => void
 }
 
 function rawHash(): string {
@@ -138,7 +140,7 @@ export function useHashRoute(fallback: string): HashRoute {
     apply(clean, !!opts?.replace, true)
   }
 
-  const setQuery = (patch: Record<string, string | null | undefined>, opts?: { replace?: boolean }) => {
+  const setQuery = (patch: Record<string, string | null | undefined>, opts?: { replace?: boolean; remount?: boolean }) => {
     const cur = parseHash(fallback)
     const merged = { ...cur.query }
     for (const [k, v] of Object.entries(patch)) {
@@ -146,7 +148,7 @@ export function useHashRoute(fallback: string): HashRoute {
       else merged[k] = v
     }
     const basePath = [cur.route, cur.sub].filter(Boolean).join('/')
-    apply(buildHash(basePath, merged), !!opts?.replace, false)
+    apply(buildHash(basePath, merged), !!opts?.replace, !!opts?.remount)
   }
 
   return { route: state.route, sub: state.sub, query: state.query, navEpoch, navigate, setQuery }

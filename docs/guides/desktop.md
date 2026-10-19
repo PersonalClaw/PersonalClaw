@@ -108,18 +108,35 @@ personalclaw://<page>[/<item>...][?<state>=<value>&...]
   shell pages, `onboarding` and `companion`, are not on the list: a link to either is refused.
 - **Up to four items** follow: a thread, a settings panel, an item's id. Each is letters, digits and
   `. _ : @ ~ -`.
-- **The state** is `project`, `mode`, `pane`, `artifact`, `file` (a path inside the thread's
-  folder) and, on a new thread only, `prompt`, each given once.
+- **The state** is `project`, `mode`, `pane`, `file` (a path inside the thread's folder) and, on
+  a new thread only, `prompt`, each given once. An artifact has a page of its own, so a link names
+  it as one (`personalclaw://artifacts/<slug>`); an `artifact` key gets the link refused.
+
+What the dashboard does with the state:
+
+- **`prompt`** is put in the new thread's composer, and nothing more. It is not sent: you read
+  it, change it if you like, and send it yourself. The address then holds it as the draft, so a
+  reload shows it in the composer again, still unsent. If the app is already showing a new
+  thread, the link opens a fresh one with its prompt in place of the unsent draft.
+- **`pane`** opens one of the chat's panes: `activity` on a thread, `history` on a new thread.
+  A pane the thread does not have is left closed. Other pages do not read `pane`.
+- **`file`** is the file the thread's file pane opens beside it.
+- **`project`** binds a new thread to that project, as the project's own Chat button does.
+- **`mode`** is read by the page it names, as that page's own address does: Skills opens its
+  Browse or Proposals view (`mode=browse`, `mode=proposals`), and the new-loop form opens with
+  Attended on (`personalclaw://loop?mode=attended`). On a thread it is checked and carried in the
+  address, but not read yet: a thread opens in the mode it was left in.
 
 For example:
 
 | Link | Opens |
 |---|---|
-| `personalclaw://threads/new?prompt=draft%20this` | a new thread, with the prompt in its address |
+| `personalclaw://threads/new?prompt=draft%20this` | a new thread, with the prompt in its composer, unsent |
 | `personalclaw://settings/providers` | Settings, at its providers address |
 | `personalclaw://skills` | Skills |
 | `personalclaw://automations` | Automations |
-| `personalclaw://threads/<key>?pane=review&file=src%2Fapp.py` | that thread, with its state in the address |
+| `personalclaw://artifacts/<slug>` | that artifact |
+| `personalclaw://threads/<key>?pane=activity&file=src%2Fapp.py` | that thread, with its Activity pane and that file open |
 
 **A link only opens a page. It never acts.** It sends nothing, approves nothing, answers nothing
 and runs nothing. Any other key in a link, a key that would act included, gets the link refused.

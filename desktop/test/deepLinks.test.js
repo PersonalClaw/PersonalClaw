@@ -42,16 +42,27 @@ describe("parseDeepLink — the links the issue names", () => {
     assert.equal(ok("personalclaw://automations"), "#/triggers");
   });
 
-  it("carries a thread's project, mode, pane, artifact and review file into its hash", () => {
+  it("carries a thread's project, mode, pane and review file into its hash", () => {
     const hash = ok(
-      "personalclaw://threads/web:abc-123?project=p-1&mode=code&pane=review&artifact=report-2&file=src%2Fapp%20main.py",
+      "personalclaw://threads/web:abc-123?project=p-1&mode=code&pane=activity&file=src%2Fapp%20main.py",
     );
-    assert.equal(hash, "#/chat/web%3Aabc-123?project=p-1&mode=code&pane=review&artifact=report-2&file=src%2Fapp+main.py");
+    assert.equal(hash, "#/chat/web%3Aabc-123?project=p-1&mode=code&pane=activity&file=src%2Fapp+main.py");
     // And the page's own parser reads back exactly what the link said.
     const qs = new URLSearchParams(hash.split("?")[1]);
     assert.deepStrictEqual(Object.fromEntries(qs), {
-      project: "p-1", mode: "code", pane: "review", artifact: "report-2", file: "src/app main.py",
+      project: "p-1", mode: "code", pane: "activity", file: "src/app main.py",
     });
+  });
+
+  it("refuses an artifact key: an artifact opens on its own page, so the key would be ignored", () => {
+    for (const raw of [
+      "personalclaw://threads/k?artifact=report-2",
+      "personalclaw://threads/new?artifact=report-2",
+      "personalclaw://artifacts?artifact=report-2",
+    ]) {
+      assert.match(refused(raw), /a parameter the app does not take/, raw);
+    }
+    assert.equal(ok("personalclaw://artifacts/report-2"), "#/artifacts/report-2");
   });
 
   it("accepts every one of the app's routes by its own name", () => {
@@ -235,14 +246,13 @@ describe("parseDeepLink — refusals (each opens the app without navigating)", (
     refused(`personalclaw://threads/k?mode=${"a".repeat(LIMITS.word + 1)}`);
     refused("personalclaw://threads/k?pane=re%20view");
     refused("personalclaw://threads/k?project=p%2F1");
-    refused("personalclaw://threads/k?artifact=a%3Cb");
     refused("personalclaw://threads/k?file=a%00b");
     refused(`personalclaw://threads/k?file=${"a".repeat(LIMITS.file + 1)}`);
   });
 
   it("holds each id and word to its own characters", () => {
     for (const [key, value] of [
-      ["project", "a%40b"], ["project", "a~b"], ["artifact", "a%40b"], ["artifact", "a~b"],
+      ["project", "a%40b"], ["project", "a~b"],
       ["mode", "1x"], ["mode", "-x"], ["pane", "9"], ["pane", "-review"],
     ]) {
       assert.match(refused(`personalclaw://threads/k?${key}=${value}`), new RegExp(`the ${key} parameter`), `${key}=${value}`);
@@ -251,7 +261,7 @@ describe("parseDeepLink — refusals (each opens the app without navigating)", (
   });
 
   it("refuses each parameter one past its cap, and accepts it at the cap", () => {
-    const caps = { project: LIMITS.id, mode: LIMITS.word, pane: LIMITS.word, artifact: LIMITS.id, file: LIMITS.file };
+    const caps = { project: LIMITS.id, mode: LIMITS.word, pane: LIMITS.word, file: LIMITS.file };
     for (const [key, cap] of Object.entries(caps)) {
       assert.match(refused(`personalclaw://threads/k?${key}=${"a".repeat(cap + 1)}`), new RegExp(key), key);
       ok(`personalclaw://threads/k?${key}=${"a".repeat(cap)}`);
