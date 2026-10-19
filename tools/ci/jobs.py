@@ -818,6 +818,8 @@ def run_one(
             env={**base_env, **env},
             grace=options.grace,
             before_stop=_hang_report(host) if "pytest" in argv else None,
+            # The reason names the job's budget, not what was left of it as this step started.
+            budget=total,
         )
         steps.append((argv, result.returncode, time.monotonic() - began))
         if result.code != run.OK:

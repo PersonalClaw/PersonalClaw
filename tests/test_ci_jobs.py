@@ -437,6 +437,49 @@ def test_a_step_that_is_not_pytest_out_of_time_lists_nothing(repo, tmp_path, cap
     assert listed == [] and "possible xdist hang" not in capfd.readouterr().err
 
 
+def test_a_step_that_starts_late_still_names_the_jobs_budget(repo, tmp_path):
+    """The planted delay: the first step takes a second of the job's 5, so the hanging step starts
+    with under 4 s left. Its reason names the 5 s the job was given, never what was left of them
+    as it started, which read as "after 3.98731s" (or "1.99999s", when a step began a moment
+    after the deadline was taken)."""
+    job = _job("late", "import time; time.sleep(1)", "import time; time.sleep(60)")
+    outcome = _run(repo, job, tmp_path, deadline_s=5, grace=0.2)
+    assert outcome.code == run.RED
+    assert outcome.reasons == ["step 2: the job timed out after 5s"]
+
+
+def test_run_job_names_the_budget_it_is_given_not_the_time_it_waited(tmp_path):
+    scratch = run.Scratch.create(tmp_path / "scratch")
+    result = run.run_job(
+        [PY, "-c", "import time; time.sleep(60)"],
+        cwd=tmp_path,
+        scratch=scratch,
+        timeout=1.0,
+        path=os.environ.get("PATH", os.defpath),
+        grace=0.2,
+        budget=7,
+    )
+    assert result.code == run.RED
+    assert result.violations == ("the job timed out after 7s",)
+
+
+@pytest.mark.parametrize("budget", [0, -1, float("nan"), float("inf"), True])
+def test_a_budget_that_is_not_a_positive_number_of_seconds_is_refused_before_anything_runs(
+    tmp_path, budget
+):
+    marker = tmp_path / "ran"
+    with pytest.raises(ValueError, match="budget"):
+        run.run_job(
+            [PY, "-c", f"open({str(marker)!r}, 'w')"],
+            cwd=tmp_path,
+            scratch=run.Scratch.create(tmp_path / "scratch"),
+            timeout=5.0,
+            path=os.environ.get("PATH", os.defpath),
+            budget=budget,
+        )
+    assert not marker.exists()
+
+
 def test_a_placeholder_with_no_value_is_refused_before_the_step_runs(repo, tmp_path):
     marker = tmp_path / "ran"
     step = Step((PY, "-c", f"open({str(marker)!r}, 'w')", "{nope}"))
