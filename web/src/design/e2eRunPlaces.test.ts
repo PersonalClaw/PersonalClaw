@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join, sep } from 'node:path'
-import { INSTALL_PORT, choosePlaces, cleanUpRun } from '../../e2e/runPlaces'
+import { dirname, join, sep } from 'node:path'
+import { INSTALL_PORT, authDirFor, choosePlaces, cleanUpRun } from '../../e2e/runPlaces'
 
 // ── Each browser run has a home and ports of its own ───────────────────────────────────────────
 //
@@ -68,7 +68,7 @@ describe('choosePlaces', () => {
     expect(env.PW_GATEWAY_PORT).toBe(String(first.gatewayPort))
 
     const again = await choosePlaces({ ...env }, { tmp: dir, testResults: join(dir, 'test-results') })
-    expect(again).toEqual({ ...first, madeHome: false, madeOutputDir: false })
+    expect(again).toEqual({ ...first, madeHome: false, madeOutputDir: false, madeAuthDir: false })
     expect(homesIn(dir), 'one run, one home').toHaveLength(1)
   })
 
@@ -101,7 +101,9 @@ describe('choosePlaces', () => {
     expect(a.storageState).not.toBe(b.storageState)
     expect(a.outputDir).not.toBe(b.outputDir)
     for (const p of [a, b]) {
-      expect(p.storageState.startsWith(p.home + sep), 'the jar lives in the run home, and goes with it').toBe(true)
+      expect(p.storageState.startsWith(p.home + sep), 'the jar is not in the gateway home: no snapshot claims it there').toBe(false)
+      expect(dirname(p.authDir), 'the jar folder sits beside the run home').toBe(dirname(p.home))
+      expect(dirname(p.storageState)).toBe(p.authDir)
       expect(p.outputDir.startsWith(results + sep), 'the output folder is under test-results/, where CI uploads').toBe(true)
     }
     // auth.setup.ts writes the jar it reads from STORAGE_STATE, so the runner hands it on.
@@ -122,6 +124,42 @@ describe('choosePlaces', () => {
     expect(existsSync(empty.outputDir), 'an empty run folder is litter').toBe(false)
     expect(existsSync(join(used.outputDir, 'geometry.txt')), 'output CI uploads stays').toBe(true)
     expect(existsSync(empty.home) || existsSync(used.home), 'the homes go too').toBe(false)
+  })
+
+  it('makes the jar folder beside the home, 0700, and removes it with the home', async () => {
+    const dir = tmp()
+    const p = await choosePlaces({}, { tmp: dir, testResults: join(dir, 'test-results') })
+    expect(p.madeAuthDir).toBe(true)
+    expect(existsSync(p.authDir), 'made before the sign-in writes into it').toBe(true)
+    // The jar holds a live owner token for this run's gateway: no one else on the machine reads it.
+    expect(statSync(p.authDir).mode & 0o777).toBe(0o700)
+    writeFileSync(p.storageState, '{"cookies":[],"origins":[]}')
+    cleanUpRun(p)
+    expect([existsSync(p.home), existsSync(p.authDir)], 'the jar goes with the home').toEqual([false, false])
+  })
+
+  it('fails loudly when it cannot make the jar folder, and makes no home it then leaves behind', async () => {
+    const dir = tmp()
+    const home = join(dir, 'named-home')
+    mkdirSync(home)
+    // Something already holds the jar folder's name, so the folder cannot be made.
+    writeFileSync(authDirFor(home), 'in the way')
+    await expect(choosePlaces({ PW_E2E_HOME: home }, { tmp: dir, testResults: join(dir, 'test-results') }))
+      .rejects.toThrow(/cookie jar/)
+    const made = await choosePlaces({}, { tmp: dir, testResults: join(dir, 'test-results'),
+      makeAuthDir: () => { throw new Error('EACCES') } }).catch((e: Error) => e)
+    expect(String(made)).toMatch(/cookie jar/)
+    expect(homesIn(dir), 'a run that could not make its jar folder left no home').toEqual([])
+  })
+
+  it('a worker makes no jar folder of its own, and removes none', async () => {
+    const dir = tmp()
+    const env: Record<string, string | undefined> = {}
+    const first = await choosePlaces(env, { tmp: dir, testResults: join(dir, 'test-results') })
+    const worker = await choosePlaces({ ...env }, { tmp: dir, testResults: join(dir, 'test-results') })
+    expect([worker.authDir, worker.madeAuthDir]).toEqual([first.authDir, false])
+    cleanUpRun(worker)
+    expect(existsSync(first.authDir), "a worker's exit leaves the runner's jar folder").toBe(true)
   })
 
   it('keeps a STORAGE_STATE the caller names', async () => {
@@ -177,7 +215,9 @@ describe('the real config', () => {
       expect(m.e2eHome.startsWith(dir + sep), m.e2eHome).toBe(true)
       expect(Number(m.previewPort)).toBeGreaterThan(0)
       expect(Number(m.gatewayPort)).not.toBe(INSTALL_PORT)
-      expect(m.storageState.startsWith(m.e2eHome + sep), m.storageState).toBe(true)
+      expect(m.storageState.startsWith(m.e2eHome + sep), `the jar is in the gateway home: ${m.storageState}`).toBe(false)
+      expect(dirname(dirname(m.storageState)), 'the jar folder sits beside the home').toBe(dirname(m.e2eHome))
+      expect(existsSync(dirname(m.storageState)), 'the jar folder is gone with the home').toBe(false)
       expect(m.outputDir.startsWith(join(WEB, 'test-results') + sep), m.outputDir).toBe(true)
     }
     expect(runs[0].e2eHome).not.toBe(runs[1].e2eHome)
