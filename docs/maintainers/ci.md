@@ -708,6 +708,20 @@ files together ran 0.66-1.52x their median on Linux and 0.70-1.95x on macOS, the
 shard at once, as a slower host does. So each shard's log ends with "shard collection and
 memory": each worker's collection seconds, its peak RSS at collection's end and over the run,
 and the machine's CPUs, which shows a slow host for what it is.
+
+Most of that is the host's CPU model. Over four main runs on Linux, a shard ran a median 1.09x
+its plan on an EPYC 7763, 0.88x on an EPYC 9V74 and 0.71x on an EPYC 9V45, so two shards of one
+run can finish about 1.5x apart on a plan balanced to 1.000x. Each report records its host's
+model (`ci_cpu`), and the plan weighs its seconds by it: a model's factor is the median, over
+the input runs' reports on that model, of what the report ran against what its files' plain
+medians planned, and each report's seconds are divided by it before the median is taken. The
+factors come from the three input runs only, never from the run being planned (`--run-id`), and
+a report with no recorded model (macOS, or a history from before it was recorded) weighs as it
+ran. Replayed on one of those runs, judged with each shard's time divided by its host's factor,
+this planned 1.10x where the plain medians planned 1.17x. In plain wall time no plan made in
+advance can do better than the hosts the run draws, so the 1.15x bar is judged that way: each
+shard's time divided by its host's factor, as the median over the newest five finished main
+runs.
 The durations only balance the shards: when neither source can be read, every file weighs the
 same and the plan is still whole.
 
@@ -905,7 +919,12 @@ the shard planner and the weekly report read it.
 - **Where each test ran.** Each pytest process records, on its first test case, its platform
   (OS, machine and Python) and its number of xdist workers (`tests/run_facts.py`), and every test
   line of that report carries them. The planner keeps one platform's and one `-n`'s seconds
-  apart, so a leg that moves to another `-n` plans from the first run that recorded it.
+  apart, so a leg that moves to another `-n` plans from the first run that recorded it. On Linux
+  it also records the host's CPU model, and the run line's `cpus` maps each report to it (null
+  where none was recorded), which the planner weighs seconds by.
+- **Versions.** Version 3 added the run line's `cpus` and nothing else. The planner, the report
+  and the parity check read versions 1, 2 and 3, so a history kept from before reads as one whose
+  reports recorded no CPU model, and they refuse anything newer.
 - **Artifacts are data.** An archive over 8 MiB is never downloaded, a report is read in memory
   up to 8 MiB, a report that is not UTF-8 or declares a DOCTYPE anywhere is refused, and nothing
   is extracted or run. A report that cannot be read fails the collection and writes nothing. The
@@ -930,8 +949,7 @@ the shard planner and the weekly report read it.
   text, the suite's way of naming a red the environment caused rather than the code under test
   (the browse proof's page that stayed detached), and false for every other case. Version 2
   adds that field and changes nothing else: the report and the parity check read version 1 too,
-  as histories without it. The shard planner still reads version 2 alone, so after this lands it
-  skips each version-1 history, with a warning, until three version-2 main histories exist.
+  as histories without it, and so does the shard planner.
 - **Not yet recorded:** `quarantined` is #3947's, `cache_hits` is #3909's, and `worker` and
   `position` are #3949's. No API reports them, so they are null, never guessed.
 

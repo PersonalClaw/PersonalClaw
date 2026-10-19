@@ -234,10 +234,20 @@ def _zip(name: str, data: bytes, *, deflate: bool = False) -> bytes:
     return buffer.getvalue()
 
 
-def _jsonl(run: int, *tests: tuple, schema: str = telemetry.SCHEMA) -> bytes:
+def _jsonl(
+    run: int,
+    *tests: tuple,
+    schema: str = telemetry.SCHEMA,
+    version: int = telemetry.VERSION,
+    cpus: dict[str, str | None] | None = None,
+) -> bytes:
     """One collected history: a run line, then a test line per ``(report, test, seconds)``,
-    each on ``LINUX`` with 4 workers unless the tuple names a platform and a worker count."""
-    head = {"kind": "run", "schema": schema, "version": telemetry.VERSION, "run_id": run}
+    each on ``LINUX`` with 4 workers unless the tuple names a platform and a worker count.
+    A version 1 or 2 history's run line has no ``cpus``; a version 3 one's maps each report to
+    the CPU model it ran on (``cpus``, none recorded unless given)."""
+    head = {"kind": "run", "schema": schema, "version": version, "run_id": run}
+    if version >= 3:
+        head["cpus"] = cpus or {}
     lines = [dict(head, attempt=1)]
     for report, test, seconds, *where in tests:
         platform, workers = where or (LINUX, 4)
@@ -256,8 +266,8 @@ def _jsonl(run: int, *tests: tuple, schema: str = telemetry.SCHEMA) -> bytes:
     return "".join(json.dumps(x) + "\n" for x in lines).encode()
 
 
-def _history(run: int, *tests: tuple, schema: str = telemetry.SCHEMA) -> bytes:
-    return _zip(f"history-{run}-1.jsonl", _jsonl(run, *tests, schema=schema))
+def _history(run: int, *tests: tuple, schema: str = telemetry.SCHEMA, **head) -> bytes:
+    return _zip(f"history-{run}-1.jsonl", _jsonl(run, *tests, schema=schema, **head))
 
 
 def _producer_of(run: int) -> int:
@@ -905,3 +915,123 @@ def test_with_no_record_yet_the_plan_weighs_every_file_the_same_and_says_so(
     assert "no telemetry history" in leg["durations"]
     assert "every file weighs the same" in leg["durations"]
     assert not any("junit-" in a for a in gh.asked if "/artifacts" in a), "no junit is read"
+
+
+# ── host factors: seconds measured on a slower CPU model weigh what the file costs ─────────────
+
+SLOW, FAST = "EPYC slow 64-Core", "EPYC fast 96-Core"
+A, S, AB = "tests.test_a::t", "tests.sub.test_s::t", "tests.test_ab::t"
+
+
+def _hosted(run: int, a: float, s: float, ab: float, models: tuple, **head) -> bytes:
+    """One run of three reports, one file each, each report on the CPU model ``models`` names."""
+    reports = ("junit-test-shard-1", "junit-test-shard-2", "junit-test-shard-3")
+    return _history(
+        run,
+        (reports[0], A, a),
+        (reports[1], S, s),
+        (reports[2], AB, ab),
+        cpus=dict(zip(reports, models, strict=True)),
+        **head,
+    )
+
+
+#: Every file costs 10 s on the fast model and 20 s on the slow one. ``test_a`` drew the slow
+#: model in two of the three runs, so its plain median says 20 s.
+HOSTED = {
+    50: (20.0, 10.0, 10.0, (SLOW, FAST, FAST)),
+    40: (20.0, 10.0, 20.0, (SLOW, FAST, SLOW)),
+    30: (10.0, 20.0, 10.0, (FAST, SLOW, FAST)),
+}
+#: Plain medians: test_a 20, the others 10. Each model's factor is the median of ran / planned
+#: over the reports that ran on it: slow 20/20, 20/20, 20/10, 20/10 is 1.5; fast 10/10 four
+#: times and 10/20 once is 1.0. Divided by its host's factor, test_a ran 13.3, 13.3 and 10 s.
+HOSTED_DURATIONS = {
+    "tests/test_a.py": pytest.approx(40 / 3),
+    "tests/sub/test_s.py": 10.0,
+    "tests/test_ab.py": 10.0,
+}
+
+
+def test_the_record_divides_each_runs_seconds_by_its_hosts_factor() -> None:
+    gh = _Gh({run: _hosted(run, *row) for run, row in HOSTED.items()})
+    durations, said = _record(gh).durations(LEG, FILES)
+    assert durations == HOSTED_DURATIONS, "the plain median would weigh test_a at 20 s"
+    assert f"{SLOW} 1.50" in said and f"{FAST} 1.00" in said, said
+
+
+def test_a_report_with_no_recorded_cpu_model_keeps_its_seconds() -> None:
+    """A report whose CPU model was not recorded has no factor to take, so its seconds weigh
+    as they ran (a factor of 1.0), never by some other model's factor or one of its own."""
+    gh = _Gh(
+        {
+            50: _hosted(50, 20.0, 10.0, 10.0, (SLOW, FAST, FAST)),
+            40: _hosted(40, 20.0, 20.0, 10.0, (None, SLOW, FAST)),
+            30: _hosted(30, 10.0, 10.0, 20.0, (None, FAST, SLOW)),
+        }
+    )
+    durations, said = _record(gh).durations(LEG, FILES)
+    # test_a: 20 / 2 (slow), then 20 and 10 as they ran: the median is 10, against 13.3 if the
+    # unrecorded reports took a factor of their own (ran / planned 1.0 and 0.5: 0.75).
+    assert durations["tests/test_a.py"] == 10.0
+    assert "an unrecorded CPU model weighs as it ran" in said, said
+
+
+@pytest.mark.parametrize("version", [1, 2], ids=["version 1", "version 2"])
+def test_an_older_history_is_still_read_and_weighs_as_it_ran(version: int) -> None:
+    """Histories written before the CPU model was recorded stay readable for as long as they
+    are kept: none records a model, so every factor is 1.0 and the plan is the plain median."""
+    gh = _Gh(
+        {
+            50: _hosted(50, 20.0, 10.0, 10.0, (SLOW, FAST, FAST), version=version),
+            40: _hosted(40, 20.0, 20.0, 10.0, (SLOW, SLOW, FAST), version=version),
+            30: _hosted(30, 10.0, 10.0, 20.0, (FAST, FAST, SLOW), version=version),
+        }
+    )
+    durations, said = _record(gh).durations(LEG, FILES)
+    assert durations == {
+        "tests/test_a.py": 20.0,
+        "tests/sub/test_s.py": 10.0,
+        "tests/test_ab.py": 10.0,
+    }
+    assert "runs 50, 40, 30" in said
+
+
+def test_a_history_of_a_newer_version_is_skipped_and_named(capsys) -> None:
+    gh = _Gh({40: _hosted(40, 1.0, 1.0, 1.0, (FAST,) * 3, version=telemetry.VERSION + 1)})
+    durations, _ = _record(gh).durations(LEG, FILES)
+    assert durations == {}
+    assert "::warning title=telemetry history unreadable::run 40" in capsys.readouterr().out
+
+
+def test_the_run_being_planned_never_weighs_its_own_plan_or_its_factors() -> None:
+    """A run planning again (a rerun of all its jobs) is listed among main's completed runs once
+    its first attempt ended, with that attempt's history. The record never reads it: neither its
+    seconds nor its hosts' factors, which would grade the plan by the run it plans."""
+    # Run 60's reports would give the slow model a factor near 0 and test_a 900 s.
+    histories = {60: _hosted(60, 900.0, 1.0, 1.0, (FAST, SLOW, SLOW))}
+    histories.update({run: _hosted(run, *row) for run, row in HOSTED.items()})
+    gh = _Gh(histories)
+    record = shards.TelemetryRecord("o/r", text=gh.text, binary=gh.binary, planning=60)
+    durations, said = record.durations(LEG, FILES)
+    assert 60 not in gh.downloads and "runs 50, 40, 30" in said
+    assert durations == HOSTED_DURATIONS
+
+
+def test_the_plan_command_names_its_own_run_to_the_record(tmp_path: Path, monkeypatch) -> None:
+    gh = _Gh(
+        {
+            60: _history(60, ("junit-test-shard-1", A, 900.0)),
+            50: _history(50, ("junit-test-shard-1", A, 2.0)),
+        }
+    )
+    monkeypatch.setattr(sys, "argv", ["x"])
+    root = _tree(tmp_path, *FILES, "tests/test_c.py")
+    monkeypatch.setattr(shards, "_gh_text", gh.text)
+    monkeypatch.setattr(shards, "_gh_binary", gh.binary)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    out = tmp_path / "plan.json"
+    argv = ["plan", "--repo", "o/r", "--root", str(root), "--out", str(out), "--run-id", "60"]
+    assert shards.main([*argv, "--leg", "test-shard:ci.yml:junit-test-shard-:2"]) == 0
+    assert 60 not in gh.downloads
+    assert "runs 50" in json.loads(out.read_text("utf-8"))["legs"]["test-shard"]["durations"]

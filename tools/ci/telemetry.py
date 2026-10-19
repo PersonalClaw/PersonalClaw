@@ -25,7 +25,13 @@ short fails the collection.
 **Where each test ran.** The suite records, on each process's first test case, its platform
 (OS, machine and Python) and its number of xdist workers (``tests/run_facts.py``). Every test
 line of that report carries them, so a reader can keep one platform's and one worker count's
-seconds apart.
+seconds apart. On Linux it also records the host's CPU model, and the run line's ``cpus`` maps
+each report to it (null for a report that recorded none), so a reader can weigh a report's
+seconds by how fast its host model is.
+
+**The CPU model** (version 3). Version 3 adds the run line's ``cpus`` and changes nothing else,
+so every reader takes a version 1 or 2 history (:data:`READS`) as one whose reports recorded no
+CPU model.
 
 **Artifacts are data.** Their content is never executed or extracted to disk: an archive larger
 than ``MAX_ARCHIVE_BYTES`` is never downloaded, a report is read in memory up to
@@ -67,10 +73,10 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA = "personalclaw-ci-telemetry"
-VERSION = 2
-#: The versions a reader takes: this one, and version 1, whose test lines lack
-#: ``environment_failure``.
-READS = frozenset({1, VERSION})
+VERSION = 3
+#: The versions a reader takes: this one; version 2, whose run line lacks ``cpus``; and version 1,
+#: whose test lines also lack ``environment_failure``.
+READS = frozenset({1, 2, VERSION})
 
 #: The run line's fields, after ``kind``, ``schema`` and ``version``.
 RUN_FIELDS = (
@@ -93,6 +99,7 @@ RUN_FIELDS = (
     "schedule_lag_seconds",
     "cache_hits",
     "jobs",
+    "cpus",
 )
 
 #: A test line's fields, exactly.
@@ -119,6 +126,7 @@ TEST_FIELDS = (
 #: The junit properties ``tests/run_facts.py`` records on each process's first test case.
 PLATFORM_PROPERTY = "ci_platform"
 WORKERS_PROPERTY = "ci_workers"
+CPU_PROPERTY = "ci_cpu"
 
 #: Where the workflows live, repository-relative: the folder the Actions API's ``path`` names.
 WORKFLOWS = ".github/workflows"
@@ -368,6 +376,14 @@ def _rerun_result(name: str, test: str, first: str, case: ET.Element) -> str | N
 def report_cases(name: str, archive: bytes) -> tuple[list[Case], str | None, int | None]:
     """Each test case of one junit archive, and the platform and worker count the suite recorded
     in it (``tests/run_facts.py``), or None for a report that records none."""
+    cases, platform, workers, _ = report_facts(name, archive)
+    return cases, platform, workers
+
+
+def report_facts(
+    name: str, archive: bytes
+) -> tuple[list[Case], str | None, int | None, str | None]:
+    """:func:`report_cases`, and the CPU model the report's processes recorded, or None."""
     try:
         with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
             members = [
@@ -377,6 +393,7 @@ def report_cases(name: str, archive: bytes) -> tuple[list[Case], str | None, int
                 raise CollectError(f"{name}: the archive holds no junit report")
             cases: list[Case] = []
             facts: set[tuple[str | None, str | None]] = set()
+            models: set[str] = set()
             budget = MAX_JUNIT_BYTES
             for member in members:
                 with zipped.open(member) as fh:
@@ -403,16 +420,21 @@ def report_cases(name: str, archive: bytes) -> tuple[list[Case], str | None, int
                         cases.append((test, seconds, first, host, rerun, environment))
                         if PLATFORM_PROPERTY in found or WORKERS_PROPERTY in found:
                             facts.add((found.get(PLATFORM_PROPERTY), found.get(WORKERS_PROPERTY)))
+                        if found.get(CPU_PROPERTY):
+                            models.add(str(found[CPU_PROPERTY]))
     except zipfile.BadZipFile:
         raise CollectError(f"{name}: not a zip archive") from None
     except (ET.ParseError, ValueError) as exc:
         raise CollectError(f"{name}: not a junit report ({exc})") from None
     if len(facts) > 1:
         raise CollectError(f"{name}: its processes recorded more than one platform: {facts}")
+    if len(models) > 1:
+        raise CollectError(f"{name}: its processes recorded more than one CPU model: {models}")
     platform, workers = next(iter(facts), (None, None))
     if workers is not None and not workers.isdigit():
         raise CollectError(f"{name}: a worker count of {workers!r}")
-    return cases, platform, int(workers) if workers is not None else None
+    count = int(workers) if workers is not None else None
+    return cases, platform, count, next(iter(models), None)
 
 
 # ── the collection ────────────────────────────────────────────────────────────────────────────
@@ -485,13 +507,14 @@ def collect(
         if name.startswith(REPORT_PREFIX) and name not in reports:
             reports[name] = artifact
     tests: list[dict[str, Any]] = []
+    cpus: dict[str, str | None] = {}
     for name, artifact in sorted(reports.items()):
         if int(artifact.get("size_in_bytes") or 0) > MAX_ARCHIVE_BYTES:
             raise CollectError(f"{name}: the archive passes {MAX_ARCHIVE_BYTES} bytes")
         data = binary("api", f"repos/{repo}/actions/artifacts/{artifact['id']}/zip")
         if len(data) > MAX_ARCHIVE_BYTES:
             raise CollectError(f"{name}: the archive passes {MAX_ARCHIVE_BYTES} bytes")
-        cases, platform, workers = report_cases(name, data)
+        cases, platform, workers, cpus[name] = report_facts(name, data)
         for test, seconds, result, host, rerun, environment in cases:
             tests.append(
                 {
@@ -548,6 +571,7 @@ def collect(
         "schedule_lag_seconds": lag,
         "cache_hits": None,
         "jobs": [_job_entry(j) for j in jobs],
+        "cpus": cpus,
     }
     return [head, *tests]
 
