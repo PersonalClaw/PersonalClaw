@@ -133,8 +133,9 @@ const codeOf = (src: string) => src.split('\n')
   })
   .join('\n')
 const CODE = codeOf(SRC)
-// The page itself draws status words too (its header and its notices).
+// The page itself draws status words too (its header and its notices), and so does its meta strip.
 const PAGE_CODE = codeOf(readFileSync(join(process.cwd(), 'src/pages/code/CodeCockpitPage.tsx'), 'utf8'))
+const META_CODE = codeOf(readFileSync(join(process.cwd(), 'src/pages/code/cockpit/meta/CockpitMeta.tsx'), 'utf8'))
 
 describe('the blocked explanation is reachable', () => {
   it('🔑 the persisted blocked banner carries a role', () => {
@@ -167,12 +168,13 @@ describe('the blocked explanation is reachable', () => {
   it('every status word on this page comes from the registry', () => {
     // The invariant that keeps this surface from growing back a vocabulary the registry replaced.
     // A literal label for a status is what "a fifth table" looks like on arrival.
-    for (const code of [PAGE_CODE, CODE]) {
+    for (const code of [PAGE_CODE, CODE, META_CODE]) {
       for (const word of ['Stalled', 'Needs you', 'Ended early', 'Analyzing']) {
         expect(code).not.toContain(`>${word}<`)
       }
     }
     expect(PAGE_CODE).toContain("from '../../lib/loopStatus'")
     expect(CODE).toContain("from '../../../../lib/loopStatus'")
+    expect(META_CODE).toContain("from '../../../../lib/loopStatus'")
   })
 })
