@@ -5,7 +5,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
-import { useMode } from '../../app/theme'
+import { useTerminalTheme } from '../../design/editorTheme'
 import { api } from '../../lib/api'
 import { registerTerminal, unregisterTerminal } from './terminalBridge'
 import { escapeGate } from './escapeGate'
@@ -26,7 +26,11 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
   // session id). A host that owns PTY teardown (the cockpit's BottomTerminal) must learn
   // the new id, or its cleanup deletes the stale one + leaks the live restarted PTY.
   onSession?: (sessionId: string) => void }) {
-  const { mode } = useMode()
+  // xterm takes concrete colours, so its theme is built from the editor layer's terminal tokens and
+  // rebuilt when the scheme, the mode or an owner's colour moves them (`design/editorTheme.ts`).
+  const terminalTheme = useTerminalTheme()
+  const themeRef = useRef(terminalTheme)
+  themeRef.current = terminalTheme
   const hostRef = useRef<HTMLDivElement>(null)
   // Where focus goes when the user asks to leave the PTY: the view's own container, so the
   // next Tab continues the page's order from the terminal's position rather than from the top.
@@ -59,9 +63,7 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
       fontSize: 13,
       fontFamily: '"Google Sans Code", "MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "JetBrainsMono Nerd Font", "Symbols Nerd Font", "Powerline Symbols", ui-monospace, monospace',
       cursorBlink: true,
-      theme: mode === 'light'
-        ? { background: '#ffffff', foreground: '#1a1a1a' }
-        : { background: '#0d0d12', foreground: '#e6e6ee' },
+      theme: themeRef.current,
     })
     const fit = new FitAddon(); term.loadAddon(fit); term.loadAddon(new WebLinksAddon())
     term.open(host); try { fit.fit() } catch { /* not visible yet */ }
@@ -181,8 +183,8 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
   // theme live-update without tearing down the session.
   useEffect(() => {
     const t = termRef.current
-    if (t) t.options.theme = mode === 'light' ? { background: '#ffffff', foreground: '#1a1a1a' } : { background: '#0d0d12', foreground: '#e6e6ee' }
-  }, [mode])
+    if (t) t.options.theme = terminalTheme
+  }, [terminalTheme])
 
   // Re-advise the way out on every focus entry, then fade it after HINT_MS. Bound to the
   // container's focusin/focusout because focus actually lands on xterm's helper textarea,
@@ -228,7 +230,7 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
         if (e.key === 'Enter' && e.target === e.currentTarget) { e.preventDefault(); termRef.current?.focus() }
       }}
       className="group relative h-full overflow-hidden rounded-lg border border-outline/30 outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
-      style={{ background: mode === 'light' ? '#ffffff' : '#0d0d12' }}>
+      style={{ background: 'var(--terminal-background)' }}>
       <div ref={hostRef} className="h-full w-full" />
 
       {/* The way out, advised where it is needed and nowhere else: revealed while focus is

@@ -16,10 +16,12 @@ const MIN_MS = 450
 const MAX_MS = 1500
 const FRAME_MS = 16
 
-export function TypingReveal({ text, mode, theme, onDone }: {
+export function TypingReveal({ text, mode, onDone }: {
   text: string
   mode: 'write' | 'erase'
-  theme: 'light' | 'dark'
+  /** Ignored: the reveal draws from the editor layer of the design tokens, which follows the mode
+   *  and the scheme by itself. Kept so a caller that still passes it compiles. */
+  theme?: 'light' | 'dark'
   onDone?: () => void
 }) {
   // Number of characters currently shown (write: counting up; erase: counting down).
@@ -69,9 +71,10 @@ export function TypingReveal({ text, mode, theme, onDone }: {
 
   const visible = text.slice(0, shown)
   const lines = visible.split('\n')
-  const bg = theme === 'light' ? '#ffffff' : '#1e1e1e'
-  const fg = theme === 'light' ? '#1f1f1f' : '#d4d4d4'
-  const gutter = theme === 'light' ? '#9aa0a6' : '#6e7681'
+  // The editor surface it hands off to, from the editor layer (`design/tokens.css`, layer 3).
+  const bg = 'var(--editor-background)'
+  const fg = 'var(--editor-foreground)'
+  const gutter = 'var(--editor-line-number-foreground)'
   return (
     <pre ref={scrollRef} aria-label={mode === 'erase' ? 'Deleting file' : 'Writing file'}
       className="m-0 h-full overflow-auto p-0 font-mono text-[13px] leading-[1.5]"

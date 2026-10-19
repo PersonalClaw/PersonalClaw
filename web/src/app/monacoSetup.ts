@@ -7,6 +7,7 @@
 // Imported once for side effects from main.tsx, BEFORE any <Editor> mounts.
 import { loader } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
+import { syncMonacoTheme } from '../design/editorTheme'
 
 // monaco-editor 0.56 added a package `exports` map ("./*" -> "./esm/vs/*.js"), so worker
 // subpaths are now addressed RELATIVE to esm/vs/ — the old `monaco-editor/esm/vs/...`
@@ -71,3 +72,7 @@ if (!monaco.languages.getLanguages().some((l) => l.id === 'toml')) {
 
 // Point the React wrapper at the imported instance — no network fetch of the AMD loader.
 loader.config({ monaco })
+
+// The one Monaco theme every editor uses (`MONACO_THEME`), built from the editor layer of the design
+// tokens and rebuilt whenever the scheme, the mode or an owner's colour moves it.
+syncMonacoTheme(monaco)

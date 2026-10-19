@@ -3,7 +3,7 @@
  *
  *   1  palette    `--<hue>-<step>`, raw values (design/palette.ts)
  *   2  semantic   `--color-*`, the brand gradient (`--grad-*`, `--glow-*`) and the ring highlight
- *   3  editor     (none yet)
+ *   3  editor     `--editor-*` and `--terminal-*`, named after Monaco's and xterm's theme keys
  *   4  component  composed from layer 2 for one component, listed below
  *
  * A scheme sheet and the `.light` block set layers 1 and 2 only; a component reads layers 2 to 4.
@@ -14,6 +14,7 @@ import { PALETTE_TOKEN } from './palette'
 export type TokenLayer = 1 | 2 | 3 | 4
 
 const SEMANTIC = /^--(?:color-[\w-]+|grad-\d|glow-[ab]|ring-stop-2)$/
+const EDITOR = /^--(?:editor|terminal)-[\w-]+$/
 
 /** Tokens made for one component out of layer 2. None is reassigned per mode or per scheme: they
  *  follow because what they are made of does. */
@@ -26,6 +27,7 @@ export const COMPONENT_TOKENS = [
 export function tokenLayer(name: string): TokenLayer | undefined {
   if (PALETTE_TOKEN.test(name)) return 1
   if (SEMANTIC.test(name)) return 2
+  if (EDITOR.test(name)) return 3
   if ((COMPONENT_TOKENS as readonly string[]).includes(name)) return 4
   return undefined
 }

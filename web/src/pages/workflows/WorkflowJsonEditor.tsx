@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react'
-import { useMode } from '../../app/theme'
+import { MONACO_THEME } from '../../design/editorTheme'
 import { Loading } from '../../ui/ListScaffold'
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'))
@@ -21,7 +21,6 @@ export function WorkflowJsonEditor({ name, value, onChange, readOnly = false }: 
   onChange: (v: string) => void
   readOnly?: boolean
 }) {
-  const { mode } = useMode()
   return (
     <Suspense fallback={<Loading what="the JSON editor" />}>
       <MonacoEditor
@@ -29,7 +28,7 @@ export function WorkflowJsonEditor({ name, value, onChange, readOnly = false }: 
         language="json"
         value={value}
         onChange={(v) => onChange(v ?? '')}
-        theme={mode === 'light' ? 'light' : 'vs-dark'}
+        theme={MONACO_THEME}
         options={{
           ariaLabel: `${name} definition (JSON)`,
           readOnly,

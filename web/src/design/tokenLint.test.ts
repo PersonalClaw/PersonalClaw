@@ -30,13 +30,6 @@ const EXEMPT_FILES = [
   'pages/files/fileMeta.ts',
   'ui/content/registerBuiltins.ts',
   'ui/content/exporters.ts',
-  // Terminal emulator (xterm.js) theme needs literal hex for its own renderer;
-  // it can't consume CSS vars. Its bg/fg track the light/dark mode explicitly.
-  'pages/terminal/TerminalView.tsx',
-  // Code-reveal views mimic a VS Code editor surface (bg/fg/gutter) — an
-  // editor-chrome palette, not app theming; parallels the terminal/Monaco.
-  'pages/code/DiffReveal.tsx',
-  'pages/code/TypingReveal.tsx',
   // Scheme-definition layer: these carry the DEFAULT coral hex as the fallback
   // when a scheme hasn't loaded yet — they DEFINE the color identity (like
   // design/), so a literal is correct here, not a token reference.
