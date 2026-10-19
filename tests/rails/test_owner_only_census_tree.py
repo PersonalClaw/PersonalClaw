@@ -8,11 +8,16 @@ hold to.
 from __future__ import annotations
 
 import ast
+import functools
 
 import pytest
+import source_index
 from owner_only_census_shared import ROOT
 
+from personalclaw import owner_only
+
 SRC = ROOT / "src" / "personalclaw"
+DOC = ROOT / "docs" / "architecture" / "security.md"
 
 
 #: Every path an agent writes by that is held to the rule, by (file, function), with what it is.
@@ -88,3 +93,36 @@ def test_the_file_tools_ask_it_for_every_change():
         if isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
     }
     assert "_owner_only" in calls
+
+
+# ── the architecture doc ────────────────────────────────────────────────────────────────────
+
+
+@functools.cache
+def _doc_section() -> str:
+    text = source_index.text(DOC)
+    start = text.index("### What runs as the owner is owner-only (`owner_only.py`)")
+    return text[start : text.index("\n### ", start + 1)]
+
+
+def test_the_architecture_doc_names_every_entry():
+    """What the doc says the rule holds is what it holds: each entry is named there. The entries
+    are the rule's own; ``tests/test_owner_only_census.py`` holds the census's list to them."""
+    section = _doc_section()
+    names = [
+        *owner_only.OWNER_ONLY_FILES,
+        *(f"{name}/" for name in owner_only.OWNER_ONLY_DIRS),
+        *owner_only.GIT_SETTINGS,
+        f"{owner_only.GIT_HOOKS}/",
+        "/".join(owner_only.GIT_REBASE_STEPS),
+        owner_only.GIT_MODULES,
+        "/".join(owner_only.GIT_SYSTEM_SETTINGS),
+        "~/.gitconfig",
+        "git/config",
+        *owner_only.SHELL_STARTUP_FILES,
+        "$ZDOTDIR",
+        *owner_only.FISH_STARTUP_FILES,
+        *(f"{name}/" for name in owner_only.FISH_STARTUP_DIRS),
+    ]
+    for name in names:
+        assert f"`{name}`" in section, name

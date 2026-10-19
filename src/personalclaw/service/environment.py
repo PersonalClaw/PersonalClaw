@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 #: what needs it. Only names, and only non-secret ones: each is a location, a name that points at
 #: credentials held elsewhere (``AWS_PROFILE``), the provider, region or model an agent CLI is set
 #: to run on, or network plumbing. ``docs/reference/cli.md`` lists the same set;
-#: ``tests/test_service_keeps_its_environment.py`` holds the two together.
+#: ``tests/rails/test_service_keeps_its_environment_tree.py`` holds the two together.
 CARRIED: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "PersonalClaw",

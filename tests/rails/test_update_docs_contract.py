@@ -33,8 +33,10 @@ import re
 from pathlib import Path
 
 import pytest
+import source_index
+from rails_repo import REPO
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = REPO
 README = REPO_ROOT / "README.md"
 CHANGELOG = REPO_ROOT / "CHANGELOG.md"
 GUIDES = REPO_ROOT / "docs" / "guides"
@@ -56,7 +58,8 @@ KIND_GUIDES = ("getting-started.md", "containers.md", "desktop.md")
 
 def _read(path: Path) -> str:
     assert path.exists(), f"{path} is missing — this rail has nothing to check"
-    text = path.read_text(encoding="utf-8")
+    # The guides through the suite's source index; README and CHANGELOG sit outside it.
+    text = source_index.text(path) if source_index.holds(path) else path.read_text("utf-8")
     assert text.strip(), f"{path} is empty — this rail would pass vacuously"
     return text
 

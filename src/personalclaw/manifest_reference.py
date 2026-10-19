@@ -21,7 +21,7 @@ same drift discipline as the live manifest. Regenerate with
 above; :func:`render_published_route_reference` renders the same
 :func:`_routes_from_ast` census into :data:`PUBLISHED_ROUTE_REFERENCE` for the docs
 tree, written by ``scripts/generate_api_route_reference.py`` and guarded by
-``tests/test_docs_api_reference.py``. Change a route docstring and BOTH need
+``tests/rails/test_docs_api_reference.py``. Change a route docstring and BOTH need
 regenerating; each has its own byte-compare, so forgetting one reds CI.
 
 **Routes resolve from the AST, not a running app** (the design rule
@@ -407,7 +407,7 @@ def _render_published_routes(routes: list[dict[str, Any]]) -> str:
         "<!-- GENERATED FILE — DO NOT EDIT BY HAND.",
         "     Rendered by scripts/generate_api_route_reference.py from the gateway's own",
         "     route registrations, and byte-compared against a fresh render by",
-        "     tests/test_docs_api_reference.py. Hand edits are reverted by the next",
+        "     tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next",
         "     regeneration and red CI in the meantime. -->",
         "",
         f"Every HTTP route the gateway registers: **{len(routes)} registrations** over "

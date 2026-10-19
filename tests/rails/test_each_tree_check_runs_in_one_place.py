@@ -261,22 +261,15 @@ KNOWN_DOCS_READERS: frozenset[str] = frozenset(
     {
         "tests/security/test_scanner_adversarial.py",
         "tests/test_a_trigger_that_stops_for_you_asks.py",
-        "tests/test_app_ui_host_origin_disclosure.py",
         "tests/test_architecture_docs_match_the_tree.py",
         "tests/test_bounty_wants_list.py",
         "tests/test_browse_cdp_preflight.py",
         "tests/test_buddy_design_matrix.py",
         "tests/test_chat_craft_sel_audit.py",
-        "tests/test_compose_standalone.py",
         "tests/test_config_roundtrip.py",
-        "tests/test_docs_api_reference.py",
         "tests/test_getting_started_walkthrough.py",
-        "tests/test_owner_only_census.py",
-        "tests/test_service_keeps_its_environment.py",
         "tests/test_the_desktop_app_refuses_python_children.py",
-        "tests/test_update_docs_contract.py",
         "tests/test_website_installer.py",
-        "tests/test_what_stays_on_each_machine.py",
         "tests/test_workflows_hardening.py",
     }
 )
