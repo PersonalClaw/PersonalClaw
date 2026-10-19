@@ -39,6 +39,9 @@ from typing import Any
 
 import pytest
 from request_boolean_census_shared import BODY_BOOLEANS, _loader_misreads, _scan
+from table_rows import row
+
+pytestmark = pytest.mark.security
 
 #: Fields that grant a consent, publish, or widen what runs. An omitted one is never a yes.
 _WIDENING = {
@@ -62,77 +65,89 @@ def test_an_omitted_consent_or_widening_field_is_never_a_yes():
     }, "a field that grants consent or widens what runs must default to no, or be required"
 
 
-@pytest.mark.parametrize(
-    "shape",
-    [
-        "async def f(request):\n    body = await request.json()\n    return bool(body.get('flag'))",
-        "async def f(request):\n    body = await json_object_body(request)\n"
-        "    if body.get('flag'):\n        return 1",
-        "async def f(request):\n    body = await json_object_body(request)\n"
-        "    return body.get('flag') is not False",
-        "async def f(request):\n    body = await json_object_body(request)\n"
-        "    return body.get('flag', True)",
-        "async def f(request):\n    body = await json_object_body(request)\n"
-        "    x = body.get('flag')\n    return 1 if x else 0",
-        "def helper(body):\n    return not body['flag']",
-        "async def f(request):\n    body = await json_object_body(request)\n"
-        "    for k in ('flag', 'other'):\n        if body[k]:\n            return 1",
-    ],
-)
-def test_the_ban_sees_every_shape_of_a_misread(shape):
+#: Each shape in which ``"false"`` reads as a yes.
+_MISREAD_SHAPES = [
+    "async def f(request):\n    body = await request.json()\n    return bool(body.get('flag'))",
+    "async def f(request):\n    body = await json_object_body(request)\n"
+    "    if body.get('flag'):\n        return 1",
+    "async def f(request):\n    body = await json_object_body(request)\n"
+    "    return body.get('flag') is not False",
+    "async def f(request):\n    body = await json_object_body(request)\n"
+    "    return body.get('flag', True)",
+    "async def f(request):\n    body = await json_object_body(request)\n"
+    "    x = body.get('flag')\n    return 1 if x else 0",
+    "def helper(body):\n    return not body['flag']",
+    "async def f(request):\n    body = await json_object_body(request)\n"
+    "    for k in ('flag', 'other'):\n        if body[k]:\n            return 1",
+]
+
+
+def test_the_ban_sees_every_shape_of_a_misread(subtests):
     """The ban's own control: each shape in which ``"false"`` reads as a yes is caught."""
-    _, misreads = _scan(shape)
-    assert any(field == "flag" for _, field, _, _ in misreads), shape
+    assert len(_MISREAD_SHAPES) == 7, "a shape was dropped from the table"
+    assert len(_MISREAD_SHAPES) == len(set(_MISREAD_SHAPES)), "a shape is listed twice"
+    for shape in _MISREAD_SHAPES:
+        with row(subtests, shape=shape):
+            _, misreads = _scan(shape)
+            assert any(field == "flag" for _, field, _, _ in misreads), shape
 
 
-@pytest.mark.parametrize(
-    ("shape", "how"),
-    [
-        (
-            "async def f(request):\n    body = await json_object_body(request)\n"
-            "    return bool_field(body, 'flag', default=False)",
-            False,
-        ),
-        (
-            "async def f(request):\n    body = await json_object_body(request)\n"
-            "    return require_bool(body, 'flag')",
-            "required",
-        ),
-        (
-            "async def f(request):\n    body = await request.json()\n    v = body.get('flag')\n"
-            "    if not isinstance(v, bool):\n        return refuse()\n    return 1 if v else 0",
-            "checked",
-        ),
-        (
-            "async def f(request):\n    body = await json_object_body(request)\n"
-            "    for k in ('flag',):\n        optional_bool(body, k)",
-            "optional",
-        ),
-    ],
-)
-def test_the_scan_declares_a_reader_and_a_checked_read(shape, how):
+#: A read through each reader, and one behind a hand-written refusal, with what the scan declares.
+_DECLARED_SHAPES = [
+    (
+        "async def f(request):\n    body = await json_object_body(request)\n"
+        "    return bool_field(body, 'flag', default=False)",
+        False,
+    ),
+    (
+        "async def f(request):\n    body = await json_object_body(request)\n"
+        "    return require_bool(body, 'flag')",
+        "required",
+    ),
+    (
+        "async def f(request):\n    body = await request.json()\n    v = body.get('flag')\n"
+        "    if not isinstance(v, bool):\n        return refuse()\n    return 1 if v else 0",
+        "checked",
+    ),
+    (
+        "async def f(request):\n    body = await json_object_body(request)\n"
+        "    for k in ('flag',):\n        optional_bool(body, k)",
+        "optional",
+    ),
+]
+
+
+def test_the_scan_declares_a_reader_and_a_checked_read(subtests):
     """A read through a reader, or behind a hand-written refusal, is declared and is no misread."""
-    declared, misreads = _scan(shape)
-    assert declared.get(("f", "flag")) == how
-    assert not misreads, misreads
+    assert len(_DECLARED_SHAPES) == 4, "a shape was dropped from the table"
+    assert {how for _, how in _DECLARED_SHAPES} == set(BODY_BOOLEANS.values()) - {True, None}
+    for shape, how in _DECLARED_SHAPES:
+        with row(subtests, declares=how):
+            declared, misreads = _scan(shape)
+            assert declared.get(("f", "flag")) == how
+            assert not misreads, misreads
 
 
 # ── Stored settings ──────────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(
-    "shape",
-    [
-        "class R:\n    @classmethod\n    def from_dict(cls, d):\n"
-        "        return cls(on=bool(d.get('on', True)))",
-        "class R:\n    @classmethod\n    def from_dict(cls, d):\n"
-        "        return cls(on=d.get('on', True))",
-        "class R:\n    @classmethod\n    def from_dict(cls, d):\n"
-        "        return cls(on=d.get('on') is not False)",
-    ],
-)
-def test_the_loader_scan_sees_a_truthiness_read(shape):
-    assert _loader_misreads(shape) == {("R", "on")}
+#: Each shape of a record loader reading a switch by truthiness.
+_LOADER_MISREAD_SHAPES = [
+    "class R:\n    @classmethod\n    def from_dict(cls, d):\n"
+    "        return cls(on=bool(d.get('on', True)))",
+    "class R:\n    @classmethod\n    def from_dict(cls, d):\n"
+    "        return cls(on=d.get('on', True))",
+    "class R:\n    @classmethod\n    def from_dict(cls, d):\n"
+    "        return cls(on=d.get('on') is not False)",
+]
+
+
+def test_the_loader_scan_sees_a_truthiness_read(subtests):
+    assert len(_LOADER_MISREAD_SHAPES) == 3, "a shape was dropped from the table"
+    assert len(_LOADER_MISREAD_SHAPES) == len(set(_LOADER_MISREAD_SHAPES))
+    for shape in _LOADER_MISREAD_SHAPES:
+        with row(subtests, shape=shape):
+            assert _loader_misreads(shape) == {("R", "on")}
 
 
 def test_the_loader_scan_passes_a_strict_read():
@@ -171,13 +186,15 @@ _PREREQUISITES: dict[tuple[str, ...], dict[tuple[str, ...], object]] = {
 }
 
 
-def _config_with(path: tuple[str, ...], value: object) -> dict[str, Any]:
+def _config_with(paths: list[tuple[str, ...]], value: object) -> dict[str, Any]:
+    """A ``config.json`` holding *value* at every one of *paths*, and each one's prerequisites."""
     doc: dict[str, Any] = {}
-    for at, setting in {**_PREREQUISITES.get(path, {}), path: value}.items():
-        node = doc
-        for key in at[:-1]:
-            node = node.setdefault("an-agent" if key == "*" else key, {})
-        node[at[-1]] = setting
+    for path in paths:
+        for at, setting in {**_PREREQUISITES.get(path, {}), path: value}.items():
+            node = doc
+            for key in at[:-1]:
+                node = node.setdefault("an-agent" if key == "*" else key, {})
+            node[at[-1]] = setting
     return doc
 
 
@@ -189,30 +206,48 @@ def _loaded(path: tuple[str, ...], cfg: Any) -> object:
     return node
 
 
+def _readings(paths: list[tuple[str, ...]], value: object) -> dict[tuple[str, ...], object]:
+    """What each of *paths* reads after one load of a ``config.json`` holding *value* at all."""
+    from personalclaw.config import validation
+    from personalclaw.config.loader import AppConfig, config_path
+
+    validation._STRIP_MEMO.clear()
+    config_path().write_text(json.dumps(_config_with(paths, value)), encoding="utf-8")
+    cfg = AppConfig.load()
+    return {path: _loaded(path, cfg) for path in paths}
+
+
 def test_the_config_schema_declares_booleans_at_every_depth():
     """Non-vacuity: the drive below covers the two-level fields and the deeper ones."""
     assert len(_SCHEMA_BOOLEANS) >= 100
     assert ("security", "egress", "allow_private") in _SCHEMA_BOOLEANS
 
 
-@pytest.mark.parametrize("path", _SCHEMA_BOOLEANS, ids=".".join)
-def test_a_config_boolean_written_as_false_text_reads_false(path):
+def test_a_config_boolean_written_as_false_text_reads_false(subtests):
     """Every boolean ``config.json`` holds: a text spelling of false reads as false at any depth
     (a switch the owner turned off stays off), a text spelling of true reads as the field's
-    default (text never turns a surface on), and a real boolean is itself."""
-    from personalclaw.config import validation
-    from personalclaw.config.loader import AppConfig, config_dir, config_path
+    default (text never turns a surface on), and a real boolean is itself.
+
+    One load writes a spelling into every boolean at once, so each row is read from it. A boolean
+    that is on only with another on is loaded alone, with that other one switched on.
+    """
+    from personalclaw.config.loader import config_dir
 
     config_dir()  # the test's own home, made on first ask
-
-    def load(value: object) -> object:
-        validation._STRIP_MEMO.clear()
-        config_path().write_text(json.dumps(_config_with(path, value)), encoding="utf-8")
-        return _loaded(path, AppConfig.load())
-
-    default = load(None)
-    assert load(True) is True
-    assert load("false") is False
-    assert load(" Off ") is False
-    assert load(False) is False
-    assert load("true") == default
+    together = [p for p in _SCHEMA_BOOLEANS if p not in _PREREQUISITES]
+    groups = [together, *([p] for p in _SCHEMA_BOOLEANS if p in _PREREQUISITES)]
+    sent = (None, True, "false", " Off ", False, "true")
+    read: dict[tuple[str, ...], dict[object, object]] = {path: {} for path in _SCHEMA_BOOLEANS}
+    for group in groups:
+        for value in sent:
+            for path, reading in _readings(group, value).items():
+                read[path][value] = reading
+    assert len(read) == len(_SCHEMA_BOOLEANS), "a schema boolean was not driven"
+    for path in _SCHEMA_BOOLEANS:
+        with row(subtests, path=".".join(path)):
+            reading = read[path]
+            assert reading[True] is True
+            assert reading["false"] is False
+            assert reading[" Off "] is False
+            assert reading[False] is False
+            assert reading["true"] == reading[None], "text turned the field on"

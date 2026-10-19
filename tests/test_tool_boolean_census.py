@@ -27,9 +27,12 @@ it is pinned here, and a read of a pinned one by truthiness fails the ban below 
 from __future__ import annotations
 
 import ast
+import functools
 from pathlib import Path
 
 import pytest
+from table_rows import row
+from test_safety_flags_reject_truthy_strings import SPELLINGS
 
 import personalclaw
 from personalclaw import validation
@@ -203,8 +206,8 @@ async def test_every_boolean_a_tool_declares_is_pinned(tmp_path):
     declared = await _declared(tmp_path)
     pinned = set(NATIVE) | set(VALIDATED) | set(CONSENT)
     assert declared == pinned, (
-        "Read each new boolean through safety_flags.yes_or_no with its field's safe value, test "
-        "it with 'false', 'no', '0', '' and 'true', and pin it here.\n"
+        "Read each new boolean through safety_flags.yes_or_no with its field's safe value, add "
+        "its door to test_a_tool_reads_a_boolean_sent_as_text's DOORS, and pin it here.\n"
         f"  declared, not pinned: {sorted(declared - pinned)}\n"
         f"  pinned, not declared: {sorted(pinned - declared)}"
     )
@@ -214,19 +217,30 @@ def test_consent_is_only_the_confirm_family():
     assert {field for _, field in CONSENT} <= CONFIRM_FIELDS
 
 
-@pytest.mark.parametrize("tool, field", sorted(VALIDATED) + sorted(CONSENT))
-@pytest.mark.parametrize("sent", ["false", "true", "", 0, 1])
-def test_an_in_process_boolean_is_a_boolean_field_spec(tool, field, sent):
+#: Every spelling of the shared table that is not a real boolean. A null is left out: an
+#: optional field's spec takes one as the field left out.
+_NOT_BOOLEANS = [
+    s.value for s in SPELLINGS if not isinstance(s.value, bool) and s.value is not None
+]
+
+
+def test_an_in_process_boolean_is_a_boolean_field_spec(subtests):
     """Its field spec is what keeps text from its handler, so each one has a ``bool`` spec, and
     the spec refuses anything that is not a real boolean."""
-    schema = validation.tool_field_schema(tool)
-    assert schema is not None, f"{tool} has no field specs"
-    [spec] = [s for s in schema.fields if s.name == field]
-    assert spec.type is bool
-    with pytest.raises(validation.ValidationError) as refused:
-        validation.validate_field(sent, spec)
-    assert refused.value.field == field
-    assert validation.validate_field(False, spec) is False
+    fields = sorted(VALIDATED) + sorted(CONSENT)
+    assert len(fields) == len(VALIDATED) + len(CONSENT), "a field is pinned twice"
+    for tool, field in fields:
+        with row(subtests, tool=tool, field=field):
+            schema = validation.tool_field_schema(tool)
+            assert schema is not None, f"{tool} has no field specs"
+            [spec] = [s for s in schema.fields if s.name == field]
+            assert spec.type is bool
+            for sent in _NOT_BOOLEANS:
+                with pytest.raises(validation.ValidationError) as refused:
+                    validation.validate_field(sent, spec)
+                assert refused.value.field == field, sent
+            assert validation.validate_field(False, spec) is False
+            assert validation.validate_field(True, spec) is True
 
 
 # ── The ban: no read of a pinned boolean by truthiness ─────────────────────────────────────────
@@ -244,6 +258,12 @@ def _constant_strings(node: ast.AST, module_tuples: dict[str, set[str]]) -> set[
     return set()
 
 
+@functools.lru_cache(maxsize=None)
+def _parsed(source: str) -> ast.Module:
+    """One parse of a module's source, however many of its keys are checked."""
+    return ast.parse(source)
+
+
 def _misreads(source: str, key: str) -> tuple[int, list[str]]:
     """``(reads, misreads)`` of the argument *key* in *source*.
 
@@ -254,7 +274,7 @@ def _misreads(source: str, key: str) -> tuple[int, list[str]]:
     compared by identity or equality with a boolean literal: every shape in which ``"false"`` is a
     yes (or ``"true"`` a no).
     """
-    tree = ast.parse(source)
+    tree = _parsed(source)
     module_tuples = {
         target.id: _constant_strings(node.value, {})
         for node in tree.body
@@ -336,73 +356,66 @@ _KEYED = sorted(
 )
 
 
-@pytest.mark.parametrize("tool, path, module", _KEYED)
-def test_a_pinned_boolean_is_never_read_by_truthiness(tool, path, module):
-    key = path.rsplit(".", 1)[-1]
-    reads, misreads = _misreads((SRC / module).read_text(encoding="utf-8"), key)
-    # Non-vacuity: the table names where the call's argument is read, so a rename or a move fails
-    # here rather than leaving a ban that scans nothing.
-    assert reads, f"{module} no longer reads {key!r} from a call's arguments: re-pin {tool}.{path}"
-    assert not misreads, (
-        f"{module} reads {tool}'s {key!r} by truthiness, where 'false' is a yes. Read it with "
-        "safety_flags.yes_or_no and the field's safe value:\n  " + "\n  ".join(misreads)
-    )
+def test_a_pinned_boolean_is_never_read_by_truthiness(subtests):
+    pinned = {**NATIVE, **VALIDATED}
+    assert len(_KEYED) == len([path for _, path in pinned if not path.endswith("*")])
+    for tool, path, module in _KEYED:
+        with row(subtests, tool=tool, path=path):
+            key = path.rsplit(".", 1)[-1]
+            reads, misreads = _misreads((SRC / module).read_text(encoding="utf-8"), key)
+            # Non-vacuity: the table names where the call's argument is read, so a rename or a
+            # move fails here rather than leaving a ban that scans nothing.
+            assert reads, f"{module} no longer reads {key!r} from a call's arguments: re-pin it"
+            assert not misreads, (
+                f"{module} reads {tool}'s {key!r} by truthiness, where 'false' is a yes. Read it "
+                "with safety_flags.yes_or_no and the field's safe value:\n  "
+                + "\n  ".join(misreads)
+            )
 
 
-@pytest.mark.parametrize(
-    "shape",
-    [
-        "def f(a):\n    return bool(a.get('flag'))",
-        "def f(a):\n    if a.get('flag'):\n        return 1",
-        "def f(a):\n    return a.get('flag') is not False",
-        "def f(a):\n    return a['flag'] is True",
-        "def f(a):\n    return a.get('flag') == True",
-        "def f(a):\n    return not a.get('flag')",
-        "def f(a):\n    return a.get('flag') or a.get('other')",
-        "def f(a):\n    return 1 if a.get('flag') else 0",
-        "def f(a):\n    x = a.get('flag')\n    return bool(x)",
-        "def f(a):\n    for k in ('flag', 'other'):\n        if a[k]:\n            return 1",
-        "KEYS = ('flag',)\ndef f(a):\n    for k in KEYS:\n        return 1 if a[k] else 0",
-        "def f(a):\n    return [k for k in a if a.get('flag')]",
-    ],
-)
-def test_the_ban_sees_every_shape_of_a_misread(shape):
+#: Each shape in which ``"false"`` reads as a yes.
+_MISREAD_SHAPES = [
+    "def f(a):\n    return bool(a.get('flag'))",
+    "def f(a):\n    if a.get('flag'):\n        return 1",
+    "def f(a):\n    return a.get('flag') is not False",
+    "def f(a):\n    return a['flag'] is True",
+    "def f(a):\n    return a.get('flag') == True",
+    "def f(a):\n    return not a.get('flag')",
+    "def f(a):\n    return a.get('flag') or a.get('other')",
+    "def f(a):\n    return 1 if a.get('flag') else 0",
+    "def f(a):\n    x = a.get('flag')\n    return bool(x)",
+    "def f(a):\n    for k in ('flag', 'other'):\n        if a[k]:\n            return 1",
+    "KEYS = ('flag',)\ndef f(a):\n    for k in KEYS:\n        return 1 if a[k] else 0",
+    "def f(a):\n    return [k for k in a if a.get('flag')]",
+]
+
+
+def test_the_ban_sees_every_shape_of_a_misread(subtests):
     """The ban's own control: each shape in which ``"false"`` reads as a yes is caught."""
-    reads, misreads = _misreads(shape, "flag")
-    assert reads and misreads, shape
+    assert len(_MISREAD_SHAPES) == 12, "a shape was dropped from the table"
+    assert len(_MISREAD_SHAPES) == len(set(_MISREAD_SHAPES)), "a shape is listed twice"
+    for shape in _MISREAD_SHAPES:
+        with row(subtests, shape=shape):
+            reads, misreads = _misreads(shape, "flag")
+            assert reads and misreads, shape
 
 
-@pytest.mark.parametrize(
-    "shape",
-    [
-        "def f(a):\n    return yes_or_no(a.get('flag')) is True",
-        "def f(a):\n    return yes_or_no(a['flag']) is not False",
-        "def f(a):\n    x = a.get('flag')\n    return x is None or yes_or_no(x) is True",
-        "def f(a):\n    return send(flag=a.get('flag'))",
-        "def f(a):\n    item = load()\n    return bool(item.get('flag'))",
-    ],
-)
-def test_the_ban_passes_the_reader_a_pass_through_and_another_dict(shape):
-    """A read through the reader, a value handed on to its own reader, and a key on something
-    other than the call's arguments are not misreads."""
-    _, misreads = _misreads(shape, "flag")
-    assert not misreads, shape
+#: A read through the reader, a value handed on to its own reader, and a key on something other
+#: than the call's arguments.
+_FAIR_SHAPES = [
+    "def f(a):\n    return yes_or_no(a.get('flag')) is True",
+    "def f(a):\n    return yes_or_no(a['flag']) is not False",
+    "def f(a):\n    x = a.get('flag')\n    return x is None or yes_or_no(x) is True",
+    "def f(a):\n    return send(flag=a.get('flag'))",
+    "def f(a):\n    item = load()\n    return bool(item.get('flag'))",
+]
 
 
-# ── `reset_tools`: one boolean per tool group ────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("sent", [False, "false", "no", "0", "", "off", "maybe", 1])
-async def test_a_group_sent_anything_but_a_yes_stays_off(tmp_path, sent):
-    runtime = await _runtime(tmp_path)
-    runtime._reset_tools({"groups": {"schedule": sent}})
-    assert "schedule" not in runtime._active_groups
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("sent", [True, "true", "yes", " TRUE ", "on", "1"])
-async def test_a_group_sent_a_yes_is_on(tmp_path, sent):
-    runtime = await _runtime(tmp_path)
-    runtime._reset_tools({"groups": {"schedule": sent}})
-    assert "schedule" in runtime._active_groups
+def test_the_ban_passes_the_reader_a_pass_through_and_another_dict(subtests):
+    """None of these is a misread."""
+    assert len(_FAIR_SHAPES) == 5, "a shape was dropped from the table"
+    assert len(_FAIR_SHAPES) == len(set(_FAIR_SHAPES)), "a shape is listed twice"
+    for shape in _FAIR_SHAPES:
+        with row(subtests, shape=shape):
+            _, misreads = _misreads(shape, "flag")
+            assert not misreads, shape
