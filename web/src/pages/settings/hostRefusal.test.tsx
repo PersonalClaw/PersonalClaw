@@ -49,16 +49,20 @@ describe('a refused host says why', () => {
   it('a valid host is not refused', () => {
     expect(hostRefusal('nas.local', [])).toBeNull()
     expect(hostRefusal('printer.lan', ['nas.local'])).toBeNull()
-    // Empty is the Add button's own gate (`unavailableWhen`), not an error to shout about.
+    // Empty is the Add button's own gate (its `disabledReason`), not an error to shout about.
     expect(hostRefusal('   ', [])).toBeNull()
   })
 
   it('the refusal is ANNOUNCED, not merely rendered', () => {
     const src = read().replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-    expect(src, 'the add path must render through FieldError').toMatch(/\{refused && <FieldError>\{refused\}<\/FieldError>\}/)
+    const error = /\{refused && <FieldError id=\{(\w+)\}>\{refused\}<\/FieldError>\}/.exec(src)
+    expect(error, 'the add path must render through FieldError, under an id the input can name').not.toBeNull()
     expect(src, 'a hand-rolled danger line would be silent — that is this family\'s defect')
       .not.toMatch(/refused && <p className="text-danger/)
-    expect(src, 'and the input is marked invalid while it stands').toMatch(/aria-invalid=\{refused \? true : undefined\}/)
+    // Through the shared Field error wiring: the provider publishes the FieldError's id only while a
+    // refusal stands, and the TextInput inside it is then `aria-invalid` and described by the refusal.
+    expect(src, 'and the input is marked invalid while it stands')
+      .toMatch(new RegExp(`<FieldErrorProvider value=\\{refused \\? ${error![1]} : undefined\\}>\\s*<TextInput\\b`))
   })
 
   it('a refusal KEEPS the draft, and typing clears the refusal', () => {

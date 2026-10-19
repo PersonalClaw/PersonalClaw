@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { notify } from '../../app/appSdk'
-import { unavailableWhen } from '../../ui/unavailable'
 import { CheckCircle2, AlertTriangle, ArrowRight, Plus, Trash2, RefreshCw, Check, X, Wand2 } from 'lucide-react'
 import { api, type LexiconTerm, type LexiconCorrection } from '../../lib/api'
 import { modelIdOf, splitModelRef } from '../../lib/modelRef'
@@ -10,7 +9,7 @@ import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { PanelHeader, Section, RowGroup, Row, Field, Toggle, SavedToast, ToggleRow } from './settingsUI'
 import { FormSkeleton, InlineLoadError, ListSkeleton, LoadError } from '../../ui/ListScaffold'
-import { ChipInput, TextInput } from '../../ui/forms'
+import { ChipInput, Select, TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { TextLink } from '../../ui/TextLink'
@@ -131,6 +130,7 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
                 <Field label="Speaking speed" hint={`${speed.toFixed(2)}× — ${higherIsFaster ? 'higher' : 'lower'} is faster.`}>
                 <div className="flex items-center gap-3">
                   <span data-type="caption" className="text-on-surface-low">{higherIsFaster ? 'Slow' : 'Fast'}</span>
+                  {/* Raw: `Slider` has no release hook (pointer-up, key-up) to save on and no `aria-valuetext`. */}
                   <input type="range" min={0.6} max={1.6} step={0.05} value={speed}
                     // A raw input reads no name from the Field around it: it names itself.
                     aria-label="Speaking speed" aria-valuetext={`${speed.toFixed(2)}×`}
@@ -147,9 +147,10 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
               )}
               {isRemoteVoice && !isGeminiVoice && (
                 <Field label="Voice persona" hint="The hosted voice used by remote TTS models.">
-                  <select value={speechVoice} onChange={(e) => save({ speech_voice: e.target.value })} data-type="body-s" className={selectCls}>
-                    {SPEECH_VOICES.map((v) => <option key={v} value={v}>{v}</option>)}
-                  </select>
+                  <div className="max-w-sm">
+                    <Select value={speechVoice} onChange={(v) => save({ speech_voice: v })} size="md" surface="high"
+                      options={SPEECH_VOICES.map((v) => ({ value: v, label: v }))} />
+                  </div>
                 </Field>
               )}
             </>
@@ -452,9 +453,6 @@ function UseCaseVoiceSection({
   )
 }
 
-// Metrics + chrome only — the type size rides `data-type="body-s"` on the consumer.
-const selectCls = 'h-9 w-full max-w-sm rounded-md bg-surface-high px-3 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary cursor-pointer'
-
 /** What ffmpeg is for, in the row's own words — said whether or not one is found. */
 const FFMPEG_USE = 'Cuts a long recording into parts, and takes the sound out of a video, before it is transcribed. A short recording is transcribed without it.'
 
@@ -608,21 +606,19 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
         ) : !data ? <ListSkeleton rows={5} what="lexicon" /> : (
           <>
             <div className="mb-3 flex items-center gap-2">
-              <input
-                value={adding} onChange={(e) => setAdding(e.target.value)}
-                aria-label="Add a vocabulary term"
-                onKeyDown={(e) => { if (e.key === 'Enter') addTerm() }}
-                placeholder="Add a term (e.g. Kubernetes, K8s)…"
-                data-type="body-s" className="flex-1 rounded-md border border-outline-variant/50 bg-surface-container px-3 py-2 outline-none focus:border-primary" />
-              <button type="button" onClick={addTerm} data-type="body-s"
-                {...unavailableWhen(!adding.trim(), 'Enter a term first', { busy })}
-                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-on-primary disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
+              <div className="flex-1">
+                <TextInput value={adding} onChange={setAdding} size="md"
+                  ariaLabel="Add a vocabulary term" placeholder="Add a term (e.g. Kubernetes, K8s)…"
+                  onKeyDown={(e) => { if (e.key === 'Enter') addTerm() }} />
+              </div>
+              <Button onClick={addTerm} shape="squircle" loading={busy}
+                disabled={!adding.trim()}
+                disabledReason={!adding.trim() ? 'Enter a term first' : undefined}>
                 <Plus size={15} /> Add
-              </button>
-              <button type="button" onClick={rebuild} disabled={busy} title="Resync from the knowledge graph"
-                data-type="body-s" className="inline-flex h-9 items-center gap-1.5 rounded-md border border-outline-variant/50 px-3 text-on-surface-low hover:text-on-surface disabled:opacity-40">
-                <RefreshCw size={15} className={busy ? 'animate-spin' : ''} /> Rebuild
-              </button>
+              </Button>
+              <Button variant="ghost" onClick={rebuild} shape="squircle" loading={busy} title="Resync from the knowledge graph">
+                <RefreshCw size={15} /> Rebuild
+              </Button>
             </div>
             {/* The count is withheld on a failed terms read for the same reason the list below is:
                 "0 in your lexicon" is a measurement, and there is nothing to measure. */}
@@ -722,16 +718,9 @@ function TermRow({ term, onChanged }: { term: LexiconTerm; onChanged: () => void
       </span>
       <span data-type="caption" className={`rounded px-1.5 py-0.5 ${badge.cls}`}
         title={fromGraph ? 'From your knowledge graph, and kept in step with it. Turn it off to stop using it.' : undefined}>{badge.label}</span>
-      <button type="button" disabled={busy} title={toggleLabel} aria-label={toggleLabel}
-        onClick={() => act(() => api.lexiconSetTermEnabled(term.id, !term.enabled))}
-        className="inline-flex h-7 w-7 items-center justify-center rounded text-on-surface-low hover:text-on-surface disabled:opacity-40">
-        {term.enabled ? <X size={14} /> : <Check size={14} />}
-      </button>
-      {/* `busy` is this row's own mutation in flight → `loading`. (Its hand-rolled neighbour above
-          is still native-`disabled`; adopting a primitive there moves pixels, so it belongs to the
-          primitive-adoption pass rather than being smuggled in here.
-          🪤 And that sentence may not name the raw element it is about: `primitiveAdoption` counts
-          the tag TEXT, comments included, so writing the literal reds the ratchet at +1.) */}
+      {/* `busy` is this row's own mutation in flight → `loading`, on both of its buttons. */}
+      <SquareIconButton icon={term.enabled ? X : Check} label={toggleLabel} loading={busy}
+        onClick={() => act(() => api.lexiconSetTermEnabled(term.id, !term.enabled))} />
       {!fromGraph && (
         <SquareIconButton icon={Trash2} tone="danger" label={`Delete term ${term.canonical}`} loading={busy}
           onClick={() => act(() => api.lexiconDeleteTerm(term.id))} />
@@ -764,6 +753,7 @@ function CorrectionRow({ corr, onChanged }: { corr: LexiconCorrection; onChanged
         <span className="text-on-surface">{corr.meant}</span>
         <span data-type="caption" className="ml-2 text-on-surface-low">×{corr.count}</span>
       </span>
+      {/* Raw: an ok-tinted / outlined two-state chip, which no button primitive draws. */}
       <button type="button" onClick={toggle} disabled={busy}
         title={corr.auto_apply ? 'Auto-applied — click to make it a suggestion' : 'Always fix this automatically'}
         data-type="caption" className={`inline-flex h-7 items-center gap-1 rounded px-2 transition-colors disabled:opacity-40 ${

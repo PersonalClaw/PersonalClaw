@@ -86,7 +86,8 @@ describe('unavailableWhen', () => {
 
   it('the fix REACHES the busy call sites, measured — not assumed from one unit test', () => {
     // The one-line change is only worth anything if the sites that pass `busy` actually spread the
-    // result. Measured rather than asserted: 9 sites across 8 files at the time of the fix.
+    // result. Measured rather than asserted: 9 sites across 8 files at the time of the fix, and 7 once
+    // the security and voice settings' Add buttons became `Button`s, whose `loading` announces itself.
     // 🪤 Comments blanked in place — this file and `RoutingPanel` both DISCUSS `busy` in prose.
     const SRC = join(__dirname, '..')
     const strip = (s: string) => s
@@ -102,7 +103,7 @@ describe('unavailableWhen', () => {
         if (/busy/.test(m[0])) busySites += 1
       }
     }
-    expect(busySites, 'busy-passing call sites, all of which now announce').toBeGreaterThanOrEqual(9)
+    expect(busySites, 'busy-passing call sites, all of which now announce').toBeGreaterThanOrEqual(7)
   })
 
   it('busy wins even when nothing is missing', () => {
@@ -149,12 +150,13 @@ const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !
 // a `disabledReason` ("Enter your name first"), the path `ui/disabledReason.test.tsx` covers.
 // `pages/tasks/TaskDetail.tsx` left it the same way: its comment composer's raw send is an
 // `IconButton` now, and a test in the block below pins its reason and its in-flight state.
+// `pages/settings/SecurityPanel.tsx` and `pages/settings/VoicePanel.tsx` left it the same way: their
+// Add-row submits (a host, a denylist pattern, a vocabulary term) are `<Button>`s with a
+// `disabledReason` now, and that rail lists them.
 const ADOPTERS = [
   'ui/PlanningWalkthrough.tsx',
   'pages/ChatPage.tsx',
   'pages/chat/ChatActivityPanel.tsx',
-  'pages/settings/SecurityPanel.tsx',
-  'pages/settings/VoicePanel.tsx',
   'pages/settings/ProjectionRulesPanel.tsx',
 ]
 

@@ -70,7 +70,9 @@ describe('disabled dim level', () => {
   const all = levels()
 
   it('finds the disabled-opacity sites (not vacuously green)', () => {
-    expect(all.length, 'the matcher must find disabled:opacity-* sites').toBeGreaterThan(50)
+    // A vacuity guard, so it keeps slack: 47 sites once the busiest pages' buttons moved onto the
+    // shared ones, which dim themselves.
+    expect(all.length, 'the matcher must find disabled:opacity-* sites').toBeGreaterThan(40)
   })
 
   it('uses only established levels, or a pinned exception', () => {

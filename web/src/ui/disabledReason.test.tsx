@@ -150,6 +150,9 @@ describe('the migrated submits pass a reason', () => {
     // The rest of the Button-primitive tail, per-form copy read from each form
     'pages/settings/MemoryPanel.tsx',
     'pages/settings/MultiInstanceCard.tsx',
+    // The Add-row submits that were raw `<button>`s on `unavailableWhen` until they took the primitive
+    'pages/settings/SecurityPanel.tsx',
+    'pages/settings/VoicePanel.tsx',
     'pages/settings/DesignPanel.tsx',
     'pages/prompts/PromptDetail.tsx',
     'pages/prompts/SnippetDetail.tsx',

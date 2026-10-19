@@ -71,7 +71,9 @@ const fileInputs = tags.filter((t) => /type=["']file["']/.test(t.tag))
 
 describe('the file-input escape hatch stays an escape hatch', () => {
   it('scans real <input> tags (not vacuously green)', () => {
-    expect(tags.length, 'the matcher must find the tree\'s <input> tags').toBeGreaterThan(100)
+    // A vacuity guard, so it keeps slack: 97 raw inputs once the busiest pages moved onto the shared
+    // fields, from the 100-odd it was written against.
+    expect(tags.length, 'the matcher must find the tree\'s <input> tags').toBeGreaterThan(80)
     expect(fileInputs.length, 'and the file inputs among them').toBeGreaterThanOrEqual(6)
     // The matcher must span a multi-line tag with a braced handler — the shape a naive
     // `[^>]*` scan truncates.
