@@ -119,7 +119,6 @@ describe('the remaining raw disabled buttons are accounted for', () => {
     ['ui/Toggle.tsx', 'pass-through `disabled` on a primitive'],
     ['pages/settings/ProjectionRulesPanel.tsx', 'pass-through `disabled` from its caller'],
     ['pages/settings/SecurityPanel.tsx', 'pass-through `disabled` from its caller'],
-    ['pages/loops/LoopPlanReview.tsx', 'self-evident — the label reads "Installed" when done'],
     ['pages/tasks/TaskDetail.tsx', 'NOT AN ACTION: read-only + capability gates, awaiting the #1168 shape'],
   ])
 

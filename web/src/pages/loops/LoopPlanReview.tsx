@@ -7,6 +7,8 @@ import { IconButton } from '../../ui/IconButton'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { CapRow, CapabilityPeekModal } from '../../ui/CapabilityPicker'
 import { Button } from '../../ui/Button'
+import { QuietButton } from '../../ui/QuietButton'
+import { NumberField, Select, TextArea, TextInput } from '../../ui/forms'
 import { Segmented } from '../../ui/Segmented'
 import { LoadError } from '../../ui/ListScaffold'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
@@ -473,10 +475,12 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
               so a rename made now would be left out of what it launches. Off, with the reason, until
               the change is settled; a soft-off keeps the tab stop the way Back and Launch below do. */}
           {editingTitle && !held ? (
+            // Raw: TextInput takes no onBlur, and leaving the field ends the edit.
             <input autoFocus aria-label="Edit the plan title" value={title} onChange={(e) => setTitle(e.target.value)}
               onBlur={() => setEditingTitle(false)} onKeyDown={(e) => { if (e.key === 'Enter') setEditingTitle(false) }}
               data-type="body-m" className="h-8 min-w-[16rem] rounded-md bg-surface-high px-m text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           ) : (
+            // Raw: the title is its own rename control, and no primitive draws bare title-m text.
             <button type="button" onClick={() => setEditingTitle(true)} {...unavailableWhen(held, HELD_REASON, { title: 'Edit title' })}
               data-type="title-m" className="truncate text-on-surface hover:text-on-surface-var aria-disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:hover:text-on-surface" style={fvs(500)}>
               {title || 'Untitled loop'}
@@ -677,6 +681,7 @@ function OverviewStep({ loop, goalType, setGoalType, rigor, subGoals, setSubGoal
           command instead of launching a loop that can never self-complete. */}
       {goalType === 'verifiable' && (
         <Section label="Verify command">
+          {/* Raw: TextInput takes no spellCheck, and a shell command must not be spell-checked. */}
           <input
             value={verifyCommand}
             onChange={(e) => setVerifyCommand(e.target.value)}
@@ -727,8 +732,8 @@ function GuidedDecomposition({ guided }: { guided: GuidedProps }) {
     <Section label="Guided decomposition"
       action={phases && phases.length
         ? <div className="flex items-center gap-s">
-            <button type="button" onClick={run} data-type="caption" className="text-on-surface-low hover:text-on-surface">Rebuild</button>
-            <button type="button" onClick={clear} data-type="caption" className="text-on-surface-low hover:text-on-surface">Use flat questions</button>
+            <QuietButton onClick={run}>Rebuild</QuietButton>
+            <QuietButton onClick={clear}>Use flat questions</QuietButton>
           </div>
         : loading ? null
         : <Button variant="ghost" size="sm" onClick={run}>
@@ -841,10 +846,9 @@ function CapabilitiesStep({ skills, skillIds, workflowIds, onToggleSkill, sugges
                     </span>
                     {s.description && <span data-type="caption" className="block text-on-surface-low line-clamp-2">{s.description}</span>}
                   </span>
-                  <button type="button" disabled={done || !!installing[s.id]} onClick={() => onInstall(s)}
-                    data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill border border-outline-variant/50 px-m h-7 text-primary-emphasis hover:bg-surface-high transition-colors disabled:opacity-50">
-                    {done ? <><Check size={13} /> Installed</> : installing[s.id] ? 'Installing…' : <><Download size={13} /> Install</>}
-                  </button>
+                  <Button variant="ghost-accent" size="xs" loading={!!installing[s.id]} disabled={done} onClick={() => onInstall(s)}>
+                    {done ? <><Check size={13} /> Installed</> : <><Download size={13} /> Install</>}
+                  </Button>
                 </div>
               )
             })}
@@ -872,6 +876,7 @@ function PhaseCapPicker({ label, options, selected, onChange }: {
       <div role="group" aria-label={label} className="flex flex-wrap gap-1">
         {options.map((o) => {
           const on = selected.includes(o.id)
+          // Raw: a multi-select h-6 chip; Button's smallest tier is h-7 and no toggle-chip primitive exists.
           return (
             <button key={o.id} type="button" aria-pressed={on} onClick={() => toggle(o.id)} title={o.id}
               data-type="caption" className={`inline-flex items-center gap-1 rounded-pill px-2 h-6 transition-colors ${on ? 'text-on-primary' : 'text-on-surface-low hover:text-on-surface'}`}
@@ -907,29 +912,29 @@ function PhaseCard({ phase, index, total, skills, workflows, agentNames, onChang
               disabledReason="Already the last phase" />
           </div>
         )}
-        <input value={phase.role} onChange={(e) => set({ role: e.target.value })} placeholder="role (e.g. researcher)"
-          data-type="label-s" className="flex-1 min-w-0 h-8 rounded-md bg-surface-high px-2 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" style={fvs(550)} />
+        <div className="flex-1 min-w-0">
+          <TextInput size="sm" surface="high" value={phase.role} onChange={(v) => set({ role: v })} placeholder="role (e.g. researcher)" />
+        </div>
         {/* Agent definition for this phase — a dropdown of saved agents (the
             planner's pick is pre-selected); "default worker" = empty = the loop
             worker does it inline. A pre-selected agent no longer installed is
             still shown so the choice isn't silently lost. */}
-        <select value={phase.agent_name} onChange={(e) => set({ agent_name: e.target.value })}
-          data-type="body-s" className="w-40 h-8 rounded-md bg-surface-high px-2 text-on-surface-var outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
-          <option value="">default worker</option>
-          {phase.agent_name && !agentNames.includes(phase.agent_name) && <option value={phase.agent_name}>{phase.agent_name} (not installed)</option>}
-          {agentNames.map((a) => <option key={a} value={a}>{a}</option>)}
-        </select>
+        <div className="w-40">
+          <Select size="sm" surface="high" ariaLabel="Agent for this phase" value={phase.agent_name} onChange={(v) => set({ agent_name: v })}
+            options={[
+              { value: '', label: 'default worker' },
+              ...(phase.agent_name && !agentNames.includes(phase.agent_name) ? [{ value: phase.agent_name, label: `${phase.agent_name} (not installed)` }] : []),
+              ...agentNames.map((a) => ({ value: a, label: a })),
+            ]} />
+        </div>
         <label data-type="caption" className="shrink-0 inline-flex items-center gap-1 text-on-surface-low">
           <span>min</span>
-          <input type="number" min={1} value={phase.min_cycles} onChange={(e) => set({ min_cycles: Math.max(1, Number(e.target.value) || 1) })}
-            data-type="body-s" className="w-12 h-8 rounded-md bg-surface-high px-1.5 text-on-surface text-center outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          <NumberField width="w-12" min={1} value={phase.min_cycles} onChange={(n) => set({ min_cycles: n })} />
         </label>
         {total > 1 && <SquareIconButton icon={X} iconSize={15} tone="danger" label="Remove phase" onClick={onRemove} className="shrink-0" />}
       </div>
-      <textarea value={phase.target} onChange={(e) => set({ target: e.target.value })} rows={2} placeholder="what this phase aims to accomplish"
-        data-type="body-s" className="rounded-md bg-surface-high px-2 py-1.5 text-on-surface placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary" />
-      <input value={phase.phase_exit} onChange={(e) => set({ phase_exit: e.target.value })} placeholder="advance when… (exit signal)"
-        data-type="body-s" className="h-8 rounded-md bg-surface-high px-2 text-on-surface-var placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+      <TextArea size="sm" surface="high" rows={2} value={phase.target} onChange={(v) => set({ target: v })} placeholder="what this phase aims to accomplish" />
+      <TextInput size="sm" surface="high" value={phase.phase_exit} onChange={(v) => set({ phase_exit: v })} placeholder="advance when… (exit signal)" />
       <PhaseCapPicker label="Skills this phase" options={skills.map((s) => ({ id: s.key, name: s.name }))}
         selected={phase.skill_ids} onChange={(ids) => set({ skill_ids: ids })} />
       <PhaseCapPicker label="Workflows this phase" options={workflows.map((w) => ({ id: w.id, name: w.name }))}
@@ -968,10 +973,9 @@ function PlanStep({ phases, setPhases, skills, workflows, agentNames }: {
             onMoveUp={() => move(i, -1)} onMoveDown={() => move(i, 1)} />
         ))}
       </div>
-      <button type="button" onClick={add}
-        data-type="body-s" className="self-start inline-flex items-center gap-1.5 rounded-pill border border-outline-variant/50 px-m h-8 text-on-surface-var hover:bg-surface-high transition-colors">
+      <Button variant="ghost" size="sm" className="self-start" onClick={add}>
         <Plus size={14} /> Add phase
-      </button>
+      </Button>
     </div>
   )
 }
@@ -1107,17 +1111,13 @@ function SuggestMoreSubGoals({ goal, value, onChange }: { goal: string; value: s
   const tooShort = goal.trim().length < 20
   return (
     // A native `disabled` button is out of the tab order, so a keyboard user tabbed straight past
-    // this and could not learn that the goal is simply too short yet. `aria-disabled` keeps the tab
-    // stop and the title says why — the same contract `Button` implements via `disabledReason`,
-    // applied by hand because this control is bespoke. `busy` keeps the NATIVE attribute: an
-    // in-flight action must not be re-clickable.
-    <button type="button" onClick={tooShort ? undefined : suggest}
-      disabled={busy}
-      aria-disabled={tooShort || undefined}
-      title={tooShort ? 'Describe the goal in a bit more detail first' : undefined}
-      data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-primary-emphasis hover:bg-surface-high transition-colors disabled:opacity-40 aria-disabled:opacity-40">
-      {busy ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} Suggest more
-    </button>
+    // this and could not learn that the goal is simply too short yet. Given the reason, `Button`
+    // keeps the tab stop and says why. `loading` keeps the NATIVE attribute: an in-flight action
+    // must not be re-clickable.
+    <Button variant="ghost-accent" size="xs" onClick={suggest} loading={busy}
+      disabled={tooShort} disabledReason="Describe the goal in a bit more detail first">
+      <Sparkles size={14} /> Suggest more
+    </Button>
   )
 }
 
@@ -1133,15 +1133,16 @@ function SubGoalsEdit({ value, onChange }: { value: string[]; onChange: (v: stri
               no aria-label) on a plan with six sub-goals — and this one DELETES. Named from the
               sub-goal it removes, truncated because a sub-goal is a full sentence. The sibling
               IconButton below already carried `label="Add sub-goal"`; this row never got the same. */}
-          <button type="button" aria-label={`Remove sub-goal: ${s.length > 60 ? `${s.slice(0, 60)}…` : s}`}
-            onClick={() => onChange(value.filter((_, j) => j !== i))} className="text-on-surface-low hover:text-on-surface"><X size={14} /></button>
+          <SquareIconButton icon={X} label={`Remove sub-goal: ${s.length > 60 ? `${s.slice(0, 60)}…` : s}`}
+            onClick={() => onChange(value.filter((_, j) => j !== i))} />
         </div>
       ))}
       <div className="flex items-center gap-s">
-        <input value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="New sub-goal"
-          onKeyDown={(e) => { if (e.key === 'Enter' && draft.trim()) { onChange([...value, draft.trim()]); setDraft('') } }}
-          placeholder="Add a sub-goal…"
-          data-type="body-s" className="flex-1 h-9 rounded-lg bg-surface-container px-m text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+        <div className="flex-1">
+          <TextInput size="md" value={draft} onChange={setDraft} ariaLabel="New sub-goal"
+            onKeyDown={(e) => { if (e.key === 'Enter' && draft.trim()) { onChange([...value, draft.trim()]); setDraft('') } }}
+            placeholder="Add a sub-goal…" />
+        </div>
         <IconButton icon={Plus} label="Add sub-goal" size={34} onClick={() => { if (draft.trim()) { onChange([...value, draft.trim()]); setDraft('') } }} />
       </div>
     </div>

@@ -42,13 +42,15 @@ describe('every sub-goal row names its own delete button', () => {
 
   it('the remove button is named from the sub-goal it removes', () => {
     // A CONSTANT label would pass a naive "is it named?" check and still announce identically six
-    // times — the shape this session has now hit three cycles running.
-    expect(src).toMatch(/aria-label=\{`Remove sub-goal: \$\{s\.length > 60 \? `\$\{s\.slice\(0, 60\)\}…` : s\}`\}/)
-    expect(/aria-label="Remove sub-goal"/.test(src), 'a constant here would announce 6 identical buttons').toBe(false)
+    // times — the shape this session has now hit three cycles running. The button is a
+    // `SquareIconButton`, whose `label` is its `aria-label`.
+    expect(src).toMatch(/<SquareIconButton icon=\{X\} label=\{`Remove sub-goal: \$\{s\.length > 60 \? `\$\{s\.slice\(0, 60\)\}…` : s\}`\}/)
+    expect(/label="Remove sub-goal"/.test(src), 'a constant here would announce 6 identical buttons').toBe(false)
   })
 
   it('the add-a-sub-goal input is named', () => {
-    expect(src).toMatch(/aria-label="New sub-goal"/)
+    // A `TextInput`, whose `ariaLabel` is its `aria-label`.
+    expect(src).toMatch(/ariaLabel="New sub-goal"/)
   })
 
   it('the sibling add control still carries its label (the pattern that was already right)', () => {
@@ -106,11 +108,14 @@ describe('no icon-only button in either plan-review surface is unnamed', () => {
   }
 
   it('the rail is not vacuously green — it finds the button it guards', () => {
-    // The fixed sub-goal remove button IS an icon-only button, so the scanner must see it (and see it
-    // as named). Without this, a broken matcher reports a clean sweep forever.
-    const found = iconOnlyButtons(code('pages/loops/LoopPlanReview.tsx'))
-    expect(found.length, 'the scanner must find at least the sub-goal remove button').toBeGreaterThan(0)
-    expect(found.some((b) => b.named && /Remove sub-goal/.test(b.tag))).toBe(true)
+    // The sub-goal remove button this rail was written for is a `SquareIconButton` now, whose `label`
+    // the type requires, so the scanner is held to the raw shape it had: it must see a named icon-only
+    // button as named. Without this, a broken matcher reports a clean sweep forever.
+    const named = `<button type="button" aria-label={\`Remove sub-goal: \${s}\`}
+            onClick={() => onChange(value.filter((_, j) => j !== i))} className="text-on-surface-low"><X size={14} /></button>`
+    const found = iconOnlyButtons(named)
+    expect(found.length, 'the scanner must find the icon-only remove button').toBe(1)
+    expect(found[0].named && /Remove sub-goal/.test(found[0].tag)).toBe(true)
     // And it must still flag the same shape without a label.
     const sample = `<button type="button" onClick={() => f()}><X size={14} /></button>`
     const s2 = iconOnlyButtons(sample)

@@ -158,7 +158,7 @@ describe('no focus ring may carry an alpha', () => {
   })
 
   it('finds the population it guards (not vacuously green)', () => {
-    // A MEASURED POPULATION, not a vacuity guard: **62 files** install their own focus ring today
+    // A MEASURED POPULATION, not a vacuity guard: **61 files** install their own focus ring today
     // (they carry `outline-none`, so the global rule cannot reach them). The floor sits at the
     // measurement per `railFloors.test.ts`'s taxonomy — if controls stop installing a ring, that is
     // either a migration worth noticing or a regression, and either way this should go red.
@@ -169,8 +169,10 @@ describe('no focus ring may carry an alpha', () => {
     // intent editor's goal and type fields, now a `TextArea` and a `TextInput`.
     // 🔻 64 → 62, the same migration: `pages/settings/SecurityPanel.tsx` and
     // `pages/settings/VoicePanel.tsx` drew their rings on their add-row fields and selects.
+    // 🔻 62 → 61, the same migration: `pages/loops/DesignCockpitPage.tsx`'s one ring was on its nudge
+    // field, now a `TextInput`.
     const uses = walk(SRC).filter((f) => /(focus|focus-visible|focus-within):ring-primary\b/.test(readSource(f)))
-    expect(uses.length, 'the app must still install its own focus ring').toBeGreaterThanOrEqual(62)
+    expect(uses.length, 'the app must still install its own focus ring').toBeGreaterThanOrEqual(61)
   })
 
   it('is scoped to focus states, and only to them', () => {

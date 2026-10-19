@@ -72,9 +72,11 @@ describe('a button that reveals content says that it does', () => {
       const at = src.indexOf(toggle)
       expect(at, `${rel} must still contain ${toggle}`).toBeGreaterThan(-1)
       const tag = src.slice(at, at + 260)
-      expect(tag, 'the attribute must be on the button itself').toMatch(/aria-expanded=\{/)
+      // A raw button carries the attribute; a primitive (`QuietButton`, `Button`) takes it as
+      // `ariaExpanded` and renders the same attribute.
+      expect(tag, 'the attribute must be on the button itself').toMatch(/aria-expanded=\{|ariaExpanded=\{/)
       expect(tag, `and bound to \`${state}\` — the same flag its content is gated on`)
-        .toContain(`aria-expanded={${state}}`)
+        .toMatch(new RegExp(`(?:aria-expanded|ariaExpanded)=\\{${state}\\}`))
     })
 
     it(`${rel} still gates its content on that same flag`, () => {
@@ -122,11 +124,14 @@ describe('a button that reveals content says that it does', () => {
       return [...src.matchAll(TOGGLE)].map((m) => src.slice(Math.max(0, m.index! - 200), m.index! + 260))
     })
     expect(toggles.length, 'the scan must still find the population it was written for').toBeGreaterThanOrEqual(48)
-    const silent = toggles.filter((w) => !/aria-expanded|aria-pressed/.test(w))
-    // A CEILING on the backlog, not a claim that it is empty: 34 measured today, and it may only fall.
-    // A new toggle that announces nothing pushes this over and has to be classified before it lands.
+    // A primitive takes the state as `ariaExpanded`/`ariaPressed` and renders the same attribute.
+    const silent = toggles.filter((w) => !/aria-expanded|aria-pressed|ariaExpanded|ariaPressed/.test(w))
+    // A CEILING on the backlog, not a claim that it is empty: 34 measured when it was written, and it may
+    // only fall. A new toggle that announces nothing pushes this over and has to be classified before
+    // it lands. 9 once the primitives' `ariaExpanded`/`ariaPressed` counted: 24 of the 33 "silent"
+    // toggles were primitives that announce, which the raw-attribute regex could not see.
     expect(silent.length, 'measured backlog — classify a new toggle, do not add to this number')
-      .toBeLessThanOrEqual(34)
+      .toBeLessThanOrEqual(9)
   })
 })
 
