@@ -798,9 +798,10 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // The two that moved out of `ChatPage` with the docked panes, the same debt under their new address.
   'pages/chat/panes/useChatPanes.ts': 2,
   'pages/chat/SessionSkillsReview.tsx': 1,
-  // Includes the one this file already documented as a deliberate keep: an instant-paint seed that
+  // 4 → 1: three moved out with the files rail (below, under `pages/code/cockpit/files/`). The one
+  // left is the one this file already documented as a deliberate keep: an instant-paint seed that
   // only ever SETS `project` when it has data, so a failed seed cannot mask the page's real `loadErr`.
-  'pages/code/CodeCockpitPage.tsx': 4,
+  'pages/code/CodeCockpitPage.tsx': 1,
   // A status-DISCRIMINATING branch, and the reason this map counts form B at all rather than trusting
   // a braced body: `if (e.status === 404) setResume(null)` reads a 404 as the answer "there is no
   // draft to resume", which is exactly what a 404 means. Left as debt rather than teaching the scanner
@@ -818,6 +819,11 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // the same fallback renders it as all-removed. Both substitutes are the true content of a side that
   // does not exist — the only two sites in this map where an empty string is the server's real answer.
   'pages/code/DiffView.tsx': 2,
+  // The three that moved out of `CodeCockpitPage` with its files rail, the same debt under their new
+  // address: a failed read of the nested repos or the recent commits reads as none, and a failed
+  // search in the finder reads as no matches.
+  'pages/code/cockpit/files/ChangesPanel.tsx': 2,
+  'pages/code/cockpit/files/FileFinder.tsx': 1,
   'pages/dashboard/PinnedTiles.tsx': 2,
   // Path autocomplete. No sentence is composed from the result, so an empty suggestion list asserts
   // nothing — the narrow line the settings-hub keeps below are also on the right side of.

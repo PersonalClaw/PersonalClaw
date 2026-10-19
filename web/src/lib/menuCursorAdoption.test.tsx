@@ -80,7 +80,8 @@ describe('the declaration-implies-implementation census', () => {
   //  need because its list is always present while mounted and this one appears and disappears.
   const COMBOBOX = [
     'ui/composer/SlashMenu.tsx', 'ui/composer/MentionMenu.tsx', 'app/CommandPalette.tsx',
-    'pages/code/CodeCockpitPage.tsx',
+    // The quick-open, which moved with the cockpit's files rail into its own module.
+    'pages/code/cockpit/files/FileFinder.tsx',
   ]
   const focusMoving = [...declaring.keys()].filter((rel) => !COMBOBOX.includes(rel))
 
@@ -346,7 +347,7 @@ describe('the quick-open combobox says what it is doing', () => {
   // Beyond the family census: the three attributes a virtual cursor needs, and the one the palette
   // does not need. A file could satisfy the census with `aria-activedescendant` anywhere in it; these
   // pin it to the ids the popover actually renders.
-  const code = codeOf('pages/code/CodeCockpitPage.tsx')
+  const code = codeOf('pages/code/cockpit/files/FileFinder.tsx')
 
   it('the field points at the list and tracks the active option', () => {
     expect(code).toMatch(/ariaHasPopup="listbox" ariaControls=\{`\$\{qoId\}-list`\}/)
