@@ -158,3 +158,23 @@ def test_misplaced_names_a_rail_outside_tests_rails_and_a_suite_module_inside(
         "tests/rails/test_suite_inside.py",
         "tests/test_rail_outside.py",
     ]
+
+
+def test_a_checkout_under_a_dot_folder_is_read_whole(tmp_path: Path) -> None:
+    """Only the parts below the root are filtered: a checkout that sits inside a folder whose
+    name starts with a dot (a worktree under another checkout's `.local/`) is still read."""
+    root = tmp_path / ".hidden" / "repo"
+    _plant(root, "tests/test_suite.py", ROWS[-1][1])
+    _plant(root, "tests/rails/test_rail.py", ROWS[5][1])
+    _plant(root, "tests/.cache/test_ignored.py", ROWS[-1][1])
+    found = [m.path for m in rails_census.census(root)]
+    assert found == ["tests/rails/test_rail.py", "tests/test_suite.py"]
+
+
+def test_a_tree_with_no_test_modules_fails_the_check(tmp_path: Path) -> None:
+    """An empty census checked nothing, so it is a violation, never a pass."""
+    (tmp_path / "tests").mkdir()
+    bad = rails_census.violations(tmp_path)
+    assert len(bad) == 1 and "no test modules" in bad[0]
+    _plant(tmp_path, "tests/test_suite.py", ROWS[-1][1])
+    assert rails_census.violations(tmp_path) == []
