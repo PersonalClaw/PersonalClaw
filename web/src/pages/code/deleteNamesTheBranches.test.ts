@@ -110,7 +110,8 @@ describe('the task deletion is named, on every branch of the copy', () => {
 
 describe('one owner: the sentence cannot drift back into two copies', () => {
   it('both call sites delegate, and neither builds a body inline', () => {
-    for (const rel of ['pages/code/CodeSection.tsx', 'pages/code/CodeCockpitPage.tsx']) {
+    // The cockpit's delete moved with its actions into `cockpit/cockpitActions.ts`.
+    for (const rel of ['pages/code/CodeSection.tsx', 'pages/code/cockpit/cockpitActions.ts']) {
       const code = strip(read(rel))
       expect(code, `${rel} delegates`).toMatch(/body: codeDeleteBody\(p, kept\)/)
       // The duplication is what let the defect survive in two places at once.

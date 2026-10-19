@@ -841,7 +841,8 @@ describe('three more bodies, checked against their handlers', () => {
     // custom body remains the point of these dialogs, so the pin still requires one to be passed
     // rather than falling back to the default. The body is handed the work the ended run kept
     // (`api.uLoopKeptWork`), the one thing a delete discards without asking task by task.
-    for (const rel of ['pages/code/CodeSection.tsx', 'pages/code/CodeCockpitPage.tsx']) {
+    // The cockpit's delete moved with its actions into `cockpit/cockpitActions.ts`.
+    for (const rel of ['pages/code/CodeSection.tsx', 'pages/code/cockpit/cockpitActions.ts']) {
       const src = web(rel)
       expect(src, `${rel} rides the shared ritual with a custom body`)
         .toMatch(/confirmDelete\('project', p\.name, \{ body: \w+\(p, kept\) \}\)/)

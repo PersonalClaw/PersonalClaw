@@ -84,7 +84,8 @@ describe('every cockpit reaches a gone state — the family, by behaviour not me
   const cases: [string, string, RegExp][] = [
     ['LoopCockpitPage', LOOP, /if \(runFlags\.deleted\) setNotFound\(true\)/],
     ['DesignCockpitPage', 'src/pages/loops/DesignCockpitPage.tsx', /status === 404\) setNotFound\(true\)/],
-    ['CodeCockpitPage', 'src/pages/code/CodeCockpitPage.tsx', /event === 'deleted'.*setProject\('missing'\)/],
+    // The code cockpit's state, and so this route, moved into its controller.
+    ['CodeCockpitPage', 'src/pages/code/cockpit/useCodeCockpit.ts', /event === 'deleted'.*setProject\('missing'\)/],
   ]
 
   it.each(cases)('%s has a deleted -> gone route', (_name, rel, pattern) => {

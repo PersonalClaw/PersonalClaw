@@ -64,6 +64,11 @@ const EXEMPT: Record<string, string> = {
   // read offers no channel, on purpose and in its own comment, so the header's "Continue on …"
   // controls are simply absent; there is nowhere in the cluster that would say a list failed.
   'pages/chat/header/useChatHeader.ts:useChatHeader': 'a failed channel read offers no channel — the handoff controls are absent, by design',
+  // Moved out of `CodeCockpitPage` with the cockpit's state: its one `useQuery` is the instant-paint
+  // seed, a cached snapshot that only ever SETS the project when it has data. The project's real read
+  // is `load()`, whose failure the hook does return, as `loadErr`; `loadErrorState.test.tsx` budgets
+  // the seed as its own keep.
+  'pages/code/cockpit/useCodeCockpit.ts:useCodeCockpit': 'its useQuery is a first-paint seed — the real read is load(), whose loadErr it returns',
 }
 
 describe('an adapter hook re-exposes useQuery\'s error', () => {

@@ -80,7 +80,8 @@ _LIFECYCLE_SURFACES = (
     "pages/loops/LoopsListPage.tsx",
     "pages/loops/LoopCockpitPage.tsx",
     "pages/loops/DesignCockpitPage.tsx",
-    "pages/code/CodeCockpitPage.tsx",
+    # The code cockpit's run controls, in its header since the page was split into regions.
+    "pages/code/cockpit/header/CockpitHeader.tsx",
 )
 # `pages/chat/SdlcProgressCard.tsx` left this list when it became a status mirror with no
 # controls of its own: its Pause, Stop and Delete live on the loop's page.
