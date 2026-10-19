@@ -110,6 +110,34 @@ is exit 0 with the `accepted:` line. Every rule fails closed:
 Nothing posts the record yet: the controller workflow and its App come later in #3910.
 `tests/test_ci_merge_verdict.py` holds each rule on planted check runs.
 
+### The merge controller's decision
+
+`tools/ci/merge_decision.py` decides what the controller will post: green, red or pending, with
+a reason, and for a green the receipt, written in the record's one format. It is a library only;
+no workflow calls it yet.
+
+- **Which run counts:** `trust.compare` of the default branch's commit, `main`'s tip, and the
+  head. A comparison whose base is not `main`'s tip is red: a base off `main` never picks which
+  run counts, and nor does an older commit on `main`, against which a candidate that puts back a
+  definition `main` has changed since shows no change. When no definition changed, the
+  candidate's own run counts. When any did, that run is advisory and only a run of the default
+  branch's definitions on the candidate's tree counts. So a job kept by name but changed to always
+  pass, an edited `tools/ci/verdict.py` or an emptied `Makefile` target is judged by the default
+  branch's copy.
+- **The planned set** is an input. Until the planner lands, the caller reads it with
+  `planned_jobs`: the merge tier of `tools/ci/catalogue.toml` at `main`'s tip, read from git,
+  never from an older commit on `main`, the candidate's files or a worktree.
+- **Red:** a planned job that is missing, cancelled, skipped or red, even when the candidate's own
+  workflow dropped it (results are read with `verdict.from_needs` and judged with
+  `verdict.decide`); results or a plan that cannot be read; a run naming the head with another
+  tree, whichever run counted; a green whose receipt would lack its toolchain or evidence.
+- **Pending:** no counted run yet, or one of an older head, of other definitions, or against
+  other partner heads than the current ones, so a partner head that moves takes a green back.
+  A red or pending output carries no receipt, so `verify-check-run` never accepts it.
+- **A pull request's reading:** it judges with `verdict.decide`, never `decide_main_push`, so a
+  cancelled planned job stays red as cancelled and is never read as superseded. A red on an
+  earlier attempt is not in `needs`; reading it from the API is the controller workflow's job.
+
 ### Reachability
 
 `trust.require_on_main` refuses a commit that is not an ancestor of `main`. Only a full commit
