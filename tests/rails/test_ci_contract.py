@@ -1963,7 +1963,7 @@ def macos_suite_first_violations(tree: Tree) -> list[str]:
 #: its union is a job of its own, advisory as the canary is, and the gating union names it
 #: nowhere and waits on none of its jobs.
 _UNIONS: dict[str, tuple[str, ...]] = {
-    "shard-union": ("ubuntu", "macos", "arm", "coverage-shard"),
+    "shard-union": ("ubuntu", "macos", "arm", "coverage-shard", "random-order"),
     "shard-union-canary": ("canary",),
 }
 #: The jobs whose red is not a verdict on the run: the canary, its planned collection and its
@@ -2134,6 +2134,89 @@ def shard_union_violations(tree: Tree) -> list[str]:
     for job_id in sorted(_ADVISORY_UNION_JOBS - {"canary"}):
         if job_id in jobs and not _continues_on_error(jobs[job_id]):
             bad.append(f"breadth.yml:{job_id} is not continue-on-error, so the canary's red is")
+    return bad
+
+
+#: The randomized-order leg's seeds (#3949): the run's number with 1 and with 2, as written.
+_RANDOM_ORDER_SEEDS = ("${{ github.run_number }}1", "${{ github.run_number }}2")
+#: A flag's value in a ``run:`` line: quoted, an expression with what follows it, or a word.
+_FLAG_VALUE = r'[\s=]+("[^"]*"|\$\{\{[^}]*\}\}\S*|\S+)'
+_ALWAYS = frozenset({"always()", "${{ always() }}"})
+_WHATEVER_IT_CONCLUDED = _ALWAYS | {"!cancelled()", "${{ !cancelled() }}"}
+
+
+def _flag_values(step: dict[str, Any], flag: str) -> list[str]:
+    """Every value *flag* takes in the step's ``run:`` text, quotes stripped and each
+    expression's spacing as ``${{ x }}``."""
+    found = re.findall(re.escape(flag) + _FLAG_VALUE, str(step.get("run", "")))
+    return [re.sub(r"\$\{\{\s*(.*?)\s*\}\}", r"${{ \1 }}", value.strip('"')) for value in found]
+
+
+def random_order_violations(tree: Tree) -> list[str]:
+    """The randomized-order leg runs its shard in two orders, each its own step, seeded the
+    run's number with 1 and with 2 (so a rerun repeats them, and no two runs share one), the
+    second whatever the first concluded. Its entry keeps exactly those seeds, in that order,
+    beside its inputs and never among them. It uploads its order files, leak reports and file
+    list, whatever it concluded, after every step that writes them."""
+    job = _breadth_jobs(tree).get("random-order")
+    if job is None:
+        return ["breadth.yml has no random-order job"]
+    where = "breadth.yml:random-order"
+    steps = list(job.get("steps") or [])
+    bad: list[str] = []
+    orders = [
+        (i, s)
+        for i, s in enumerate(steps)
+        if any(_root_pytest(w) for w in _commands(str(s.get("run", ""))))
+        and _SHARD_LIST in str(s.get("run", ""))
+    ]
+    seeds = [_flag_values(s, "--random-order-seed") for _, s in orders]
+    if seeds != [[seed] for seed in _RANDOM_ORDER_SEEDS]:
+        bad.append(
+            f"{where} seeds its orders {seeds}, not one step each seeded"
+            f" {', '.join(_RANDOM_ORDER_SEEDS)} in turn"
+        )
+    for i, step in orders:
+        condition = str(step.get("if", "")).strip()
+        if condition and condition not in _WHATEVER_IT_CONCLUDED:
+            bad.append(
+                f"{where} runs its order {step.get('id') or i + 1} under `if: {condition}`,"
+                " not whatever the steps before it concluded"
+            )
+    recorded = [
+        _flag_values(s, "--seeds")
+        for s in steps
+        if "breadth_evidence.py ran" in str(s.get("run", ""))
+    ]
+    if recorded != [[",".join(_RANDOM_ORDER_SEEDS)]]:
+        bad.append(
+            f"{where}'s entry keeps the seeds {recorded}, not its orders'"
+            f" {','.join(_RANDOM_ORDER_SEEDS)}"
+        )
+    for s in steps:
+        if "breadth_evidence.py inputs" in str(s.get("run", "")) and "seeds=" in str(s["run"]):
+            bad.append(
+                f"{where} records its seeds among its inputs, so a green on the next night's"
+                " seeds reads as changed inputs and closes a red order's issue"
+            )
+    uploads = [
+        (i, s)
+        for i, s in enumerate(steps)
+        if _action(s) == "actions/upload-artifact"
+        and str((s.get("with") or {}).get("name", "")) == "random-order-${{ matrix.shard }}"
+    ]
+    if len(uploads) != 1:
+        return [*bad, f"{where} uploads no one random-order-${{{{ matrix.shard }}}}"]
+    at, upload = uploads[0]
+    if str(upload.get("if", "")).strip() not in _ALWAYS:
+        bad.append(f"{where} uploads its orders under `if: {upload.get('if')}`, not always()")
+    paths = [p.strip() for p in str((upload.get("with") or {}).get("path", "")).splitlines()]
+    if not {"reports/random-order/", "reports/random-order"} & set(paths):
+        bad.append(f"{where} uploads {paths}, not the whole of reports/random-order/")
+    writers = [i for i, s in enumerate(steps) if "reports/random-order" in str(s.get("run", ""))]
+    late = [steps[i].get("name") or i + 1 for i in [*writers, *(i for i, _ in orders)] if i > at]
+    if late:
+        bad.append(f"{where} uploads its orders before {late} wrote to them")
     return bad
 
 
@@ -4151,8 +4234,8 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "the gating union not waiting on a leg's planned collection",
                 _BREADTH,
-                " planned-ids-arm, planned-ids-coverage-shard]\n",
-                " planned-ids-coverage-shard]\n",
+                " planned-ids-arm, planned-ids-coverage-shard,",
+                " planned-ids-coverage-shard,",
                 expect="breadth.yml:shard-union does not wait on planned-ids-arm",
             ),
             _plant(
@@ -5474,6 +5557,135 @@ NOTHING_IS_MASKED_UNSEEN = Row(
 ROWS = (*ROWS, NOTHING_IS_MASKED_UNSEEN)
 
 
+# ── The randomized-order leg runs two seeded orders and keeps them (#3949) ─────────────────────
+# Each order is its own step, seeded from the run's number so a rerun repeats it; the second runs
+# whatever the first concluded; the entry keeps the seeds beside its inputs; and the shard uploads
+# its orders, leak reports and file list whatever it concluded. How the two outcomes make the
+# shard's is the masking row's (tests/ci_masking.py).
+
+_RANDOM_ORDER_UPLOAD = (
+    "      - name: Upload the orders and snapshots (random-order · shard ${{ matrix.shard }})\n"
+    "        if: always()\n"
+    "        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n"
+    "        with:\n"
+    "          name: random-order-${{ matrix.shard }}\n"
+    "          path: reports/random-order/\n"
+    "          if-no-files-found: ignore\n"
+    "          retention-days: 14\n"
+)
+_SECOND_ORDER = "      - name: pytest (random-order shard ${{ matrix.shard }}, second order)\n"
+_RANDOM_ORDER_SEEDED = "breadth.yml:random-order seeds its orders"
+
+RANDOM_ORDER_RUNS_TWO_SEEDED_ORDERS = _toolchain_row(
+    "breadth-random-order-runs-two-seeded-orders-and-keeps-them",
+    random_order_violations,
+    (
+        _plant(
+            "the first order seeded from a constant",
+            _BREADTH,
+            "--random-order-seed ${{ github.run_number }}1",
+            "--random-order-seed 7771",
+            expect=_RANDOM_ORDER_SEEDED,
+        ),
+        _plant(
+            "the first order seeded from the run's attempt",
+            _BREADTH,
+            "--random-order-seed ${{ github.run_number }}1",
+            "--random-order-seed ${{ github.run_attempt }}1",
+            expect=_RANDOM_ORDER_SEEDED,
+        ),
+        _plant(
+            "the first order unseeded, in collection order",
+            _BREADTH,
+            " --random-order-seed ${{ github.run_number }}1",
+            "",
+            expect=_RANDOM_ORDER_SEEDED,
+        ),
+        _plant(
+            "both orders on one seed",
+            _BREADTH,
+            "--random-order-seed ${{ github.run_number }}2",
+            "--random-order-seed ${{ github.run_number }}1",
+            expect=_RANDOM_ORDER_SEEDED,
+        ),
+        _plant(
+            "an order seeded twice",
+            _BREADTH,
+            "--random-order-seed ${{ github.run_number }}2",
+            "--random-order-seed ${{ github.run_number }}2 --random-order-seed 5",
+            expect=_RANDOM_ORDER_SEEDED,
+        ),
+        _plant(
+            "the entry keeping other seeds than the orders'",
+            _BREADTH,
+            '--seeds "${{ github.run_number }}1,${{ github.run_number }}2"',
+            '--seeds "${{ github.run_number }}2,${{ github.run_number }}1"',
+            expect="breadth.yml:random-order's entry keeps the seeds",
+        ),
+        _plant(
+            "the entry keeping no seeds",
+            _BREADTH,
+            ' --seeds "${{ github.run_number }}1,${{ github.run_number }}2"',
+            "",
+            expect="breadth.yml:random-order's entry keeps the seeds",
+        ),
+        _plant_in_job(
+            "the seeds back among the inputs",
+            _BREADTH,
+            "random-order",
+            '            --external "shard_files=${SHARD_FILES:?no shard list}"\n',
+            '            --external "shard_files=${SHARD_FILES:?no shard list}" \\\n'
+            '            --external "seeds=${{ github.run_number }}1,${{ github.run_number }}2"\n',
+            expect="breadth.yml:random-order records its seeds among its inputs",
+        ),
+        _plant(
+            "the second order run only after a green first",
+            _BREADTH,
+            _SECOND_ORDER,
+            _SECOND_ORDER + "        if: steps.pytest-1.outcome == 'success'\n",
+            expect="breadth.yml:random-order runs its order pytest-2 under `if:",
+        ),
+        _plant(
+            "no upload of the orders",
+            _BREADTH,
+            _RANDOM_ORDER_UPLOAD,
+            "",
+            expect="breadth.yml:random-order uploads no one random-order-",
+        ),
+        _plant(
+            "the upload narrowed to the order files",
+            _BREADTH,
+            "          path: reports/random-order/\n",
+            "          path: reports/random-order/order-*.jsonl\n",
+            expect="breadth.yml:random-order uploads ['reports/random-order/order-*.jsonl']",
+        ),
+        _plant(
+            "the upload only when the shard is green",
+            _BREADTH,
+            _RANDOM_ORDER_UPLOAD,
+            _RANDOM_ORDER_UPLOAD.replace("        if: always()\n", ""),
+            expect="breadth.yml:random-order uploads its orders under `if: None`",
+        ),
+        _plants(
+            "the upload before the second order ran",
+            _BREADTH,
+            ((_RANDOM_ORDER_UPLOAD, ""), (_SECOND_ORDER, _RANDOM_ORDER_UPLOAD + _SECOND_ORDER)),
+            expect="breadth.yml:random-order uploads its orders before",
+        ),
+        _plant(
+            "no random-order job",
+            _BREADTH,
+            "\n  random-order:\n",
+            "\n  random-order-renamed:\n",
+            expect="breadth.yml has no random-order job",
+        ),
+        Control("the leg as the tree has it passes", _nothing, fails=False),
+    ),
+)
+
+ROWS = (*ROWS, RANDOM_ORDER_RUNS_TWO_SEEDED_ORDERS)
+
+
 # ── Every rail lives in tests/rails ─────────────────────────────────────────────────────────
 #
 # A test that checks the source tree runs once per CI run, in the rails job, and never in a
@@ -6415,6 +6627,9 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "suite-macos": _Mapped(("breadth.yml:macos",), ("breadth",), security="security"),
     "suite-arm": _Mapped(("breadth.yml:arm",), ("breadth",), security="security"),
     "suite-canary": _Mapped(("breadth.yml:canary",), ("breadth",), security="security"),
+    # The suite in seeded orders: it runs the security-marked modules, and its seeds change every
+    # run, so it is never reused.
+    "random-order": _Mapped(("breadth.yml:random-order",), ("breadth",), security="security"),
     "coverage-shard": _Mapped(("breadth.yml:coverage-shard",), ("breadth",), security="security"),
     "coverage": _Mapped(("breadth.yml:coverage",), ("breadth",)),
     "rails-macos": _Mapped(("breadth.yml:rails-macos",), ("breadth",), reuse="tree"),
@@ -6432,6 +6647,7 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
         ("breadth.yml:planned-ids-coverage-shard",), ("breadth",)
     ),
     "planned-ids-canary": _Mapped(("breadth.yml:planned-ids-canary",), ("breadth",)),
+    "planned-ids-random-order": _Mapped(("breadth.yml:planned-ids-random-order",), ("breadth",)),
     "shard-union": _Mapped(("breadth.yml:shard-union",), ("breadth",)),
     "shard-union-canary": _Mapped(("breadth.yml:shard-union-canary",), ("breadth",)),
     "client": _Mapped(("client",), ("change", "merge")),
@@ -6637,6 +6853,8 @@ tmux -V
 
 "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/canary__${{ matrix.shard }}.json"
 
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --seeds "${{ github.run_number }}1,${{ github.run_number }}2" --out "$RUNNER_TEMP/entry/random-order__${{ matrix.shard }}.json"
+
 "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
 
 "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/rails-macos-26-3.12__1.json"
@@ -6659,6 +6877,8 @@ tmux -V
 
 "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-canary__1.json"
 
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-random-order__1.json"
+
 "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/shard-union__1.json"
 
 "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/shard-union-canary__1.json"
@@ -6672,6 +6892,8 @@ tmux -V
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/ubuntu-24.04-arm-3.13__${{ matrix.shard }}.json"
 
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/canary__${{ matrix.shard }}.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/random-order__${{ matrix.shard }}.json"
 
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
 
@@ -6695,6 +6917,8 @@ tmux -V
 
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-canary__1.json"
 
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-random-order__1.json"
+
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/shard-union__1.json"
 
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/shard-union-canary__1.json"
@@ -6716,6 +6940,15 @@ if [ "$result" != "success" ]; then
 fi
 echo "all coverage shards passed"
 
+""",  # noqa: E501
+    "random-order's: each order's state-leak report, and the shard's file list, kept beside its"
+    " order files": r"""
+mkdir -p reports/random-order
+if [ -f reports/state-leaks.json ]; then
+  mv reports/state-leaks.json "reports/random-order/state-leaks-${{ github.run_number }}1.json"
+  mv reports/state-leaks.json "reports/random-order/state-leaks-${{ github.run_number }}2.json"
+fi
+cp "$RUNNER_TEMP/shard.txt" reports/random-order/shard.txt
 """,  # noqa: E501
     "install-smoke's: the bare container's own system, for the log": r"""
 . /etc/os-release
@@ -7217,6 +7450,20 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             "uv run pytest -n 4 --dist worksteal -q tests/rails",
             "uv run pytest -n 4 --dist worksteal -q -x tests/rails",
             expect="rails: command step 1",
+        ),
+        _plant(
+            "the first random-order seed drawn from another number than the run's",
+            _BREADTH,
+            "--random-order-seed ${{ github.run_number }}1",
+            "--random-order-seed ${{ github.run_attempt }}1",
+            expect="random-order: command step 2",
+        ),
+        _plant(
+            "the second random-order seed drawn from another number than the run's",
+            _BREADTH,
+            "--random-order-seed ${{ github.run_number }}2",
+            "--random-order-seed ${{ github.run_attempt }}2",
+            expect="random-order: command step 3",
         ),
         _plant(
             "a step moved to another working directory",

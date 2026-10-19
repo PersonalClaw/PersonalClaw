@@ -13,7 +13,10 @@ Every such site must match an entry below, not only a validation tool's. Telling
 command from a cleanup one by its words would miss a wrapper (``make``, ``uv run``, a script),
 so the row asks for a reason at every site instead. An entry that matches nothing fails too, so
 the list cannot rot. A tolerated step whose result is what the job reports (``outcome_read``)
-must also be read back by a later step of its job, as ``steps.<id>.outcome``.
+must also be read back by a later step of its job, as ``steps.<id>.outcome``. A job with more
+than one reads them together, in one expression that is green only when every one was:
+``steps.<a>.outcome == 'success' && steps.<b>.outcome == 'success' && 'success' || 'failure'``,
+so one step's red never reads as green because another step was green.
 
 What it does not see: a mask spelled another way (``set +e``, ``if cmd; then :; fi``, a
 ``trap``'d exit, ``|| echo``). The row holds the forms the tree uses and a realistic edit
@@ -32,6 +35,14 @@ from typing import Any
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]
+
+#: The one way a job with several ``outcome_read`` steps reads their outcomes: green only when
+#: every one of them was, each ``steps.<id>.outcome == 'success'``, joined by ``&&``.
+_EVERY_ONE_GREEN = re.compile(
+    r"(?:steps\.[\w-]+\.outcome == 'success' && )+'success' \|\| 'failure'"
+)
+_EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.S)
+_OUTCOME = re.compile(r"steps\.([\w-]+)\.outcome\b")
 
 #: ``|| true`` or ``|| :`` ending a command: at the end of the line, or before ``)``, a quote,
 #: ``;``, ``&``, ``|`` or a comment.
@@ -174,6 +185,18 @@ TOLERATED: tuple[Tolerated, ...] = (
         "on a red entry, after the evidence is written and uploaded.",
         outcome_read=True,
     ),
+    *(
+        Tolerated(
+            _BREADTH,
+            ("random-order",),
+            order,
+            "The second order runs whatever the first did, and the two outcomes together are "
+            "the shard's result: `ran` records it, and the last step fails the job on a red "
+            "entry, after the evidence is written and uploaded.",
+            outcome_read=True,
+        )
+        for order in ("pytest-1", "pytest-2")
+    ),
     Tolerated(
         _BREADTH,
         ("canary",),
@@ -281,11 +304,56 @@ def violations(root: Path) -> list[str]:
             later = " ".join(str(s) for s in steps[index + 1 :])
             if not sid or f"steps.{sid}.outcome" not in later:
                 bad.append(f"{where} is continue-on-error, and no later step reads its outcome")
+    bad += _read_together(sites, named)
     for key in named:
         if key not in sites:
             rel, job_id, step = key
             what = f"step {step!r}" if step else "the job"
             bad.append(f"{rel}:{job_id}: the entry for {what} matches nothing: delete it")
+    return bad
+
+
+def _strings(value: object) -> Iterator[str]:
+    """Every string in a step, its keys' values at any depth."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _strings(item)
+
+
+def _read_together(
+    sites: dict[tuple[str, str, str | None], tuple[dict[str, Any], int]],
+    named: dict[tuple[str, str, str | None], Tolerated],
+) -> list[str]:
+    """In a job with more than one ``outcome_read`` step, every expression that reads one of
+    their outcomes reads them all, green only when every one was."""
+    groups: dict[tuple[str, str], tuple[dict[str, Any], set[str]]] = {}
+    for (rel, job_id, step), (job, index) in sites.items():
+        entry = named.get((rel, job_id, step))
+        sid = (job.get("steps") or [{}])[index].get("id") if index >= 0 else None
+        if entry is not None and entry.outcome_read and sid:
+            groups.setdefault((rel, job_id), (job, set()))[1].add(str(sid))
+    bad: list[str] = []
+    for (rel, job_id), (job, ids) in sorted(groups.items()):
+        if len(ids) < 2:
+            continue
+        for step in job.get("steps") or []:
+            for text in _strings(step):
+                for expression in _EXPRESSION.findall(text):
+                    read = set(_OUTCOME.findall(expression))
+                    if not read & ids:
+                        continue
+                    spoken = " ".join(expression.split())
+                    if read != ids or not _EVERY_ONE_GREEN.fullmatch(spoken):
+                        bad.append(
+                            f"{rel}:{job_id} reads `{spoken}`, not green only when every one of"
+                            f" {sorted(ids)} was: each `steps.<id>.outcome == 'success'`,"
+                            " joined by &&"
+                        )
     return bad
 
 
@@ -335,6 +403,22 @@ PLANTS: tuple[tuple[str, str, str, str], ...] = (
         _BREADTH,
         "OUTCOME: ${{ steps.pytest.outcome }}",
         "OUTCOME: success",
+    ),
+    (
+        "two tolerated orders whose shard is green when either was",
+        _BREADTH,
+        "OUTCOME: ${{ steps.pytest-1.outcome == 'success' && steps.pytest-2.outcome == 'success'"
+        " && 'success' || 'failure' }}",
+        "OUTCOME: ${{ (steps.pytest-1.outcome == 'success' || steps.pytest-2.outcome =="
+        " 'success') && 'success' || 'failure' }}",
+    ),
+    (
+        "two tolerated orders whose shard is green when the first was, and the second read apart",
+        _BREADTH,
+        "OUTCOME: ${{ steps.pytest-1.outcome == 'success' && steps.pytest-2.outcome == 'success'"
+        " && 'success' || 'failure' }}",
+        "OUTCOME: ${{ steps.pytest-1.outcome == 'success' && 'success' || 'failure' }}\n"
+        "          SECOND: ${{ steps.pytest-2.outcome }}",
     ),
     (
         "an entry whose step is gone",

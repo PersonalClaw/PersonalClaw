@@ -928,3 +928,102 @@ def test_on_main_a_carried_key_whose_origin_run_is_gone_is_left_out() -> None:
     found, _ = be.previous(_Source({202: {name: data}}, deleted=(201,)))
     assert found[mac]["run_id"] == 202
     assert _KEY not in found
+
+
+def test_a_red_random_order_leg_names_its_seeds_in_its_issue() -> None:
+    """The random-order leg's entries carry their seeds beside their inputs, and its issue names
+    the seeds of its red shards, so the order that failed can be run again."""
+    seeded = {"shard_files": "f" * 64}
+    entries = {
+        "random-order/1": {**_leg(be.RED, external=seeded), "seeds": ["4211", "4212"]},
+        "random-order/2": {**_leg(external=seeded), "seeds": ["4211", "4212"]},
+        "random-order/3": {**_leg(be.RED, external=seeded), "seeds": ["4211", "4212"]},
+    }
+    _, actions = be.settle_record(entries, {}, run_id=421, tree="d" * 40)
+    [action] = actions
+    assert action.action == "open" and action.seeds == ("4211", "4212")
+    issues = _Issues()
+    be.apply(actions, issues, run_url="https://example.com/r/421", record_digest="a" * 64)
+    body = issues.open[be.issue_title("random-order")][1]
+    assert "Seeds: `4211`, `4212`" in body
+    assert be.open_red_inputs(body) == {action.inputs}
+
+
+def _random_order_night(
+    tmp_path, monkeypatch, gh: _Gh, run_id: int, seeds: str, *, tree: str, red: tuple[int, ...]
+):
+    """One night of the random-order leg as breadth.yml writes it: each shard's inputs, then its
+    entry with the night's seeds beside them (``ran --seeds``), then ``report`` and ``issues``."""
+    entries = _all_green()
+    for shard in range(1, 5):
+        folder = tmp_path / f"{run_id}-random-order-{shard}"
+        folder.mkdir()
+        inputs, out = folder / "inputs.json", folder / "entry.json"
+        argv = ["inputs", "--out", str(inputs), "--tree", tree, "--image", "ubuntu24"]
+        argv += ["--image-version", "20261012.1.0", "--arch", "X64", "--python", "3.13.16"]
+        argv += ["--uv", "0.13.1", "--node", "none", "--external", f"shard_files={'f' * 64}"]
+        assert be.main(argv) == 0
+        outcome = be.RED if shard in red else be.GREEN
+        argv = ["ran", "--inputs", str(inputs), "--outcome", outcome, "--seeds", seeds]
+        assert be.main([*argv, "--out", str(out)]) == 0
+        entries[f"random-order/{shard}"] = be.json.loads(out.read_text("utf-8"))
+    return _night(tmp_path, monkeypatch, gh, entries, run_id)
+
+
+def test_a_random_order_red_stays_open_on_other_seeds_until_the_tree_changes(
+    tmp_path, monkeypatch
+) -> None:
+    """The seeds are not an input: a red order is the tree's, and a green on other seeds does not
+    show it gone. On the same tree and runner it is a flake, as the security corpus's is, and
+    only a changed tree closes it. Each issue names the seeds of its red shards."""
+    gh = _Gh()
+    _, done = _random_order_night(
+        tmp_path, monkeypatch, gh, 1, "12341,12342", tree="d" * 40, red=(2,)
+    )
+    assert done["random-order"] == "open"
+    [issue] = gh.issues
+    assert "Seeds: `12341`, `12342`" in issue["body"]
+    record, done = _random_order_night(
+        tmp_path, monkeypatch, gh, 2, "12351,12352", tree="d" * 40, red=()
+    )
+    assert done["random-order"] == "flake"
+    assert record["legs"]["random-order/2"]["result"] == be.RED
+    assert record["legs"]["random-order/2"]["seeds"] == ["12351", "12352"]
+    assert [i["state"] for i in gh.issues] == ["open"]
+    _, done = _random_order_night(
+        tmp_path, monkeypatch, gh, 3, "12361,12362", tree="e" * 40, red=()
+    )
+    assert done["random-order"] == "close"
+    assert [i["state"] for i in gh.issues] == ["closed"]
+
+
+@pytest.mark.parametrize("seeds", ["", "12a", "1,,2", "1, 2", "-1"])
+def test_ran_refuses_seeds_that_are_not_whole_numbers(seeds, tmp_path) -> None:
+    inputs, out = tmp_path / "inputs.json", tmp_path / "entry.json"
+    inputs.write_text(be.json.dumps(INPUTS), encoding="utf-8")
+    argv = ["ran", "--inputs", str(inputs), "--outcome", "success", "--seeds", seeds]
+    with pytest.raises(SystemExit):
+        be.main([*argv, "--out", str(out)])
+    assert not out.exists()
+
+
+def test_an_entry_without_seeds_holds_none(tmp_path) -> None:
+    inputs, out = tmp_path / "inputs.json", tmp_path / "entry.json"
+    inputs.write_text(be.json.dumps(INPUTS), encoding="utf-8")
+    argv = ["ran", "--inputs", str(inputs), "--outcome", "success", "--out", str(out)]
+    assert be.main(argv) == 0
+    assert "seeds" not in be.json.loads(out.read_text(encoding="utf-8"))
+
+
+def test_a_leg_with_no_seeds_names_none() -> None:
+    _, [action] = be.settle_record({"audit/1": _leg(be.RED)}, {}, run_id=5, tree="d" * 40)
+    assert action.seeds == ()
+    issues = _Issues()
+    be.apply([action], issues, run_url="https://example.com/r/5", record_digest="a" * 64)
+    assert "Seeds" not in issues.open[be.issue_title("audit")][1]
+
+
+def test_the_random_order_leg_is_never_reused_and_has_four_shards() -> None:
+    assert "random-order" in be.NON_REUSABLE
+    assert be.SHARDS["random-order"] == 4
+    assert not be.reusable("random-order", _leg(), INPUTS)

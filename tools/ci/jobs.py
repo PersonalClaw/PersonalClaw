@@ -7,7 +7,8 @@ environment built from nothing (:func:`tools.ci.run.job_env`): what a GitHub run
 step (:data:`RUNNER_ENV`, ``CI=true``), the workflow's env, then the job's, then the step's, never
 the caller's beyond its ``PATH``. A value only the runner knows is filled in: ``{runner_temp}`` is
 the job's own temporary folder (``Scratch.tmp``; on GitHub, ``$RUNNER_TEMP``), ``{shard}`` the
-shard asked for, ``{base}`` the ref a diff is taken against.
+shard asked for, ``{base}`` the ref a diff is taken against, ``{run_number}`` the run's number on
+GitHub and :data:`LOCAL_RUN_NUMBER` here.
 
 The job has its catalogue cap less a minute, across every step; a step still running when that
 runs out is stopped with its whole group, and a pytest step says first which of its processes
@@ -301,6 +302,25 @@ def _render(value: str, values: Mapping[str, str]) -> str:
         return values[name]
 
     return re.sub(r"\{([^{}]*)\}", fill, value)
+
+
+#: ``{run_number}`` here, where no numbered run runs: a local run of a job that names it draws
+#: the same values every time (the randomized-order leg's seeds ``01`` and ``02``). A
+#: ``GITHUB_RUN_NUMBER`` the caller set names another run, so it is not read.
+LOCAL_RUN_NUMBER = "0"
+
+
+def _run_number(host: Host) -> str:
+    """``{run_number}``: on GitHub the run's own number, ``GITHUB_RUN_NUMBER``, which every
+    attempt of the run keeps; :data:`LOCAL_RUN_NUMBER` here."""
+    if not host.on_github:
+        return LOCAL_RUN_NUMBER
+    number = os.environ.get("GITHUB_RUN_NUMBER")
+    if number is None or not re.fullmatch(r"[0-9]+", number):
+        raise Unreadable(
+            f"GITHUB_RUN_NUMBER is {number!r}, not a run's number, so {{run_number}} has no value"
+        )
+    return number
 
 
 def _workers(job: Job, options: Options) -> str | None:
@@ -1175,6 +1195,9 @@ def run_one(
         values["base"] = _base(host, options)
     if any("python" in step.placeholders() for step in job.command):
         values["python"] = _python(job, host)
+    # In a step or in the job's own env, which each step runs with: where the loader accepts it.
+    if "run_number" in job.placeholders():
+        values["run_number"] = _run_number(host)
     plan: str | None = None
     if job.shards > 1:
         if host.on_github:
@@ -1349,7 +1372,8 @@ LOCKS = ("uv.lock", "package-lock.json")
 #: Each placeholder as a key holds it: unfilled. ``{runner_temp}`` is this run's own scratch
 #: folder, which would change every key; ``{shard}`` takes each of its values in every run of the
 #: job, and the shard count is keyed; ``{base}`` names a commit, which the key holds as
-#: ``declared["base"]``.
+#: ``declared["base"]``; ``{run_number}`` is another value every run, and a job whose steps name
+#: it is never reused (``catalogue.validate``).
 _AS_WRITTEN = {name: f"{{{name}}}" for name in catalogue.PLACEHOLDERS}
 
 Fingerprint = Callable[..., Mapping[str, str]]

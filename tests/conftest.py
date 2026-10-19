@@ -15,6 +15,7 @@ from pathlib import Path
 import native_omp_guard
 import pycache_guard
 import pytest
+import random_order
 import real_home_guard
 import run_facts
 import shard_list
@@ -281,10 +282,13 @@ def pytest_addoption(parser):
     shard_list.addoption(parser)
     # --strict-state and its allowlist: a test that leaves process-global state (#3949).
     state_leak_guard.addoption(parser)
+    # --random-order-seed: the modules, and the tests within each, in a seeded order (#3949).
+    random_order.addoption(parser)
 
 
 def pytest_configure(config):
     shard_list.configure(config)
+    random_order.configure(config)
     # Where this process ran (platform, xdist workers), for the telemetry record (#3948).
     run_facts.configure(config)
     if config.getoption("--fixture-costs"):

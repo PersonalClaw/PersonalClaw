@@ -746,6 +746,70 @@ def test_a_github_run_id_it_cannot_read_runs_nothing(repo, tmp_path, monkeypatch
     assert not marker.exists()
 
 
+def _on_a_github_run(tmp_path: Path, monkeypatch) -> None:
+    """A GitHub runner's own variables, as a run's first attempt has them."""
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "1234")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+
+
+def _says_its_seed(out: Path) -> Step:
+    """A step that writes the value it is given for ``{run_number}1``, as a seed is spelled."""
+    return Step(
+        (PY, "-c", f"import sys; open({str(out)!r}, 'w').write(sys.argv[1])", "{run_number}1")
+    )
+
+
+def test_the_run_number_on_github_is_the_runs_own(repo, tmp_path, monkeypatch):
+    """``{run_number}`` is ``${{ github.run_number }}``, which every attempt of a run keeps."""
+    _on_a_github_run(tmp_path, monkeypatch)
+    monkeypatch.setenv("GITHUB_RUN_NUMBER", "1234")
+    out = tmp_path / "said"
+    host = _host(repo, on_github=True)
+    outcome = _run(repo, _job("seeded", steps=(_says_its_seed(out),)), tmp_path, host=host)
+    assert outcome.code == run.OK, outcome.reasons
+    assert out.read_text() == "12341"
+
+
+def test_the_run_number_here_is_0_whatever_the_caller_set(repo, tmp_path, monkeypatch):
+    """No numbered run runs here: a local run of a job that names ``{run_number}`` draws the
+    same values every time, and a ``GITHUB_RUN_NUMBER`` the caller set names another run."""
+    monkeypatch.setenv("GITHUB_RUN_NUMBER", "1234")
+    out = tmp_path / "said"
+    outcome = _run(repo, _job("seeded", steps=(_says_its_seed(out),)), tmp_path)
+    assert outcome.code == run.OK, outcome.reasons
+    assert out.read_text() == f"{jobs.LOCAL_RUN_NUMBER}1" == "01"
+
+
+def test_the_run_number_a_job_env_names_is_filled_too(repo, tmp_path, monkeypatch):
+    """The loader accepts ``{run_number}`` in a job's env as in a step's, so it is filled
+    there too, not left a placeholder no step names."""
+    _on_a_github_run(tmp_path, monkeypatch)
+    monkeypatch.setenv("GITHUB_RUN_NUMBER", "1234")
+    out = tmp_path / "said"
+    step = Step((PY, "-c", f"import os; open({str(out)!r}, 'w').write(os.environ['SEED'])"))
+    job = _job("seeded", steps=(step,), env=Env({"SEED": "{run_number}1"}))
+    outcome = _run(repo, job, tmp_path, host=_host(repo, on_github=True))
+    assert outcome.code == run.OK, outcome.reasons
+    assert out.read_text() == "12341"
+
+
+@pytest.mark.parametrize("number", [None, "", "12a", "-1", "1 2", "١٢"])
+def test_a_run_number_github_gives_as_no_number_is_refused_before_the_step_runs(
+    repo, tmp_path, monkeypatch, number
+):
+    _on_a_github_run(tmp_path, monkeypatch)
+    if number is None:
+        monkeypatch.delenv("GITHUB_RUN_NUMBER", raising=False)
+    else:
+        monkeypatch.setenv("GITHUB_RUN_NUMBER", number)
+    out = tmp_path / "said"
+    host = _host(repo, on_github=True)
+    with pytest.raises(jobs.Unreadable, match="GITHUB_RUN_NUMBER is .*, not a run's number"):
+        _run(repo, _job("seeded", steps=(_says_its_seed(out),)), tmp_path, host=host)
+    assert not out.exists()
+
+
 # ── a tier ───────────────────────────────────────────────────────────────────────────────────
 
 

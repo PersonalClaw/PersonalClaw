@@ -16,9 +16,10 @@ the environment behind the catalogue's back. No env names a variable the runner 
 Reuse is one of ``never``, ``tree`` (the result stands for any run of the same tree and
 external inputs) and ``ttl:<hours>``. :func:`parse_reuse` is the one parser of it. A security
 or live job is never reused, by TTL or by tree, and a job that reads one of
-:data:`LIVE_INPUTS` is live. The merge tier's security evidence, :data:`MERGE_SECURITY_JOBS`, is
-the suite's own run of its security-marked modules on each platform and ``security``, the one run
-of the security corpus.
+:data:`LIVE_INPUTS` is live. Nor is a job that names ``{run_number}``, another value every run,
+in a step or in its own env (:meth:`Job.placeholders`, where run-job fills it). The merge tier's
+security evidence, :data:`MERGE_SECURITY_JOBS`, is the suite's own run of its security-marked
+modules on each platform and ``security``, the one run of the security corpus.
 
 A pull request's catalogue is read with main's as its reference (:func:`against`): a security or
 live job main has stays, with its posture and its tiers, until main's own copy marks it
@@ -138,6 +139,9 @@ PLACEHOLDERS: dict[str, tuple[str, ...]] = {
     # The uv-managed interpreter of the job's own Python, as a step that must not install the
     # project first runs it: breadth's shard list and evidence steps, before deciding to run.
     "python": ('"$(uv python find "$PY")"',),
+    # The run's number, which every attempt of the run keeps: the randomized-order leg's seeds
+    # are drawn from it. It is another value every run, so a job that names it is never reused.
+    "run_number": ("${{ github.run_number }}",),
 }
 
 #: The job-level variables a placeholder's workflow spelling reads, and nothing else: ``PY``
@@ -344,6 +348,13 @@ class Job:
     #: The issue that retires the job (``#<number>``). The job is still the catalogue's and
     #: still runs; once main's catalogue marks it, a pull request may drop it (:func:`against`).
     retiring: str | None = None
+
+    def placeholders(self) -> set[str]:
+        """Every placeholder the job names: in a step's argv or env, or in its own env, which
+        each step runs with."""
+        return {n for step in self.command for n in step.placeholders()} | {
+            n for value in self.env.values() for n in _PLACEHOLDER.findall(value)
+        }
 
 
 @dataclass(frozen=True)
@@ -915,6 +926,11 @@ def validate(catalogue: Catalogue, complete: bool = True) -> list[str]:
         if job.reuse != NEVER and (job.security == "security" or job.live):
             what = "a security job's" if job.security == "security" else "a live job's"
             problems.append(f"{job.id}: reuse is {job.reuse}, but {what} evidence is never reused")
+        if job.reuse != NEVER and "run_number" in job.placeholders():
+            problems.append(
+                f"{job.id}: reuse is {job.reuse}, but its steps name {{run_number}}, another"
+                " value every run, so its evidence is never reused"
+            )
         if job.reuse.kind == "tree":
             for unpinned in sorted(UNPINNED_INPUTS & set(job.external_inputs)):
                 problems.append(

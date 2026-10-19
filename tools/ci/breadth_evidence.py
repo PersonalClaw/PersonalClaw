@@ -16,7 +16,9 @@ legs were reused does not satisfy a release on its own (:func:`satisfies_release
 ``report`` keeps one issue per failing leg, under an exact title (:func:`issue_title`), and
 :func:`settle` says what each leg's result does to that issue: a red opens or updates it; a
 green on changed inputs closes it; a green on the inputs the red ran on is a flake, which keeps
-the issue open and the leg red in the record.
+the issue open and the leg red in the record. The randomized-order leg's seeds sit beside a
+shard's inputs, never in them: a red order is the tree's, so a green on that night's other seeds
+is a flake too, and only a changed input closes its issue, which names the red shards' seeds.
 
 All of that is on ``main`` (the full ref, :data:`MAIN`: a tag named ``main`` is not main).
 Off main (a tag, a release branch) nothing is reused and no issue is read: no earlier result is
@@ -38,6 +40,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -74,6 +77,7 @@ NON_REUSABLE = frozenset(
         "security",
         "security-macos",
         "canary",
+        "random-order",
         "install-smoke",
         "audit",
         # #3923's union check reads the ids each of these uploads that night: a carried result
@@ -83,6 +87,7 @@ NON_REUSABLE = frozenset(
         "planned-ids-arm",
         "planned-ids-coverage-shard",
         "planned-ids-canary",
+        "planned-ids-random-order",
         "shard-union",
         "shard-union-canary",
     }
@@ -101,15 +106,17 @@ SHARDS: Mapping[str, int] = {
     "security": 1,
     "security-macos": 1,
     "canary": 4,
+    "random-order": 4,
     "install-smoke": 1,
     "audit": 1,
     # #3923: each suite leg's planned suite, collected on its own runner, and the union checks:
-    # the four gating legs' and the advisory canary's.
+    # the five gating legs' and the advisory canary's.
     "planned-ids-ubuntu": 1,
     "planned-ids-macos": 1,
     "planned-ids-arm": 1,
     "planned-ids-coverage-shard": 1,
     "planned-ids-canary": 1,
+    "planned-ids-random-order": 1,
     "shard-union": 1,
     "shard-union-canary": 1,
 }
@@ -515,11 +522,20 @@ def decide(
 
 
 def executed(
-    inputs: Mapping[str, Any], result: str, ran_at: str, attempt: int = 1
+    inputs: Mapping[str, Any],
+    result: str,
+    ran_at: str,
+    attempt: int = 1,
+    seeds: Sequence[str] = (),
 ) -> dict[str, Any]:
+    """A shard's entry. ``seeds`` (the random-order leg's) sit beside its inputs, never in them:
+    a red order is the tree's, so a green on other seeds is no changed input (:func:`settle`)."""
     if result not in (GREEN, RED):
         raise ValueError(f"not a result: {result!r}")
-    return {"inputs": dict(inputs), "result": result, "ran_at": ran_at, "attempt": attempt}
+    entry = {"inputs": dict(inputs), "result": result, "ran_at": ran_at, "attempt": attempt}
+    if seeds:
+        entry["seeds"] = list(seeds)
+    return entry
 
 
 @dataclass(frozen=True)
@@ -529,6 +545,9 @@ class Action:
     inputs: str
     red: tuple[str, ...]
     carried: bool
+    #: The seeds a red shard's orders were drawn from (the random-order leg's entries carry
+    #: them beside their inputs), so its issue names what reproduces it.
+    seeds: tuple[str, ...] = ()
 
 
 def settle_record(
@@ -579,7 +598,8 @@ def settle_record(
                 for entry in shards.values():
                     if not entry.get("reused_from"):
                         entry["result"], entry["flake"] = RED, True
-        actions.append(Action(leg, action, key, red, everything_carried))
+        seeds = tuple(sorted({str(seed) for k in red for seed in shards[k].get("seeds") or ()}))
+        actions.append(Action(leg, action, key, red, everything_carried, seeds))
         record_legs.update(shards)
     record = {
         "version": VERSION,
@@ -646,7 +666,11 @@ def _apply_one(a: Action, issues: Issues, *, run_url: str, record_digest: str) -
     where = f"Run: {run_url}\nRecord: `{artifact_name(record_digest)}`\n"
     found = issues.find(title)
     if a.action in ("open", "update"):
-        body = f"Red shards: {', '.join(f'`{k}`' for k in a.red)}\n{where}{MARKER}{a.inputs}\n"
+        seeds = f"Seeds: {', '.join(f'`{s}`' for s in a.seeds)}\n" if a.seeds else ""
+        body = (
+            f"Red shards: {', '.join(f'`{k}`' for k in a.red)}\n{seeds}{where}"
+            f"{MARKER}{a.inputs}\n"
+        )
         if found is None:
             issues.create(title, f"`{a.leg}` is red in breadth.\n\n{body}")
         else:
@@ -827,6 +851,14 @@ def _latest_jobs(repo: str, run_id: int) -> dict[str, tuple[int, str]] | None:
     return jobs
 
 
+def _seeds(text: str) -> tuple[str, ...]:
+    """``ran --seeds``: whole numbers, comma-separated, as ``--random-order-seed`` takes them."""
+    seeds = tuple(text.split(","))
+    if not all(re.fullmatch(r"[0-9]+", seed) for seed in seeds):
+        raise argparse.ArgumentTypeError(f"not whole numbers, comma-separated: {text!r}")
+    return seeds
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else "")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -851,6 +883,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--inputs", required=True)
     p.add_argument("--outcome", required=True, help="the test step's outcome")
     p.add_argument("--attempt", type=int, default=1, help="GITHUB_RUN_ATTEMPT")
+    p.add_argument(
+        "--seeds",
+        type=_seeds,
+        default=(),
+        help="the seeds its orders were drawn from, comma-separated, kept beside its inputs",
+    )
     p.add_argument("--out", required=True)
     p = sub.add_parser("night", help="the night a run belongs to, from its creation time")
     p.add_argument("--created-at", required=True, help="the run's created_at, fixed on reruns")
@@ -923,7 +961,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "ran":
         result = GREEN if args.outcome == GREEN else RED
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        _write(args.out, executed(_load(args.inputs), result, now, args.attempt))
+        _write(args.out, executed(_load(args.inputs), result, now, args.attempt, args.seeds))
     elif args.command == "night":
         _output(f"night={night_of(args.created_at)}")
     elif args.command == "report":
@@ -990,7 +1028,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         _output(f"digest={record_digest}")
     elif args.command == "issues":
-        acts = [Action(**{**a, "red": tuple(a["red"])}) for a in _load(args.actions)]
+        acts = [
+            Action(**{**a, "red": tuple(a["red"]), "seeds": tuple(a.get("seeds", ()))})
+            for a in _load(args.actions)
+        ]
         try:
             done = apply(acts, GhIssues(args.repo), run_url=args.run_url, record_digest=args.digest)
         except Unwritten as exc:
