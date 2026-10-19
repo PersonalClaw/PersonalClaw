@@ -757,9 +757,11 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
             {LOOP_ACTION_SOURCE_STATUSES.stop.has(c.status) && <HeaderControl icon={Square} label={confirmStop ? 'Stop for good?' : 'Stop'} variant={confirmStop ? 'danger' : 'secondary'} onClick={() => { if (!confirmStop) { setConfirmStop(true); return } setConfirmStop(false); act('stop') }} />}
             {/* `ariaExpanded`, not `active`: this reveals the inline nudge composer below (a
                 height 0 → auto region with a textarea), so the state a screen-reader user needs is
-                "content appeared", not "a mode is on". Its sibling Details is the opposite case. */}
+                "content appeared", not "a mode is on". Its sibling Details is the same case: it shows
+                and hides the Details rail, so it keeps `active` for its look and passes `ariaExpanded`,
+                which makes `HeaderControl` drop `aria-pressed`. */}
             {active && <HeaderControl icon={MessageSquarePlus} label="Nudge" variant="secondary" ariaExpanded={nudgeOpen} onClick={() => setNudgeOpen(!nudgeOpen)} />}
-            <HeaderControl icon={PanelRight} label="Details" active={railOpen} onClick={() => { setRailOpen(!railOpen); setSelected(null) }} />
+            <HeaderControl icon={PanelRight} label="Details" active={railOpen} ariaExpanded={railOpen} onClick={() => { setRailOpen(!railOpen); setSelected(null) }} />
           </HeaderActions>
         }
       />
