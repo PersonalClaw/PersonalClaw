@@ -2134,6 +2134,44 @@ def freshness_ref_violations(tree: Tree) -> list[str]:
     return bad
 
 
+#: The ``collection-parses`` leg's one pytest command, word for word. Any other word can narrow
+#: what it collects, however it is spelled (a narrower path, ``--ignore=…``, ``--ignore-glob=…``,
+#: ``--deselect``, ``-k``, ``-m``, another ``-c`` or ``--rootdir``), or unload the guard.
+_COLLECTION_PARSES_COMMAND = (
+    "uv run pytest --collect-only -qq -n0 -p collection_parse_guard tests"
+    " --junitxml=reports/junit-collection-parses.xml"
+).split()
+
+
+def collection_parses_violations(tree: Tree) -> list[str]:
+    """breadth.yml's ``collection-parses`` leg collects the whole suite with the parse guard
+    loaded (``tests/collection_parse_guard.py``): its one pytest command is
+    ``_COLLECTION_PARSES_COMMAND`` word for word, and no ``PYTEST_`` variable reaches it from the
+    workflow's, the job's or a step's ``env``, or from a step's ``run`` (``$GITHUB_ENV``).
+    Without the guard, or over part of the suite, the leg is green on a parse it never saw."""
+    job = _breadth_jobs(tree).get("collection-parses")
+    if job is None:
+        return ["breadth.yml has no collection-parses leg"]
+    commands = [words for words in _commands(_runs(job)) if "pytest" in words]
+    if len(commands) != 1:
+        return [f"breadth.yml:collection-parses runs {len(commands)} pytest commands, not one"]
+    bad: list[str] = []
+    if commands[0] != _COLLECTION_PARSES_COMMAND:
+        bad.append(
+            f"breadth.yml:collection-parses runs {' '.join(commands[0])!r}, not "
+            f"{' '.join(_COLLECTION_PARSES_COMMAND)!r}"
+        )
+    workflow = _workflow(tree, "breadth.yml") or {}
+    envs = [workflow.get("env"), job.get("env"), *(s.get("env") for s in job.get("steps") or [])]
+    named = sorted({str(k) for env in envs for k in env or {} if str(k).startswith("PYTEST_")})
+    if named or "PYTEST_" in _runs(job):
+        bad.append(
+            f"breadth.yml:collection-parses sets {named or 'a PYTEST_ variable in a run'}, "
+            "which can narrow its collection or unload the guard"
+        )
+    return bad
+
+
 def docker_tree_check_violations(tree: Tree) -> list[str]:
     """``docker-single-container.yml`` builds on a main push only when the tree is untested, and
     never cancels a main run."""
@@ -3734,8 +3772,8 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "report missing a leg",
                 _BREADTH,
-                "needs: [freshness, ubuntu, macos, rails-macos, arm,",
-                "needs: [freshness, ubuntu, rails-macos, arm,",
+                "needs: [freshness, ubuntu, macos, rails-macos, collection-parses, arm,",
+                "needs: [freshness, ubuntu, rails-macos, collection-parses, arm,",
             ),
             _plant(
                 "report gated on success()",
@@ -4031,6 +4069,76 @@ ROWS: tuple[Row, ...] = (
                 "      - name: pytest (adversarial scanner corpus)\n",
             ),
             Control("the ref named, as the tree has it, passes", _nothing, fails=False),
+        ),
+    ),
+    _toolchain_row(
+        "breadth-collection-parses-loads-the-guard-over-the-whole-suite",
+        collection_parses_violations,
+        (
+            _plant(
+                "the leg without the guard",
+                _BREADTH,
+                " -n0 -p collection_parse_guard tests --junitxml",
+                " -n0 tests --junitxml",
+            ),
+            _plant(
+                "the leg collecting the rails alone",
+                _BREADTH,
+                " -p collection_parse_guard tests --junitxml",
+                " -p collection_parse_guard tests/rails --junitxml",
+            ),
+            _plant(
+                "the leg loading another plugin of a longer name",
+                _BREADTH,
+                " -p collection_parse_guard tests --junitxml",
+                " -p collection_parse_guard_off tests --junitxml",
+            ),
+            # Each narrowing below keeps the text the plants above edit, so it is the check, not
+            # a stale anchor, that fails it.
+            _plant(
+                "the leg ignoring the rails",
+                _BREADTH,
+                "pytest --collect-only -qq -n0 -p collection_parse_guard",
+                "pytest --collect-only -qq --ignore=tests/rails -n0 -p collection_parse_guard",
+            ),
+            _plant(
+                "the leg ignoring the rails by glob",
+                _BREADTH,
+                "pytest --collect-only -qq -n0 -p collection_parse_guard",
+                "pytest --collect-only -qq --ignore-glob=tests/rails/* -n0 -p "
+                "collection_parse_guard",
+            ),
+            _plant(
+                "the leg deselecting by keyword",
+                _BREADTH,
+                "pytest --collect-only -qq -n0 -p collection_parse_guard",
+                "pytest --collect-only -qq -k not_rails -n0 -p collection_parse_guard",
+            ),
+            _plant(
+                "PYTEST_ADDOPTS in the leg's pytest step",
+                _BREADTH,
+                "          PYTHONPATH: tests\n        run: uv run pytest --collect-only",
+                "          PYTHONPATH: tests\n          PYTEST_ADDOPTS: --ignore=tests/rails\n"
+                "        run: uv run pytest --collect-only",
+            ),
+            _plant(
+                "PYTEST_ADDOPTS in the leg's job env",
+                _BREADTH,
+                '    timeout-minutes: 20\n    env:\n      PERSONALCLAW_SKIP_APP_BACKENDS: "1"\n',
+                '    timeout-minutes: 20\n    env:\n      PERSONALCLAW_SKIP_APP_BACKENDS: "1"\n'
+                "      PYTEST_ADDOPTS: --ignore=tests/rails\n",
+            ),
+            _plant(
+                "PYTEST_ADDOPTS written to $GITHUB_ENV by an earlier step",
+                _BREADTH,
+                "        if: ${{ steps.decide.outputs.run != 'false' }}\n"
+                "        run: uv sync --locked --extra dev\n"
+                "      - name: pytest (collect the whole suite",
+                "        if: ${{ steps.decide.outputs.run != 'false' }}\n"
+                "        run: |\n          uv sync --locked --extra dev\n"
+                '          echo "PYTEST_ADDOPTS=--ignore=tests/rails" >> "$GITHUB_ENV"\n'
+                "      - name: pytest (collect the whole suite",
+            ),
         ),
     ),
     PER_TEST_TEMPORARY_FOLDERS,

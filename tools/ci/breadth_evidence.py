@@ -72,6 +72,7 @@ SHARDS: Mapping[str, int] = {
     "ubuntu-24.04-3.13": 4,
     "macos-26-3.12": 6,
     "rails-macos-26-3.12": 1,
+    "collection-parses": 1,
     "ubuntu-24.04-arm-3.13": 4,
     "coverage": 6,
     "security-corpus": 1,

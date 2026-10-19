@@ -63,8 +63,9 @@ _DOCKER = ".github/workflows/docker-single-container.yml"
 _WALK = ".github/workflows/clean-machine-walkthroughs.yml"
 _BREADTH = ".github/workflows/breadth.yml"
 _SUITE_LEGS = ("ubuntu", "macos", "arm", "coverage-shard")
-#: The tree-keyed breadth legs: the suite legs, and the rails on macOS.
-_TREE_KEYED_LEGS = (*_SUITE_LEGS, "rails-macos")
+#: The tree-keyed breadth legs: the suite legs, the rails on macOS, and the whole-suite
+#: collection that counts parses of the source tree.
+_TREE_KEYED_LEGS = (*_SUITE_LEGS, "rails-macos", "collection-parses")
 
 MASKED: tuple[Masked, ...] = (
     Masked(

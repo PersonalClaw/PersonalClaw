@@ -719,9 +719,12 @@ The rest of the platform breadth runs nightly (09:37 UTC) and on dispatch:
   also publishes the run's night: the date of the 09:37 UTC slot at or before the run's
   `created_at`, which every attempt of a run keeps.
 - **Tree-keyed legs:** Ubuntu 24.04 on 3.13, macOS 26 on 3.12 (six shards, two at a time),
-  Ubuntu 24.04 on arm64 on 3.13, and coverage. Each shard reads its own runner's image,
-  architecture and toolchain. On `main` it skips pytest and carries the earlier result, red
-  or green, only when every input matches.
+  Ubuntu 24.04 on arm64 on 3.13, coverage, the rails on macOS, and `collection-parses`: one
+  whole-suite collection in one process with `tests/collection_parse_guard.py` loaded, red on any
+  parse named as a file under the source index's roots, or of a whole `.py` file under them,
+  while pytest collects, except by pytest's assertion rewrite and Hypothesis's own constants
+  scan. Each shard reads its own runner's image, architecture and toolchain. On `main` it skips
+  pytest and carries the earlier result, red or green, only when every input matches.
 - **Legs that run every night:** the security corpus, a canary on the next Ubuntu image
   (advisory), the installer smoke, and the dependency audit. `NON_REUSABLE` in
   `tools/ci/breadth_evidence.py` names them. The canary differs from the ubuntu-24.04 leg
@@ -843,6 +846,11 @@ of the same commit was red is the release gate's question (#3911), not this work
   (`$GITHUB_REF`); every `decide`, `ran` and `report` pass the run attempt; every leg's job is
   named `breadth-leg <key>`; no never-reused leg downloads `freshness`'s map, and a tree-keyed
   shard downloads it only on `refs/heads/main`;
+- `collection-parses` runs one pytest command, word for word:
+  `--collect-only -qq -n0 -p collection_parse_guard tests` and its JUnit report, and no
+  `PYTEST_` variable reaches it from an `env` or a `run`. Without the guard, or over part of
+  the suite (a narrower path, an `--ignore=…`, a `-k`), it would be green on a parse it never
+  saw;
 - `docker-single-container.yml` checks the tree before it builds on `main`;
 - every workflow that runs on `pull_request` has its run cancelled when the pull request closes:
   the row evaluates each workflow's group on a pull request's run and the canceller's on its
