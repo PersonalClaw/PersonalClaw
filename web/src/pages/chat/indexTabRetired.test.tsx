@@ -144,12 +144,14 @@ describe('The panel owns no navigation at all', () => {
   })
 
   it('🔑 ChatPage no longer hands the panel a jump handler', () => {
-    const page = readSource(join(SRC, 'pages/ChatPage.tsx'))
-    expect(page.length, 'ChatPage.tsx read empty').toBeGreaterThan(1000)
+    // The panel is rendered by the chat's docked panes (`chat/panes/ChatPanes.tsx`), which moved out
+    // of ChatPage.
+    const page = readSource(join(SRC, 'pages/chat/panes/ChatPanes.tsx'))
+    expect(page.length, 'ChatPanes.tsx read empty').toBeGreaterThan(1000)
     const open = page.indexOf('<ChatActivityPanel ')
-    expect(open, 'no <ChatActivityPanel> call site in ChatPage.tsx — this rail would be vacuous').toBeGreaterThan(-1)
+    expect(open, 'no <ChatActivityPanel> call site in ChatPanes.tsx — this rail would be vacuous').toBeGreaterThan(-1)
     const close = page.indexOf('/>', open)
-    expect(close, '<ChatActivityPanel> is not self-closing in ChatPage.tsx — widen this reader').toBeGreaterThan(open)
+    expect(close, '<ChatActivityPanel> is not self-closing in ChatPanes.tsx — widen this reader').toBeGreaterThan(open)
     const tag = page.slice(open, close)
     // CONTROL: the tag really is the call site, still passing the props that survive.
     expect(tag).toMatch(/activity=\{/)

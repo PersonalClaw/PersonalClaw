@@ -313,8 +313,10 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // longer exists at any call site, rather than being excused at nine.
   // `lib/agents.ts` (1) is GONE: `ensureBindableAgentName` used to swallow a failed `createAgent` and
   // return the profile name anyway. It propagates now, and each picker that calls it says why.
-  // 1: the side-chat open. Its three optimistic organise writes (pin/folder/never-archive) moved with
-  // the history page to `pages/chat/history/useChatHistory.ts`, below. The two tag
+  // `pages/ChatPage.tsx` left this budget with its regions. The side-chat open moved with the docked
+  // panes to `pages/chat/panes/useChatPanes.ts`, and the three optimistic organise writes
+  // (pin/folder/never-archive) with the history page to `pages/chat/history/useChatHistory.ts`, both
+  // below and both still owed. The two tag
   // writes left this list when they became one-tag edits that report a refusal, and the title regen
   // when it said why nothing was asked and reported a request that failed. The `/optimize` and `/undo`
   // fall-throughs moved with the composer to `pages/chat/composer/useChatComposer.ts`, and the two
@@ -325,7 +327,9 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // `setNeverArchive` already does `reportActionFailure` + an UNGATED `load()` (the refetch is the
   // repair for an optimistic move that already lied). The five organise writes are that same shape
   // with the report missing, and `userActionReported` already pinned three of their siblings.
-  'pages/ChatPage.tsx': 1,
+  // (a) The side-chat open, moved with the docked panes: opening the side session before its first
+  // question, with nothing said when it fails.
+  'pages/chat/panes/useChatPanes.ts': 1,
   // The history page's three organise writes (pin, folder, never-archive), moved with it, ruled (a)
   // above: `setLifecycle` beside them is the exemplar they lack.
   'pages/chat/history/useChatHistory.ts': 3,

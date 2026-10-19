@@ -176,7 +176,10 @@ describe('a confirmed delete reports its failure', () => {
   const SWALLOWED = /\.catch\(\s*\(\s*\)\s*⇒\s*\{\s*\}\s*\)/
 
   const allPages = (): string[] => {
-    const walk = (dir: string): string[] => filesUnder(dir, (name) => /\.tsx$/.test(name) && !name.includes('.test.'))
+    // Components, and the `use*.ts` controller hooks a page's handlers live in (the chat's regions
+    // are these), so a confirmed action does not leave the sweep by moving into one.
+    const walk = (dir: string): string[] =>
+      filesUnder(dir, (name) => (/\.tsx$/.test(name) || /^use[A-Z]\w*\.ts$/.test(name)) && !name.includes('.test.'))
     return walk(PAGES)
   }
 

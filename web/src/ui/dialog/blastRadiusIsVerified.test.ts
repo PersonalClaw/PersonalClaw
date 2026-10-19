@@ -165,7 +165,10 @@ describe('no destructive dialog names its subject NOWHERE', () => {
     },
   ]
 
-  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
+  // Components, and the `use*.ts` controller hooks a page's handlers live in (the chat's regions are
+  // these), so a dialog does not leave the census by moving into one.
+  const walk = (d: string): string[] =>
+    filesUnder(d, (n) => (/\.tsx$/.test(n) || /^use[A-Z]\w*\.ts$/.test(n)) && !/\.test\.tsx?$/.test(n))
 
   /** The balanced `{…}` object literal starting at `i`. */
   function objectAt(src: string, i: number): string {

@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { reportActionFailure, reportingWrite } from '../app/reportingWrite'
 
 import { motion, AnimatePresence } from 'framer-motion'
-import { Edit3, History, MessageSquare, Activity, PanelRight, Pencil, Sparkles, Link2, Loader2, ArrowLeft, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, NotebookPen, FolderCog, ListTree, Send } from 'lucide-react'
+import { Edit3, History, MessageSquare, PanelRight, Pencil, Sparkles, Link2, Loader2, ArrowLeft, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, NotebookPen, FolderCog, ListTree, Send } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { TopBar } from '../ui/TopBar'
-import { SidePanel } from '../ui/SidePanel'
 import { Button } from '../ui/Button'
 import { HeaderActions, HeaderControl, HeaderModePill } from '../ui/HeaderActions'
 import { ClawMark } from '../ui/ClawMark'
@@ -15,15 +14,8 @@ import { chatContextChips } from './chat/ChatContextLine'
 import { DotGlow } from '../ui/DotGlow'
 import { EmptyState, LoadError, Skeleton, LoadingStatus } from '../ui/ListScaffold'
 import { NeedsModelNote } from './chat/NoModelSetupState'
-import { onToolResultFull } from './chat/toolResultBridge'
-import { withoutFence } from '../lib/untrustedFence'
 import { RoomView } from './chat/RoomView'
-import { ChatFilePanel } from './chat/ChatFilePanel'
-import { sameSessionTarget, type CommentTarget } from '../ui/content/commentTarget'
-import { ChatActivityPanel } from './chat/ChatActivityPanel'
-import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { deriveActivity } from './chat/chatTypes'
 import { useIdentity, firstNameOf } from '../app/identity'
 import { notify } from '../app/appSdk'
 import { spring } from '../design/motion'
@@ -37,12 +29,12 @@ import { useTranscript } from './chat/transcript/useTranscript'
 import { Transcript } from './chat/transcript/Transcript'
 import { MessagesSkeleton } from './chat/transcript/MessagesSkeleton'
 import { SessionMapReturnLatest, scrollToLatest } from './chat/SessionMapReturnLatest'
-import { SessionMapDrawer } from './chat/SessionMapDrawer'
 import { ChatHistoryPage } from './chat/history/ChatHistoryPage'
-import { ChatHistorySidePanelBody } from './chat/history/ChatHistorySidePanel'
+import { useChatPanes } from './chat/panes/useChatPanes'
+import { ChatPanes, ToolResultModal } from './chat/panes/ChatPanes'
 import { useQuery, invalidateKeys } from '../lib/data'
 import { sessionTitle } from '../lib/sessionTitle'
-import { useQueryFlag, useQueryParam, type RouteProps } from '../app/useQueryState'
+import { type RouteProps } from '../app/useQueryState'
 import { copyText } from '../app/clipboard'
 
 // Options for the chat-header segmented controls. Permission mirrors the
@@ -281,8 +273,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const {
     sessionRef, turns, wsConnected,
     loadingHistory, missing, loadFailure, setLoadAttempt,
-    subagents, setSubagents,
-    sideMsgs, setSideMsgs, sideBusy, setSideBusy, sideOpenedRef,
     setAutoChain, workingDir, setWorkingDir,
     title, setTitle, titleNeed, setTitleNeed, sessionCost,
     branchedFrom, startedBy, investigateOrigin,
@@ -304,25 +294,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     api.project(projectId).then((p) => { if (alive) setProjectName(p?.name || '') }).catch(() => {})
     return () => { alive = false }
   }, [projectId])
-  // activity panel (Stage 5) — Index/Files/Links, chat-only, toggled from header.
-  // URL-backed (?activity=1, push → Back closes it; refresh restores it).
-  const [activityOpen, setActivityOpen] = useQueryFlag(query, setQuery, 'activity')
-  // New-chat page: a right-docked chat-history panel (the shared SidePanel), toggled
-  // from the header. URL-bound (?history=1) so Back closes it + refresh restores it.
-  const [historyOpen, setHistoryOpen] = useQueryFlag(query, setQuery, 'history')
-  // "Show full result": the full raw of a projected tool
-  // result, fetched on demand from the per-session store + shown in a modal. The
-  // OPEN state is the URL (?result=<rawRef>, push); the fetched body + the tool
-  // name (for the title) are derived — the ref is stable so a refresh re-fetches.
-  const [resultRef, setResultRef] = useQueryParam(query, setQuery, 'result', '')
-  const resultToolRef = useRef<string>('')
-  const [resultBody, setResultBody] = useState<{ content: string; length: number } | null>(null)
-
-  // The docked open-file peek panel. URL-backed (?file=<path>, push → Back closes;
-  // refresh/deep-link reopens the same file beside the transcript).
-  const [openFileRaw, setOpenFileRaw] = useQueryParam(query, setQuery, 'file', '')
-  const openFile = openFileRaw || null
-  const setOpenFile = (p: string | null) => setOpenFileRaw(p || '')
+  // The panels docked beside the chat and a tool's full result (`chat/panes/useChatPanes`).
+  const panes = useChatPanes({ query, setQuery, stream })
+  const { activityOpen, setActivityOpen, historyOpen, setHistoryOpen, setOpenFile } = panes
   // session title + header actions: rename inline, LLM-regenerate, copy link.
   const [renaming, setRenaming] = useState(false)
   const [renameVal, setRenameVal] = useState('')
@@ -338,84 +312,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     sessionId, query, setQuery, navigate, stream, started, notice, memoryMode, setSelection,
     agent: selection.agent, send,
   })
-  const { followNewTurn, scrolledUp, endRef, isMobile, mapOpen, setMapOpen, sessionEntries, pendingMapJump, runPendingMapJump } = transcript
-
-  // "Show full result": a tool card asked to reveal the
-  // full raw of a projected result → the modal is URL-backed (?result=<rawRef>,
-  // push → Back closes it; the ref is a stable per-session id so a refresh/deep-link
-  // re-fetches). The card's bridge event just writes the param (+ stashes the tool
-  // name for the title); the fetch effect below does the work off `resultRef`.
-  useEffect(() => onToolResultFull(({ rawRef, tool }) => {
-    resultToolRef.current = tool
-    setResultRef(rawRef)
-  }), []) // eslint-disable-line react-hooks/exhaustive-deps
-  // Fetch the full result body whenever ?result names a ref (click, refresh, or
-  // deep-link). Keyed on the ref + session so a reload re-fetches from the stable
-  // per-session store; cleared when the param goes away (Back / close).
-  useEffect(() => {
-    if (!resultRef) { setResultBody(null); return }
-    const sess = sessionRef.current
-    if (!sess) return
-    let alive = true
-    setResultBody(null)
-    fetch(`/api/chat/sessions/${encodeURIComponent(sess)}/tool-result/${encodeURIComponent(resultRef)}`,
-      { headers: { 'X-Session-Key': 'dashboard:ui' } })
-      // Surface the backend's actual reason (not-found vs evicted vs bad-grep)
-      // rather than blanket-labeling every failure "expired" — that conflation
-      // once masked a key-mismatch bug as a benign expiry.
-      .then(async (res) => {
-        if (res.ok) return res.json()
-        const reason = await res.json().catch(() => null)
-        throw new Error(reason?.error || `HTTP ${res.status}`)
-      })
-      .then((d) => { if (alive) setResultBody({ content: String(d.content ?? ''), length: Number(d.length ?? 0) }) })
-      .catch((e) => { if (alive) setResultBody({ content: `(couldn't load the full result: ${String(e?.message || e)})`, length: 0 }) })
-    return () => { alive = false }
-  }, [resultRef])
+  const { followNewTurn, scrolledUp, endRef, isMobile, mapOpen, setMapOpen } = transcript
 
   // Read-aloud: Speak, "Speak replies aloud" and the audio a reading streams (`chat/useChatVoice`).
   const { voiceCfg, speakingTurn, speak, replyFinished, oweSpokenReply, enqueueAudio, readingRef } = useChatVoice({ sessionRef, turns, notice })
-
-  // activity panel: the Files / Links tabs, derived from the transcript. No navigation —
-  // the Session Map's rail and drawer are the session's only jump surface.
-  const activity = useMemo(() => deriveActivity(turns), [turns])
-
-  // Kill EVERY running subagent of this chat's fan-out in one click.
-  // Optimistically mark the running cards done; the subagent_done WS events reconcile. A batch's
-  // tasks are its run's, and stop with that run, so they are not marked.
-  async function killFanout() {
-    const s = sessionRef.current
-    if (!s) return
-    setSubagents((prev) => prev.map((c) => (c.done || c.run ? c : { ...c, done: true, error: 'cancelled' })))
-    await api.cancelFanout(s).catch(reportActionFailure('cancel the subagents'))
-  }
-
-  // ── side chat (stage 6) ──
-  async function openSide() {
-    const s = sessionRef.current
-    if (!s || sideOpenedRef.current) return
-    sideOpenedRef.current = true
-    await api.sideOpen(s).catch(() => {})
-  }
-  async function askSide(question: string) {
-    const s = sessionRef.current
-    const q = question.trim()
-    if (!s || !q || sideBusy) return
-    await openSide()
-    setSideBusy(true)
-    // push the entry FIRST (runId filled once the POST resolves) so streamed
-    // frames that arrive before the response have an open entry to attach to.
-    setSideMsgs((prev) => [...prev, { q, a: '', runId: '', done: false }])
-    try {
-      const res = await api.sideTurn(s, q)
-      setSideMsgs((prev) => { const i = prev.length - 1; if (i < 0) return prev; const n = [...prev]; if (!n[i].runId) n[i] = { ...n[i], runId: res.run_id }; return n })
-    } catch (e) {
-      // Don't silently drop the question — keep it visible with an error answer
-      // so the user knows the side request failed (and can retry).
-      setSideBusy(false)
-      setSideMsgs((prev) => { const i = prev.length - 1; if (i < 0) return prev; const n = [...prev]; n[i] = { ...n[i], a: `⚠️ Couldn’t answer: ${(e as Error).message}`, done: true }; return n })
-    }
-  }
 
   /** Save the current chat's setup as a reusable starter. Captures the SETUP only —
    *  never the transcript — so sharing or reusing a starter can't leak a conversation. */
@@ -765,96 +665,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           )}
         </div>
 
-        {/* A file opened INSIDE this chat: comments route to THIS session (not a
-            new one) so the agent the user is already talking to picks up the
-            feedback in context. */}
-        <AnimatePresenceFilePanel path={openFile} onClose={() => setOpenFile(null)}
-          commentTarget={sameSessionTarget((msg) => { send(msg) })} />
-
-        {/* ── SESSION MAP, COARSE-POINTER FORM ────────────────────────────────────────────────
-            On the mobile form the gutter rail is replaced by this drawer: the SHARED `SidePanel`,
-            so the map's WIDTH persists through the primitive's own `storeKey` mechanism
-            and the panel matches every other dock in the app. Same `?map` flag and same header
-            control as the rail — one open/closed state, two forms.
-
-            CLOSED AT REST on this form — see the per-form default where `mapFlag` is read. This
-            drawer is a docked column whose fit-width fills a phone viewport, so an open resting
-            state puts it over the composer before the user has typed anything.
-
-            🪤 NO `urlKey`, DELIBERATELY, and the reason survives the per-form default. `SidePanel`'s
-            `urlKey` close path writes `{key: null}`, i.e. "back to the default" — which is the
-            right value here but the wrong MECHANISM: the flag is shared with the rail, whose
-            default is the opposite, so a close routed through `urlKey` would depend on which form
-            happened to be mounted. `onClose` writes the closed value explicitly, so close ⇒ URL
-            updated holds identically in both forms.
-
-            A tap jumps AND closes: the drawer covers the transcript at this width, so a jump the
-            user cannot see is not a jump. It closes FIRST and scrolls after — see
-            `pendingMapJump`, where the order is the difference between a tap that navigates and
-            one that resolves an offset in a 32px-wide transcript and lands nowhere. */}
-        <AnimatePresence onExitComplete={runPendingMapJump}>
-          {mapOpen && isMobile && started && (
-            <SidePanel title="Session map" icon={<ListTree size={18} className="text-primary" />} storeKey="session-map-w"
-              fillHeight onClose={() => setMapOpen(false)}>
-              <SessionMapDrawer entries={sessionEntries}
-                onJumpTo={(coord) => { pendingMapJump.current = coord; setMapOpen(false) }} />
-            </SidePanel>
-          )}
-        </AnimatePresence>
-        {/* Activity rail — a standard right-docked SidePanel (Files / Links / Side),
-            a flex sibling that pushes the chat narrower (not a floating overlay).
-            URL-bound: ?activity=1 (Back closes; refresh restores). */}
-        <AnimatePresence>
-          {activityOpen && started && (
-            <SidePanel title="Activity" icon={<Activity size={18} className="text-primary" />} storeKey="chat-activity-w"
-              fillHeight urlKey={{ key: 'activity', setQuery }} onClose={() => setActivityOpen(false)}>
-              <ChatActivityPanel activity={activity} onOpenFile={setOpenFile} subagents={subagents}
-                onKillFanout={killFanout}
-                side={{ msgs: sideMsgs, busy: sideBusy, onAsk: askSide, onOpen: openSide }} />
-            </SidePanel>
-          )}
-        </AnimatePresence>
-        {/* New-chat page: a right-docked chat-history panel via the SHARED SidePanel
-            primitive (matches Activity/File panels app-wide). Lists recent chats to
-            resume + a "View all" link to the full history page. */}
-        <AnimatePresence>
-          {historyOpen && !started && (
-            <SidePanel title="Chat history" icon={<History size={18} className="text-primary" />} storeKey="chat-history-w"
-              fillHeight urlKey={{ key: 'history', setQuery }} onClose={() => setHistoryOpen(false)}>
-              <ChatHistorySidePanelBody navigate={navigate} onOpen={(key) => navigate(`chat/${key}`)} />
-            </SidePanel>
-          )}
-        </AnimatePresence>
+        <ChatPanes panes={panes} stream={stream} transcript={transcript} started={started} setQuery={setQuery}
+          navigate={navigate} send={send} />
       </div>
-      {resultRef && (
-        <Modal title={`${resultToolRef.current || 'Tool'} — full result`} onClose={() => setResultRef('')}>
-          <div className="flex flex-col gap-2 p-l" style={{ minWidth: 520, maxWidth: 900 }}>
-            {resultBody === null ? (
-              <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem]"><Loader2 size={13} className="animate-spin" /> Loading…</div>
-            ) : (
-              <>
-                {resultBody.length > 0 && (
-                  <div className="text-on-surface-low text-[0.75rem]">{resultBody.length.toLocaleString()} chars</div>
-                )}
-                <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-md bg-surface-low px-3 py-2 font-mono text-on-surface-var text-[0.75rem] leading-relaxed">{withoutFence(resultBody.content)}</pre>
-              </>
-            )}
-          </div>
-        </Modal>
-      )}
+      <ToolResultModal panes={panes} />
     </div>
-  )
-}
-
-/** File panel wrapper (kept out of the big return for clarity). No `key={path}`:
- *  switching from one file to another while the panel is open swaps content IN
- *  PLACE (FileViewer re-fetches on path change) rather than running a jarring
- *  collapse-and-reexpand. AnimatePresence still animates the true open/close. */
-function AnimatePresenceFilePanel({ path, onClose, commentTarget }: { path: string | null; onClose: () => void; commentTarget?: CommentTarget }) {
-  return (
-    <AnimatePresence>
-      {path && <ChatFilePanel path={path} onClose={onClose} commentTarget={commentTarget} />}
-    </AnimatePresence>
   )
 }
 
