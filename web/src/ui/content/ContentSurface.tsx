@@ -6,6 +6,7 @@ import { SquareIconButton } from '../SquareIconButton'
 import { Centered } from '../Centered'
 import { LoadingStatus } from '../ListScaffold'
 import { useMode } from '../../app/theme'
+import { MONACO_THEME } from '../../design/editorTheme'
 import { CommentLayer } from '../../pages/files/comments/CommentLayer'
 import type { CommentTarget } from './commentTarget'
 import { type ContentType, isEditable, isCommentable } from './contentTypes'
@@ -258,7 +259,7 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
     return (
       <Suspense fallback={<SurfaceLoading />}>
         <MonacoEditor height="100%" path={path} language={language || type.edit?.language || 'plaintext'} value={draft}
-          onChange={(v) => setDraft(v ?? '')} theme={mode === 'light' ? 'light' : 'vs-dark'}
+          onChange={(v) => setDraft(v ?? '')} theme={MONACO_THEME}
           onMount={split ? (ed: any) => { editorRef.current = ed; ed?.onDidScrollChange?.(syncFromEditor) } : undefined}
           options={{
             // Monaco's editing surface DOES carry a name by default — but the same one everywhere:

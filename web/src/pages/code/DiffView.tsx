@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { Loader2, RotateCcw } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { api } from '../../lib/api'
-import { useMode } from '../../app/theme'
+import { MONACO_THEME } from '../../design/editorTheme'
 import { monacoLang } from '../files/fileMeta'
 
 // Monaco's side-by-side diff editor, lazy like the main editor (shares the
@@ -15,7 +15,6 @@ const MonacoDiff = lazy(() => import('@monaco-editor/react').then((m) => ({ defa
  *  current working copy. Read-only — this is a review surface; edits happen in
  *  the normal editor tab. */
 export function DiffView({ path, name, ws, deleted = false }: { path: string; name: string; ws: string; deleted?: boolean }) {
-  const { mode } = useMode()
   // Issue 582: the cockpit conditionally unmounts this view; detach the models first
   // or Monaco throws on every close (same guard as artifacts/ArtifactCompare).
   const onDiffMount = useDiffTeardown()
@@ -90,7 +89,7 @@ export function DiffView({ path, name, ws, deleted = false }: { path: string; na
             onMount={onDiffMount}
             original={original} modified={modified}
             language={monacoLang(name)}
-            theme={mode === 'light' ? 'light' : 'vs-dark'}
+            theme={MONACO_THEME}
             // ignoreTrimWhitespace defaults to true, which SILENTLY hides
             // whitespace-only line changes — exactly when the worker re-indents code
             // (reformatting, nesting changes, Python especially). For an honest

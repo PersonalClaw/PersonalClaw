@@ -18,10 +18,12 @@ const FRAME_MS = 16
 // cell budget we skip it entirely and hand straight off to the real editor.
 const LCS_CELL_CAP = 1_000_000
 
-export function DiffReveal({ oldText, newText, theme, onDone }: {
+export function DiffReveal({ oldText, newText, onDone }: {
   oldText: string
   newText: string
-  theme: 'light' | 'dark'
+  /** Ignored: the reveal draws from the editor layer of the design tokens, which follows the mode
+   *  and the scheme by itself. Kept so a caller that still passes it compiles. */
+  theme?: 'light' | 'dark'
   onDone?: () => void
 }) {
   // Cheap pre-check (line counts only) BEFORE the quadratic lineDiff: if the diff is
@@ -78,11 +80,13 @@ export function DiffReveal({ oldText, newText, theme, onDone }: {
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }) }, [addShown])
 
-  const bg = theme === 'light' ? '#ffffff' : '#1e1e1e'
-  const fg = theme === 'light' ? '#1f1f1f' : '#d4d4d4'
-  const gutter = theme === 'light' ? '#9aa0a6' : '#6e7681'
-  const addBg = theme === 'light' ? 'rgba(46,160,67,0.12)' : 'rgba(46,160,67,0.18)'
-  const delBg = theme === 'light' ? 'rgba(248,81,73,0.12)' : 'rgba(248,81,73,0.18)'
+  // The editor surface it hands off to, from the editor layer (`design/tokens.css`, layer 3), and a
+  // wash of the status tone for an added and a removed line.
+  const bg = 'var(--editor-background)'
+  const fg = 'var(--editor-foreground)'
+  const gutter = 'var(--editor-line-number-foreground)'
+  const addTint = 'bg-ok/15'
+  const delTint = 'bg-danger/15'
 
   // How many add-chars have reached this row (cumulative across add rows in order).
   let addCursor = 0
@@ -111,23 +115,23 @@ export function DiffReveal({ oldText, newText, theme, onDone }: {
             const writing = phase === 'add' && addShown > start && addShown < addCursor
             // not yet reached → render nothing (keeps layout from jumping is a tradeoff;
             // we DO render the row container so the diff shape is stable)
-            return <DiffLine key={idx} text={r.text.slice(0, shownChars)} gutter={gutter} bg={addBg} sign="+" caret={writing} fg={fg} />
+            return <DiffLine key={idx} text={r.text.slice(0, shownChars)} gutter={gutter} tint={addTint} sign="+" caret={writing} fg={fg} />
           }
           // del row: fully visible until phase 2 erases its suffix R→L
           const shownLen = phase === 'del' || phase === 'done' ? (delShownLen.get(idx) ?? 0) : r.text.length
           if (phase === 'done' && shownLen === 0) return null  // fully erased → gone
-          return <DiffLine key={idx} text={r.text.slice(0, shownLen)} gutter={gutter} bg={delBg} sign="-" />
+          return <DiffLine key={idx} text={r.text.slice(0, shownLen)} gutter={gutter} tint={delTint} sign="-" />
         })}
       </code>
     </pre>
   )
 }
 
-function DiffLine({ text, gutter, bg, sign, caret, fg }: {
-  text: string; gutter: string; bg?: string; sign?: '+' | '-'; caret?: boolean; fg?: string
+function DiffLine({ text, gutter, tint, sign, caret, fg }: {
+  text: string; gutter: string; tint?: string; sign?: '+' | '-'; caret?: boolean; fg?: string
 }) {
   return (
-    <span className="grid grid-cols-[2ch_1fr] px-3" style={bg ? { background: bg } : undefined}>
+    <span className={`grid grid-cols-[2ch_1fr] px-3 ${tint ?? ''}`}>
       <span className="select-none pr-2 text-center" style={{ color: gutter }}>{sign || ''}</span>
       <span className="whitespace-pre-wrap break-words">
         {text}

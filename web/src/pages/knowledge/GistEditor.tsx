@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react'
 import { Loader2 } from 'lucide-react'
-import { useMode } from '../../app/theme'
+import { MONACO_THEME } from '../../design/editorTheme'
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'))
 
@@ -27,7 +27,6 @@ export function GistEditor({ value, onChange, language, readOnly = false }: {
   language?: string | null
   readOnly?: boolean
 }) {
-  const { mode } = useMode()
   return (
     <Suspense fallback={<div className="grid h-full place-items-center"><Loader2 size={20} className="animate-spin text-on-surface-low" /></div>}>
       <MonacoEditor
@@ -35,7 +34,7 @@ export function GistEditor({ value, onChange, language, readOnly = false }: {
         language={gistMonacoLang(language)}
         value={value}
         onChange={(v) => onChange(v ?? '')}
-        theme={mode === 'light' ? 'light' : 'vs-dark'}
+        theme={MONACO_THEME}
         options={{
           // Monaco names its editing surface "Editor content" by default — identical to the Files
           // editor's, so the announcement said nothing about WHAT was being edited. Naming it from

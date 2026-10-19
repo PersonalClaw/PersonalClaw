@@ -13,7 +13,9 @@
      2. semantic   `--color-*`, the brand gradient and the ring highlight, written only in terms of
                    layer 1 (or as an alias of another layer-2 token). Dark is the default; `.light`
                    reassigns the same names onto light palette steps, and nothing else.
-     3. editor     (none yet)
+     3. editor     what the code editor and the terminal take (`--editor-*`, `--terminal-*`), named
+                   after Monaco's colour ids and xterm's ITheme fields and written only in terms of
+                   layer 2. design/editorTheme.ts hands them to both editors.
      4. component  a token composed from layer 2 for one component (the ring stops, the glass
                    material, the lift and composer-focus shadows). Never reassigned per mode.
    A scheme is one override sheet, `schemes/<id>.css`, generated from `schemes.ts`, loaded after this
@@ -66,6 +68,23 @@
   --green-697: #0ebc5f;
   --blue-483: #1059bc;
   --blue-702: #629efe;
+  /* the terminal's ANSI 16: xterm's own defaults, which it has always drawn */
+  --gray-320: #2e3436;
+  --gray-454: #555753;
+  --gray-874: #d3d7cf;
+  --gray-949: #eeeeec;
+  --red-531: #cc0000;
+  --red-613: #ef2929;
+  --lime-613: #4e9a06;
+  --lime-826: #8ae234;
+  --yellow-718: #c4a000;
+  --yellow-923: #fce94f;
+  --blue-504: #3465a4;
+  --blue-689: #729fcf;
+  --violet-488: #75507b;
+  --violet-655: #ad7fa8;
+  --cyan-617: #06989a;
+  --teal-831: #34e2e2;
 }
 
 @theme {
@@ -316,6 +335,64 @@
   --z-modal:   calc(var(--z-content) + 10);   /* 60  — dialogs, sheets, blocking takeovers (Modal · DialogShell · SnipOverlay · tour · onboarding · update); a dialog opened from a dialog stacks by mount order within this rung */
   --z-menu:    calc(var(--z-content) + 50);   /* 100 — control-anchored menus / popovers: ABOVE dialogs, BELOW toast + palette. THE Z-ORDER FIX: the composer menus were z-[9999] and painted over a firing toast and the Cmd-K palette */
   --z-toast:   calc(var(--z-content) + 150);  /* 200 — toasts + the command palette: the topmost system surfaces, above everything else */
+}
+
+/* ── layer 2: the terminal's ANSI colours. One set for both modes and every scheme, as xterm has
+   always drawn them; whether they should follow the status tones is an open question (#3809). ── */
+:root {
+  --color-ansi-black: var(--gray-320);
+  --color-ansi-red: var(--red-531);
+  --color-ansi-green: var(--lime-613);
+  --color-ansi-yellow: var(--yellow-718);
+  --color-ansi-blue: var(--blue-504);
+  --color-ansi-magenta: var(--violet-488);
+  --color-ansi-cyan: var(--cyan-617);
+  --color-ansi-white: var(--gray-874);
+  --color-ansi-bright-black: var(--gray-454);
+  --color-ansi-bright-red: var(--red-613);
+  --color-ansi-bright-green: var(--lime-826);
+  --color-ansi-bright-yellow: var(--yellow-923);
+  --color-ansi-bright-blue: var(--blue-689);
+  --color-ansi-bright-magenta: var(--violet-655);
+  --color-ansi-bright-cyan: var(--teal-831);
+  --color-ansi-bright-white: var(--gray-949);
+}
+
+/* ── layer 3: the editor-compatible layer. Each token is named after the key it feeds: Monaco's
+   colour id (`editor.selectionBackground` → `--editor-selection-background`) or xterm's ITheme
+   field (`brightBlack` → `--terminal-bright-black`), so design/editorTheme.ts maps them one to one.
+   Written only in terms of layer 2 and never reassigned: a scheme or the light mode moves it by
+   moving layer 2. Monaco's syntax colours and diff tints are not here; it keeps its own. ── */
+:root {
+  --editor-background: var(--color-surface-container);
+  --editor-foreground: var(--color-on-surface);
+  --editor-line-highlight-background: var(--color-surface-high);
+  --editor-selection-background: var(--color-primary-container);
+  --editor-cursor-foreground: var(--color-primary);
+  --editor-line-number-foreground: var(--color-on-surface-low);
+  --editor-line-number-active-foreground: var(--color-on-surface);
+  --editor-gutter-background: var(--color-surface-container);
+  --terminal-background: var(--color-surface);
+  --terminal-foreground: var(--color-on-surface);
+  --terminal-cursor: var(--color-primary);
+  --terminal-cursor-accent: var(--color-surface);
+  --terminal-selection-background: var(--color-primary-container);
+  --terminal-black: var(--color-ansi-black);
+  --terminal-red: var(--color-ansi-red);
+  --terminal-green: var(--color-ansi-green);
+  --terminal-yellow: var(--color-ansi-yellow);
+  --terminal-blue: var(--color-ansi-blue);
+  --terminal-magenta: var(--color-ansi-magenta);
+  --terminal-cyan: var(--color-ansi-cyan);
+  --terminal-white: var(--color-ansi-white);
+  --terminal-bright-black: var(--color-ansi-bright-black);
+  --terminal-bright-red: var(--color-ansi-bright-red);
+  --terminal-bright-green: var(--color-ansi-bright-green);
+  --terminal-bright-yellow: var(--color-ansi-bright-yellow);
+  --terminal-bright-blue: var(--color-ansi-bright-blue);
+  --terminal-bright-magenta: var(--color-ansi-bright-magenta);
+  --terminal-bright-cyan: var(--color-ansi-bright-cyan);
+  --terminal-bright-white: var(--color-ansi-bright-white);
 }
 
 /* ── light mode: layer 2 reassigned onto light palette steps (coral brand, light). Nothing else

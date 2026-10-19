@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { ArrowLeftRight, Loader2 } from 'lucide-react'
 import { api, type Artifact } from '../../lib/api'
-import { useMode } from '../../app/theme'
+import { MONACO_THEME } from '../../design/editorTheme'
 import { resolveContentType } from '../../ui/content/contentTypes'
 import { Segmented } from '../../ui/Segmented'
 
@@ -29,7 +29,6 @@ const MonacoDiff = lazy(() => import('@monaco-editor/react').then((m) => ({ defa
  *  CURRENT version number, not the one requested, so every label here is built from
  *  the requested number and never from the payload. */
 export function ArtifactCompare({ art, versions }: { art: Artifact; versions: number[] }) {
-  const { mode } = useMode()
   const ordered = useMemo(() => versions.slice().sort((a, b) => a - b), [versions])
   // Default to the two most recent versions — "what changed in the last iteration?"
   // is the question this surface exists to answer.
@@ -106,7 +105,7 @@ export function ArtifactCompare({ art, versions }: { art: Artifact; versions: nu
                     onMount={onDiffMount}
                     original={bodies.left} modified={bodies.right}
                     language={diffLanguage(art.kind)}
-                    theme={mode === 'light' ? 'light' : 'vs-dark'}
+                    theme={MONACO_THEME}
                     // ignoreTrimWhitespace defaults to TRUE, which silently hides
                     // whitespace-only changes. An agent re-rendering a widget often
                     // re-indents it, and "nothing changed" would be a lie. Always
