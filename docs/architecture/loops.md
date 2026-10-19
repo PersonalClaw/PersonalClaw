@@ -740,6 +740,11 @@ redirecting a run-backed loop (`run_id`) to its run page, `#/workflows/runs/<id>
   over the footer, or one task's detail. `CollapsiblePanel.tsx` is the frame of
   both side panels: a title, a collapse button, a resize handle, and the
   collapsed state the editor's re-open chips follow.
+- **The meta strip** — `meta/useCockpitMeta.ts` keeps what the strip under the
+  title says: the run's status in the registry's words, its elapsed time
+  (ticking while it runs), its cycles against the budget, its workspace and the
+  Project that contains it. `meta/CockpitMeta.tsx` draws it around
+  `meta/StageTrail.tsx`, the plan's stages in a row.
 
 What more than one region reads lives in `cockpitShared.ts` (the statuses a
 steer still reaches and the ones that end a run, a stage's key, a worker path

@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Code2, Play, Pause, Square, Trash2, Loader2, ListChecks, FolderTree,
-  TerminalSquare, CircleDot, CheckCircle2, Circle,
-  ChevronLeft, Target, HelpCircle, Folder, Repeat, Clock, AlertTriangle,
-  FolderKanban,
+  TerminalSquare,
+  ChevronLeft, Target, HelpCircle, AlertTriangle,
+
 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -22,9 +22,9 @@ import { cleanSay, toolDetail } from '../../lib/agentFeed'
 import { isStepPhase, phaseFeedLine } from '../../lib/workPhase'
 import {
   LOOP_ACTION_SOURCE_STATUSES,
-  effectiveLoopStatus,
-  loopStatusLabel,
-  loopStatusTone,
+
+
+
 } from '../../lib/loopStatus'
 import { useRunStream } from '../loops/useRunStream'
 import { belongsToLoop } from '../workflows/containerKey'
@@ -32,9 +32,7 @@ import { foldReducer, emptyRunFlags, type RunFlags } from '../loops/runFold'
 import { WorkspacePicker } from './WorkspacePicker'
 import { useWorkspaceMissing } from '../../lib/useWorkspaceMissing'
 import { useRuntimeGroups } from '../../lib/agents'
-import { LoopRunsOn } from '../loop/LoopRuntimePill'
 import { runtimeFields, runtimeOf, showRuntime, type LoopRuntime } from '../loop/loopRuntime'
-import { withArticle } from '../../lib/article'
 import { codeDeleteBody } from './codeMeta'
 import { RepromptNotice } from '../loops/RepromptNotice'
 import { CockpitPromptBar } from '../loops/CockpitPromptBar'
@@ -45,15 +43,16 @@ import { CenterEditor } from './cockpit/CenterEditor'
 import { PROJECT_DIR_HIDDEN, PROJECT_DIR_HIDDEN_PREFIXES } from './cockpit/files/WorkspaceTree'
 import { FilesRail } from './cockpit/files/FilesRail'
 import { StageTasks } from './cockpit/tasks/StageTasks'
-import { TERMINAL_STATUSES, stageKey, type ActivityItem, resolveTouchedPath } from './cockpit/cockpitShared'
+import { TERMINAL_STATUSES, type ActivityItem, resolveTouchedPath } from './cockpit/cockpitShared'
 import { missingCommandNotices, cmdLabel } from './cockpit/cockpitCommands'
 import { ProjectFooter } from './cockpit/footer/ProjectFooter'
 import { CollapsiblePanel } from './cockpit/CollapsiblePanel'
 import { RightPanel } from './cockpit/RightPanel'
 import { normalizeStageLabel } from './cockpit/useRightPanel'
+import { CockpitMeta } from './cockpit/meta/CockpitMeta'
 
 // The page's own tests still import these from it, where they used to live.
-export { StageTasks, ProjectFooter, resolveTouchedPath, missingCommandNotices, normalizeStageLabel }
+export { StageTasks, ProjectFooter, CockpitMeta, resolveTouchedPath, missingCommandNotices, normalizeStageLabel }
 
 // The Code cockpit is a code-shaped view-model over the unified Loop (kind=code).
 // The wire format is the unified Loop (entry_stage/project_kind/verify_command/
@@ -735,217 +734,6 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
       </AnimatePresence>
     </div>
   )
-}
-
-// ── header stage trail ──
-
-function StageTrail({ project }: { project: CodeProject }) {
-  const plan = project.stage_plan ?? []
-  if (!plan.length) return null
-  // While the project is RUNNING, the active stage's icon spins — an at-a-glance
-  // "the worker is alive + cycling" cue (the header otherwise looks static).
-  const running = project.status === 'running'
-  // Pre-launch (ready/review/intake/planning), NO stage is "active" yet — work
-  // hasn't begun, so highlighting stage 1 as active falsely implies the design
-  // stage is underway before the user clicks Start. Treat the whole trail as
-  // upcoming until the project has actually started.
-  const started = !['ready', 'review', 'intake', 'planning'].includes(project.status)
-  // The active stage = first not-done (matches the backend's active_stage_index),
-  // so the header is right even if stage_status briefly lags a transition. -1 when
-  // not started → every stage renders 'pending'.
-  const activeIdx = started
-    ? plan.findIndex((s) => (project.stage_status?.[stageKey(s)] ?? 'pending') !== 'done')
-    : -1
-  const allDone = started && activeIdx < 0
-  const cur = allDone || !started ? null : plan[activeIdx]
-  // The active stage's color must not imply healthy progress when the run is actually
-  // parked. Only a genuinely RUNNING project's active stage gets the primary (in-flight)
-  // color; an attention/halted state (blocked / needs_input / stagnant / failed / stopped)
-  // renders it WARN so the trail agrees with the status pill + outcome banner instead of
-  // showing a hopeful blue "active" while the worker waits on the user or has stopped.
-  const ATTENTION = ['blocked', 'needs_input', 'stagnant', 'failed', 'stopped']
-  const halted = ATTENTION.includes(project.status)
-  return (
-    <>
-      {/* full trail on wide screens — min-w-0 + overflow-hidden so a long multi-stage
-          plan can't push the project title out or overflow the header; each stage
-          label truncates individually. */}
-      <div className="ml-1 hidden min-w-0 items-center gap-1 overflow-hidden md:flex">
-        {plan.map((s, i) => {
-          const st = i < activeIdx || allDone ? 'done' : i === activeIdx ? 'active' : 'pending'
-          // A halted (failed/stopped) project's active stage renders muted (not the
-          // primary in-progress color) — it stopped here, it isn't working here.
-          const color = st === 'done' ? 'var(--color-ok)'
-            : st === 'active' ? (halted ? 'var(--color-warn)' : 'var(--color-primary)')
-            : 'var(--color-on-surface-low)'
-          const activeRunning = st === 'active' && running
-          const Icon = st === 'done' ? CheckCircle2 : activeRunning ? Loader2 : st === 'active' ? CircleDot : Circle
-          return (
-            <span key={i} className="inline-flex min-w-0 items-center gap-1" title={`${s.title || s.stage} — ${st}`}>
-              {i > 0 && <span className="shrink-0 text-on-surface-low/40">›</span>}
-              <Icon size={12} className={`shrink-0 ${activeRunning ? 'animate-spin' : ''}`} style={{ color }} />
-              <span data-type="caption" className="max-w-[7rem] truncate" style={{ color }}>{s.title || s.stage}</span>
-            </span>
-          )
-        })}
-      </div>
-      {/* compact "stage N/M · title" — always visible (incl. narrow screens where
-          the full trail is hidden), so stage context is never lost. Pre-launch it
-          shows the plan size as upcoming rather than a misleading "stage 1 active". */}
-      <span data-type="caption" className="ml-1 inline-flex items-center gap-1 md:hidden"
-        style={{ color: allDone ? 'var(--color-ok)' : halted ? 'var(--color-warn)' : started ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }}>
-        {!started
-          ? <><Circle size={12} /> {plan.length} stage{plan.length === 1 ? '' : 's'} planned</>
-          : allDone
-          ? <><CheckCircle2 size={12} /> all stages done</>
-          : <>{running ? <Loader2 size={12} className="animate-spin" /> : <CircleDot size={12} />} stage {activeIdx + 1}/{plan.length} · {cur?.title || cur?.stage}</>}
-      </span>
-    </>
-  )
-}
-
-/** A compact meta strip under the header: workspace path · cycles run · elapsed.
- *  At-a-glance "where / how much work / how long" for the build the user watches.
- *  Renders only what it has; hidden entirely for a bare draft with none of it. */
-/** The cockpit's status strip. Exported for `cockpitNamesItsStatus.test.tsx`: what broke in #671
- *  is which facts this strip states, and asserting that on the rendered component beats asserting
- *  it on the 3400-line page's source — mounting the whole cockpit would need the chat socket, the
- *  run stream and a dozen endpoints, and would test the mocks. */
-export function CockpitMeta({ project: p, onOpenProject, onRuntimeChange }: {
-  project: CodeProject
-  onOpenProject?: (projectId: string) => void
-  /** Given while the project's spec can still change: "Runs on" is then the picker. */
-  onRuntimeChange?: (rt: LoopRuntime) => void
-}) {
-  // The Folder chip represents the BOUND workspace only — NOT the engine files dir.
-  // A no-workspace project's files_dir is internal bookkeeping (~/.personalclaw/loop/
-  // <id>), so falling back to it rendered a folder chip labeled with the loop-id hash
-  // (e.g. "da50a558") — a meaningless path that reads as a bug. No workspace → no chip.
-  const ws = p.workspace_dir || ''
-  const cycles = p.total_cycles || 0
-  // Resolve the containing Project's name (the redacted code project carries only its
-  // id) so the meta strip can show + link to it — the Code→Project direction, mirroring
-  // the Projects page's →linked-work. Fetched once when the binding id is present.
-  // tasks_project_id (the provisioned/containing project — set at launch, takes
-  // precedence) OR project_id (an explicit pre-launch user scope, before provision runs).
-  const projId = p.tasks_project_id || p.project_id || ''
-  const [projName, setProjName] = useState('')
-  useEffect(() => {
-    if (!projId) { setProjName(''); return }
-    let alive = true
-    api.project(projId).then((pr) => { if (alive) setProjName(pr.name) }).catch(() => {})
-    return () => { alive = false }
-  }, [projId])
-  // Tick every 30s WHILE RUNNING so the live elapsed clock actually advances. Without
-  // this, liveStretch is recomputed only when `project` changes (an SSE event), which
-  // can be minutes apart during one long worker cycle — the minute-granularity clock
-  // would sit frozen then jump in chunks. Visible-only (pauses when the tab is hidden).
-  const [, tick] = useState(0)
-  useVisiblePoll(() => tick((n) => n + 1), p.status === 'running' ? 30000 : null)
-  // elapsed = time banked from prior run stretches (elapsed_seconds, excludes
-  // pauses) + the CURRENT stretch while running (server only banks it on
-  // pause/stop, so add now − started_at live so a running build's clock ticks).
-  const banked = p.elapsed_seconds || 0
-  const liveStretch = p.status === 'running' && p.started_at ? Math.max(0, Date.now() / 1000 - p.started_at) : 0
-  const elapsed = banked + liveStretch
-  // Elapsed leads at the far LEFT; workspace · project · cycles all float to the far
-  // RIGHT edge (a single ml-auto group), leaving the StageTrail alone in the middle.
-  const wsBase = ws ? (ws.replace(/\/$/, '').split('/').pop() || ws) : ''
-  // Show progress toward the cycle BUDGET when capped ("5 / 60 cycles") so the user
-  // can gauge how close the run is to its ceiling; uncapped (max_cycles 0) stays a
-  // bare count. Also render the cap pre-run (cycles 0) so the configured budget is
-  // visible before launch, not only once cycles accrue.
-  const cap = p.max_cycles || 0
-  const cyclesText = (cycles > 0 || cap > 0)
-    ? (cap > 0 ? `${cycles} / ${cap} cycles` : `${cycles} cycle${cycles === 1 ? '' : 's'}`)
-    : ''
-  const elapsedText = elapsed > 0 ? fmtDuration(elapsed) : ''
-  // The project chip is interactive (deep-links to the Project), so it's rendered
-  // separately from the plain info items. Show it whenever the work is bound.
-  const showProj = !!(projId && projName)
-  // The LIFECYCLE STATUS, in the project's own words from the one registry (#671). This strip
-  // calls itself "the single place to read where the run is" and named everything except that:
-  // elapsed, stage, workspace, project, cycles. On a loop the API reported as `blocked`, the word
-  // "blocked" appeared NOWHERE on the page — the Code list shows a status pill (`CodeSection`'s
-  // `statusPill`), so the state was legible until you opened the thing it described.
-  //
-  // Always rendered, including while running: the stage trail says which stage, the streaming dot
-  // says whether the feed is live, and neither says whether the run is running, paused, blocked or
-  // finished. It also means this strip now always has content, which is why it no longer returns
-  // null — a bare pre-run draft reading "Ready" is exactly what the guard's "nothing worth a bar"
-  // was mis-deciding.
-  //
-  // `effectiveLoopStatus` for the same reason every other surface uses it: a `complete` project
-  // whose `stop_reason` names a ceiling rather than `done` finished non-genuinely, and must not
-  // read as a green "Completed".
-  const dispStatus = effectiveLoopStatus(p.status, p.stop_reason, p.held)
-  return (
-    <div data-type="caption" className="flex shrink-0 items-center gap-3 border-b border-outline-variant/40 bg-surface-low/30 px-l py-1 text-on-surface-low">
-      {/* Status leads: it is the one line always true about a run, and the answer to the question
-          the rest of the strip qualifies. */}
-      <span className="shrink-0 rounded-pill px-2 py-0.5" style={loopStatusTone(dispStatus)}>
-        {loopStatusLabel(dispStatus)}
-      </span>
-      {/* Elapsed next — "how long has this been running" is the first thing to read after the
-          state itself. */}
-      {elapsedText && (
-        <span className="inline-flex shrink-0 items-center gap-1" title="Elapsed run time">
-          <Clock size={11} className="shrink-0 opacity-70" />
-          <span className="font-mono">{elapsedText}</span>
-        </span>
-      )}
-      {/* Phase-execution status — moved here from beside the title so the
-          status bar is the single place to read where the run is. */}
-      <StageTrail project={p} />
-      {/* Runs on · workspace · project · cycles all float to the far RIGHT edge (ml-auto pushes
-          the whole group). The project chip is interactive (deep-links to the Project). "Runs on"
-          is always said, since PersonalClaw and an agent CLI are different programs doing her work. */}
-      <span className="ml-auto inline-flex min-w-0 shrink-0 items-center gap-3">
-        <LoopRunsOn loop={p} onChange={onRuntimeChange} />
-        {wsBase && (
-          <span className="inline-flex shrink-0 items-center gap-1" title={ws}>
-            <Folder size={11} className="shrink-0 opacity-70" />
-            <span className="max-w-[220px] truncate font-mono">{wsBase}</span>
-          </span>
-        )}
-        {showProj && (
-          onOpenProject ? (
-            <button type="button" onClick={() => onOpenProject(projId)} title={`Project: ${projName} — open`}
-              className="inline-flex min-w-0 items-center gap-1 text-on-surface-var hover:text-primary">
-              <FolderKanban size={11} className="shrink-0 text-primary" />
-              <span className="max-w-[180px] truncate">{projName}</span>
-            </button>
-          ) : (
-            <span className="inline-flex min-w-0 items-center gap-1" title={`Project: ${projName}`}>
-              <FolderKanban size={11} className="shrink-0 text-primary" />
-              <span className="max-w-[180px] truncate">{projName}</span>
-            </span>
-          )
-        )}
-        {cyclesText && (
-          <span className="inline-flex shrink-0 items-center gap-1"
-            title={cap > 0 ? `${cycles} of ${withArticle(`${cap}-cycle`)} budget run` : `${cycles} cycles run (uncapped)`}>
-            <Repeat size={11} className="shrink-0 opacity-70" />
-            <span className="font-mono">{cyclesText}</span>
-          </span>
-        )}
-      </span>
-      {/* The original task/prompt is NOT shown here — it has its own dedicated,
-          expandable CockpitPromptBar ("Prompt") rendered immediately below this strip. */}
-    </div>
-  )
-}
-
-/** Humanize a duration in seconds → "3m", "1h 12m", "2d 4h". */
-function fmtDuration(secs: number): string {
-  const s = Math.floor(secs)
-  if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h ${m % 60}m`
-  const d = Math.floor(h / 24)
-  return `${d}d ${h % 24}h`
 }
 
 // ── shells ──
