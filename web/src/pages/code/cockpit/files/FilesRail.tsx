@@ -33,6 +33,7 @@ export function FilesRail({ ws, isProjectDir, running, merges }: { ws: string; i
 }
 
 function RailTab({ icon: Icon, label, on, onClick, badge }: { icon: typeof ListChecks; label: string; on: boolean; onClick: () => void; badge?: number }) {
+  // Raw: a tab that swaps the rail's pane and carries a count; no tab primitive exists (Segmented is a radiogroup).
   return (
     <button type="button" onClick={onClick}
       data-type="body-s" className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 transition-colors"

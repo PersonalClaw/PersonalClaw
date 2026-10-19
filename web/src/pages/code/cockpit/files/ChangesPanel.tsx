@@ -149,6 +149,7 @@ export function ChangesPanel({ ws, running, isProjectDir = false, merges = [] }:
           </Eyebrow>
           {entries.map(([path, code]) => {
             const l = label(code)
+            // Raw: a full-row clickable list item, which no primitive draws.
             return (
               <button key={path} type="button" onClick={() => open(path, code)}
                 data-type="body-s" className="flex items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-surface-high">
@@ -171,6 +172,7 @@ export function ChangesPanel({ ws, running, isProjectDir = false, merges = [] }:
             {commits.length >= 20 && <span data-type="caption" className="text-on-surface-low/70">latest 20</span>}
           </div>
           {commits.map((c) => (
+            // Raw: a full-row clickable list item, which no primitive draws.
             <button key={c.hash} type="button"
               onClick={() => window.dispatchEvent(new CustomEvent('ne:code-open-commit', { detail: { hash: c.hash, subject: c.subject, path: ws } }))}
               data-type="body-s" className="flex w-full items-baseline gap-2 px-3 py-1 text-left transition-colors hover:bg-surface-high">

@@ -182,6 +182,7 @@ export function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew
       <div className="p-2">
         {STEERABLE.has(project.status) ? (
           <div className="flex items-end gap-1.5 rounded-xl bg-surface-container px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
+            {/* Raw: a bare text surface inside the steer card, focused through a ref; TextArea draws its own fill and takes no ref. */}
             <textarea ref={steerRef} value={text} onChange={(e) => setText(e.target.value)} rows={1}
               placeholder={workerAsks ? 'Answer the worker…' : 'Steer the worker…'}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); steer() } }}

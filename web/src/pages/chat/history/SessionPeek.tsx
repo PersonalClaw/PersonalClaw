@@ -117,6 +117,7 @@ export function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; on
           compact panel composer; lg stays proportionate AND tracks the user's
           global roundness slider like every token radius. */}
       <div className="shrink-0 rounded-lg bg-surface-container p-s shadow-[var(--shadow-composer)]">
+        {/* Raw: a bare text surface inside the peek's composer card; TextArea draws its own fill, padding and radius. */}
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}

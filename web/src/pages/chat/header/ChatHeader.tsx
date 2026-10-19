@@ -101,6 +101,7 @@ export function ChatHeader({ header, stream, composer, panes, transcript, starte
       renaming ? (
         // `min-w-0 w-full`: an input's intrinsic width is ~20ch and a flex item will not shrink
         // below it, so a fixed 200px floor here overran a phone's whole row.
+        // Raw: TextInput takes no onBlur, and the rename commits on blur.
         <input autoFocus aria-label="Rename this chat" value={renameVal} onChange={(e) => setRenameVal(e.target.value)}
           onBlur={commitRename}
           onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') setRenaming(false) }}
@@ -114,6 +115,7 @@ export function ChatHeader({ header, stream, composer, panes, transcript, starte
           {/* Back to the chat history list — replaces the separate right-side
               "Chat history" button (it sits left of the title, its natural home). */}
           <IconButton icon={ArrowLeft} label="Back to chat history" size={40} onClick={() => navigate('chat/history')} />
+          {/* Raw: the title is its own rename control, and no primitive draws bare title-l text. */}
           <button type="button" onClick={beginRename} title="Rename chat"
             className="group inline-flex items-center gap-1.5 min-w-0 max-w-[420px] text-on-surface hover:text-on-surface-var transition-colors">
             <span data-type="title-l" className="truncate">{sessionTitle({ key: sessionRef.current ?? '', title })}</span>

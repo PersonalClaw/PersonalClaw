@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { X, FilePlus2, FolderPlus } from 'lucide-react'
 import { Button } from '../../../../ui/Button'
 import { IconButton } from '../../../../ui/IconButton'
+import { FieldError } from '../../../../ui/forms'
 import { confirm } from '../../../../ui/dialog'
 import { api, type FsEntry } from '../../../../lib/api'
 import { useVisiblePoll } from '../../../../lib/useVisiblePoll'
@@ -109,6 +110,7 @@ export function WorkspaceTree({ ws, running, isProjectDir }: { ws: string; runni
   const [creating, setCreating] = useState<'file' | 'dir' | null>(null)
   const [newName, setNewName] = useState('')
   const [createErr, setCreateErr] = useState('')
+  const createErrId = useId()
   // In-flight guard: the create input fires submitCreate on BOTH Enter and onBlur, so
   // Enter (which can blur) — or any click-away during the async create — would fire a
   // second fileCreate that hits the just-created name as a 409 "already exists". Ignore
@@ -181,9 +183,11 @@ export function WorkspaceTree({ ws, running, isProjectDir }: { ws: string; runni
         <div className="flex flex-col gap-1 px-1.5 pb-1">
          <div className="flex items-center gap-1">
           {creating ? (
+            // Raw: TextInput takes no onBlur, and leaving the field creates the entry.
             <input autoFocus value={newName} onChange={(e) => { setNewName(e.target.value); if (createErr) setCreateErr('') }}
               onKeyDown={(e) => { if (e.key === 'Enter') submitCreate(); if (e.key === 'Escape') cancelCreate() }}
               onBlur={() => { if (!createErr) submitCreate() }} placeholder={creating === 'file' ? 'new-file.ext' : 'new-folder'}
+              aria-invalid={createErr ? true : undefined} aria-describedby={createErr ? createErrId : undefined}
               data-type="body-s" className={`h-7 min-w-0 flex-1 rounded-md bg-surface-high px-2 text-on-surface outline-none focus:ring-2 placeholder:text-on-surface-low ${createErr ? 'focus:ring-danger/50 ring-2 ring-danger/40' : 'focus:ring-primary'}`} />
           ) : (
             <>
@@ -195,7 +199,7 @@ export function WorkspaceTree({ ws, running, isProjectDir }: { ws: string; runni
             </>
           )}
          </div>
-         {createErr && <span role="alert" data-type="caption" className="px-0.5 text-danger">{createErr}</span>}
+         {createErr && <FieldError id={createErrId} className="px-0.5">{createErr}</FieldError>}
         </div>
       )}
       {/* rename/delete failure — dismissable, sits above the tree (works in both

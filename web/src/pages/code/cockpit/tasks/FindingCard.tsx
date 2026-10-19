@@ -39,6 +39,7 @@ export function FindingCard({ finding: f, ws }: { finding: CodeFinding; ws: stri
       <FilesTouched files={f.files_touched} ws={ws} />
       {evidence && (
         <div className="mt-1.5">
+          {/* Raw: QuietButton takes no aria-label, and this toggle is named Show or Hide evidence. */}
           <button type="button" onClick={() => setShowEvidence((v) => !v)} aria-expanded={showEvidence}
             aria-label={showEvidence ? 'Hide evidence' : 'Show evidence'}
             data-type="caption" className="inline-flex items-center gap-1 text-on-surface-low hover:text-on-surface">

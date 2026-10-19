@@ -1,8 +1,8 @@
 import { useMemo } from 'react'
-import { fvs } from '../../../design/fontWeight'
 import { motion } from 'framer-motion'
 import { MessageSquare, ArrowRight } from 'lucide-react'
 import { StartedByApp } from '../StartedByApp'
+import { Button } from '../../../ui/Button'
 import { LoadError } from '../../../ui/ListScaffold'
 import { spring, stagger, listItemEnter, expr } from '../../../design/motion'
 import { api, type ChatSessionSummary } from '../../../lib/api'
@@ -72,11 +72,9 @@ export function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: s
         </motion.div>
       )}
       {/* deep-link to the full, filterable/organizable chat-history page */}
-      <button type="button" onClick={() => navigate('chat/history')}
-        className="mt-1 flex items-center justify-center gap-1.5 rounded-md border border-outline-variant/40 px-2 py-2 text-on-surface-var text-[0.8125rem] transition-colors hover:bg-surface-high hover:text-on-surface"
-        style={fvs(470)}>
+      <Button variant="ghost" size="sm" onClick={() => navigate('chat/history')} className="mt-1 border border-outline-variant/40">
         View all chats <ArrowRight size={13} className="shrink-0" />
-      </button>
+      </Button>
     </div>
   )
 }

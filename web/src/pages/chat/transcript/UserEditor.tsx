@@ -22,6 +22,7 @@ export function UserEditor({ initial, onSubmit, onCancel, replacesLater = false,
   const noticeId = useId()
   return (
     <div className="flex flex-col items-end gap-2">
+      {/* Raw: the in-place editor keeps the sent message bubble's radius, padding and type size, which TextArea's field chrome does not draw. */}
       <textarea autoFocus value={v} onChange={(e) => setV(e.target.value)} rows={Math.min(10, v.split('\n').length + 1)}
         aria-label="Edit your message"
         aria-describedby={replacesLater ? noticeId : undefined}

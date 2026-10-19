@@ -171,8 +171,12 @@ describe('no focus ring may carry an alpha', () => {
     // `pages/settings/VoicePanel.tsx` drew their rings on their add-row fields and selects.
     // 🔻 62 → 61, the same migration: `pages/loops/DesignCockpitPage.tsx`'s one ring was on its nudge
     // field, now a `TextInput`.
+    // 🔺 61 → 66, set to the measurement, not raised past it: splitting the chat and the code cockpit
+    // into regions spread their hand-drawn rings over the region files (67 by the end of the split,
+    // with this floor left at 61), and the chat's auto-nudge settings then left the population (67 → 66)
+    // because their three rings were on fields that are a `TextArea` and two `NumberField`s now.
     const uses = walk(SRC).filter((f) => /(focus|focus-visible|focus-within):ring-primary\b/.test(readSource(f)))
-    expect(uses.length, 'the app must still install its own focus ring').toBeGreaterThanOrEqual(61)
+    expect(uses.length, 'the app must still install its own focus ring').toBeGreaterThanOrEqual(66)
   })
 
   it('is scoped to focus states, and only to them', () => {
