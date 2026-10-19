@@ -190,8 +190,9 @@ export function ChatHeader({ header, stream, composer, panes, transcript, starte
         {started && (
           <HeaderControl icon={PanelRight} label="Activity" active={activityOpen} ariaExpanded={activityOpen} onClick={() => setActivityOpen(!activityOpen)} />
         )}
+        {/* Chat history is the same: it shows and hides the Chat history pane. */}
         {!started && (
-          <HeaderControl icon={History} label="Chat history" active={historyOpen} onClick={() => setHistoryOpen(!historyOpen)} />
+          <HeaderControl icon={History} label="Chat history" active={historyOpen} ariaExpanded={historyOpen} onClick={() => setHistoryOpen(!historyOpen)} />
         )}
       </HeaderActions>} />
   )

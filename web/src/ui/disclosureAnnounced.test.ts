@@ -123,6 +123,15 @@ describe('a button that reveals content says that it does', () => {
       .toMatch(/\{activityOpen && started && \(\s*<SidePanel title="Activity"/)
   })
 
+  it("the new chat's Chat history button is a disclosure, not a setting", () => {
+    // Activity's twin on a new chat: it shows and hides the Chat history pane, which renders only
+    // while `historyOpen` holds, and it had only `active`, so it said it was pressed.
+    expect(read('chat/header/ChatHeader.tsx'))
+      .toMatch(/label="Chat history" active=\{historyOpen\} ariaExpanded=\{historyOpen\} onClick=\{\(\) => setHistoryOpen\(!historyOpen\)\}/)
+    expect(read('chat/panes/ChatPanes.tsx'), 'and the pane is gated on that same flag')
+      .toMatch(/\{historyOpen && !started && \(\s*<SidePanel title="Chat history"/)
+  })
+
   it('a MODE toggle is not given a disclosure promise', () => {
     // The distinction the census turned up: these two reveal nothing, so `aria-expanded` would be false.
     const diag = read('settings/DiagnosticsPanel.tsx')
@@ -304,8 +313,9 @@ describe('a button that reveals content says that it does', () => {
     // 9 when the check was bound to the toggle's own state, which closed that gap: the Activity button
     // had counted as announced by the Session map button's `ariaExpanded={mapOpen}`. 8 again once
     // Activity, a disclosure, announced its own pane (pinned above).
+    // 7 once the new chat's Chat history button, the same case, announced its own pane (pinned above).
     expect(silent.length, `measured backlog — classify a new toggle, do not add to this number:\n${
-      silent.map((t) => t.flip).join('\n')}`).toBeLessThanOrEqual(8)
+      silent.map((t) => t.flip).join('\n')}`).toBeLessThanOrEqual(7)
   })
 })
 

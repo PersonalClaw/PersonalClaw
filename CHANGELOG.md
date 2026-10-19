@@ -20,6 +20,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A new chat's Chat history button tells a screen reader whether the Chat history pane is showing, where it said the button was pressed.**
 - **A chat's Activity button tells a screen reader whether the Activity pane is showing, where it said the button was pressed.**
 - **A loop page's Details button tells a screen reader whether the Details rail is showing, where it said the button was pressed.**
 - **A chat's row in the chat history follows the chat: it stops saying "running" and shows the new message count when the turn ends, and a chat started elsewhere appears, where the row kept what it said when the page opened.**
