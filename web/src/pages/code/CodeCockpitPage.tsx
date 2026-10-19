@@ -1,20 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { AnimatePresence } from 'framer-motion'
 import {
-  Code2, Play, Pause, Square, Trash2, Loader2, ListChecks, FolderTree,
-  TerminalSquare,
-  ChevronLeft, Target, HelpCircle, AlertTriangle,
+  Code2, Loader2, ListChecks, FolderTree,
+
+  HelpCircle,
 
 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Button } from '../../ui/Button'
-import { IconButton } from '../../ui/IconButton'
 import { LoadError } from '../../ui/ListScaffold'
 import { Centered } from '../../ui/Centered'
 import { confirmDelete } from '../../ui/dialog'
-import { confirmStopLoop } from '../loop/stopLoop'
-import { api, type CodeProject, type CodeStage, type CodeFinding, type Loop } from '../../lib/api'
+import { api, type CodeProject, type CodeStage, type CodeFinding } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
@@ -22,8 +20,6 @@ import { cleanSay, toolDetail } from '../../lib/agentFeed'
 import { isStepPhase, phaseFeedLine } from '../../lib/workPhase'
 import {
   LOOP_ACTION_SOURCE_STATUSES,
-
-
 
 } from '../../lib/loopStatus'
 import { useRunStream } from '../loops/useRunStream'
@@ -34,53 +30,26 @@ import { useWorkspaceMissing } from '../../lib/useWorkspaceMissing'
 import { useRuntimeGroups } from '../../lib/agents'
 import { runtimeFields, runtimeOf, showRuntime, type LoopRuntime } from '../loop/loopRuntime'
 import { codeDeleteBody } from './codeMeta'
-import { RepromptNotice } from '../loops/RepromptNotice'
 import { CockpitPromptBar } from '../loops/CockpitPromptBar'
 import { CockpitToast, type CodeToastState } from './CodeToast'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
-import { messageEnter } from '../../design/motion'
 import { CenterEditor } from './cockpit/CenterEditor'
 import { PROJECT_DIR_HIDDEN, PROJECT_DIR_HIDDEN_PREFIXES } from './cockpit/files/WorkspaceTree'
 import { FilesRail } from './cockpit/files/FilesRail'
 import { StageTasks } from './cockpit/tasks/StageTasks'
-import { TERMINAL_STATUSES, type ActivityItem, resolveTouchedPath } from './cockpit/cockpitShared'
-import { missingCommandNotices, cmdLabel } from './cockpit/cockpitCommands'
+import { type ActivityItem, resolveTouchedPath } from './cockpit/cockpitShared'
+import { missingCommandNotices } from './cockpit/cockpitCommands'
 import { ProjectFooter } from './cockpit/footer/ProjectFooter'
 import { CollapsiblePanel } from './cockpit/CollapsiblePanel'
 import { RightPanel } from './cockpit/RightPanel'
 import { normalizeStageLabel } from './cockpit/useRightPanel'
 import { CockpitMeta } from './cockpit/meta/CockpitMeta'
+import { loopToCodeProject } from './cockpit/codeProject'
+import { CockpitHeader } from './cockpit/header/CockpitHeader'
+import { CockpitNotices } from './cockpit/header/CockpitNotices'
 
 // The page's own tests still import these from it, where they used to live.
 export { StageTasks, ProjectFooter, CockpitMeta, resolveTouchedPath, missingCommandNotices, normalizeStageLabel }
-
-// The Code cockpit is a code-shaped view-model over the unified Loop (kind=code).
-// The wire format is the unified Loop (entry_stage/project_kind/verify_command/
-// test_command/queued_task_ids under kind_config; the stage list as `plan`, per-stage
-// status as `phase_status`); adapt it to the CodeProject shape the cockpit's many
-// sub-components already render, so the migration is one boundary, not 2700 lines.
-function loopToCodeProject(p: Loop): CodeProject {
-  const kc = (p.kind_config || {}) as Record<string, unknown>
-  return {
-    ...(p as unknown as CodeProject),
-    entry_stage: (kc.entry_stage as CodeProject['entry_stage']) ?? 'ideation',
-    project_kind: (kc.project_kind as CodeProject['project_kind']) ?? 'greenfield',
-    verify_command: String(kc.verify_command ?? ''),
-    test_command: String(kc.test_command ?? ''),
-    queued_task_ids: Array.isArray(kc.queued_task_ids) ? (kc.queued_task_ids as string[]) : [],
-    stage_plan: (p.plan ?? []) as unknown as CodeStage[],
-    stage_status: (p.phase_status ?? {}) as Record<string, string>,
-    command_runnability: p.command_runnability,
-  }
-}
-
-// The shared chrome for this page's full-width warn strips (missing command, brownfield
-// needs a workspace, workspace vanished). One object, so the tint lives in ONE place
-// instead of being re-typed per banner — the status-tint ratchet counts each spelling.
-const WARN_STRIP: React.CSSProperties = {
-  background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)',
-  color: 'var(--color-warn)',
-}
 
 /** The Code cockpit — a mini-VSCode/Cursor execution view for one project:
  *   • LEFT   — per-stage task lists (the Tasks Project) + the workspace file tree.
@@ -114,12 +83,6 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   // In-flight guard for run controls (start/pause/resume/stop) — without it a rapid
   // double-click fires two codeAction calls, racing the worker spawn/teardown.
   const [acting, setActing] = useState(false)
-  const [editingTitle, setEditingTitle] = useState(false)
-  const [titleDraft, setTitleDraft] = useState('')
-  // Set by Escape so the blur that fires as the input unmounts skips the save.
-  const cancelRename = useRef(false)
-  // Guards the double commitRename (Enter → unmount → onBlur) from a double PUT.
-  const renameInFlight = useRef(false)
 
   // Tracks an initial-load failure (transient 5xx/network on the FIRST fetch, before
   // any snapshot). Without it a failed first load left `project` null forever — an
@@ -524,185 +487,21 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
     try { await api.deleteULoop(id); onDeleted() }
     catch (e) { setToast({ kind: 'error', text: `Couldn't delete this project: ${(e as Error).message || 'unknown error'}` }) }
   }
-  // Rename works in ANY state — the name is pure metadata; the rest of the spec
-  // freezes once started. updateCode with a name-only body routes to the rename
-  // path server-side (PUT /api/code/{id} → store.rename), so a running or finished
-  // project can still be retitled.
-  function startRename() { cancelRename.current = false; setTitleDraft(p.name || ''); setEditingTitle(true) }
-  function abortRename() { cancelRename.current = true; setEditingTitle(false) }
-  async function commitRename() {
-    setEditingTitle(false)
-    if (cancelRename.current) { cancelRename.current = false; return }
-    // Enter sets editingTitle=false, which unmounts the input → fires onBlur →
-    // commitRename AGAIN. The 2nd call still sees the old p.name (setProject is
-    // post-await), so the name-unchanged guard below doesn't catch it → a double PUT.
-    // Guard re-entry while the rename is in flight.
-    if (renameInFlight.current) return
-    const name = titleDraft.trim()
-    if (!name || name === (p.name || '')) return
-    renameInFlight.current = true
-    // Surface a failed rename instead of silently keeping the old name — a swallowed
-    // catch left the user thinking the rename took when it didn't (network/5xx, or a
-    // backend rejection). Toast the reason so the no-op isn't a mystery.
-    try { setProject(loopToCodeProject(await api.updateULoop(id, { name }))) }
-    catch (e) { setToast({ kind: 'error', text: `Couldn't rename: ${(e as Error).message || 'unknown error'}` }) }
-    finally { renameInFlight.current = false }
-  }
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
-      <TopBar
-        left={<div className="flex min-w-0 items-center gap-2">
-          {/* Back-to-project: left of the title, jumps to the Project this loop belongs to
-              (tasks_project_id is the provisioned container; project_id a pre-launch scope).
-              Only shown when the loop is actually bound to a project AND we can open it. */}
-          {onOpenProject && (p.tasks_project_id || p.project_id) && (
-            <IconButton icon={ChevronLeft} label="Back to the project this loop belongs to"
-              onClick={() => onOpenProject((p.tasks_project_id || p.project_id) as string)}
-              size={28} iconSize={18} className="shrink-0" />
-          )}
-          <Code2 size={18} className="shrink-0 text-primary" />
-          {editingTitle ? (
-            <input autoFocus value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
-              onBlur={commitRename} onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') abortRename() }}
-              aria-label="Rename project"
-              data-type="body-m" className="min-w-[14rem] h-7 rounded-md bg-surface-high px-2 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
-          ) : (
-            <button type="button" onClick={startRename} title="Rename project"
-              data-type="title-l" className="truncate text-on-surface text-left hover:text-on-surface-var">
-              {p.name}
-            </button>
-          )}
-          {/* StageTrail (phase-execution status) moved OUT of the title row into the
-              dedicated status bar below the header (CockpitMeta). */}
-          {/* FEED liveness — the last of the four `useRunStream` consumers to get it, after the
-              workflow run view, the loop cockpit and the design cockpit. A running code loop whose
-              stream dropped keeps showing its last stage while nothing arrives, indistinguishable from
-              a loop that is simply working. Same dot-plus-WORD form `settings/DiagnosticsPanel` ships,
-              so the vocabulary is not re-invented and the colour only confirms the word. Shown only
-              while `active` — a finished loop has no stream to be connected to. */}
-          {active && (
-            <span data-type="caption" className="inline-flex shrink-0 items-center gap-1 text-on-surface-low">
-              <span className="inline-block size-1.5 rounded-pill"
-                style={{ background: connected ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }} />
-              {connected ? 'Streaming' : 'Connecting…'}
-            </span>
-          )}
-        </div>}
-        right={<HeaderActions>
-          {/* Run controls + terminal toggle are primary/default (frequent, contextual);
-              everything else (run build/tests, reuse workspace, navigate away, delete)
-              is low-priority so the cluster's own overflow menu absorbs it first. */}
-          {LOOP_ACTION_SOURCE_STATUSES.pause.has(p.status)
-            ? <HeaderControl icon={Pause} label="Pause" priority="primary" onClick={() => act('pause')} disabled={acting} />
-            : LOOP_ACTION_SOURCE_STATUSES.resume.has(p.status)
-              ? <HeaderControl icon={Play} label="Resume" priority="primary" onClick={() => act('resume')} variant="primary" disabled={acting} />
-              : LOOP_ACTION_SOURCE_STATUSES.start.has(p.status)
-                ? <HeaderControl icon={Play} label="Start" priority="primary" onClick={() => act('start')} variant="primary" disabled={acting} />
-                : null}
-          {/* Stop is TERMINAL + non-resumable — confirm first, like Delete. `stagnant`
-              is an active attention state (resume + stop both valid). */}
-          {LOOP_ACTION_SOURCE_STATUSES.stop.has(p.status) &&
-            <HeaderControl icon={Square} label="Stop" priority="primary" onClick={async () => {
-              // The one Stop confirm, said once for every Stop control (`loop/stopLoop`).
-              if (await confirmStopLoop(p.status, p.name)) act('stop')
-            }} />}
-          {/* A shell only makes sense in a real codebase (gate on `ws`). */}
-          {!!ws && <HeaderControl icon={TerminalSquare} label={showTerm ? 'Hide terminal' : 'Terminal'} onClick={() => setShowTerm(!showTerm)} active={showTerm} ariaExpanded={showTerm} />}
-          {/* Run the configured build/test command in the cockpit terminal (only with a
-              real workspace + the command configured). Low priority → overflow first. */}
-          {!!ws && p.verify_command && <HeaderControl icon={Play}
-            label={missingBuild ? `Run build unavailable (${missingBuild.binary} not on PATH)` : `Run build (${cmdLabel(p.verify_command)})`}
-            hint={missingBuild?.command} disabled={!!missingBuild} priority="low"
-            onClick={() => runInWorkspaceTerminal(p.verify_command || '')} />}
-          {!!ws && p.test_command && <HeaderControl icon={Play}
-            label={missingTest ? `Run tests unavailable (${missingTest.binary} not on PATH)` : `Run tests (${cmdLabel(p.test_command)})`}
-            hint={missingTest?.command} disabled={!!missingTest} priority="low"
-            onClick={() => runInWorkspaceTerminal(p.test_command || '')} />}
-          {/* Reuse this project's BOUND workspace for a fresh target — only with a real
-              codebase dir + not mid-run. */}
-          {onNewTarget && !active && !!ws && <HeaderControl icon={Target} label="New target" priority="low" onClick={() => onNewTarget(ws)} />}
-          <HeaderControl icon={ListChecks} label="All projects" priority="low" onClick={onBack} />
-          <HeaderControl icon={Trash2} label="Delete project" danger priority="low" onClick={() => { void del() }} />
-        </HeaderActions>} />
+      <CockpitHeader id={id} project={p} setProject={setProject} setToast={setToast} onOpenProject={onOpenProject}
+        active={active} connected={connected} acting={acting} act={act} ws={ws} showTerm={showTerm} setShowTerm={setShowTerm}
+        missingBuild={missingBuild} missingTest={missingTest} runInWorkspaceTerminal={runInWorkspaceTerminal}
+        onNewTarget={onNewTarget} onBack={onBack} del={del} />
 
       <CockpitMeta project={p} onOpenProject={onOpenProject} onRuntimeChange={runtimeEditable ? moveRuntime : undefined} />
 
       {/* Expandable prompt bar — first line collapsed, full on expand. */}
       <CockpitPromptBar prompt={p.task || ''} />
 
-      {missingCommands.length > 0 && (
-        <motion.div variants={messageEnter} initial="initial" animate="animate"
-          role="status" data-type="body-s"
-          className="flex shrink-0 items-start gap-s border-b border-outline-variant/40 px-l py-s"
-          style={WARN_STRIP}>
-          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-          <span>
-            {missingCommands.map((notice, index) => (
-              <span key={notice.key}>
-                {index > 0 && ' '}
-                The stored {notice.label} command <code>{notice.command}</code> cannot run here because <code>{notice.binary}</code> is not on PATH.
-              </span>
-            ))}{' '}
-            Edit the stored {missingCommands.length === 1 ? 'command' : 'commands'} before resuming.
-          </span>
-        </motion.div>
-      )}
-
-      {/* The agent CLI this project runs on can't run it now: said where she is looking, with what
-          she can do about it — before launch, choose another under Runs on. */}
-      {runsOn.unavailable && !TERMINAL_STATUSES.has(p.status) && (
-        <motion.div variants={messageEnter} initial="initial" animate="animate"
-          role="status" data-type="body-s"
-          className="flex shrink-0 items-start gap-s border-b border-outline-variant/40 px-l py-s"
-          style={WARN_STRIP}>
-          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-          <span>
-            {runsOn.unavailable}{' '}
-            {runtimeEditable
-              ? 'Choose another runtime under Runs on, or get it ready, then start it.'
-              : 'Its workers run there, so their turns can fail until it is ready again.'}
-          </span>
-        </motion.div>
-      )}
-
-      {/* A worker asked again for its finding: why, and how many asks are left. */}
-      <RepromptNotice reprompt={runFlags.reprompt} className="shrink-0 border-b border-outline-variant/40 px-l py-s" />
-
-      {/* A ready brownfield draft can't start until a workspace is chosen — make
-          that explicit + actionable instead of a silent failed Start. */}
-      {p.status === 'ready' && p.project_kind === 'brownfield' && !ws && (
-        <motion.div variants={messageEnter} initial="initial" animate="animate"
-          data-type="body-s" className="flex shrink-0 items-center justify-between gap-2 border-b border-outline-variant/40 bg-warn/10 px-l py-2"
-          style={WARN_STRIP}>
-          <span>This brownfield project needs a workspace directory before it can start.</span>
-          <Button variant="ghost" size="xs" onClick={() => setPickWs(true)} className="shrink-0">Choose folder</Button>
-        </motion.div>
-      )}
-      {/* Bound workspace went missing on disk (moved/deleted after binding). A PRE-RUN
-          draft (ready/review) can re-pick — its spec is still editable. A project that
-          already STARTED (but is still mid-run/parked) has a frozen spec, so re-picking
-          would 409: surface an honest "can't continue" message. Not shown while running
-          (the worker proves the dir exists), and NOT shown for a TERMINAL project
-          (complete/stopped): its work is finished + graduated, so a missing workspace
-          afterward is expected — not an error, and there's no run left to "continue".
-          Showing "Stop or Delete" on a completed project is contradictory + alarming. */}
-      {ws && wsMissing && p.status !== 'running' && !TERMINAL_STATUSES.has(p.status) && (
-        (p.status === 'ready' || p.status === 'review') ? (
-          <motion.div variants={messageEnter} initial="initial" animate="animate"
-            data-type="body-s" className="flex shrink-0 items-center justify-between gap-2 border-b border-outline-variant/40 px-l py-2"
-            style={WARN_STRIP}>
-            <span>The workspace folder <span className="font-mono">{ws.split('/').slice(-1)[0]}</span> no longer exists — re-pick it to continue.</span>
-            <Button variant="ghost" size="xs" onClick={() => setPickWs(true)} className="shrink-0">Re-pick folder</Button>
-          </motion.div>
-        ) : (
-          <motion.div variants={messageEnter} initial="initial" animate="animate"
-            data-type="body-s" className="flex shrink-0 items-center gap-2 border-b border-outline-variant/40 px-l py-2"
-            style={WARN_STRIP}>
-            <span>The workspace folder <span className="font-mono">{ws.split('/').slice(-1)[0]}</span> no longer exists, so this run can't continue. Its files are gone — Stop or Delete the project, or restore the folder and reopen.</span>
-          </motion.div>
-        )
-      )}
+      <CockpitNotices project={p} ws={ws} wsMissing={wsMissing} missingCommands={missingCommands} runsOn={runsOn}
+        runtimeEditable={runtimeEditable} runFlags={runFlags} setPickWs={setPickWs} />
 
       {/* body: Files (left) | Editor+tabs (center) | Tasks (right). Both side
           panels collapsible + resizable (useResizablePanel persists each). */}

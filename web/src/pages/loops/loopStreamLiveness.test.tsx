@@ -70,8 +70,10 @@ describe('the loop cockpit says whether its feed is alive', () => {
     // which is exactly what a guard like that is for.
     const code = read('pages/code/CodeCockpitPage.tsx')
     expect(code).toMatch(/const \{ connected \} = useRunStream/)
-    expect(code).toMatch(/\{connected \? 'Streaming' : 'Connecting…'\}/)
-    expect(code, 'gated on its own running flag').toMatch(/\{active && \(/)
+    // The dot and its word moved with the cockpit's header into its own module.
+    const header = read('pages/code/cockpit/header/CockpitHeader.tsx')
+    expect(header).toMatch(/\{connected \? 'Streaming' : 'Connecting…'\}/)
+    expect(header, 'gated on its own running flag').toMatch(/\{active && \(/)
   })
 
   it('LoopPlanReview stays the one deliberate opt-out', () => {
