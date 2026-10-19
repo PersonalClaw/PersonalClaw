@@ -443,9 +443,11 @@ def classify(rel: str, source: str, helpers: Mapping[str, HelperFacts] | None = 
 
 
 def test_modules(root: Path) -> Iterator[Path]:
-    """Every ``test_*.py`` under ``root/tests``, in path order."""
+    """Every ``test_*.py`` under ``root/tests``, in path order. Only the parts below ``root``
+    are filtered, so a checkout that sits inside a dot-folder is still read whole."""
     for path in sorted((root / "tests").rglob("test_*.py")):
-        if "__pycache__" not in path.parts and not any(p.startswith(".") for p in path.parts):
+        parts = path.relative_to(root).parts
+        if "__pycache__" not in parts and not any(p.startswith(".") for p in parts):
             yield path
 
 
@@ -527,8 +529,12 @@ def misplaced(modules: Iterable[Module]) -> list[str]:
 
 
 def violations(root: Path) -> list[str]:
-    """Everything wrong with ``root``'s rails: :func:`misplaced` over its census."""
-    return misplaced(census(root))
+    """Everything wrong with ``root``'s rails: :func:`misplaced` over its census. A census
+    with no test modules checked nothing, so it is a violation, never a pass."""
+    modules = census(root)
+    if not modules:
+        return [f"{root / 'tests'} holds no test modules, so the census checked nothing"]
+    return misplaced(modules)
 
 
 def main(argv: list[str] | None = None) -> int:

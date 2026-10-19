@@ -14,6 +14,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **`python -m tools.ci rails check` reads every test module of a checkout that sits inside a hidden folder, where it found none and passed, and a tree with no test modules fails the check instead of passing it.**
 - **Form fields announce their errors, and the busiest pages use the shared controls.**
 - **A shell command that runs a read command or an interpreter many times, such as a long pipeline or a generated script, is checked for credential files in a fraction of a second, where 40 KB took about 13 seconds.**
 - **A focused primary or danger button shows its keyboard focus ring in the page's ink colour, where the coral ring matched the button's own colour and could barely be seen.**
