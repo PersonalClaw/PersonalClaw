@@ -7,11 +7,13 @@ network is not one, and a module with tests of both kinds is mixed and gets spli
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
-from tools.ci import rails_census
+from tools.ci import rails_census, shards
 
 _HEAD = "from pathlib import Path\n\nREPO = Path(__file__).resolve().parents[1]\n\n\n"
 
@@ -169,6 +171,235 @@ def test_a_checkout_under_a_dot_folder_is_read_whole(tmp_path: Path) -> None:
     _plant(root, "tests/.cache/test_ignored.py", ROWS[-1][1])
     found = [m.path for m in rails_census.census(root)]
     assert found == ["tests/rails/test_rail.py", "tests/test_suite.py"]
+
+
+def test_the_census_reads_every_module_pytest_collects_by_its_defaults(tmp_path: Path) -> None:
+    """With no ``python_files`` set, pytest collects ``test_*.py`` and ``*_test.py``: the census
+    reads both, and neither is a helper."""
+    _plant(tmp_path, "tests/test_suite.py", ROWS[-1][1])
+    _plant(tmp_path, "tests/new_rail_test.py", ROWS[5][1])
+    _plant(tmp_path, "tests/rails/c_test.py", ROWS[5][1])
+    _plant(tmp_path, "tests/helper.py", "X = 1\n")
+    _plant(tmp_path, "tests/conftest.py", "")
+    found = {m.path: m.kind for m in rails_census.census(tmp_path)}
+    assert found == {
+        "tests/new_rail_test.py": "rail",
+        "tests/rails/c_test.py": "rail",
+        "tests/test_suite.py": "suite",
+    }
+    assert set(rails_census.helper_facts(tmp_path)) == {"helper"}
+    bad = rails_census.misplaced(rails_census.census(tmp_path))
+    assert [line.split(" ", 1)[0] for line in bad] == ["tests/new_rail_test.py"], bad
+
+
+def test_the_census_reads_python_files_from_pyproject(tmp_path: Path) -> None:
+    _plant(tmp_path, "pyproject.toml", '[tool.pytest.ini_options]\npython_files = ["check_*.py"]\n')
+    _plant(tmp_path, "tests/rails/check_a.py", ROWS[5][1])
+    _plant(tmp_path, "tests/rails/test_b.py", ROWS[5][1])
+    assert [m.path for m in rails_census.census(tmp_path)] == ["tests/rails/check_a.py"]
+
+
+@pytest.mark.parametrize(
+    ("python_files", "rails"),
+    [
+        (None, {"tests/rails/test_r.py", "tests/rails/s_test.py"}),
+        ('["check_*.py", "*_test.py"]', {"tests/rails/s_test.py"}),
+    ],
+    ids=["defaults", "named"],
+)
+def test_the_census_and_the_shards_read_the_same_test_modules(
+    tmp_path: Path, python_files: str | None, rails: set[str]
+) -> None:
+    """Differential: outside tests/rails the census reads exactly the shards' universe, the files
+    pytest collects there, so a module either reads as a test module is one in both."""
+    config = '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n'
+    if python_files:
+        config += f"python_files = {python_files}\n"
+    _plant(tmp_path, "pyproject.toml", config)
+    for rel in (
+        "tests/test_a.py",
+        "tests/b_test.py",
+        "tests/check_c.py",
+        "tests/sub/test_d.py",
+        "tests/helper.py",
+        "tests/conftest.py",
+        "tests/rails/test_r.py",
+        "tests/rails/s_test.py",
+    ):
+        _plant(tmp_path, rel, ROWS[-1][1])
+    found = {path.relative_to(tmp_path).as_posix() for path in rails_census.test_modules(tmp_path)}
+    outside = {rel for rel in found if not rel.startswith(rails_census.RAILS + "/")}
+    assert outside == set(shards.universe(tmp_path))
+    assert found - outside == rails
+
+
+def _halves(root: Path, first: str, second: str) -> None:
+    _plant(root, rails_census.HALVES[0], first)
+    _plant(root, rails_census.HALVES[1], second)
+
+
+def _two_rails(root: Path) -> None:
+    _plant(root, "tests/rails/test_a.py", ROWS[5][1])
+    _plant(root, "tests/rails/test_b.py", ROWS[5][1])
+    _plant(root, "tests/test_suite.py", ROWS[-1][1])
+
+
+def test_the_halves_hold_every_rail_once(tmp_path: Path) -> None:
+    _two_rails(tmp_path)
+    _halves(tmp_path, "tests/rails/test_a.py\n", "tests/rails/test_b.py\n")
+    assert rails_census.half_violations(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "expect"),
+    [
+        pytest.param(
+            "tests/rails/test_a.py\n",
+            "\n",
+            "tools/ci/rails-half-2.txt names no file",
+            id="an empty half",
+        ),
+        pytest.param(
+            "tests/rails/test_a.py\n",
+            "tests/rails/test_a.py\n",
+            "tests/rails/test_b.py is in neither half",
+            id="a rail in neither half",
+        ),
+        pytest.param(
+            "tests/rails/test_a.py\ntests/rails/test_b.py\n",
+            "tests/rails/test_b.py\n",
+            "tests/rails/test_b.py is listed 2 times",
+            id="a rail in both halves",
+        ),
+        pytest.param(
+            "tests/rails/test_a.py\ntests/test_suite.py\n",
+            "tests/rails/test_b.py\n",
+            "tests/test_suite.py is listed in tools/ci/rails-half-1.txt and is no test module",
+            id="a suite module listed",
+        ),
+        pytest.param(
+            "tests/rails/test_a.py\ntests/rails/test_gone.py\n",
+            "tests/rails/test_b.py\n",
+            "tests/rails/test_gone.py is listed in tools/ci/rails-half-1.txt and is no test",
+            id="a listed file that is gone",
+        ),
+    ],
+)
+def test_a_planted_half_violation_fails(tmp_path: Path, first: str, second: str, expect: str):
+    _two_rails(tmp_path)
+    _halves(tmp_path, first, second)
+    bad = rails_census.half_violations(tmp_path)
+    assert any(expect in line for line in bad), bad
+
+
+def test_a_rail_named_the_other_way_pytest_collects_is_in_neither_half(tmp_path: Path) -> None:
+    """pytest collects ``*_test.py`` as well as ``test_*.py`` (its default ``python_files``), and
+    ``--shard-list`` skips either kind when no list names it: so a rail of either name that no
+    half lists would run nowhere."""
+    _two_rails(tmp_path)
+    _plant(tmp_path, "tests/rails/c_test.py", ROWS[5][1])
+    _halves(tmp_path, "tests/rails/test_a.py\n", "tests/rails/test_b.py\n")
+    assert rails_census.half_violations(tmp_path) == [
+        "tests/rails/c_test.py is in neither half of the rails job"
+        f" ({', '.join(rails_census.HALVES)})"
+    ]
+    _halves(tmp_path, "tests/rails/test_a.py\n", "tests/rails/test_b.py\ntests/rails/c_test.py\n")
+    assert rails_census.half_violations(tmp_path) == []
+
+
+def test_a_half_that_is_not_utf8_fails(tmp_path: Path) -> None:
+    _two_rails(tmp_path)
+    _plant(tmp_path, rails_census.HALVES[0], "tests/rails/test_a.py\n")
+    (tmp_path / rails_census.HALVES[1]).write_bytes(b"tests/rails/test_b.py\n\xff\n")
+    bad = rails_census.half_violations(tmp_path)
+    assert bad[0] == (
+        f"{rails_census.HALVES[1]} cannot be read (UnicodeDecodeError), so its half runs nothing"
+    ), bad
+
+
+def test_a_folder_named_like_the_rails_is_not_theirs(tmp_path: Path) -> None:
+    """``tests/rails_other`` is not ``tests/rails``: its modules are in no half, and need not be."""
+    _two_rails(tmp_path)
+    _plant(tmp_path, "tests/rails_other/test_x.py", ROWS[-1][1])
+    _halves(tmp_path, "tests/rails/test_a.py\n", "tests/rails/test_b.py\n")
+    assert rails_census.half_violations(tmp_path) == []
+
+
+#: A conftest that wires ``--shard-list`` in, as ``tests/conftest.py`` does.
+_SHARD_LIST_CONFTEST = f"""
+import sys
+sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})
+import shard_list
+
+
+def pytest_addoption(parser):
+    shard_list.addoption(parser)
+
+
+def pytest_configure(config):
+    shard_list.configure(config)
+
+
+def pytest_ignore_collect(collection_path, config):
+    return shard_list.ignore_collect(collection_path, config)
+
+
+def pytest_collection_finish(session):
+    shard_list.collection_finish(session)
+"""
+
+
+def _collected(root: Path, *args: str) -> set[str]:
+    done = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"]
+        + ["-o", "addopts=", "tests/rails", *args],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    return {line for line in done.stdout.splitlines() if "::" in line}
+
+
+def test_halves_the_check_passes_collect_what_pytest_collects_in_tests_rails(
+    tmp_path: Path,
+) -> None:
+    """Differential, against pytest itself: halves ``rails check`` passes collect, with the
+    ``--shard-list`` runs CI makes, exactly what ``pytest tests/rails`` collects, each test in
+    one half. A rail pytest collects that no half lists is a violation, never a pass."""
+    _plant(tmp_path, "pyproject.toml", '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n')
+    _plant(tmp_path, "tests/conftest.py", _SHARD_LIST_CONFTEST)
+    for rel in ("tests/rails/test_a.py", "tests/rails/test_b.py", "tests/rails/c_test.py"):
+        _plant(tmp_path, rel, ROWS[0][1])
+    _halves(tmp_path, "tests/rails/test_a.py\n", "tests/rails/test_b.py\n")
+    assert any(
+        "c_test.py is in neither half" in line for line in rails_census.half_violations(tmp_path)
+    )
+    _halves(tmp_path, "tests/rails/test_a.py\n", "tests/rails/test_b.py\ntests/rails/c_test.py\n")
+    assert rails_census.half_violations(tmp_path) == []
+    whole = _collected(tmp_path)
+    first, second = (_collected(tmp_path, "--shard-list", half) for half in rails_census.HALVES)
+    assert len(whole) == 3, whole
+    assert not first & second and first | second == whole, (first, second)
+
+
+def test_a_missing_half_fails(tmp_path: Path) -> None:
+    _two_rails(tmp_path)
+    _plant(tmp_path, rails_census.HALVES[0], "tests/rails/test_a.py\ntests/rails/test_b.py\n")
+    bad = rails_census.half_violations(tmp_path)
+    assert bad == [
+        f"{rails_census.HALVES[1]} cannot be read (FileNotFoundError), so its half runs nothing"
+    ]
+
+
+def test_rails_check_reports_a_half_violation(tmp_path: Path, capsys) -> None:
+    _two_rails(tmp_path)
+    _halves(tmp_path, "tests/rails/test_a.py\n", "tests/rails/test_a.py\n")
+    assert rails_census.main(["check", "--root", str(tmp_path)]) == 1
+    assert "tests/rails/test_b.py is in neither half" in capsys.readouterr().err
+    _halves(tmp_path, "tests/rails/test_a.py\n", "tests/rails/test_b.py\n")
+    assert rails_census.main(["check", "--root", str(tmp_path)]) == 0
 
 
 def test_a_tree_with_no_test_modules_fails_the_check(tmp_path: Path) -> None:

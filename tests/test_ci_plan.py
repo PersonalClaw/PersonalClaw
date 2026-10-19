@@ -301,6 +301,35 @@ def test_an_override_never_makes_a_path_known(paths) -> None:
         assert set(_plan(kind_of_path).jobs) <= set(_plan(kind_of_path, areas=areas).jobs)
 
 
+#: The job that runs `rails check`, with inputs no diff of these tests reaches.
+_RAILS_CHECKS = """
+[[job]]
+id = "rails-checks"
+tiers = ["change", "merge"]
+inputs = ["ASSET_LICENSES.json"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+timeout_min = 10
+command = [{ argv = ["uv", "run", "python", "-m", "tools.ci", "rails", "check"] }]
+"""
+
+
+@pytest.mark.parametrize(
+    ("tier", "paths"),
+    [("merge", ["docs/a.md"]), ("change", ["tests/rails/test_new_rail.py"])],
+    ids=["a-docs-diff", "a-new-rail"],
+)
+def test_the_rails_own_check_is_planned_whatever_its_inputs(tier, paths) -> None:
+    """`rails check` holds every rail to one half of the rails job: it runs whenever the rails
+    do, so a diff that adds a rail plans it even once its own inputs are narrowed."""
+    text = _TEXT.replace('jobs = [\n  "rails",', 'jobs = [\n  "rails", "rails-checks",', 1)
+    p = _plan(paths, tier=tier, text=text + _RAILS_CHECKS)
+    assert not p.full and "rails-checks" in p.jobs, (p.jobs, p.full_reasons)
+    assert p.reasons["rails-checks"] == ["the rails' own check always runs"]
+
+
 def test_a_plan_holds_only_its_tiers_jobs() -> None:
     p = _plan(["web/src/App.tsx", "docs/a.md"], tier="change")
     assert set(p.jobs) == {"rails", "docs-check"}
@@ -641,6 +670,81 @@ def test_every_plan_reports_the_floor() -> None:
     assert _plan([]).rails_floor == planner.NOT_MEASURED
 
 
+def _halves(folder: Path, run_id: int, *legs: tuple[str, str, float]) -> None:
+    jobs = [{"name": n, "conclusion": c, "minutes": m} for n, c, m in legs]
+    _head(folder, run_id, json.dumps({"kind": "run", "workflow": "ci.yml", "jobs": jobs}))
+
+
+def test_a_halved_runs_floor_is_its_slower_half(tmp_path) -> None:
+    """The rails end when the slower half ends: 6 and 4 is a 6-minute run, never 4 or 10."""
+    _halves(tmp_path, 1, ("rails (1)", "success", 6.0), ("rails (2)", "success", 4.0))
+    _halves(tmp_path, 2, ("rails (1)", "success", 5.0), ("rails (2)", "success", 5.5))
+    _history(tmp_path, 3, "ci.yml", 9.0, "success")
+    assert planner.rails_floor(tmp_path) == {"minutes": 6.0, "runs": 3}
+
+
+@pytest.mark.parametrize(
+    "legs",
+    [
+        (("rails (1)", "success", 6.0), ("rails (2)", "cancelled", 10.3)),
+        (("rails (1)", "success", 6.0), ("rails (2)", "success", float("nan"))),
+    ],
+    ids=["a-half-cut-off", "a-half-unmeasured"],
+)
+def test_a_run_with_a_half_that_did_not_pass_measures_nothing(tmp_path, legs) -> None:
+    """A run whose other half was cut off at the cap did not finish its rails in 6 minutes."""
+    _halves(tmp_path, 1, *legs)
+    assert planner.rails_floor(tmp_path) == planner.NOT_MEASURED
+
+
+#: Runs whose rails jobs are not one whole job, nor exactly the two halves, each once.
+_NOT_TWO_HALVES = {
+    "only half 1": (("rails (1)", "success", 6.0),),
+    "only half 2": (("rails (2)", "success", 6.0),),
+    "half 1 twice": (("rails (1)", "success", 6.0), ("rails (1)", "success", 5.0)),
+    "a third leg": (
+        ("rails (1)", "success", 6.0),
+        ("rails (2)", "success", 5.0),
+        ("rails (3)", "success", 4.0),
+    ),
+    "the whole job beside the halves": (
+        ("rails", "success", 9.0),
+        ("rails (1)", "success", 6.0),
+        ("rails (2)", "success", 5.0),
+    ),
+    "the whole job twice": (("rails", "success", 6.0), ("rails", "success", 5.0)),
+}
+
+
+@pytest.mark.parametrize("legs", list(_NOT_TWO_HALVES.values()), ids=list(_NOT_TWO_HALVES))
+def test_a_run_missing_a_half_measures_nothing(tmp_path, legs) -> None:
+    """A run whose history lacks a half, or names one twice, does not say when its rails ended."""
+    _halves(tmp_path, 1, *legs)
+    assert planner.rails_floor(tmp_path) == planner.NOT_MEASURED
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "rails-checks",
+        "rails (x)",
+        "rails (1",
+        "rails (12",
+        "rails (1)x",
+        "rails ()",
+        "rails-macos (1)",
+    ],
+)
+def test_a_job_that_is_not_a_rails_half_is_not_read_as_one(tmp_path, name) -> None:
+    """Beside the two halves, a job named like one is another job: neither a third leg that
+    voids the run nor a slower half."""
+    halves = (("rails (1)", "success", 6.0), ("rails (2)", "success", 4.0))
+    _halves(tmp_path, 1, *halves, (name, "success", 9.0))
+    assert planner.rails_floor(tmp_path) == {"minutes": 6.0, "runs": 1}
+    _halves(tmp_path, 1, (name, "success", 3.0))
+    assert planner.rails_floor(tmp_path) == planner.NOT_MEASURED
+
+
 # ── the command ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -847,18 +951,18 @@ def _zip(
     *,
     kind: str = "run",
     line_bytes: int | None = None,
+    legs: tuple[tuple[str, str, float], ...] = (),
 ) -> bytes:
-    """One history archive whose run line names ``run_id``; ``line_bytes`` pads that line,
-    its newline included, to exactly that length."""
+    """One history archive whose run line names ``run_id``: one passing ``rails`` job of
+    ``rails`` minutes, or the jobs ``legs`` names (name, conclusion, minutes). ``line_bytes``
+    pads that line, its newline included, to exactly that length."""
     import io
     import zipfile
 
-    head: dict[str, object] = {
-        "kind": kind,
-        "run_id": run_id,
-        "workflow": workflow,
-        "jobs": [{"name": "rails", "conclusion": "success", "minutes": rails}],
-    }
+    jobs = [{"name": n, "conclusion": c, "minutes": m} for n, c, m in legs] or [
+        {"name": "rails", "conclusion": "success", "minutes": rails}
+    ]
+    head: dict[str, object] = {"kind": kind, "run_id": run_id, "workflow": workflow, "jobs": jobs}
     line = json.dumps(head) + "\n"
     if line_bytes is not None:
         head["pad"] = ""
@@ -957,6 +1061,35 @@ def test_the_ci_floor_is_the_median_of_the_newest_three_collected_runs() -> None
         0: ("success", _zip(0, 99.0)),
     }
     assert _floor(*_gh(runs)) == {"minutes": 7.0, "runs": 3}
+
+
+def _two_halves(
+    first: float, second: float, slower_first: bool
+) -> tuple[tuple[str, str, float], ...]:
+    legs = (("rails (1)", "success", first), ("rails (2)", "success", second))
+    return legs if (first >= second) == slower_first else legs[::-1]
+
+
+@pytest.mark.parametrize("slower_first", [True, False], ids=["slower-first", "faster-first"])
+def test_the_ci_floor_of_halved_runs_is_each_runs_slower_half(slower_first) -> None:
+    """The path ci.yml's `changes` job reads: a halved run's rails minutes are its slower half's,
+    in whichever order its history lists them; a run with a half cut off measures nothing, so the
+    next run is read instead; a run from before the halves counts by its one job."""
+    cut_off = (("rails (1)", "success", 3.0), ("rails (2)", "cancelled", 10.3))
+    runs = {
+        5: ("success", _zip(5, 0, legs=_two_halves(6.0, 4.0, slower_first))),
+        4: ("failure", _zip(4, 0, legs=cut_off)),
+        3: ("success", _zip(3, 0, legs=_two_halves(5.0, 5.5, slower_first))),
+        2: ("success", _zip(2, 7.5)),
+        1: ("success", _zip(1, 99.0)),
+    }
+    assert _floor(*_gh(runs)) == {"minutes": 6.0, "runs": 3}
+
+
+@pytest.mark.parametrize("legs", list(_NOT_TWO_HALVES.values()), ids=list(_NOT_TWO_HALVES))
+def test_a_ci_run_missing_a_half_measures_nothing(legs) -> None:
+    text, binary = _gh({1: ("success", _zip(1, 0, legs=legs))})
+    assert _floor(text, binary) == planner.NOT_MEASURED
 
 
 def test_history_the_collector_did_not_upload_is_not_read() -> None:

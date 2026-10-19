@@ -1372,10 +1372,24 @@ jobs:
     # live in tests/rails. They run here, once, and in no suite shard: tools/ci/shards.py leaves
     # tests/rails out of every plan, so `shards check` proves no shard lists one. breadth.yml's
     # `rails-macos` leg runs the same set nightly on macOS.
+    #
+    # The rails run in two halves, in parallel, each under the 10-minute cap: one job running
+    # all of them hit that cap on more than half of main's pushes. tools/ci/rails-half-1.txt and
+    # rails-half-2.txt name each half's files, balanced by their recorded seconds, and `rails
+    # check` (in `rails-checks`) fails when a rail is in neither half or in both. Leg i runs
+    # rails-half-<i>.txt, each half on one leg: the CI contract row "each half of the rails runs
+    # once, on its own leg" holds the matrix to the lists. The cap is never raised: a half that
+    # outgrows it is rebalanced. `--shard-list` prints each worker's collection seconds and peak
+    # memory under "shard collection and memory", as a shard does.
     needs: [tree-check]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    strategy:
+      # One red half does not cancel the other: both halves' reports land in one push.
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     # No PERSONALCLAW_HOME (see `test-shard`): the suite runs under the no-global-home contract.
     # The rest is `test-shard`'s environment, so a rail sees what it saw in a shard.
     env:
@@ -1395,12 +1409,53 @@ jobs:
           node: "true"
       - name: Install (locked)
         run: uv sync --locked --extra dev
-      # Every module the census places in tests/rails, on four workers. Its junit lists every rail
-      # this run ran, so a rail red on main can be traced to the pull request's run that ran it.
-      - name: every rail (tests/rails)
-        run: uv run pytest -n 4 --dist worksteal -q tests/rails --junitxml=reports/junit-rails.xml
+      # This half's modules of tests/rails, on four workers. The two halves' junit together list
+      # every rail this run ran, so a rail red on main can be traced to the pull request's run
+      # that ran it.
+      - name: the rails, half ${{ matrix.shard }} of 2 (tests/rails)
+        run: uv run pytest -n 4 --dist worksteal -q tests/rails --shard-list tools/ci/rails-half-${{ matrix.shard }}.txt --junitxml=reports/junit-rails-${{ matrix.shard }}.xml
+      # Same argument as `test-shard`'s upload step, one artifact per half.
+      - name: Upload JUnit results (rails half ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-rails-${{ matrix.shard }}
+          path: reports/junit-rails-${{ matrix.shard }}.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+  rails-checks:
+    # ── The whole-tree checks that ran beside the rails before they were halved ─────────────
+    # The census's own verdict, the asset licences, the gate aggregate and the npm advisory
+    # floors over the installed tree. About two minutes; its own job so neither rails half
+    # carries them.
+    needs: [tree-check]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # No PERSONALCLAW_HOME (see `test-shard`); the rest is the rails halves' environment.
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
+        with:
+          python-version: "3.12.15"
+          node: "true"
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
       # The rule itself, apart from the contract row that holds it: the census's own verdict,
-      # naming any rail outside tests/rails and any pending-split name that no longer applies.
+      # naming any rail outside tests/rails, and any module pytest collects under tests/rails
+      # (`test_*.py` or `*_test.py`) in neither of the rails job's halves
+      # (tools/ci/rails-half-1.txt, rails-half-2.txt) or in both. The planner plans this job on
+      # every diff, as it plans the rails.
       - name: every rail lives in tests/rails
         run: uv run python -m tools.ci rails check
       # Every tracked font, image, binary and fixture has a recorded source, licence and notice
@@ -1416,9 +1471,10 @@ jobs:
       # twin reached CI not at all.
       #
       # Run as the script rather than `make gates` so the failure names the gate instead of
-      # "make: *** [gates] Error 1", and placed in `rails` because that job is already the home
-      # for machine-checked invariants. It imports only `scripts/*` + stdlib, so it needs no
-      # PERSONALCLAW_HOME — consistent with this job's no-global-home contract.
+      # "make: *** [gates] Error 1", and placed in `rails-checks`, the home of the whole-tree
+      # checks that ran beside the rails before they were halved, so neither half carries it. It
+      # imports only `scripts/*` + stdlib, so it needs no PERSONALCLAW_HOME — consistent with this
+      # job's no-global-home contract.
       - name: gate aggregate (make gates)
         run: uv run python scripts/gate_report.py
       # The npm advisory floors read package-lock.json, which `test` already covers, and then the
@@ -1433,16 +1489,7 @@ jobs:
         env:
           PERSONALCLAW_REQUIRE_NPM_TREE: "1"
         run: uv run pytest tests/test_npm_advisory_floors.py --junitxml=reports/junit-npm-floors.xml
-      # Same argument as `test-shard`'s upload step. Placed after the aggregate so a red gate
-      # still publishes the residue sweep's report (`always()`, not `success()`).
-      - name: Upload JUnit results (rails)
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: junit-rails
-          path: reports/junit-rails.xml
-          if-no-files-found: ignore
-          retention-days: 7
+      # Same argument as `test-shard`'s upload step (`always()`, not `success()`).
       - name: Upload JUnit results (npm advisory floors)
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

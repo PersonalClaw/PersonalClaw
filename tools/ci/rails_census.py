@@ -2,7 +2,8 @@
 
 A **rail** reads the repository itself — the package, ``web/src``, ``docs``, the workflows,
 ``tests/``, any file beside them — and judges what it finds. Rails live in ``tests/rails/`` and
-run once per CI run, in the ``rails`` job; the suite's shards never collect them
+run once per CI run, in the ``rails`` job's two halves (:data:`HALVES`, each rail in exactly
+one, held by :func:`half_violations`); the suite's shards never collect them
 (``tools/ci/shards.py``). This module decides membership from each module's source, read with
 ``ast`` and never imported, so the rule is code and the ``rails`` row of the CI contract table
 can hold the tree to it.
@@ -43,14 +44,19 @@ from __future__ import annotations
 
 import argparse
 import ast
+import fnmatch
 import json
 import sys
+import tomllib
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
 #: Where rails live. Nothing else under ``tests/`` may hold one.
 RAILS = "tests/rails"
+
+#: The names pytest collects as test modules when its configuration names none.
+PYTEST_FILES: tuple[str, ...] = ("test_*.py", "*_test.py")
 
 #: The suite's test helpers that read the tree for a rail.
 TREE_HELPERS = frozenset({"source_index", "controller_sources"})
@@ -442,12 +448,36 @@ def classify(rel: str, source: str, helpers: Mapping[str, HelperFacts] | None = 
 # ── the tree ────────────────────────────────────────────────────────────────────────────────
 
 
+def python_files(root: Path) -> tuple[str, ...]:
+    """The file names pytest collects as test modules under ``root``: ``python_files`` in
+    ``root/pyproject.toml``, read as ``tools/ci/shards.py`` reads it, or pytest's defaults
+    (:data:`PYTEST_FILES`) when the file or the setting is absent. A setting that is not a list
+    names nothing, so the census finds no module and fails rather than reading too few."""
+    path = root / "pyproject.toml"
+    if not path.is_file():
+        return PYTEST_FILES
+    options: object = tomllib.loads(path.read_text(encoding="utf-8"))
+    for key in ("tool", "pytest", "ini_options"):
+        options = options.get(key, {}) if isinstance(options, Mapping) else {}
+    named = options.get("python_files", PYTEST_FILES) if isinstance(options, Mapping) else ()
+    return tuple(str(p) for p in named) if isinstance(named, (list, tuple)) else ()
+
+
+def _is_test_module(name: str, patterns: Iterable[str]) -> bool:
+    return name.endswith(".py") and any(fnmatch.fnmatch(name, p) for p in patterns)
+
+
 def test_modules(root: Path) -> Iterator[Path]:
-    """Every ``test_*.py`` under ``root/tests``, in path order. Only the parts below ``root``
-    are filtered, so a checkout that sits inside a dot-folder is still read whole."""
-    for path in sorted((root / "tests").rglob("test_*.py")):
+    """Every test module under ``root/tests``, in path order: each ``.py`` file whose name
+    pytest collects (:func:`python_files`), so ``foo_test.py`` is one as ``test_foo.py`` is, and
+    ``--shard-list`` and this census agree on what a half must list. Only the parts below
+    ``root`` are filtered, so a checkout that sits inside a dot-folder is still read whole."""
+    patterns = python_files(root)
+    for path in sorted((root / "tests").rglob("*.py")):
         parts = path.relative_to(root).parts
-        if "__pycache__" not in parts and not any(p.startswith(".") for p in parts):
+        if "__pycache__" in parts or any(p.startswith(".") for p in parts):
+            continue
+        if _is_test_module(path.name, patterns):
             yield path
 
 
@@ -486,13 +516,14 @@ def _facts_of(source: str, facts: Mapping[str, HelperFacts]) -> HelperFacts:
 
 def helper_facts(root: Path) -> dict[str, HelperFacts]:
     """For each helper module under ``root/tests`` (a ``.py`` file that is neither a test module
-    nor a ``conftest.py``), by module name, what its names are. A helper that imports another
-    is read in the light of that one, so a chain of helpers resolves."""
+    (:func:`test_modules`) nor a ``conftest.py``), by module name, what its names are. A helper
+    that imports another is read in the light of that one, so a chain of helpers resolves."""
+    patterns = python_files(root)
     sources = {
         path.stem: path.read_text(encoding="utf-8")
         for path in sorted((root / "tests").rglob("*.py"))
         if "__pycache__" not in path.parts
-        and not path.name.startswith("test_")
+        and not _is_test_module(path.name, patterns)
         and path.name != "conftest.py"
     }
     facts: dict[str, HelperFacts] = {}
@@ -537,6 +568,43 @@ def violations(root: Path) -> list[str]:
     return misplaced(modules)
 
 
+#: The rails job's halves: each names the rail modules one half runs, one per line, and
+#: ``ci.yml``'s rails job runs half ``i`` with ``--shard-list tools/ci/rails-half-<i>.txt``.
+HALVES: tuple[str, ...] = ("tools/ci/rails-half-1.txt", "tools/ci/rails-half-2.txt")
+
+
+def half_violations(root: Path) -> list[str]:
+    """Everything wrong with the rails job's halves: a list that is missing or names nothing,
+    a rail module in neither half or in both, and a listed file that is not a test module under
+    :data:`RAILS`. Together the halves are exactly the rail modules, each once."""
+    rails = {
+        rel
+        for rel in (path.relative_to(root).as_posix() for path in test_modules(root))
+        if rel.startswith(RAILS + "/")
+    }
+    bad: list[str] = []
+    seen: dict[str, list[str]] = {}
+    for half in HALVES:
+        try:
+            lines = (root / half).read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError) as exc:
+            bad.append(f"{half} cannot be read ({type(exc).__name__}), so its half runs nothing")
+            continue
+        listed = [line.strip() for line in lines if line.strip()]
+        if not listed:
+            bad.append(f"{half} names no file, so its half runs nothing")
+        for rel in listed:
+            seen.setdefault(rel, []).append(half)
+    for rel in sorted(rails - set(seen)):
+        bad.append(f"{rel} is in neither half of the rails job ({', '.join(HALVES)})")
+    for rel, halves in sorted(seen.items()):
+        if len(halves) > 1:
+            bad.append(f"{rel} is listed {len(halves)} times ({', '.join(halves)}): it runs once")
+        if rel not in rails:
+            bad.append(f"{rel} is listed in {halves[0]} and is no test module under {RAILS}/")
+    return bad
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m tools.ci rails")
     parser.add_argument("command", choices=["census", "check"])
@@ -552,7 +620,7 @@ def main(argv: list[str] | None = None) -> int:
                 if found.kind != "suite":
                     print(found.line())
         return 0
-    bad = violations(Path(args.root))
+    bad = violations(Path(args.root)) + half_violations(Path(args.root))
     for line in bad:
         print(line, file=sys.stderr)
     return 1 if bad else 0

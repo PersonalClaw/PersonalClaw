@@ -375,8 +375,11 @@ overrides (`--areas`, beside the catalogue by default):
   their jobs call (`.github/actions/`), `tools/ci/`, the locks and manifests and the image
   smoke's own inputs (all whole-tier), the installer (`static`) and the SDK snapshot script
   (`apps-contract`).
-- **Always planned:** the `rails` job, every `security` job, every `live` job, and each job an
-  `after` of a planned one names.
+- **Always planned:** the `rails` job (both halves) and `rails-checks`, whose `rails check`
+  holds every rail to exactly one half, every `security` job, every `live` job, and each job an
+  `after` of a planned one names. `rails-checks` also runs the asset licences, the gate
+  aggregate and the npm advisory floors. The loader refuses a merge tier whose rails run in
+  halves without `rails-checks`, as it refuses one without `rails`.
 - **Fail-safe: the whole tier.** An empty diff, a path no input but the whole tree names, a
   path that is not a plain path inside the repository (empty, absolute, `..`, not in its
   normal form, a newline, a carriage return or a NUL in it, not a string), a list that cannot
@@ -388,13 +391,15 @@ overrides (`--areas`, beside the catalogue by default):
   refuses a wildcard the planner would read otherwise than git: a backslash, a `[` it never
   closes, a `/` or a `[:name:]` in a class, `literal` with `glob`. A test holds the matcher to
   `git ls-files` over the forms it accepts.
-- **The rails floor** is the median minutes of `ci.yml`'s passing `rails` job over a folder of
-  telemetry history (`--history`). A head it cannot measure from (no job list, minutes that
-  are not a finite positive number) is skipped; with none it reads
+- **The rails floor** is the median, over a folder of telemetry history (`--history`), of each
+  `ci.yml` run's rails minutes: the slower of its two halves, `rails (1)` and `rails (2)`, or
+  the one `rails` job a run before the halves had. A run with a half that did not pass, a half
+  missing or a half named twice measures nothing, and so does a head it cannot measure from (no
+  job list, minutes that are not a finite positive number); with none it reads
   `{"minutes": null, "runs": 0}`, never a guessed number. On CI it is read with `--repo
   <owner/name>` from `main`'s history instead: the newest three completed `ci.yml` runs on
   `main` whose history the collector itself uploaded, a cancelled run skipped and a red one
-  counted when its rails job passed, and only a history line naming that run. Each `gh` call
+  counted when its rails jobs passed, and only a history line naming that run. Each `gh` call
   gets what is left of 60 seconds, so the read ends within them; any failure, running out of
   time included, gives what was read and a warning on stderr. The floor is a report, never a
   gate: nothing it reads changes the plan's jobs.
