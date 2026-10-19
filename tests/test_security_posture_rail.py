@@ -26,7 +26,11 @@ The same two declarations reach past config fields, and are railed here too:
 
 from __future__ import annotations
 
+import functools
+
 import pytest
+from fenced_rows import fences_unchanged
+from table_rows import row
 from test_apps_cannot_relax_security import LOOSENING_WRITES
 from test_apps_cannot_run_code_or_bypass_approvals import AUTOMATION_POSTURE_CASES
 
@@ -48,8 +52,20 @@ pytestmark = pytest.mark.security
 CONTROLS = sorted(k for k, spec in _EDITABLE_CONFIG.items() if security_control(spec))
 
 
+def _controls_in_the_registry() -> int:
+    """How many controls ``_EDITABLE_CONFIG`` holds, counted apart from :data:`CONTROLS`, so a
+    table that skipped one cannot agree with it."""
+    return sum(1 for spec in _EDITABLE_CONFIG.values() if security_control(spec) is not None)
+
+
+@functools.cache
+def _defaults() -> dict:
+    """What a fresh config resolves to, read once: every row below reads it and none writes it."""
+    return AppConfig().to_dict()
+
+
 def _in_effect(path: str) -> object:
-    node: object = AppConfig().to_dict()
+    node: object = _defaults()
     for part in path.split("."):
         assert isinstance(node, dict) and part in node, f"{path} does not resolve in to_dict()"
         node = node[part]
@@ -63,45 +79,65 @@ def test_the_list_is_not_vacuous() -> None:
         assert named in CONTROLS
 
 
-@pytest.mark.parametrize(
-    "field",
-    sorted(k for k in _EDITABLE_CONFIG if k.split(".")[0] in SECURITY_SECTIONS),
-)
-def test_every_field_in_a_security_section_declares_what_it_is(field: str) -> None:
-    declared = _EDITABLE_CONFIG[field].get("security")
-    assert isinstance(declared, (SecurityControl, NotASecurityControl)), (
-        f"{field} sits in a security section and declares no sensitivity. Add "
-        '`"security": SecurityControl(...)` (and a case in LOOSENING_WRITES), or '
-        '`"security": NotASecurityControl("why")` if changing it loosens nothing.'
-    )
+def test_every_field_in_a_security_section_declares_what_it_is(subtests) -> None:
+    fields = sorted(k for k in _EDITABLE_CONFIG if k.split(".")[0] in SECURITY_SECTIONS)
+    checked = 0
+    for field in fields:
+        with row(subtests, field=field), fences_unchanged():
+            declared = _EDITABLE_CONFIG[field].get("security")
+            assert isinstance(declared, (SecurityControl, NotASecurityControl)), (
+                f"{field} sits in a security section and declares no sensitivity. Add "
+                '`"security": SecurityControl(...)` (and a case in LOOSENING_WRITES), or '
+                '`"security": NotASecurityControl("why")` if changing it loosens nothing.'
+            )
+        checked += 1
+    in_sections = sum(1 for k in _EDITABLE_CONFIG if k.partition(".")[0] in SECURITY_SECTIONS)
+    assert checked == in_sections, "a field of a security section was left out of the table"
 
 
-@pytest.mark.parametrize("field", sorted(k for k, s in _EDITABLE_CONFIG.items() if "security" in s))
-def test_every_declaration_is_one_of_the_two_kinds(field: str) -> None:
-    declared = _EDITABLE_CONFIG[field]["security"]
-    assert isinstance(declared, (SecurityControl, NotASecurityControl))
-    if isinstance(declared, NotASecurityControl):
-        assert declared.reason.strip(), f"{field}: a reviewed exemption must say why"
+def test_every_declaration_is_one_of_the_two_kinds(subtests) -> None:
+    checked = 0
+    for field in sorted(k for k, s in _EDITABLE_CONFIG.items() if "security" in s):
+        with row(subtests, field=field), fences_unchanged():
+            declared = _EDITABLE_CONFIG[field]["security"]
+            assert isinstance(declared, (SecurityControl, NotASecurityControl))
+            if isinstance(declared, NotASecurityControl):
+                assert declared.reason.strip(), f"{field}: a reviewed exemption must say why"
+        checked += 1
+    declaring = sum(1 for spec in _EDITABLE_CONFIG.values() if "security" in spec)
+    assert checked == declaring, "a declaration was left out of the table"
 
 
-@pytest.mark.parametrize("field", CONTROLS)
-def test_every_control_resolves_to_a_value_in_effect(field: str) -> None:
-    _in_effect(field)
+def test_every_control_resolves_to_a_value_in_effect(subtests) -> None:
+    checked = 0
+    for field in CONTROLS:
+        with row(subtests, field=field), fences_unchanged():
+            _in_effect(field)
+        checked += 1
+    assert checked == _controls_in_the_registry(), "a control was left out of the table"
 
 
-@pytest.mark.parametrize("field", CONTROLS)
-def test_every_consent_sentence_is_a_sentence(field: str) -> None:
+def test_every_consent_sentence_is_a_sentence(subtests) -> None:
     # It is dialog copy: a surface that did not ask its own question shows exactly this.
-    consent = security_control(_EDITABLE_CONFIG[field]).consent
-    assert consent[:1].isupper() and consent.endswith("."), consent
+    checked = 0
+    for field in CONTROLS:
+        with row(subtests, field=field), fences_unchanged():
+            consent = security_control(_EDITABLE_CONFIG[field]).consent
+            assert consent[:1].isupper() and consent.endswith("."), consent
+        checked += 1
+    assert checked == _controls_in_the_registry(), "a control was left out of the table"
 
 
-@pytest.mark.parametrize("field", CONTROLS)
-def test_the_shipped_default_is_not_already_looser_than_itself(field: str) -> None:
+def test_the_shipped_default_is_not_already_looser_than_itself(subtests) -> None:
     # A rule that calls "write what is already stored" a loosening would demand consent for a
     # no-op, which teaches the owner to click through the dialog.
-    default = _in_effect(field)
-    assert not security_control(_EDITABLE_CONFIG[field]).loosens(default, default)
+    checked = 0
+    for field in CONTROLS:
+        with row(subtests, field=field), fences_unchanged():
+            default = _in_effect(field)
+            assert not security_control(_EDITABLE_CONFIG[field]).loosens(default, default)
+        checked += 1
+    assert checked == _controls_in_the_registry(), "a control was left out of the table"
 
 
 def test_the_loosening_table_covers_every_control_exactly() -> None:
@@ -125,14 +161,18 @@ def test_every_loosening_case_really_loosens() -> None:
         assert security_control(_EDITABLE_CONFIG[field]).loosens(current, value), (field, value)
 
 
-@pytest.mark.parametrize("field", sorted(CONFIG_ON_DISCARDED_READ))
-def test_a_discarded_read_substitutes_the_restrictive_end(field: str) -> None:
+def test_a_discarded_read_substitutes_the_restrictive_end(subtests) -> None:
     # `CONFIG_ON_DISCARDED_READ` answers a different question (what to hold a field at when
     # config.json cannot be read), but its membership rule is "a security control", so every
     # entry must be on the list — and moving TO its value must never be a loosening.
-    control = security_control(_EDITABLE_CONFIG[field])
-    assert control is not None, f"{field} is held fail-closed but is not on the list"
-    assert not control.loosens(_in_effect(field), CONFIG_ON_DISCARDED_READ[field])
+    checked = 0
+    for field in sorted(CONFIG_ON_DISCARDED_READ):
+        with row(subtests, field=field), fences_unchanged():
+            control = security_control(_EDITABLE_CONFIG[field])
+            assert control is not None, f"{field} is held fail-closed but is not on the list"
+            assert not control.loosens(_in_effect(field), CONFIG_ON_DISCARDED_READ[field])
+        checked += 1
+    assert checked == len(CONFIG_ON_DISCARDED_READ), "a held field was left out of the table"
 
 
 def test_the_put_endpoint_writes_no_security_setting() -> None:
@@ -168,15 +208,23 @@ def test_an_agent_profiles_approval_mode_is_the_same_control() -> None:
 # ── routes: every write in a security family declares who may reach it ───────────────
 
 
-def _family_write_routes() -> list[tuple[str, str]]:
-    """``(METHOD, canonical route)`` for every write route registered under a security family —
-    from the same AST census the published route reference is rendered from, so no boot."""
-    from personalclaw.apps.permissions import WRITE_METHODS, security_family
+@functools.cache
+def _registered_routes() -> tuple[dict, ...]:
+    """Every route the source registers, from the same AST census the published route reference
+    is rendered from, so no boot. Read once: it is a scan of the whole package, and every route
+    test below reads the same answer."""
     from personalclaw.manifest_reference import _routes_from_ast
+
+    return tuple(_routes_from_ast())
+
+
+def _family_write_routes() -> list[tuple[str, str]]:
+    """``(METHOD, canonical route)`` for every write route registered under a security family."""
+    from personalclaw.apps.permissions import WRITE_METHODS, security_family
 
     return sorted(
         (r["method"], r["path"])
-        for r in _routes_from_ast()
+        for r in _registered_routes()
         if (r["method"] in WRITE_METHODS or r["method"] == "*") and security_family(r["path"])
     )
 
@@ -186,11 +234,10 @@ def _family_read_routes(*, declared_families_only: bool = True) -> list[tuple[st
     declared route by route (the conversation families) — or, with ``declared_families_only``
     off, under any security family, where a read MAY carry a row (``owns`` on a draft skill)."""
     from personalclaw.apps.permissions import READ_DECLARED_FAMILIES, READ_METHODS, security_family
-    from personalclaw.manifest_reference import _routes_from_ast
 
     return sorted(
         (r["method"], r["path"])
-        for r in _routes_from_ast()
+        for r in _registered_routes()
         if r["method"] in READ_METHODS
         and security_family(r["path"])
         and (not declared_families_only or security_family(r["path"]) in READ_DECLARED_FAMILIES)
@@ -300,8 +347,7 @@ def test_every_route_declaration_is_real_and_says_why() -> None:
             assert owned.field and owned.capability.strip(), f"{key}: {owned}"
 
 
-@pytest.mark.parametrize("family", sorted(SECURITY_ROUTE_FAMILIES))
-def test_a_new_route_in_any_family_fails_closed(family: str) -> None:
+def test_a_new_route_in_any_family_fails_closed(subtests) -> None:
     # A write is refused either way: by a subtree row that covers every route under it, or by the
     # undeclared-route check until someone declares it. A read is refused the same way under the
     # conversation families, and is the allowlist's business anywhere else.
@@ -311,13 +357,18 @@ def test_a_new_route_in_any_family_fails_closed(family: str) -> None:
         undeclared_security_route,
     )
 
-    route = f"{family}/{{id}}/a-route-added-tomorrow"
-    assert owner_only_api_reason(route) or undeclared_security_route("POST", route)
-    if family in READ_DECLARED_FAMILIES:
-        assert undeclared_security_route("GET", route), "a read of your conversations is declared"
-        assert undeclared_security_route("HEAD", route), "HEAD is the same read"
-    else:
-        assert not undeclared_security_route("GET", route), "a READ is the allowlist's business"
+    checked = 0
+    for family in sorted(SECURITY_ROUTE_FAMILIES):
+        with row(subtests, family=family), fences_unchanged():
+            route = f"{family}/{{id}}/a-route-added-tomorrow"
+            assert owner_only_api_reason(route) or undeclared_security_route("POST", route)
+            if family in READ_DECLARED_FAMILIES:
+                assert undeclared_security_route("GET", route), "a read of yours is declared"
+                assert undeclared_security_route("HEAD", route), "HEAD is the same read"
+            else:
+                assert not undeclared_security_route("GET", route), "a READ is the allowlist's"
+        checked += 1
+    assert checked == len(SECURITY_ROUTE_FAMILIES), "a family was left out of the table"
 
 
 # ── an automation's posture ───────────────────────────────────────────────────────────
@@ -328,13 +379,17 @@ def test_every_automation_posture_key_is_driven_by_a_consent_case() -> None:
     assert covered == set(POSTURE_SPECS), (covered, set(POSTURE_SPECS))
 
 
-@pytest.mark.parametrize("key", sorted(POSTURE_SPECS))
-def test_an_automation_posture_key_is_a_control_with_a_sentence(key: str) -> None:
-    control = security_control(POSTURE_SPECS[key])
-    assert control is not None
-    assert control.consent[:1].isupper() and control.consent.endswith("."), control.consent
-    # Unset is the shipped state of every step; re-writing it must never ask.
-    assert not control.loosens("", "")
+def test_an_automation_posture_key_is_a_control_with_a_sentence(subtests) -> None:
+    checked = 0
+    for key in sorted(POSTURE_SPECS):
+        with row(subtests, key=key), fences_unchanged():
+            control = security_control(POSTURE_SPECS[key])
+            assert control is not None
+            assert control.consent[:1].isupper() and control.consent.endswith("."), control.consent
+            # Unset is the shipped state of every step; re-writing it must never ask.
+            assert not control.loosens("", "")
+        checked += 1
+    assert checked == len(POSTURE_SPECS), "a posture key was left out of the table"
 
 
 def test_the_run_overlay_declares_every_knob() -> None:
@@ -361,8 +416,7 @@ _OVERLAY_PROBES = {
 }
 
 
-@pytest.mark.parametrize("knob", sorted(_OVERLAY_PROBES))
-def test_an_overlay_declaration_matches_what_the_engine_consumes(knob: str) -> None:
+def test_an_overlay_declaration_matches_what_the_engine_consumes(subtests) -> None:
     # `tick_config` is the one consumer of a run's resolved policy (`RunController._on_loop_trip`).
     # A control must change what it produces, and an exemption citing `_NOT_CONSUMED` must not —
     # so wiring `autopilot` into the engine turns this red until it is declared a control.
@@ -376,11 +430,16 @@ def test_an_overlay_declaration_matches_what_the_engine_consumes(knob: str) -> N
 
     assert set(_OVERLAY_PROBES) == set(POLICY_OVERRIDE_SECURITY)
     base = parse_supervisor_policy({"budget": {"max_cycles": 3}})
-    changed = tick_config(
-        apply_policy_overrides(base, {knob: _OVERLAY_PROBES[knob]})
-    ) != tick_config(base)
-    declared = POLICY_OVERRIDE_SECURITY[knob]
-    if isinstance(declared, SecurityControl):
-        assert changed, f"{knob} is declared a control but changes nothing the engine reads"
-    elif declared.reason == _NOT_CONSUMED:
-        assert not changed, f"{knob} now changes the engine; declare it a SecurityControl"
+    checked = 0
+    for knob in sorted(_OVERLAY_PROBES):
+        with row(subtests, knob=knob), fences_unchanged():
+            changed = tick_config(
+                apply_policy_overrides(base, {knob: _OVERLAY_PROBES[knob]})
+            ) != tick_config(base)
+            declared = POLICY_OVERRIDE_SECURITY[knob]
+            if isinstance(declared, SecurityControl):
+                assert changed, f"{knob} is declared a control but changes nothing the engine reads"
+            elif declared.reason == _NOT_CONSUMED:
+                assert not changed, f"{knob} now changes the engine; declare it a SecurityControl"
+        checked += 1
+    assert checked == len(POLICY_OVERRIDE_SECURITY), "a knob was left out of the table"
