@@ -7,8 +7,9 @@
 # installed package only when `web/dist` is in the build tree and nothing in
 # `Dockerfile.backend` ever built it. It also asserts the image can offer its default chat
 # model — the installed sign-off record and a non-null `chat_download_offer` — because the
-# image once shipped without that record behind all-200 responses. And a login shell in it
-# must find `personalclaw`, as the dashboard's terminal needs.
+# image once shipped without that record behind all-200 responses. A login shell in it must
+# find `personalclaw`, as the dashboard's terminal needs. And, signed in, seven API endpoints
+# must answer 200 with the JSON their handlers answer (step 9).
 # `tools/docker_single_container_smoke.py` owns the assertions (and their negative control);
 # this file only decides WHICH image it runs against.
 #
@@ -49,6 +50,9 @@ on:
       - src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt
       # What step 7 judges: the profile a login shell in the image reads.
       - deploy/docker/personalclaw-profile.sh
+      # Step 9 judges routes under src/personalclaw/, which are not listed: they would build the
+      # image on most PRs. tests/rails/test_docker_single_container_tree.py holds each to a GET
+      # route the gateway serves on every PR; their answers are judged live here and at release.
       - tools/docker_single_container_smoke.py
       - .github/workflows/docker-single-container.yml
   push:
@@ -71,6 +75,9 @@ on:
       - src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt
       # What step 7 judges: the profile a login shell in the image reads.
       - deploy/docker/personalclaw-profile.sh
+      # Step 9 judges routes under src/personalclaw/, which are not listed: they would build the
+      # image on most PRs. tests/rails/test_docker_single_container_tree.py holds each to a GET
+      # route the gateway serves on every PR; their answers are judged live here and at release.
       - tools/docker_single_container_smoke.py
       - .github/workflows/docker-single-container.yml
   workflow_dispatch:

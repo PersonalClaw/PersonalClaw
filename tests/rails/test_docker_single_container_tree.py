@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 
 import yaml
-from docker_single_container_shared import _REPO
+from docker_single_container_shared import _REPO, get_handler
 
 from tools import docker_single_container_smoke as smoke
 
@@ -122,7 +122,7 @@ def test_the_version_only_arch_smoke_is_left_intact() -> None:
     assert "for arch in amd64 arm64; do" in script
 
 
-def test_main_runs_both_steps_after_the_dashboard_ones() -> None:
+def test_main_runs_the_later_steps_after_the_dashboard_ones() -> None:
     """A step with no call site guards nothing; asserted on `main`'s AST."""
     import ast
 
@@ -137,9 +137,47 @@ def test_main_runs_both_steps_after_the_dashboard_ones() -> None:
         "_assert_installed_record",
         "_assert_download_offer",
         "_assert_login_shell_finds_the_agent_clis",
+        "_assert_api_endpoints",
     ):
         assert step in order, f"main() never runs {step}: {order}"
         assert order.index("_assert_asset") < order.index(step)
+    assert order.index("_assert_download_offer") < order.index("_assert_api_endpoints")
+
+
+#: The endpoints step 9 reads, spelled out: a table that shrank, grew or renamed one fails here.
+_API_STEP_ENDPOINTS = (
+    "/api/system",
+    "/api/auth-status",
+    "/api/providers",
+    "/api/models/active",
+    "/api/security/credentials",
+    "/api/sessions",
+    "/api/agents",
+)
+
+
+#: What the check before step 9 read in place of `/api/models/active` and
+#: `/api/security/credentials`. The gateway serves neither, so they are the negative control.
+_REMOVED_API_ROUTES = ("/api/use-cases", "/api/credentials")
+
+
+def test_the_api_step_reads_the_seven_get_routes_the_gateway_serves() -> None:
+    """Step 9 runs live only where an image is built: this workflow, for its own paths, and the
+    release. A route handler removed under `src/personalclaw/dashboard/` is in neither path list,
+    so the table is held to the router here, on every PR: it is the seven, and each is a GET route
+    the gateway serves. GET, so the step only reads.
+
+    The two removed routes are the control: a resolver that found a handler for them would find
+    one for anything, and the check above would pass for any table.
+    """
+    assert tuple(smoke._API_ENDPOINTS) == _API_STEP_ENDPOINTS, (
+        "step 9's endpoints changed; a smaller table checks less at release, so change this "
+        f"pin only with the reason: {tuple(smoke._API_ENDPOINTS)}"
+    )
+    not_served = [path for path in _API_STEP_ENDPOINTS if get_handler(path) is None]
+    assert not not_served, f"step 9 reads routes the gateway serves no GET for: {not_served}"
+    served = [path for path in _REMOVED_API_ROUTES if get_handler(path) is not None]
+    assert not served, f"the resolver finds a handler for a removed route: {served}"
 
 
 def test_the_image_links_each_command_its_agent_cli_lock_provides() -> None:

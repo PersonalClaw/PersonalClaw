@@ -224,7 +224,6 @@ def test_the_census_sees_the_modules_that_drive_a_runtime():
     }
     for module in (
         "test_compose_standalone.py",
-        "test_deployment_parity.py",
         "test_sandbox_docker.py",
         "test_sandbox_lima.py",
     ):
