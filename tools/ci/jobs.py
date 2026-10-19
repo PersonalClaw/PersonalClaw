@@ -32,8 +32,16 @@ After an interrupted job nothing more runs. ``--changed`` runs the jobs
 
 Exit codes are :mod:`tools.ci.run`'s: 0 every planned job ran here and passed; 1 a job ran and
 failed, or broke its isolation; 2 a job could not run here, was interrupted, or left no record,
-or the input could not be read (an unknown job, tier or option, an option given twice, a tier
-with no job).
+or the input could not be read (an unknown job, tier or option, an option given twice or not
+spelled in full, a tier with no job).
+
+``--working-tree`` (either verb) runs the same steps on the checkout as it stands, uncommitted
+changes included, and writes no record, on a clean tree or a dirty one: the steps ran on no
+commit. Its exit is the steps' result, 2 only for a job that cannot run here or an interrupted
+run, and ``run`` judges nothing. Only in this mode does a job of another platform family run
+here, when every program its toolchain needs is on ``PATH``; the summary names it, with the
+platform CI runs it on. The mode is refused on GitHub, where the checkout is the commit under
+test.
 
 A local result never stands in for GitHub's: nothing reads these records yet, and reuse of a
 recorded pass is not wired. A local ``--workers N`` replaces the catalogue's worker count, is
@@ -130,6 +138,9 @@ class Options:
     workers: int | None = None
     deadline_s: float | None = None  # overrides the cap, for tests
     grace: float = run.GRACE
+    #: Run on the checkout as it stands, uncommitted changes included: the same steps, no
+    #: record, and the steps' result. A local mode only; on GitHub the checkout is a commit.
+    working_tree: bool = False
 
 
 @dataclass
@@ -142,6 +153,9 @@ class Outcome:
     ran: bool = True
     record: Path | None = None
     interrupted: bool = False  # the runner got SIGINT or SIGTERM while a step ran
+    #: In a working-tree run only: the platform the job runs on in CI, when this machine is of
+    #: another family and the job ran here anyway. Never set on a run that records.
+    off_platform: str | None = None
 
 
 # ── what a job needs, and whether it can run here ────────────────────────────────────────────
@@ -151,10 +165,20 @@ def key_of(job: Job, shard: int | None) -> str:
     return f"{job.id} ({shard}/{job.shards})" if shard is not None else job.id
 
 
-def cannot_run_here(job: Job, host: Host) -> list[str]:
-    """Why ``job`` cannot run on this machine; empty when it can."""
+def off_its_platform(job: Job, host: Host) -> bool:
+    """Whether this machine is of another runner family than the one ``job`` runs on in CI."""
+    return not host.family or not job.platform.startswith(host.family)
+
+
+def cannot_run_here(job: Job, host: Host, *, working_tree: bool = False) -> list[str]:
+    """Why ``job`` cannot run on this machine; empty when it can.
+
+    A job of another platform family cannot run here, except in a working-tree run
+    (``working_tree``), which writes no record, so its result can never stand as evidence.
+    A container, a toolchain program missing from PATH and a missing partner checkout are
+    reasons in either mode."""
     why: list[str] = []
-    if not host.family or not job.platform.startswith(host.family):
+    if off_its_platform(job, host) and not working_tree:
         why.append(f"it runs on {job.platform}, and this machine runs {host.family or 'neither'}*")
     if job.container is not None:
         why.append(f"it runs in the container {job.container}")
@@ -355,14 +379,19 @@ def run_one(
     options: Options,
     work: Path,
 ) -> Outcome:
-    """Run ``job`` (shard ``shard`` of it) here, and leave its record in ``work/records``."""
+    """Run ``job`` (shard ``shard`` of it) here, and leave its record in ``work/records`` (none
+    with ``--working-tree``)."""
     key = key_of(job, shard)
     _owned_env(job)
-    why = cannot_run_here(job, host)
+    why = cannot_run_here(job, host, working_tree=options.working_tree)
     if why:
         return Outcome(key, run.PARTIAL, [f"cannot run here: {w}" for w in why], ran=False)
     if options.workers is not None and host.on_github:
         raise Unreadable("--workers is a local override; on GitHub the catalogue's count runs")
+    if options.working_tree and host.on_github:
+        raise Unreadable(
+            "--working-tree is a local mode: on GitHub the checkout is the commit under test"
+        )
     head, clean = _state(host)
     revisions = external_revisions([job], host)
     slug = re.sub(r"[^a-z0-9-]+", "-", key.lower()).strip("-")
@@ -441,6 +470,19 @@ def run_one(
                 code = run.RED
 
     outcome = Outcome(key, code, reasons, interrupted=interrupted)
+    if options.working_tree and off_its_platform(job, host):
+        outcome.off_platform = job.platform
+        outcome.reasons.append(
+            f"off its platform: it runs on {job.platform} in CI, and ran here on"
+            f" {host.family or 'another'}* instead; a local result is never CI's evidence"
+        )
+    if options.working_tree:
+        # The steps ran on whatever the tree holds, so their result names no commit: it is
+        # reported, and never written as a record a later run could take for evidence.
+        outcome.reasons.append(
+            "working tree: no record, since the steps ran on the checkout as it stands"
+        )
+        return outcome
     after_head, after_clean = _state(host)
     unrecorded = None
     if not (clean and after_clean and head == after_head):
@@ -496,11 +538,16 @@ def ordered(jobs: Sequence[Job]) -> list[Job]:
     return done
 
 
-def _changed(host: Host, base: str) -> list[str]:
+def _changed(host: Host, base: str, untracked: bool = False) -> list[str]:
     """Every path the diff from ``base`` touches: both sides of a move, since the job whose
-    inputs lost the file changed too, and each name as it is, never quoted."""
+    inputs lost the file changed too, and each name as it is, never quoted. A working-tree run
+    adds the untracked files git does not ignore, since its steps run on them too."""
     out = _git(host, "diff", "--name-only", "--no-renames", "-z", base)
-    return [p for p in out.split("\0") if p]
+    paths = {p for p in out.split("\0") if p}
+    if untracked:
+        listed = _git(host, "ls-files", "--others", "--exclude-standard", "-z")
+        paths |= {p for p in listed.split("\0") if p}
+    return sorted(paths)
 
 
 def run_tier(
@@ -523,7 +570,7 @@ def run_tier(
     for job in jobs:
         _owned_env(job)
     if changed:
-        paths = _changed(host, _base(host, options))
+        paths = _changed(host, _base(host, options), options.working_tree)
         chosen = plan.plan(cat, tier, paths, overrides=overrides, root=host.root)
         for reason in chosen.full_reasons:
             print(f"plan: the whole tier: {reason}", file=sys.stderr)
@@ -548,6 +595,10 @@ def run_tier(
                 )
                 continue
             outcomes.append(run_one(cat, job, shard, host, options, work))
+    if options.working_tree:
+        # No job left a record, so nothing is judged: the run says what its steps did.
+        unjudged = verdict.Reason("", "working tree", "no record was written, so none is judged")
+        return _tier_code(outcomes), outcomes, verdict.Verdict(green=False, reasons=(unjudged,))
     records = [o.record.read_text(encoding="utf-8") for o in outcomes if o.record is not None]
     results = verdict.from_job_records(records)
     reasons: list[verdict.Reason] = []
@@ -555,36 +606,75 @@ def run_tier(
         mine = [r for r in results if r.key in keys]
         reasons.extend(verdict.decide(keys, mine, expected[job_id]).reasons)
     judged = verdict.Verdict(green=not reasons, reasons=tuple(reasons))
+    return _tier_code(outcomes, unproven=not judged.green), outcomes, judged
+
+
+def _tier_code(outcomes: Sequence[Outcome], *, unproven: bool = False) -> int:
+    """A tier's exit, in either mode: red over partial, so a red job is never reported as one
+    that could not run; partial for a job that could not run here or was interrupted; and when
+    every job passed, red if its records are ``unproven`` (the verdict is not green), else ok."""
     if any(o.code == run.RED for o in outcomes):
-        code = run.RED
-    elif any(o.code != run.OK for o in outcomes):
-        code = run.PARTIAL
-    else:
-        code = run.OK if judged.green else run.RED
-    return code, outcomes, judged
+        return run.RED
+    if any(o.code != run.OK for o in outcomes):
+        return run.PARTIAL
+    return run.RED if unproven else run.OK
 
 
 # ── the command line ─────────────────────────────────────────────────────────────────────────
 
 
 class _Parser(argparse.ArgumentParser):
+    """A parser that refuses with exit 2, and takes each option spelled in full only: no prefix
+    stands in for an option, so a later option can never change what a short spelling meant
+    (:func:`_parser` builds it with ``allow_abbrev=False``)."""
+
     def error(self, message: str):  # type: ignore[override]
         self.print_usage(sys.stderr)
         print(f"{self.prog}: {message}", file=sys.stderr)
         raise SystemExit(run.PARTIAL)
 
 
+class _OnceFlag(argparse.Action):
+    """A flag. Given twice, it is refused rather than taken once, as every option of the two
+    verbs is (the valued ones by :class:`verdict._Once`)."""
+
+    def __init__(self, option_strings: Sequence[str], dest: str, **kwargs: object) -> None:
+        kwargs.pop("nargs", None)
+        kwargs.pop("default", None)
+        super().__init__(
+            option_strings, dest, nargs=0, default=False, **kwargs  # type: ignore[arg-type]
+        )
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        if getattr(namespace, self.dest, False):
+            raise argparse.ArgumentError(self, "given twice")
+        setattr(namespace, self.dest, True)
+
+
 def _parser(prog: str, description: str) -> argparse.ArgumentParser:
-    """The options run and run-job share. Each is given once: one given twice is refused, not
-    last-wins, as the verdict's own command line refuses it."""
+    """The options run and run-job share. Each is given once and spelled in full: one given
+    twice is refused, not last-wins, as the verdict's own command line refuses it, and no prefix
+    stands in for one."""
     once = verdict._Once
-    parser = _Parser(prog=f"python -m tools.ci {prog}", description=description)
+    parser = _Parser(prog=f"python -m tools.ci {prog}", description=description, allow_abbrev=False)
     parser.add_argument("--catalogue", type=Path, action=once, help="the catalogue to read")
     parser.add_argument("--base", action=once, help="the ref a diff is taken against")
     parser.add_argument(
         "--workers", type=int, action=once, help="a local worker count in place of the catalogue's"
     )
     parser.add_argument("--out", type=Path, action=once, help="the run's folder (scratch, records)")
+    parser.add_argument(
+        "--working-tree",
+        action=_OnceFlag,
+        help="run on the checkout as it stands, uncommitted changes included: no record, and"
+        " the exit is the steps' result",
+    )
     return parser
 
 
@@ -607,7 +697,12 @@ def _setup(args: argparse.Namespace) -> tuple[Catalogue, Host, Options, Path]:
     except RuntimeError as exc:
         raise Unreadable(str(exc)) from None
     work = args.out or root / WORK / f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
-    return cat, host, Options(base=args.base, workers=args.workers), work
+    if args.working_tree and host.on_github:
+        raise Unreadable(
+            "--working-tree is a local mode: on GitHub the checkout is the commit under test"
+        )
+    options = Options(base=args.base, workers=args.workers, working_tree=args.working_tree)
+    return cat, host, options, work
 
 
 def _say(outcomes: Sequence[Outcome]) -> None:
@@ -619,11 +714,19 @@ def _say(outcomes: Sequence[Outcome]) -> None:
     missing = [o.key for o in outcomes if not o.ran]
     if missing:
         print(f"not proven here: {', '.join(missing)}")
+    moved = [f"{o.key} ({o.off_platform} in CI)" for o in outcomes if o.off_platform]
+    if moved:
+        print(
+            f"ran off their platform family: {', '.join(moved)}. A local result is never CI's"
+            " evidence: CI runs each job on its own platform."
+        )
 
 
 def run_job_main(argv: list[str]) -> int:
     """``python -m tools.ci run-job <id> [--shard i/N]``."""
-    parser = _parser("run-job", "Run one catalogue job here, and leave its record.")
+    parser = _parser(
+        "run-job", "Run one catalogue job here, and leave its record (none with --working-tree)."
+    )
     parser.add_argument("job")
     parser.add_argument("--shard", action=verdict._Once, help="i/N, for a sharded job")
     try:
@@ -659,10 +762,12 @@ def run_job_main(argv: list[str]) -> int:
 
 def run_main(argv: list[str]) -> int:
     """``python -m tools.ci run <tier> [--changed] [--fail-fast]``."""
-    parser = _parser("run", "Run every job of a tier here, and judge their records.")
+    parser = _parser(
+        "run", "Run every job of a tier here, and judge their records (none with --working-tree)."
+    )
     parser.add_argument("tier", help=f"one of {', '.join(catalogue.TIERS)}")
-    parser.add_argument("--changed", action="store_true", help="only the jobs the diff touches")
-    parser.add_argument("--fail-fast", action="store_true", help="stop after the first red job")
+    parser.add_argument("--changed", action=_OnceFlag, help="only the jobs the diff touches")
+    parser.add_argument("--fail-fast", action=_OnceFlag, help="stop after the first red job")
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -689,6 +794,9 @@ def run_main(argv: list[str]) -> int:
             print(f"run: {problem}", file=sys.stderr)
         return run.PARTIAL
     _say(outcomes)
-    print(verdict.summary(judged), end="")
+    if options.working_tree:
+        print("working tree: no record was written, so this run is no evidence for a commit")
+    else:
+        print(verdict.summary(judged), end="")
     print({run.OK: "ok", run.RED: "red", run.PARTIAL: "partial"}[code])
     return code

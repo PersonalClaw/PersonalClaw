@@ -96,11 +96,13 @@ lint:
 test:
 	$(PYTHON) -m pytest -n auto --dist worksteal
 
-## check: run the change tier's catalogue jobs here, as CI runs them (tools/ci/catalogue.toml)
-## gate: run the merge tier's catalogue jobs here. Exit 0 every planned job ran here and passed,
-## 1 one ran and failed, 2 one could not run on this machine (named in the summary)
+## check: run the change tier's catalogue jobs here, as CI runs them (tools/ci/catalogue.toml), on
+## the working tree as it stands, before a commit: no record, and the exit is the steps' result
+## gate: run the merge tier's catalogue jobs here on the committed tree, leaving a record of each.
+## Exit 0 every planned job ran here and passed, 1 one ran and failed, 2 one could not run on this
+## machine (named in the summary)
 check:
-	$(PYTHON) -m tools.ci run change
+	$(PYTHON) -m tools.ci run change --working-tree
 
 gate:
 	$(PYTHON) -m tools.ci run merge

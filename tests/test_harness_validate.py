@@ -191,15 +191,12 @@ def test_cli_validate_has_no_scanner_warnings_now() -> None:
     assert "0 warning(s)" in buf.getvalue()
 
 
-def test_the_web_profile_passes_on_an_uncommitted_tree(tmp_path: Path, monkeypatch) -> None:
-    # `harness run --diff` runs before the executor commits, so the web gate must pass on a
-    # checkout with uncommitted changes, on either platform. A planted checkout, dirty, with
-    # this tree's tools/ci in it (what a profile that ran a catalogue job would run) and an
-    # npm that exits 0 after writing down what it was asked.
+def _planted_web_checkout(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
+    """A planted checkout, dirty, with this tree's tools/ci in it (what the web profile runs),
+    as the harness's root, and an npm, npx and node on PATH that exit 0 after writing down what
+    they were asked; the checkout, and the file of what was asked."""
     import shutil
     import subprocess
-
-    from harness.profiles import resolve_commands
 
     root = tmp_path / "tree"
     shutil.copytree(
@@ -221,7 +218,36 @@ def test_the_web_profile_passes_on_an_uncommitted_tree(tmp_path: Path, monkeypat
         stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{stubs}:{os.environ['PATH']}")
     monkeypatch.setattr(cli, "_repo_root", lambda: root)
+    return root, asked
+
+
+def test_the_web_profile_passes_on_an_uncommitted_tree(tmp_path: Path, monkeypatch) -> None:
+    # `harness run --diff` runs before the executor commits, so the web gate must pass on a
+    # checkout with uncommitted changes, on either platform. It is a local gate: the suite runs
+    # on GitHub too, whose runner sets GITHUB_ACTIONS, so the test runs it as a local run does.
+    from harness.profiles import resolve_commands
+    from tools.ci import catalogue
+
+    root, asked = _planted_web_checkout(tmp_path, monkeypatch)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
 
     commands = [c.command for c in resolve_commands(["web"])]
     assert cli._execute(commands, dry_run=False) == 0
-    assert asked.read_text().splitlines() == ["npm run typecheck:web", "npm run test:web"]
+    # The profile runs the catalogue's web-unit job: its toolchain's install, then its steps,
+    # word for word, as the catalogue in the planted checkout says.
+    web_unit = catalogue.read(root).job("web-unit")
+    want = ["npm ci", *(" ".join(step.argv) for step in web_unit.command)]
+    assert asked.read_text().splitlines() == want
+
+
+def test_the_web_profile_is_refused_on_github(tmp_path: Path, monkeypatch) -> None:
+    # A local gate: on GitHub, where CI runs web-unit itself on the commit under test, the
+    # profile fails before any step, never passes in its place.
+    from harness.profiles import resolve_commands
+
+    _planted_web_checkout(tmp_path, monkeypatch)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+
+    commands = [c.command for c in resolve_commands(["web"])]
+    assert cli._execute(commands, dry_run=False) != 0
+    assert not (tmp_path / "asked").exists(), "a step ran on GitHub"

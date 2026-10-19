@@ -91,9 +91,12 @@ _register(
 _register(
     Profile(
         name="web",
-        description="Frontend gate: typecheck + vitest (run from the repo root).",
-        # Root scripts proxy into the web workspace — never `cd web` (npm/cli#4828).
-        commands=("npm run typecheck:web", "npm run test:web"),
+        description="Frontend gate: the catalogue's web-unit job (typecheck, vitest, desktop"
+        " and mobile tests), run as CI runs it, on the working tree as it stands. A local gate:"
+        " refused on GitHub, where CI runs web-unit on the commit under test.",
+        # tools/ci/catalogue.toml holds the commands; --working-tree runs them on the
+        # uncommitted change too, writes no record, and exits by the steps' result.
+        commands=(f"{HARNESS_PY} -m tools.ci run-job web-unit --working-tree",),
     )
 )
 _register(

@@ -293,7 +293,7 @@ Useful Makefile targets (see `make help` for the full list):
 | Target | What it does |
 |---|---|
 | `make test` | Run the Python test suite (pytest). |
-| `make check` / `make gate` | Run the change / merge tier's CI jobs from `tools/ci/catalogue.toml` on this machine, as CI runs them: `make check` before a commit, `make gate` before opening or updating a pull request. Exit 0: every planned job ran here and passed; 1: one failed; 2: one cannot run on this machine, or left no record because the tree was not committed (the summary names it; CI runs it). GitHub CI on the pull request is the gate: a local run never stands in for it. |
+| `make check` / `make gate` | Run the change / merge tier's CI jobs from `tools/ci/catalogue.toml` on this machine, as CI runs them: `make check` before a commit, `make gate` before opening or updating a pull request. `make check` runs on the working tree as it stands, uncommitted changes included, and writes no record; `make gate` runs on the committed tree and records each job. Exit 0: every planned job ran here and passed; 1: one failed; 2: one cannot run on this machine (the summary names it; CI runs it), or, for `make gate`, the tree was not committed so no record was left. GitHub CI on the pull request is the gate: a local run never stands in for it. |
 | `make lint` / `make format` | black + isort + flake8 + mypy / auto-format. |
 | `make web-build` | Build the React SPA and link `static/dist -> web/dist` (a symlink by design — never copy). |
 | `make build` | Build a distribution: the sdist and wheel, inspected and proved reproducible (below). |

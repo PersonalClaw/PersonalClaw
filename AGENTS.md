@@ -38,10 +38,10 @@ tree where the locked `8.0.1` reports none.
 Definition of done for any change: `make lint` green · targeted `pytest` green ·
 `make test` green before the final commit · `make check` before a commit and
 `make gate` before opening or updating a PR (exit 2 names the jobs this machine
-cannot run, or that left no record because the tree was not committed) · GitHub CI
-on the PR is the gate: a local run never stands in for it · the web gate **including
-the render smoke** when `web/` or the npm manifest/lockfile changed · new behavior
-has tests · docs moved with the change.
+cannot run, or, for `make gate`, that left no record because the tree was not
+committed) · GitHub CI on the PR is the gate: a local run never stands in for it ·
+the web gate **including the render smoke** when `web/` or the npm
+manifest/lockfile changed · new behavior has tests · docs moved with the change.
 
 **Render smoke is non-negotiable for frontend-affecting pushes.** typecheck,
 vitest (jsdom), and `vite build` can ALL pass while the built bundle crashes at
