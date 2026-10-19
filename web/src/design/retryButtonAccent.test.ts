@@ -68,6 +68,8 @@ const RETRY_SITES = [
   'pages/artifacts/ArtifactViewer.tsx',
   'pages/files/browse/FileViewer.tsx',
   'pages/code/CodeCockpitPage.tsx',
+  // The terminal's Try again, which moved with the cockpit terminal into its own module.
+  'pages/code/cockpit/BottomTerminal.tsx',
 ]
 
 describe('the retry button carries its accent through a variant, not a className', () => {

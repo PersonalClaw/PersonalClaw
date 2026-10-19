@@ -694,6 +694,18 @@ redirecting a run-backed loop (`run_id`) to its run page, `#/workflows/runs/<id>
   `web/src/pages/code/CodeCockpitPage.tsx` — Monaco-based edit/save,
   PTY-backed build/test commands, and the SDLC stage trail.
 
+### The code cockpit's regions (web)
+
+`CodeCockpitPage.tsx` is being split into region controllers under
+`web/src/pages/code/cockpit/`, each a hook and its component:
+
+- **The terminal** — `useBottomTerminal.ts` opens a PTY in the workspace,
+  follows a Restart to the new one, closes whichever is live when the drawer
+  goes, says why one could not start and tries again, and runs a build or test
+  command on its own session once that session takes input.
+  `BottomTerminal.tsx` draws the drawer under the editor, hidden rather than
+  unmounted so the shell and its scrollback survive a toggle.
+
 ## Related docs
 
 - Tasks that loops provision: [tasks-triggers.md](tasks-triggers.md)
