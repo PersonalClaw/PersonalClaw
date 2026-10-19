@@ -4,26 +4,22 @@ held to them.
 ``owner_only`` is one rule with three kinds of place: PersonalClaw's own files in its home, git's
 own settings and hook scripts, and the owner's shell startup files. This census lists every entry
 of each kind as the rule declares it, and fails for one it does not list, so a new entry is named
-here first. For each it checks that the rule recognises a path of that entry, that the
-architecture doc names it (what the doc says the rule holds is what it holds), and that a path
-which only shares a name is not one. Then it reads every write path that must ask the rule, and
-fails for one that stops asking. Every detector is shown to find what it looks for before its
-answer is trusted.
+here first. For each it checks that the rule recognises a path of that entry, and that a path
+which only shares a name is not one. That the architecture doc names each entry (what the doc
+says the rule holds is what it holds), and that every write path that must ask the rule still
+asks it, are the rail ``tests/rails/test_owner_only_census_tree.py``, once per CI run in the
+rails job. Every detector is shown to find what it looks for before its answer is trusted.
 """
 
 from __future__ import annotations
 
-import functools
 import os
 from pathlib import Path
 
 import pytest
-from owner_only_census_shared import ROOT
 
 import personalclaw.config.loader as loader
 from personalclaw import owner_only
-
-DOC = ROOT / "docs" / "architecture" / "security.md"
 
 #: PersonalClaw's own, by name in its home: the files, then the folders.
 HOME_FILES = ("config.json", "mcp.json")
@@ -152,35 +148,6 @@ def test_a_path_that_only_shares_a_name_is_none_of_them(owner):
         user / "notes" / ".profile.bak",
     ):
         assert owner_only.kind_of(path) == "", path
-
-
-@functools.cache
-def _doc_section() -> str:
-    text = DOC.read_text(encoding="utf-8")
-    start = text.index("### What runs as the owner is owner-only (`owner_only.py`)")
-    return text[start : text.index("\n### ", start + 1)]
-
-
-def test_the_architecture_doc_names_every_entry():
-    """What the doc says the rule holds is what it holds: each entry is named there."""
-    section = _doc_section()
-    names = [
-        *HOME_FILES,
-        *(f"{name}/" for name in HOME_FOLDERS),
-        *GIT_SETTINGS,
-        f"{GIT_HOOKS}/",
-        "/".join(GIT_REBASE_STEPS),
-        GIT_MODULES,
-        "/".join(GIT_SYSTEM_SETTINGS),
-        "~/.gitconfig",
-        "git/config",
-        *SHELL_STARTUP_FILES,
-        "$ZDOTDIR",
-        *FISH_STARTUP_FILES,
-        *(f"{name}/" for name in FISH_STARTUP_DIRS),
-    ]
-    for name in names:
-        assert f"`{name}`" in section, name
 
 
 # ── the write paths ─────────────────────────────────────────────────────────────────────────

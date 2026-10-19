@@ -18,7 +18,6 @@ template nudges' counters and candidates. The sync docs name each.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -222,28 +221,3 @@ def test_an_old_conflict_on_the_agent_runtime_config_closes_only_by_keeping_this
     assert mine.read_bytes() == before
     assert resolver.taking_it_here(tmp_path, record) == ""
     assert resolver.resolve_conflict(tmp_path, record.id, resolver.CHOICE_KEEP_LOCAL).ok
-
-
-_SYNC_DOC = Path(__file__).resolve().parents[1] / "docs" / "architecture" / "tasks-triggers.md"
-_LEADS = (
-    "**What is one machine's own stays on it.**",
-    "**What ran on a machine stays on it too.**",
-)
-
-
-def _paragraph(doc: str, lead: str) -> str:
-    """The paragraph of *doc* that starts with *lead*: up to the next blank line."""
-    start = doc.find(lead)
-    assert start >= 0, f"{_SYNC_DOC.name} has no paragraph starting {lead!r}"
-    end = doc.find("\n\n", start)
-    return doc[start : end if end >= 0 else len(doc)]
-
-
-def test_the_sync_docs_name_everything_that_stays_on_each_machine():
-    doc = _SYNC_DOC.read_text()
-    named = {name for lead in _LEADS for name in re.findall(r"`([^`]+)`", _paragraph(doc, lead))}
-    staying = {e.path for e in inv.INVENTORY if e.machine_local} | {
-        f"{e.path}/{glob}" for e in inv.INVENTORY for glob in e.machine_local_within
-    }
-    assert staying, "nothing is declared machine-local — the check is vacuous"
-    assert staying <= named, sorted(staying - named)

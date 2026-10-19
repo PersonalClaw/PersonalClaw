@@ -3,7 +3,7 @@
 <!-- GENERATED FILE — DO NOT EDIT BY HAND.
      Rendered by scripts/generate_api_route_reference.py from the gateway's own
      route registrations, and byte-compared against a fresh render by
-     tests/test_docs_api_reference.py. Hand edits are reverted by the next
+     tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
 Every HTTP route the gateway registers: **931 registrations** over **756 distinct paths** — 924 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.

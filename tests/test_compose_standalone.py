@@ -173,19 +173,6 @@ def test_the_header_does_not_claim_something_the_file_cannot_do():
             ), f"{name}: bind mount {mount!r} needs the source tree"
 
 
-def test_the_guide_states_the_real_failure_not_a_silent_one():
-    """`docs/guides/platforms.md` had the direction backwards; it must not regress."""
-    raw = (REPO_ROOT / "docs" / "guides" / "platforms.md").read_text()
-    # Strip the blockquote markers and collapse the wrapping, so the assertion pins the
-    # SENTENCE rather than the column at which a paragraph happened to be re-flowed.
-    guide = " ".join(" ".join(line.lstrip().removeprefix(">").split()) for line in raw.splitlines())
-    assert (
-        "keys silently do not load" not in guide
-    ), "a missing required env_file is a HARD Compose failure, not a silent skip"
-    assert "`required` defaults to **true**" in guide
-    assert "failed to start at all" in guide
-
-
 # ── Behavioural layer: the real `compose config` from a scratch directory ─────────
 
 

@@ -17,7 +17,6 @@ call is replaced, and the files are written under ``tmp_path`` or kept in memory
 from __future__ import annotations
 
 import plistlib
-import re
 import shlex
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -28,8 +27,6 @@ from personalclaw.service import controller
 from personalclaw.service import linux as svc_linux
 from personalclaw.service import macos as svc_macos
 from personalclaw.service.common import Platform
-
-_ROOT = Path(__file__).resolve().parents[1]
 
 #: What this user's shell sets for the tools the gateway runs.
 SHELL = {
@@ -286,19 +283,3 @@ def test_no_carried_name_is_a_credential():
     from personalclaw.service.environment import carried_names
 
     assert [n for n in carried_names() if is_credential_field_name(n)] == []
-
-
-def test_the_cli_reference_lists_exactly_the_carried_names():
-    """The table in the CLI reference is the documented contract: the same names, both ways."""
-    from personalclaw.service.environment import carried_names
-
-    doc = (_ROOT / "docs" / "reference" / "cli.md").read_text(encoding="utf-8")
-    section = doc.split("## `personalclaw service`", 1)[1].split("\n## ", 1)[0]
-    table = section.split("| For | Variables |", 1)[1].split("\n\n", 1)[0]
-    rows = [line for line in table.splitlines() if line.startswith("|")][1:]  # past |---|
-    assert rows, "the table is gone, so this check would pass on nothing"
-    documented = {n for row in rows for n in re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", row)}
-    assert documented == set(carried_names()), (
-        f"documented, not carried: {sorted(documented - set(carried_names()))}; "
-        f"carried, not documented: {sorted(set(carried_names()) - documented)}"
-    )

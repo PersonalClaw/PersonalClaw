@@ -23,7 +23,7 @@ ceiling below is what makes reintroducing it red rather than merely regrettable.
 (~5s). It is computed ONCE for the module and shared; do not add a leg that calls
 ``_routes_from_ast`` or ``render_published_route_reference`` again. A sibling gate that
 re-rendered a census per assertion took 18 minutes under load and stopped fitting in a
-shard.
+shard. It reads the published docs, so it is a rail: it runs once per CI run, in the rails job.
 """
 
 from __future__ import annotations
@@ -34,6 +34,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import source_index
+from rails_repo import REPO
 
 from personalclaw.manifest_reference import (
     PUBLISHED_ROUTE_REFERENCE,
@@ -42,7 +44,7 @@ from personalclaw.manifest_reference import (
     _summary_for_method,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = REPO
 OVERVIEW = REPO_ROOT / "docs" / "reference" / "api-overview.md"
 ROUTES_DOC = REPO_ROOT / PUBLISHED_ROUTE_REFERENCE
 
@@ -108,7 +110,7 @@ def test_published_route_reference_matches_a_fresh_render():
     _assert_one_checkout()
     _, expected = _census()
     assert ROUTES_DOC.is_file(), f"{PUBLISHED_ROUTE_REFERENCE} is missing.\n{_REGENERATE}"
-    assert ROUTES_DOC.read_text(encoding="utf-8") == expected, (
+    assert source_index.text(ROUTES_DOC) == expected, (
         f"{PUBLISHED_ROUTE_REFERENCE} differs from a fresh render — the published route\n"
         f"reference is stale, or was hand-edited.\n{_REGENERATE}"
     )
@@ -230,7 +232,7 @@ def test_generated_route_reference_warns_against_hand_editing():
     A reader who edits a generated file and then has to decode a byte-compare failure
     was failed by the file, not by the guard.
     """
-    head = ROUTES_DOC.read_text(encoding="utf-8")[:600]
+    head = source_index.text(ROUTES_DOC)[:600]
     assert "GENERATED FILE" in head
     assert "generate_api_route_reference.py" in head
 
@@ -243,7 +245,7 @@ def test_api_overview_does_not_duplicate_the_route_catalogue():
     growing one back reds here.
     """
     routes, _ = _census()
-    text = OVERVIEW.read_text(encoding="utf-8")
+    text = source_index.text(OVERVIEW)
     named = sorted({r["path"] for r in routes if r["path"] in text})
     assert len(named) <= _OVERVIEW_PATH_CEILING, (
         f"api-overview.md now names {len(named)} distinct route paths (ceiling "
@@ -256,7 +258,7 @@ def test_api_overview_does_not_duplicate_the_route_catalogue():
 
 def test_api_overview_defers_to_the_generated_reference():
     """The overview points at the route list and claims no completeness of its own."""
-    text = OVERVIEW.read_text(encoding="utf-8")
+    text = source_index.text(OVERVIEW)
     assert "api-routes.md" in text, (
         "api-overview.md no longer links the generated route reference — a reader who "
         "needs the route list has nowhere to go from here"
