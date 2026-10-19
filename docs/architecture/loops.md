@@ -733,6 +733,13 @@ redirecting a run-backed loop (`run_id`) to its run page, `#/workflows/runs/<id>
   or a conflict waiting on you, a paused loop, the worker's question, a failed
   gate or a stall, and the steer box, with `footer/OutcomeBanner.tsx` for a
   finished run.
+- **The Tasks panel** — `useRightPanel.ts` keeps which task is open, every
+  stage's tasks (only the newest read applied, a failed list kept as it was)
+  and each finding under the task it belongs to, or under its stage's running
+  or last task when it names only a stage. `RightPanel.tsx` draws the task list
+  over the footer, or one task's detail. `CollapsiblePanel.tsx` is the frame of
+  both side panels: a title, a collapse button, a resize handle, and the
+  collapsed state the editor's re-open chips follow.
 
 What more than one region reads lives in `cockpitShared.ts` (the statuses a
 steer still reaches and the ones that end a run, a stage's key, a worker path

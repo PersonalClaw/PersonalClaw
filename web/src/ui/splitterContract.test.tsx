@@ -56,9 +56,10 @@ describe('a declared splitter implements the splitter contract', () => {
   it('finds the claimants — not vacuous', () => {
     expect(claimants().map((f) => f.rel).sort()).toEqual([
       'pages/chat/ChatFilePanel.tsx',
-      'pages/code/CodeCockpitPage.tsx',
-      // The cockpit terminal's top-edge handle, which moved with the terminal into its own module.
+      // The cockpit terminal's top-edge handle and its side panels' handle, which moved out of
+      // `CodeCockpitPage` into their own modules.
       'pages/code/cockpit/BottomTerminal.tsx',
+      'pages/code/cockpit/CollapsiblePanel.tsx',
       'pages/terminal/TerminalDrawer.tsx',
       'ui/NavRail.tsx',
       'ui/SidePanel.tsx',

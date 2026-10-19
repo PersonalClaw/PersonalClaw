@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fvs } from '../../design/fontWeight'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Code2, Play, Pause, Square, Trash2, Loader2, ListChecks, FolderTree,
   TerminalSquare, CircleDot, CheckCircle2, Circle,
   ChevronLeft, Target, HelpCircle, Folder, Repeat, Clock, AlertTriangle,
-  PanelLeftClose, PanelRightClose, RotateCcw, FolderKanban,
+  FolderKanban,
 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -15,7 +14,7 @@ import { LoadError } from '../../ui/ListScaffold'
 import { Centered } from '../../ui/Centered'
 import { confirmDelete } from '../../ui/dialog'
 import { confirmStopLoop } from '../loop/stopLoop'
-import { api, type CodeProject, type CodeStage, type CodeFinding, type TaskItem, type Loop } from '../../lib/api'
+import { api, type CodeProject, type CodeStage, type CodeFinding, type Loop } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
@@ -29,7 +28,7 @@ import {
 } from '../../lib/loopStatus'
 import { useRunStream } from '../loops/useRunStream'
 import { belongsToLoop } from '../workflows/containerKey'
-import { foldReducer, emptyRunFlags, type RunFlags, type StallInfo } from '../loops/runFold'
+import { foldReducer, emptyRunFlags, type RunFlags } from '../loops/runFold'
 import { WorkspacePicker } from './WorkspacePicker'
 import { useWorkspaceMissing } from '../../lib/useWorkspaceMissing'
 import { useRuntimeGroups } from '../../lib/agents'
@@ -38,7 +37,6 @@ import { runtimeFields, runtimeOf, showRuntime, type LoopRuntime } from '../loop
 import { withArticle } from '../../lib/article'
 import { codeDeleteBody } from './codeMeta'
 import { RepromptNotice } from '../loops/RepromptNotice'
-import { useResizablePanel } from '../../ui/useResizablePanel'
 import { CockpitPromptBar } from '../loops/CockpitPromptBar'
 import { CockpitToast, type CodeToastState } from './CodeToast'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
@@ -46,23 +44,16 @@ import { messageEnter } from '../../design/motion'
 import { CenterEditor } from './cockpit/CenterEditor'
 import { PROJECT_DIR_HIDDEN, PROJECT_DIR_HIDDEN_PREFIXES } from './cockpit/files/WorkspaceTree'
 import { FilesRail } from './cockpit/files/FilesRail'
-import { isTerminalTask } from './cockpit/tasks/taskState'
-import { TaskDetailView } from './cockpit/tasks/TaskDetailView'
 import { StageTasks } from './cockpit/tasks/StageTasks'
 import { TERMINAL_STATUSES, stageKey, type ActivityItem, resolveTouchedPath } from './cockpit/cockpitShared'
 import { missingCommandNotices, cmdLabel } from './cockpit/cockpitCommands'
 import { ProjectFooter } from './cockpit/footer/ProjectFooter'
+import { CollapsiblePanel } from './cockpit/CollapsiblePanel'
+import { RightPanel } from './cockpit/RightPanel'
+import { normalizeStageLabel } from './cockpit/useRightPanel'
 
 // The page's own tests still import these from it, where they used to live.
-export { StageTasks, ProjectFooter, resolveTouchedPath, missingCommandNotices }
-
-/** Strip a model-authored stage decoration — '1 — ', 'Stage 2/2 — ', '3: ' — down to
- *  the bare title, case-folded (issue 642). Mirrors the ingest-side canonicalizer in
- *  loop/files.py (_STAGE_DECOR_RE): the ingest stamps NEW findings with the plan's
- *  canonical stage; this normalize keeps already-ledgered legacy labels attributable. */
-export function normalizeStageLabel(s: string): string {
-  return s.replace(/^\s*(stage\s*)?\d+(\s*\/\s*\d+)?\s*[—:\-–]\s*/i, '').trim().toLowerCase()
-}
+export { StageTasks, ProjectFooter, resolveTouchedPath, missingCommandNotices, normalizeStageLabel }
 
 // The Code cockpit is a code-shaped view-model over the unified Loop (kind=code).
 // The wire format is the unified Loop (entry_stage/project_kind/verify_command/
@@ -956,243 +947,6 @@ function fmtDuration(secs: number): string {
   const d = Math.floor(h / 24)
   return `${d}d ${h % 24}h`
 }
-
-// ── collapsible + resizable side panel shell ──
-
-function CollapsiblePanel({ side, panelKey, def, min, max, icon: Icon, label, children }: {
-  side: 'left' | 'right'; panelKey: string; def: number; min: number; max: number
-  icon: typeof ListChecks; label: string; children: React.ReactNode
-}) {
-  const { width, collapsed, setCollapsed, onHandleDown, onHandleKey } = useResizablePanel(panelKey, { def, min, max, side, collapsible: true })
-  // Allow a programmatic expand (e.g. ⌘P quick-open targeting a collapsed Files panel,
-  // or a click on the editor-bar re-open tab), keyed by panelKey so each panel only
-  // responds to its own request.
-  useEffect(() => {
-    const onExpand = (e: Event) => { if ((e as CustomEvent).detail === panelKey) setCollapsed(false) }
-    window.addEventListener('ne:code-expand-panel', onExpand as EventListener)
-    return () => window.removeEventListener('ne:code-expand-panel', onExpand as EventListener)
-  }, [panelKey, setCollapsed])
-  // Broadcast this panel's collapsed state so the editor tab bar can show a pull-out
-  // re-open tab for it (no persistent vertical rail — the editor reclaims the full
-  // width when collapsed). Fires on mount + every toggle; the bar reconciles by key.
-  useEffect(() => {
-    window.dispatchEvent(new CustomEvent('ne:code-panel-collapsed', { detail: { panelKey, side, label, collapsed } }))
-  }, [panelKey, side, label, collapsed])
-  const borderSide = side === 'left' ? 'border-r' : 'border-l'
-  // Collapsed → render NOTHING (the editor reclaims the space). The re-open affordance
-  // lives as a pull-out tab on the editor's tab bar (see CenterEditor), per the
-  // VSCode-style activity model — not a persistent vertical slice in the body.
-  if (collapsed) return null
-  // Resize handle: a wider hit strip pinned to the panel's INNER editor-facing edge
-  // (right edge of a left panel, left edge of a right panel). Kept inside the panel
-  // bounds so the editor sibling can't paint over it.
-  const handle = (
-    <div onPointerDown={onHandleDown} onKeyDown={onHandleKey} role="separator" aria-orientation="vertical"
-      tabIndex={0} aria-label={`Resize ${label} — arrow keys to resize`}
-      aria-valuenow={Math.round(width)} aria-valuemin={min} aria-valuemax={max}
-      className="group/handle absolute top-0 bottom-0 z-20 w-2 cursor-col-resize outline-none focus-visible:bg-primary/30"
-      style={{ [side === 'left' ? 'right' : 'left']: 0 } as React.CSSProperties}>
-      <div className="mx-auto h-full w-0.5 bg-transparent transition-colors group-hover/handle:bg-primary/60 group-focus-visible/handle:bg-primary" />
-    </div>
-  )
-  return (
-    <div className={`relative flex shrink-0 flex-col ${borderSide} border-outline-variant/40 bg-surface-low/40`} style={{ width }}>
-      <div className="flex shrink-0 items-center justify-between gap-1 border-b border-outline-variant/40 px-2 py-1.5">
-        <span data-type="label-s" className="inline-flex items-center gap-1.5 text-on-surface-var" style={fvs(550)}>
-          <Icon size={14} /> {label}
-        </span>
-        <IconButton icon={side === 'left' ? PanelLeftClose : PanelRightClose} label={`Collapse ${label}`}
-          onClick={() => setCollapsed(true)} size={24} iconSize={14} />
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
-      {handle}
-    </div>
-  )
-}
-
-// ── right panel: Tasks (agent loop events live IN TASK SCOPE — under each task
-//    card — not a separate global feed) + project-level banners + a steer box. ──
-
-function RightPanel({ project, onTasksChanged, tasksNonce, activityBySession, gateFail, stalled, onNudged, onStartNew, onAnswerOnScreen, answerWanted, onAnswerShown }: {
-  project: CodeProject; onTasksChanged: () => void; tasksNonce: number
-  activityBySession: Record<string, ActivityItem[]>; gateFail: { label: string; command: string; output: string } | null
-  stalled: StallInfo | null; onNudged: () => void; onStartNew?: () => void
-  /** Whether the answer panel (the project footer) is on screen, for the cockpit's toast. */
-  onAnswerOnScreen?: (onScreen: boolean) => void
-  /** The toast's Respond asked for the answer panel; `onAnswerShown` once its steer box has the cursor. */
-  answerWanted?: boolean; onAnswerShown?: () => void
-}) {
-  // Navigable Tasks panel: a list view (all tasks, grouped by stage) and a per-task
-  // DETAIL view (task plan + its agent loop events + a task-scoped steer box). The
-  // selected task makes "what is the user steering" unambiguous for both sides.
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
-  // The toast's Respond is a project-level answer, and the project footer that takes it is
-  // unmounted while a TASK is open (the detail view replaces it), so a Respond then closes the
-  // task. The footer mounts with the request still standing and takes the cursor itself.
-  useEffect(() => {
-    if (answerWanted) setSelectedTaskId(null)
-  }, [answerWanted])
-  const links = project.task_list_ids ?? {}
-  const [tasksByList, setTasksByList] = useState<Record<string, TaskItem[]>>({})
-  const [loading, setLoading] = useState(true)
-  // A task-list fetch that FAILED this refresh — so a transient error doesn't render
-  // the stage as a (false) empty "no tasks" list, hiding real work in the core
-  // execute-one-by-one surface. Tracked separately so successful stages still show.
-  const [loadFailed, setLoadFailed] = useState(false)
-  // Sequence guard: refresh fires on EVERY tasksNonce bump (each SSE lifecycle event +
-  // the 8s poll), so during a busy run multiple fetches overlap. Without ordering, a
-  // slow earlier fetch resolving AFTER a faster later one would clobber the rail with
-  // stale tasks. Stamp each run + only the latest one's result is allowed to apply.
-  const refreshSeq = useRef(0)
-  const refresh = useCallback(() => {
-    const lists = Object.values(links)
-    if (!lists.length) { setLoading(false); return }
-    const seq = ++refreshSeq.current
-    let anyFailed = false
-    Promise.all(lists.map((lid) => api.allTasks({ task_list: lid }).then((r) => [lid, r.tasks] as const)
-      .catch(() => { anyFailed = true; return [lid, null] as const })))
-      // A failed list yields null (NOT []): keep its PRIOR tasks shown (merge over the
-      // previous map) rather than blanking the stage to a misleading "no tasks". Only
-      // overwrite a list whose fetch succeeded.
-      .then((pairs) => {
-        if (seq !== refreshSeq.current) return  // a newer refresh superseded this one
-        setTasksByList((prev) => {
-          const next = { ...prev }
-          for (const [lid, tasks] of pairs) if (tasks !== null) next[lid] = tasks
-          return next
-        })
-        setLoadFailed(anyFailed)
-      }).finally(() => { if (seq === refreshSeq.current) setLoading(false) })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(links)])
-  useEffect(() => { refresh() }, [refresh, tasksNonce])
-
-  const allTasks: TaskItem[] = Object.values(tasksByList).flat()
-  const selected = selectedTaskId ? allTasks.find((t) => t.id === selectedTaskId) : null
-  // Self-heal a dangling selection: if a task was open in the detail view and it's
-  // since gone (deleted, or its list dropped) AFTER tasks have loaded, clear the id
-  // so a refetch race can't snap a stale task back into focus. Only once loaded +
-  // non-empty, so the normal "still fetching" window doesn't wrongly clear it.
-  const selectionStale = !!selectedTaskId && !loading && allTasks.length > 0 && !selected
-  useEffect(() => { if (selectionStale) setSelectedTaskId(null) }, [selectionStale])
-  // findings per task (task_id, or sequential findings attributed to their stage's
-  // active task) — the agent loop events shown in TASK SCOPE.
-  const findingsByTask: Record<string, CodeFinding[]> = {}
-  const stages = project.stage_plan ?? []
-  const tasksByStage: Record<string, TaskItem[]> = {}
-  for (const s of stages) tasksByStage[stageKey(s)] = (links[stageKey(s)] && tasksByList[links[stageKey(s)]]) || []
-  // A sequential-mode cycle finding has no task_id; its `stage` field may carry the
-  // stage id ("implementation"), the stage title, OR a model-decorated label like
-  // '1 — Write bell_times.py' / 'Stage 2/2 — Verify & QA' (issue 642: the field is
-  // unconstrained model output, and exact equality attributed ZERO of a 12-cycle
-  // loop's findings). The ingest now canonicalizes new findings server-side; the
-  // normalized fallback here keeps every already-ledgered legacy label attributable.
-  const stageTasksFor = (fstage: string): TaskItem[] => {
-    const s = stages.find((sg) => sg.stage === fstage || sg.title === fstage)
-      ?? stages.find((sg) => normalizeStageLabel(sg.title) === normalizeStageLabel(fstage)
-        || normalizeStageLabel(sg.stage ?? '') === normalizeStageLabel(fstage))
-    return s ? (tasksByStage[stageKey(s)] || []) : []
-  }
-  for (const f of (project.findings ?? [])) {
-    let tid = f.task_id
-    if (!tid && f.stage) {
-      const st = stageTasksFor(f.stage)
-      // The active task if one is running; else the LAST task of the stage, so a
-      // COMPLETED stage's cycle findings still surface under a task (sequential mode
-      // attributes nothing, and every task is done → no in-progress to borrow).
-      tid = (st.find((t) => t.status === 'in_progress')
-        || st.find((t) => !isTerminalTask(t))
-        || st[st.length - 1])?.id
-    }
-    if (tid) (findingsByTask[tid] ??= []).push(f)
-  }
-
-  if (selected) {
-    const doneIds = new Set(allTasks.filter(isTerminalTask).map((t) => t.id))
-    // This task's live events: its own task-worker session (parallel) if present;
-    // else, only if THIS task is the one in-progress, the main worker's stream
-    // (sequential mode runs the active task in loop-<id>). A non-running task gets
-    // no borrowed activity.
-    const taskSess = `loop-${project.id}-${selected.id}`
-    // A TERMINAL task has no live activity. Its per-task bucket can LINGER though: it's
-    // only cleared on a clean chat_done, so a worker torn down by an orphan-reap /
-    // watchdog kill / conflict-pause leaves a populated bucket — which would render as
-    // stale "live" events on the now-done task's detail view. Gate on terminal (same
-    // reasoning as the list-row pulse's doneForPulse guard).
-    const live = isTerminalTask(selected)
-      ? []
-      : activityBySession[taskSess]
-        ?? (selected.status === 'in_progress' ? activityBySession[`loop-${project.id}`] : undefined)
-        ?? []
-    // Which stage owns this task, and is that stage open (active/done) for exec? A
-    // task in a not-yet-reached stage is held by the phase barrier → 'waiting'.
-    const ownerStage = stages.find((s) => (tasksByStage[stageKey(s)] || []).some((t) => t.id === selected.id))
-    const ss = ownerStage ? (project.stage_status?.[stageKey(ownerStage)] ?? 'pending') : 'active'
-    const stageOpen = ss === 'active' || ss === 'done'
-    // The specific NOT-yet-resolved blockers for this task (its dependency edges whose
-    // target isn't terminal), as {id,title} — so the detail view can NAME what it's
-    // waiting on + let the user click through, instead of a generic "its dependency
-    // tasks". Resolve titles against the full task set; an edge to an unknown id (cross-
-    // stage / pruned) is dropped (it's not a blocker we can act on here).
-    const byId = new Map(allTasks.map((t) => [t.id, t]))
-    const blockers = (selected.dependencies ?? [])
-      .map((d) => d.depends_on_task_id)
-      .filter((bid): bid is string => !!bid && byId.has(bid) && !doneIds.has(bid))
-      .map((bid) => ({ id: bid, title: byId.get(bid)!.title }))
-    // key by task id so a task→task switch (e.g. clicking a blocker chip, which calls
-    // onOpenTask WITHOUT unmounting) REMOUNTS with fresh local state — else the steer
-    // draft + last-steer echo (component-local) bleed across tasks, and a half-typed
-    // steer for task A could be sent scoped to task B. Mirrors CenterEditor's
-    // `FileViewer key={active.path}` for the same reason.
-    return <TaskDetailView key={selected.id} project={project} task={selected} doneIds={doneIds} stageOpen={stageOpen}
-      knownIds={new Set(byId.keys())}
-      findings={findingsByTask[selected.id] ?? []} liveActivity={live} blockers={blockers} onOpenTask={setSelectedTaskId}
-      onBack={() => setSelectedTaskId(null)} onChanged={onTasksChanged} />
-  }
-  // Task ids whose own worker session has live events right now → a list-row pulse
-  // so the user sees WHICH parallel tasks are actively emitting (not just statically
-  // 'running'). Keyed off the per-session activity buckets.
-  const activeTaskIds = new Set<string>()
-  const pfx = `loop-${project.id}-`
-  // A DONE task must never show the "active now" pulse: a task-worker reaped without
-  // a clean chat_done (orphan reap, watchdog kill, conflict pause) leaves its activity
-  // bucket populated, so a bare items.length check would pulse a finished/merged task
-  // forever. Gate on the task not being done.
-  const doneForPulse = new Set(
-    allTasks.filter(isTerminalTask).map((t) => t.id),
-  )
-  for (const [sess, items] of Object.entries(activityBySession)) {
-    if (!sess.startsWith(pfx) || !items.length) continue
-    const tid = sess.slice(pfx.length)
-    if (!doneForPulse.has(tid)) activeTaskIds.add(tid)
-  }
-  return (
-    <div className="flex h-full flex-col">
-      {/* A task-list fetch failed this refresh — say so (with a retry) instead of
-          rendering the affected stage as a false-empty "no tasks". Any stages that DID
-          load stay shown below; this is a non-blocking notice, not a wipe. */}
-      {loadFailed && (
-        <div role="alert" data-type="caption" className="mx-2 mt-2 flex items-center gap-2 rounded-md px-2.5 py-1.5"
-          style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)', color: 'var(--color-warn)' }}>
-          <AlertTriangle size={12} className="shrink-0" />
-          <span className="min-w-0 flex-1">Couldn't refresh some tasks — showing the last known list.</span>
-          {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
-          <Button variant="ghost" size="xs" onClick={refresh} className="shrink-0 gap-1 px-1.5 text-[0.75rem] text-warn hover:bg-warn/15"><RotateCcw size={11} /> Retry</Button>
-        </div>
-      )}
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <StageTasks project={project} onTasksChanged={onTasksChanged} loading={loading}
-          tasksByList={tasksByList} onSelect={setSelectedTaskId} activeTaskIds={activeTaskIds}
-          mainActivity={activityBySession[`loop-${project.id}`] ?? []} />
-      </div>
-      {/* Project-level signals + steer box (list view): not task-scoped. */}
-      <ProjectFooter project={project} gateFail={gateFail} stalled={stalled} onNudged={onNudged} onStartNew={onStartNew}
-        onAnswerOnScreen={onAnswerOnScreen} answerWanted={answerWanted} onAnswerShown={onAnswerShown} />
-    </div>
-  )
-}
-
-// ── right: live activity + steer ──
 
 // ── shells ──
 
