@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import ast
 import posixpath
+import subprocess
 import textwrap
+from functools import lru_cache
 
 import local_actions
 import pytest
 import yaml
 from rails_repo import REPO
 
+from scripts import ci_touches_sdk
 from tools.ci import catalogue
 from tools.ci import plan as planner
 
@@ -26,6 +29,14 @@ _MERGE = {j.id for j in _CAT.tier("merge")}
 
 def _plan(*paths: str, tier: str = "merge") -> planner.Plan:
     return planner.plan(_CAT, tier, list(paths), overrides=_AREAS, root=REPO)
+
+
+@lru_cache(maxsize=1)
+def _tracked() -> tuple[str, ...]:
+    out = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=REPO, capture_output=True, text=True, check=True
+    ).stdout
+    return tuple(p for p in out.split("\0") if p)
 
 
 # ── the browser run keeps the frontend classifier's answers ──────────────────────────────────
@@ -131,7 +142,10 @@ def test_each_e2e_exclusion_carries_the_classifiers_reason_word_for_word() -> No
 
 # ── every declared input schedules its job ───────────────────────────────────────────────────
 
-#: A path each job's declared inputs reach, and a path they do not (None: the whole tree).
+#: A path each job's declared inputs reach, and a path they do not, whose plan leaves the job out
+#: (None: no plan leaves it out, because the job declares the whole tree or is a job every plan
+#: holds: the rails, a security job or a live one). python-suite names its inputs, but every plan
+#: holds it as a security job, so its row pins the input through the reason alone.
 _INPUT_ROWS = {
     "static": ("Makefile", None),
     "rails": ("tests/rails/test_ci_plan_tree.py", None),
@@ -157,7 +171,9 @@ def test_the_rows_name_every_job_of_the_change_and_merge_tiers() -> None:
 def test_a_declared_input_schedules_its_job(job_id: str) -> None:
     reached, missed = _INPUT_ROWS[job_id]
     tier = "merge" if job_id in _MERGE else "change"
-    assert job_id in _plan(reached, tier=tier).jobs, reached
+    p = _plan(reached, tier=tier)
+    assert job_id in p.jobs, reached
+    assert f"{reached}: a declared input" in p.reasons[job_id], (reached, p.reasons[job_id])
     if missed is not None:
         p = _plan(missed, tier=tier)
         assert not p.full and job_id not in p.jobs, missed
@@ -205,6 +221,24 @@ def test_an_overrides_path_plans_what_it_says(path: str) -> None:
         assert set(want) <= set(p.jobs), (path, p.full_reasons)
         for job_id in want:
             assert any(o.reason in r for o in mine for r in p.reasons[job_id]), (path, job_id)
+
+
+#: The folders a whole-tier override names, written here and not read from tools/ci/areas.toml: an
+#: override narrowed to the files planted above would still pass the rows above, and every other
+#: file under its folder would lose the whole tier its reason promises. python-suite names each
+#: of these folders, so only the override plans their files' whole tier.
+_WHOLE_TIER_FOLDERS = (".github/workflows/", ".github/actions/", "tools/ci/", "deploy/docker/")
+
+
+@pytest.mark.parametrize("folder", _WHOLE_TIER_FOLDERS)
+def test_every_tracked_file_under_a_whole_tier_folder_plans_the_whole_tier(folder: str) -> None:
+    under = [p for p in _tracked() if p.startswith(folder)]
+    assert under, f"no tracked file under {folder}: this sweep would read nothing"
+    reasons = [o.reason for o in _AREAS if o.whole_tier]
+    for path in under:
+        p = _plan(path)
+        assert p.full and set(p.jobs) == _MERGE, (path, p.full_reasons)
+        assert any(why in r for why in reasons for r in p.full_reasons), (path, p.full_reasons)
 
 
 def test_a_local_action_a_job_calls_plans_the_whole_tier() -> None:
@@ -322,27 +356,71 @@ def test_no_plan_leaves_out_the_rails_or_a_security_or_live_job() -> None:
         assert floor <= set(_plan(path).jobs), path
 
 
+def test_a_src_diff_is_known_and_leaves_apps_contract_out() -> None:
+    """python-suite names src/, so a backend diff is a known path: the plan is not the whole
+    tier, and apps-contract, whose inputs are the SDK's, is left out."""
+    p = _plan("src/personalclaw/app.py")
+    assert not p.full, p.full_reasons
+    assert {"python-suite", "python-suite-macos", "e2e"} <= set(p.jobs)
+    assert "apps-contract" not in p.jobs
+    assert any("a declared input" in r for r in p.reasons["python-suite"])
+
+
+def test_a_src_diff_that_reaches_the_sdk_plans_apps_contract() -> None:
+    p = _plan("src/personalclaw/app.py", "src/personalclaw/sdk/channel.py")
+    assert not p.full and "apps-contract" in p.jobs
+
+
+def test_docs_is_one_of_python_suites_inputs() -> None:
+    """Suite modules read docs/ (the publication-hygiene check reads every tracked file, and
+    modules check prose against the tree), so docs/ is one of python-suite's inputs. Every plan
+    holds python-suite as a security job anyway: this row pins the input, through its reason,
+    not the run."""
+    p = _plan("docs/vision.md")
+    assert not p.full and "python-suite" in p.jobs and "python-suite-macos" in p.jobs
+    assert "docs/vision.md: a declared input" in p.reasons["python-suite"], p.reasons
+
+
 def test_a_path_only_a_whole_tree_input_reaches_plans_the_whole_tier() -> None:
-    """Every job but e2e and apps-contract declares the whole tree, which names no path: a
-    backend or web change is therefore unknown and runs the whole tier, apps-contract included,
-    until a job declares it. A narrower input is each job's own change."""
-    for path in ("src/personalclaw/app.py", "web/src/App.tsx", "Makefile"):
-        p = _plan(path)
-        assert p.full and set(p.jobs) == _MERGE, path
-        assert p.full_reasons == (f"{path} is named by no input but the whole tree",), path
-
-
-def test_a_path_a_whole_tree_jobs_step_runs_is_still_unknown() -> None:
-    """package's step runs scripts/verify_wheel.py: the step schedules package, but only a
-    declared input names a path, and package declares the whole tree."""
-    p = _plan("scripts/verify_wheel.py")
+    """flake.nix is in no job's named inputs: the suite reads it (the publication-hygiene check
+    opens every tracked file), and python-suite leaves it out on purpose, so a change to it alone
+    is unknown and plans the whole tier
+    (tests/rails/test_ci_python_suite_inputs_tree.py holds that choice)."""
+    p = _plan("flake.nix")
     assert p.full and set(p.jobs) == _MERGE
-    assert p.full_reasons == ("scripts/verify_wheel.py is named by no input but the whole tree",)
+    assert p.full_reasons == ("flake.nix is named by no input but the whole tree",)
+
+
+def test_a_new_root_markdown_file_is_known_through_e2es_exclusion() -> None:
+    """A new top-level path no input names plans the whole tier, but a new root *.md is named by
+    e2e's exclusion: it is known, and its plan leaves e2e and apps-contract out."""
+    assert "GOVERNANCE.md" not in _tracked()
+    p = _plan("GOVERNANCE.md")
+    assert not p.full, p.full_reasons
+    assert "e2e" not in p.jobs and "apps-contract" not in p.jobs
+
+
+def test_apps_contracts_inputs_are_ci_ymls_classifier_triggers() -> None:
+    """ci.yml runs apps-contract on what scripts/ci_touches_sdk.py says, and the catalogue says
+    its inputs are that classifier's triggers: the two lists are one."""
+    assert set(_CAT.job("apps-contract").inputs) == set(ci_touches_sdk.TRIGGERS)
+
+
+def test_every_tracked_path_ci_yml_runs_apps_contract_on_plans_it() -> None:
+    """python-suite names every top-level entry but the flake, so the unknown-path fallback no
+    longer plans apps-contract for a path its inputs miss: each tracked path the classifier
+    runs it on must plan it."""
+    sdk = [p for p in _tracked() if ci_touches_sdk.touches_sdk([p])]
+    assert len(sdk) > 20, sdk
+    missed = [p for p in sdk if "apps-contract" not in _plan(p).jobs]
+    assert not missed, missed
 
 
 def test_a_docs_only_plan_leaves_out_the_browser_run_and_reports_the_floor() -> None:
-    """The issue's docs-only target (static and the rails alone) waits on each other job's
-    inputs being narrowed; until then the plan keeps e2e off and reports the rails floor."""
+    """The issue's docs-only target (static and the rails alone) waits on two things: each other
+    job's inputs being narrowed, and a security-posture decision, since every plan holds the
+    security jobs (python-suite among them) whatever their inputs say. Until then the plan keeps
+    e2e off and reports the rails floor."""
     p = _plan("docs/vision.md", "README.md")
     assert not p.full and "e2e" not in p.jobs and "apps-contract" not in p.jobs
     assert {"static", "rails"} <= set(p.jobs)

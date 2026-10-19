@@ -15,9 +15,10 @@
 #
 # `inputs` are git pathspecs, and tools/ci/plan.py plans each run from them: a changed path a
 # job's inputs reach, or a path one of its steps runs, schedules that job. A path no input but
-# the whole tree names plans the whole tier. Every job but e2e and apps-contract still declares
-# the whole tree; each is narrowed in a change of its own, with its reason and a planted path.
-# tools/ci/areas.toml holds the explicit overrides, which add jobs for named paths and only add.
+# the whole tree names plans the whole tier. e2e, apps-contract and python-suite name their
+# inputs; every other job still declares the whole tree, and each is narrowed in a change of its
+# own, with its reason and a planted path. tools/ci/areas.toml holds the explicit overrides,
+# which add jobs for named paths and only add.
 
 # The jobs the merge tier must run. Each job whose tiers claim merge is listed here, and only
 # those, so dropping one from the merge tier takes two edits.
@@ -87,11 +88,69 @@ command = [
 ]
 
 # The suite, its security-marked modules included: the merge tier's security evidence is this
-# run of them, so the job is security posture and never reused.
+# run of them, so the job is security posture and never reused, and every plan holds it.
+#
+# So its inputs do not decide whether it runs; they decide which paths are known. They are what
+# the suite reads, held to a census by tests/rails/test_ci_python_suite_inputs_tree.py: every
+# tracked path, since the suite's publication-hygiene tests list the tracked tree and open each
+# file in it, and every path a suite module names. The list is every top-level entry but
+# flake.nix and flake.lock, which the suite reads too and the list leaves out on purpose: the
+# flake is what the Nix workflow builds and checks, a workflow of its own and no catalogue job,
+# so a change to it alone is named by no input and plans the whole tier. A path in the list is
+# known, so a src/ diff plans the jobs it reaches, not the whole tier, and leaves apps-contract
+# out unless it reaches the SDK. A new top-level path no input names plans the whole tier; a new
+# root *.md is named by e2e's exclusion, so it is known. An entry leaves this list only when no
+# suite test reads it, which waits on the publication-hygiene tests' real-tree runs moving to
+# tests/rails.
 [[job]]
 id = "python-suite"
 tiers = ["merge"]
-inputs = [":(glob)**"]
+inputs = [
+".dockerignore",
+".env.example",
+".githooks/",
+".github/",
+".gitignore",
+".nvmrc",
+".python-version",
+"AGENTS.md",
+"ASSET_LICENSES.json",
+"CHANGELOG.md",
+"CLAUDE.md",
+"CODE_OF_CONDUCT.md",
+"CONTRIBUTING.md",
+"LICENSE",
+"MAINTAINERS",
+"MANIFEST.in",
+"Makefile",
+"README.md",
+"SECURITY.md",
+"SHOWCASE.md",
+"config-baseline.json",
+"deploy/",
+"desktop/",
+"docs-lint-baseline.json",
+"docs/",
+"harness/",
+"inert-surface-baseline.json",
+"mobile/",
+"nix/",
+"package-lock.json",
+"package.json",
+"packages/",
+"personalclaw-backend.spec",
+"publication-hygiene-baseline.json",
+"pyproject.toml",
+"scripts/",
+"setup.cfg",
+"setup.py",
+"src/",
+"structural-baseline.json",
+"tests/",
+"tools/",
+"uv.lock",
+"web/",
+]
 external_inputs = ["shard-history"]
 toolchain = ["uv-sync", "tmux"]
 cache = ["uv"]
@@ -292,7 +351,10 @@ command = [
 ]
 
 # ci.yml runs it only when scripts/ci_touches_sdk.py says the diff changes what the apps build
-# against; these are that classifier's triggers.
+# against; these are that classifier's triggers. python-suite names every tracked path but the
+# flake, so on any of them no unknown-path fallback stands behind these inputs, and they alone
+# decide a plan's apps-contract. tests/rails/test_ci_plan_tree.py holds them to the triggers and
+# plans every tracked path the classifier runs the job on.
 [[job]]
 id = "apps-contract"
 tiers = ["merge"]
