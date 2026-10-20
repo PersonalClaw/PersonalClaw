@@ -21,17 +21,20 @@ Order is not checked, since a union merge keeps each side's new lines where that
 ``SITE_BASELINE_PRUNE=1``, and each check then deletes its stale and repeated lines and sorts the
 file. It never adds a line.
 
-**A branch cannot grow its own list.** Given the pull request's base commit in ``BASE_SHA``, the
-file is compared with the base's copy of it. A line the base does not have is an added exception:
-it passes only with ``"added": "YYYY-MM-DD"`` and its reason, and each is printed for the job
-summary. A line the base has and the branch deleted is a fixed site. With no
-base, a local run, the file is compared with the working tree only, and the check says so.
+**A branch cannot grow its own list.** Given the pull request's base commit in ``BASE_SHA``, as
+the rails job's ``base`` step fetches it, the file is compared with the base's copy of it. A line
+the base does not have is an added exception: it passes only with ``"added": "YYYY-MM-DD"`` and
+its reason, and each is printed and written to the job summary (``GITHUB_STEP_SUMMARY``), where
+the review reads it, a line break in its reason escaped. A line the base has and the branch
+deleted is a fixed site. With no base, a local run, the file is compared with the working tree
+only, and the check says so.
 
 **Nor by its file.** Every baseline file is registered in :data:`REGISTRY`, one line each: its
 path, the rail that checks it, what it replaces, and the ceiling it replaced at conversion. The
 registry is a site baseline of files, compared with the base the same way (:func:`check_registry`).
 A baseline file the base does not have is accepted only when its registry line is new in this
-branch, carries ``added`` and a reason, and names a ceiling its line count does not exceed. A
+branch, carries ``added`` and a reason, and names a ceiling its line count does not exceed; the
+job summary then names it against that ceiling and lists each of its sites with its reason. A
 registered file that is renamed or deleted fails until its registry line goes too, and a registry
 line may not raise its ceiling.
 
@@ -52,6 +55,7 @@ import ast
 import datetime
 import json
 import os
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -79,6 +83,9 @@ REGISTRY_RAIL = (
 
 #: The commit a check compares against, as the gate passes it. Unset or empty: no base.
 BASE_VARIABLE = "BASE_SHA"
+
+#: The file GitHub gives each step for its job's summary; unset off GitHub.
+SUMMARY_VARIABLE = "GITHUB_STEP_SUMMARY"
 
 #: Set to ``1`` by ``--prune``: each check deletes its stale and repeated lines.
 PRUNE_VARIABLE = "SITE_BASELINE_PRUNE"
@@ -306,6 +313,38 @@ def _added_since(
     return added, failures
 
 
+#: A character that could end a summary line: a line break, or any other control character.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _one_line(text: str) -> str:
+    """*text* with each control character written as its escape (``\\n`` for a line break), so a
+    reason, which is free text, stays on its own line and cannot end the summary's fence."""
+    return _CONTROL.sub(lambda char: repr(char.group())[1:-1], text)
+
+
+def _summarise(heading: str, texts: list[str]) -> None:
+    """Print each of *texts*, and write them under *heading* to the job summary when there is
+    one: a passing test's output is captured, so the summary is where the review sees them."""
+    texts = [_one_line(text) for text in texts]
+    for text in texts:
+        print(text)
+    summary = os.environ.get(SUMMARY_VARIABLE)
+    if not (texts and summary):
+        return
+    with open(summary, "a", encoding="utf-8") as out:
+        out.write(f"### {heading}\n\n~~~text\n" + "".join(t + "\n" for t in texts) + "~~~\n\n")
+
+
+def _report(rel: str, compared: str, added: list[Line]) -> None:
+    """Each line this branch added to *rel*, with its date and reason (:func:`_summarise`)."""
+    count = f"{len(added)} line{'s' if len(added) > 1 else ''}"
+    _summarise(
+        f"{rel}: {count} this branch adds ({compared})",
+        [f"added {line.added}: {line.site}: {line.reason}" for line in added],
+    )
+
+
 def _fail(rel: str, compared: str, failures: list[str]) -> None:
     if failures:
         raise AssertionError("\n".join([f"{rel} ({compared}):", *("  " + f for f in failures)]))
@@ -333,9 +372,14 @@ def _registration(root: Path, rel: str, lines: list[Line], base: str | None) -> 
             f"{rel} is a new baseline of {len(lines)} sites, over the ceiling {ceiling} its "
             "registry line names"
         ]
-    print(
-        f"{rel}: a new baseline of {len(lines)} sites (it replaces {entry.fields.get('replaces')}, "
-        f"ceiling {ceiling})"
+    # Every line of a file the base lacks is one the branch adds: each reaches the summary.
+    _summarise(
+        f"{rel}: a new baseline file this branch adds ({_compared(base)})",
+        [
+            f"{rel}: a new baseline of {len(lines)} sites (it replaces "
+            f"{entry.fields.get('replaces')}, ceiling {ceiling})",
+            *(f"{line.site}: {line.reason}" for line in lines),
+        ],
     )
     return []
 
@@ -349,7 +393,8 @@ def check(
     prune: bool | None = None,
 ) -> list[Line]:
     """Hold the sites a rail *found* to the baseline at *path*; return the lines this branch
-    added, each printed. Raises :class:`AssertionError` naming every failure.
+    added, each printed and written to the job summary (:func:`_report`). Raises
+    :class:`AssertionError` naming every failure.
 
     *base* is the commit to compare with: by default the gate's (:data:`BASE_VARIABLE`); ``None``
     for none. *prune*, by default :data:`PRUNE_VARIABLE`, deletes stale and repeated lines first.
@@ -367,8 +412,7 @@ def check(
     if at_base is not None:
         added, more = _added_since(lines, at_base, set(found), _SITES)
         failures += more
-    for line in added:
-        print(f"added {line.added}: {line.site}: {line.reason}")
+    _report(rel, compared, added)
     _fail(rel, compared, failures)
     return added
 
@@ -386,7 +430,7 @@ def check_registry(
     """Hold the registry to the baseline *files* a rail found in the tree: each is registered,
     every registered file is among them, every line names its rail, what it replaces and a
     ceiling, and against *base* nothing grew. Returns the registry lines this branch added, each
-    printed."""
+    printed and written to the job summary (:func:`_report`)."""
     root = Path(root)
     base = _base(base)
     compared = _compared(base)
@@ -418,8 +462,7 @@ def check_registry(
             was, now = before.get(line.site), line.fields.get("ceiling")
             if isinstance(was, int) and isinstance(now, int) and now > was:
                 failures.append(f"{line.site} raises its ceiling from {was} to {now}")
-    for line in added:
-        print(f"added {line.added}: {line.site}: {line.reason}")
+    _report(REGISTRY, compared, added)
     _fail(REGISTRY, compared, failures)
     return added
 
