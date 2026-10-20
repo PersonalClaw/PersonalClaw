@@ -53,7 +53,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from aiohttp import DummyCookieJar, web
 from aiohttp.test_utils import TestClient, TestServer
-from shared_app_rows import RecordedRows, Row, SharedApp, planted_rows
+from shared_app_rows import (
+    RecordedRows,
+    Row,
+    SharedApp,
+    home_files,
+    planted_rows,
+    written_since,
+)
 from table_rows import row
 
 # Imported before any test patches `config_dir`: a module first imported under a patch keeps the
@@ -444,38 +451,6 @@ def _chat_binding() -> list[str]:
     return list(load_active_models().get("chat") or [])
 
 
-#: What the token middleware stamps on the session of any authorized request, refused or not:
-#: when it was last seen, and from where (``session_store.touch_device_last_seen``).
-_SIGN_IN_STAMPS = frozenset({"last_seen", "ip"})
-
-
-def _unstamped(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {k: _unstamped(v) for k, v in value.items() if k not in _SIGN_IN_STAMPS}
-    if isinstance(value, list):
-        return [_unstamped(v) for v in value]
-    return value
-
-
-def _files(home: Path) -> dict[str, bytes]:
-    """Every file under *home* by its path, the sessions' sign-in stamps left out of their file."""
-    from personalclaw.dashboard.session_store import SESSIONS_FILE
-
-    files = {}
-    for path in (p for p in home.rglob("*") if p.is_file()):
-        name, raw = path.relative_to(home).as_posix(), path.read_bytes()
-        if name == SESSIONS_FILE:
-            raw = json.dumps(_unstamped(json.loads(raw)), sort_keys=True).encode()
-        files[name] = raw
-    return files
-
-
-def _changed_since(home: Path, before: dict[str, bytes]) -> list[str]:
-    """The files in *home* that differ from *before*, by their path in the home."""
-    now = _files(home)
-    return sorted(k for k in before.keys() | now.keys() if before.get(k) != now.get(k))
-
-
 #: The fixture app, installed once for the module.
 SHARED = SharedApp(APP, _bundle, _gateway)
 
@@ -493,10 +468,10 @@ def _route_rows(reached: list[tuple[str, str]]) -> list[tuple[str, Any]]:
 
         async def case(r: Row) -> None:
             reached.clear()
-            before = _files(r.home)
+            before = home_files(r.home)
             as_sdk = await r.gw.call(method, path, body, app_token=r.token)
             as_backend = await r.gw.call(method, path, body, app_token=r.token, as_backend=True)
-            written = _changed_since(r.home, before)
+            written = written_since(r.home, before)
             yours = await r.gw.call(method, path, body)
             for status, text in (as_sdk, as_backend):
                 assert status == 403, text
@@ -675,11 +650,11 @@ def _the_bind_is_refused(ollama: _Ollama, bind_chat: bool):
     async def case(r: Row, _models: Any) -> None:
         await _your_models(r.gw)
         ollama.hits = 0
-        before = _files(r.home)
+        before = home_files(r.home)
         status, text = await r.gw.call(
             "POST", BIND, {"endpoint": ollama.endpoint, "bind_chat": bind_chat}, app_token=r.token
         )
-        assert _changed_since(r.home, before) == [], "the refusal wrote nothing"
+        assert written_since(r.home, before) == [], "the refusal wrote nothing"
         assert _chat_binding() == [f"{YOURS}:{YOUR_MODEL}"], "your chats run on your model"
         assert _stored_providers() == [YOURS], "no provider was added at the app's server"
         assert ollama.hits == 0, "the gateway never asked the app's server anything"

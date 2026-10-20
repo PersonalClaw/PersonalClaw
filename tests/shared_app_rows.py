@@ -16,11 +16,15 @@ table on that copy. Nothing one row did reaches the next:
 
 A row is ``(name, body)``: an async function given the :class:`Row` it runs in. ``row()`` reports
 a failing row as a subtest named by its name, and the rows after it still run.
+
+A refused row reads the home around the app's requests with :func:`home_files` and
+:func:`written_since`, so a refusal that wrote anything fails its own row.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import AbstractAsyncContextManager, contextmanager
@@ -50,6 +54,38 @@ def digest(home: Path) -> str:
         hasher.update(path.read_bytes())
         hasher.update(b"\0")
     return hasher.hexdigest()
+
+
+#: What the token middleware stamps on the session of any authorized request, refused or not:
+#: when it was last seen, and from where (``session_store.touch_device_last_seen``).
+_SIGN_IN_STAMPS = frozenset({"last_seen", "ip"})
+
+
+def _unstamped(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _unstamped(v) for k, v in value.items() if k not in _SIGN_IN_STAMPS}
+    if isinstance(value, list):
+        return [_unstamped(v) for v in value]
+    return value
+
+
+def home_files(home: Path) -> dict[str, bytes]:
+    """Every file under *home* by its path, the sessions' sign-in stamps left out of their file."""
+    from personalclaw.dashboard.session_store import SESSIONS_FILE
+
+    files = {}
+    for path in (p for p in home.rglob("*") if p.is_file()):
+        name, raw = path.relative_to(home).as_posix(), path.read_bytes()
+        if name == SESSIONS_FILE:
+            raw = json.dumps(_unstamped(json.loads(raw)), sort_keys=True).encode()
+        files[name] = raw
+    return files
+
+
+def written_since(home: Path, before: dict[str, bytes]) -> list[str]:
+    """The files in *home* that differ from *before* (a :func:`home_files` reading), by path."""
+    now = home_files(home)
+    return sorted(k for k in before.keys() | now.keys() if before.get(k) != now.get(k))
 
 
 def _changed(was: Path, now: Path) -> list[str]:
