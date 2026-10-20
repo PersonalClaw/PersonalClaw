@@ -17,6 +17,7 @@ const doc: UiDoc = {
     { name: 'overlayOpen', description: 'Overlay drawer expanded (slid in). When false the drawer is off-screen (translateX -100%) and no scrim shows.' },
     { name: 'onScrimClick', description: 'Tap the scrim behind the open overlay drawer → close it.' },
     { name: 'material', description: 'The desktop window\'s translucent sidebar material shows behind the rail (app/windowMaterial.ts, useWindowMaterial): the in-flow column is then clear so the material shows through it. The mobile overlay drawer floats over the page, so it keeps var(--color-rail) either way. Default false.' },
+    { name: 'threads', description: "The projects with their threads (a ThreadRail), rendered after the leading unsectioned items and before the first sectioned one, in the expanded rail and the mobile drawer (the compact path to them). The collapsed icon rail shows none. Omit it and the rail renders only its items." },
     { name: 'disclosure', description: 'Progressive disclosure: {expanded, moreCount, onToggle}. Renders an "Everything / Show fewer" row at the end of scroll order, with aria-expanded and the count in its accessible name. Omit it (or pass moreCount 0) and no expander renders. The rail is handed already-FILTERED items — which surfaces are starter, which are pinned and how pins persist all live in app/navDisclosure.ts.' },
   ],
   bestPractices: [
@@ -28,7 +29,7 @@ const doc: UiDoc = {
     { guidance: false, description: 'Do not use disclosure to make a surface unreachable. It hides rail ROWS only: deep links, the CommandPalette and in-app links must still render a hidden surface, and visiting one pins it.' },
     { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens.' },
   ],
-  anatomy: ['nav column (background var(--color-rail); clear over the desktop window material)', 'header (Wordmark expanded / Spark collapsed)', 'scroll-order items (with section headers + badges)', 'disclosure row ("Everything +N" / "Show fewer") when disclosure is passed', 'flex spacer', 'bottom-pinned items', 'active pill (instant, by colour)', 'right-edge drag-resize handle (expanded)', 'mobile: scrim + fixed overlay drawer'],
+  anatomy: ['nav column (background var(--color-rail); clear over the desktop window material)', 'header (Wordmark expanded / Spark collapsed)', 'scroll-order items (with section headers + badges)', 'the threads slot, after the leading unsectioned items (expanded and drawer only)', 'disclosure row ("Everything +N" / "Show fewer") when disclosure is passed', 'flex spacer', 'bottom-pinned items', 'active pill (instant, by colour)', 'right-edge drag-resize handle (expanded)', 'mobile: scrim + fixed overlay drawer'],
 }
 
 export default doc

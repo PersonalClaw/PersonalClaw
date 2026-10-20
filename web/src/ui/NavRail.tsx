@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { withWeight } from '../design/fontWeight'
 import { ChevronDown, type LucideIcon } from 'lucide-react'
 import { motion } from 'framer-motion'
@@ -74,9 +74,13 @@ const DEFAULT_W = 196
  *  the rail). When collapsed → icon-only 64px rail. Bottom: a live system
  *  health widget. No operator/identity footer (single-user; Settings is in nav). */
 export function NavRail({
-  items, activeId, onSelect, collapsed, overlay = false, overlayOpen = false, onScrimClick, disclosure, material = false,
+  items, activeId, onSelect, collapsed, overlay = false, overlayOpen = false, onScrimClick, disclosure, material = false, threads,
 }: {
   items: NavItem[]
+  /** The projects with their threads (`ThreadRail`), shown after the leading destinations and
+   *  before the sectioned ones, in the expanded rail and the phone's drawer. The collapsed rail is
+   *  icons only and shows none: a thread is reached there from Home, the palette or a key. */
+  threads?: ReactNode
   /** The desktop window's translucent material shows behind the rail (`app/windowMaterial.ts`):
    *  the in-flow column is then clear so the material shows through it. The phone drawer floats
    *  over the page, so it keeps its own surface either way. */
@@ -200,6 +204,13 @@ export function NavRail({
   // drawer. In overlay mode it always shows full labels (a drawer has room; icon-only
   // makes no sense once you've deliberately opened it).
   const showFull = overlay ? true : !collapsed
+  // The threads sit after the leading (unsectioned) destinations, before the first sectioned one.
+  const firstSectioned = topItems.findIndex((i) => i.section)
+  const threadsAt = firstSectioned < 0 ? topItems.length : firstSectioned
+  // One keyed list, so the threads keep their place in React's tree (and their state) when the
+  // destinations around them change, as disclosure changes them.
+  const topRows = topItems.map((item) => renderItem(item, !disclosure || disclosure.expanded))
+  if (showFull && threads) topRows.splice(threadsAt, 0, <Fragment key="threads">{threads}</Fragment>)
   const railBody = (
     // `data-tour` is the product tour's anchor for its first stop. A
     // literal, not a prop: the rail is the shell's one navigation and the tour points at it
@@ -217,7 +228,7 @@ export function NavRail({
           a heading per item, which groups nothing. The starter rail is one curated group by
           construction (essentials + what you have opened), and the sections it has are
           "starter" and "everything". Expert keeps Platform / Capabilities / Apps untouched. */}
-      {topItems.map((item) => renderItem(item, !disclosure || disclosure.expanded))}
+      {topRows}
 
       {/* Progressive disclosure — the last row of scroll order, so it reads as "…and the
           rest" rather than as a section of its own. `aria-expanded` because it genuinely
