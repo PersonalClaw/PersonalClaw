@@ -7,18 +7,22 @@ Python file under :mod:`personalclaw`, selecting both path families that can hid
 * a GET with a non-terminal ``{param}`` segment; and
 * a deep GET whose terminal ``{param}`` may itself name a parent-scoped collection.
 
-Every selected route must be directly covered by ``test_parent_resource_validation.py`` or
-have a written exclusion below.  Both maps are checked for stale paths and handler drift.
-Static inspection follows ``test_api_manifest_drift.py``: booting the dashboard just to walk
-its live route table has security-sensitive startup side effects.
+Every selected route must be directly covered by ``test_parent_resource_validation.py`` or be
+listed, with the reason it needs no pair, in :data:`SUBRESOURCE_READS`, a site baseline.  The
+coverage map is checked for stale paths and handler drift, and the list for new and stale routes,
+each by name.  Static inspection follows ``test_api_manifest_drift.py``: booting the dashboard
+just to walk its live route table has security-sensitive startup side effects.
 """
 
 from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Iterable
 from pathlib import Path
 
+import pytest
+import site_baseline
 import source_index
 from rails_repo import REPO
 
@@ -60,154 +64,18 @@ PARENT_READ_COVERED = {
     "/api/workflows/{name}/versions/{version}": "api_def_version_detail",
 }
 
-# MANIFEST_EXCLUDE-shaped on purpose: each candidate is named once with the reason it
-# does not need another ghost-parent regression pair.  Repeated prose would hide the
-# important distinction, so each value names the resolver or the endpoint contract.
-PARENT_READ_EXCLUDE = {
-    "/api/agent-providers/{id}/agents": (
-        "registry rejects unknown ids; the built-in runtime intentionally has no catalog"
-    ),
-    "/api/apps/{name}/agent-run/{run_id}": (
-        "run lookup is app-owned and rejects absent or cross-app run ids"
-    ),
-    "/api/apps/{name}/config": "resolves the installed app manifest before reading config",
-    "/api/artifacts/{slug}/events": "provider.get resolves the artifact before listing events",
-    "/api/artifacts/{slug}/extract": "provider.get resolves the artifact before extraction",
-    "/api/artifacts/{slug}/model": "the artifact resolver rejects an unknown slug before decoding",
-    "/api/artifacts/{slug}/raw": "provider.get resolves the artifact before serving bytes",
-    "/api/artifacts/{slug}/versions/{version}": (
-        "provider.get resolves the exact artifact version; this is a child detail read"
-    ),
-    "/api/channels/{name}/owner": (
-        "channel_owner._channel resolves the registered transport first, so an unknown "
-        "channel is channel_unknown 404 (both halves driven in test_channel_owner_api.py)"
-    ),
-    "/api/chat/sessions/{session}/export": "_read_transcript rejects a missing session",
-    "/api/chat/sessions/{session}/map": "full_session_messages rejects a missing session",
-    "/api/chat/sessions/{session}/organize": "resolve_session rejects a missing session",
-    "/api/chat/sessions/{session}/plan-session": "_resolve rejects a missing live chat session",
-    "/api/chat/sessions/{session}/rewind": "_resolve_session rejects a missing live chat session",
-    "/api/chat/sessions/{session}/tool-result/{rid}": (
-        "the exact session/result key must resolve in the raw-result store"
-    ),
-    "/api/dashboard/views/{view_id}/tiles/refresh": (
-        "tile_refresh rejects a missing view or tile with tile_not_found"
-    ),
-    "/api/durability/history/{root}/timeline": (
-        "_history_root validates the root against the durable-root registry"
-    ),
-    "/api/inbox/{id}/attachments/{aid}": (
-        "the inbox row and then the exact attachment record are both resolved; this is child "
-        "detail (a ghost row is inbox_attachment_not_found, driven in test_message_attachments.py)"
-    ),
-    "/api/knowledge/collections/{id}/items": (
-        "get_collection resolves the collection before resolving its items"
-    ),
-    "/api/knowledge/entities/{id}/graph": "the graph must contain the entity node",
-    "/api/knowledge/intents/{id}/outcomes": "the intent store resolves the intent first",
-    "/api/knowledge/items/{id}/annotations": "get_item resolves the item before annotations",
-    "/api/knowledge/items/{id}/content": "get_item resolves the item before returning content",
-    "/api/knowledge/items/{id}/duplicates": "get_item resolves the item before duplicate search",
-    "/api/knowledge/items/{id}/extracted": "get_item resolves the item before extracted content",
-    "/api/knowledge/items/{id}/file": "_serve_item_path rejects an item without a stored file",
-    "/api/knowledge/items/{id}/graph": "get_item resolves the item before projecting its graph",
-    "/api/knowledge/items/{id}/ingest/stream": (
-        "SSE event transport, not an empty collection read; the id selects a per-item progress feed"
-    ),
-    "/api/knowledge/items/{id}/intents": "get_item resolves the item before listing outcomes",
-    "/api/knowledge/items/{id}/related": (
-        "the related-items handler explicitly distinguishes unknown items from no close neighbours"
-    ),
-    "/api/knowledge/items/{id}/sections": "get_item resolves the item before sectioning",
-    "/api/knowledge/items/{id}/staleness": "staleness_for rejects an unknown item",
-    "/api/knowledge/items/{id}/thumbnail": "_serve_item_path rejects an item without a thumbnail",
-    "/api/loops/{id}/conflict": "the loop (404) and the conflict it waits on (409) resolve first",
-    "/api/loops/{id}/design/tokens": "loop store resolves the design loop before token projection",
-    "/api/loops/{id}/kept-work": "_kept_loop resolves the loop (404 when absent) before listing",
-    "/api/loops/{id}/merge": "the loop (404) and its waiting merge (409) resolve before a review",
-    "/api/loops/{id}/plan-session": "loop store resolves the loop before nullable plan state",
-    "/api/loops/{id}/report": "loop store resolves the loop before reading empty-on-missing files",
-    "/api/loops/{id}/stream": "_loop_view resolves the loop before opening its SSE stream",
-    "/api/model-providers/{name}/models": "model-provider registry resolves the entry first",
-    "/api/model-providers/{name}/search": "model-provider registry resolves the entry first",
-    "/api/model-providers/{name}/show": "model-provider registry resolves the entry first",
-    "/api/models/downloads/{id}/stream": "download registry resolves the job before SSE setup",
-    "/api/models/embedding/reindex/{id}/stream": "reindex registry resolves the SSE job",
-    "/api/models/local/{provider}/search": "local-model registry rejects an unknown provider",
-    "/api/models/sidecar/{provider}/install/status": (
-        "sidecar registry rejects providers without an install definition"
-    ),
-    "/api/models/use-cases/{use_case}/settings": "VALID_USE_CASES validates this enum-like key",
-    "/api/projects/{project_id}/export": "project store resolves the project before export",
-    "/api/projects/{project_id}/linked": "project store resolves the project before linked work",
-    "/api/projects/{project_id}/work": "project store resolves the project before board projection",
-    "/api/providers/{name}/config": "provider registry resolves the extension before config",
-    "/api/providers/{name}/instances": "provider registry resolves the extension before instances",
-    "/api/providers/{name}/instances/{id}": (
-        "provider registry and then the exact instance are both resolved; this is child detail"
-    ),
-    "/api/providers/{name}/schema": "provider registry resolves the extension before schema",
-    "/api/rooms/{room_id}/export": (
-        "rooms.store.require_room resolves the room before any transcript read, so a ghost "
-        "room is room_not_found rather than an empty export (asserted in test_rooms_api.py)"
-    ),
-    "/api/sessions/{id}/agents/{agent_id}": (
-        "read_result requires the exact session/agent result; this is child detail"
-    ),
-    "/api/sessions/{id}/agents/{agent_id}/stream": (
-        "SSE may attach before the child result exists; this is not a collection read"
-    ),
-    "/api/skills/{name}/files": "skill-root resolver rejects unknown skills before browsing",
-    "/api/triggers/{id}/history/{run_id}": (
-        "the run store resolves the exact trigger/run pair; this is child detail"
-    ),
-    "/api/voice/profiles/{id}/audio": "require_profile resolves the profile before serving audio",
-    "/api/workflows/runs/{run_id}/continuations": "run store rejects unknown runs first",
-    "/api/workflows/runs/{run_id}/deliverable": (
-        "run_cockpit.run_deliverable rejects an unknown run"
-    ),
-    "/api/workflows/runs/{run_id}/drop": "service.drop_status rejects an unknown run",
-    "/api/workflows/runs/{run_id}/events": "run store resolves the run before SSE setup",
-    "/api/workflows/runs/{run_id}/introspect": "run_cockpit.introspect rejects an unknown run",
-    "/api/workflows/runs/{run_id}/ledger-rails": "run_cockpit.ledger_rails rejects an unknown run",
-    "/api/workflows/runs/{run_id}/nodes/{node_id}/inspect": (
-        "service.inspect_node resolves the run and node; this is child detail"
-    ),
-    "/api/workflows/runs/{run_id}/observe": "service.observe rejects an unknown run",
-    "/api/workflows/runs/{run_id}/outbox": "service.outbox rejects an unknown run",
-    "/api/workflows/runs/{run_id}/outputs/{node_id}": (
-        "service.output resolves the run and node; this is child detail"
-    ),
-    "/api/workflows/runs/{run_id}/review": "review_findings rejects an unknown run",
-    "/api/workflows/runs/{run_id}/steering": "guard and service resolve the run first",
-    "/api/workflows/runs/{run_id}/workspace": "service.workspace_review rejects an unknown run",
-    "/api/workflows/{name}/versions": "service.get_def resolves the workflow first",
-    # Deep terminal-parameter controls.  Sixteen are ordinary detail/key reads; the two
-    # collection-for-parent exceptions (autonudge and ephemeral skills) are covered above.
-    "/api/agent-marketplace/agents/{name}": "plain detail; marketplace.get rejects absence",
-    "/api/agents/detail/{name}": "plain detail; agent-file resolver rejects absence",
-    "/api/chat/sessions/{session}": "plain detail; live-or-persisted resolver rejects absence",
-    "/api/dashboard/views/{view_id}": "plain view detail; get_view rejects unknown ids",
-    "/api/desktop/capabilities/{cap}": "enum-key detail; CAPABILITIES rejects unknown names",
-    "/api/doctor/crash/{filename}": "plain crash-artifact detail; read_crash rejects absence",
-    "/api/evals/studies/{study_id}": "plain study detail; study_view rejects absence",
-    "/api/knowledge/items/{id}": "plain item detail; get_item rejects absence",
-    "/api/learning/proposals/{id}": "plain proposal detail; proposal store rejects absence",
-    "/api/memory/history/{day}": (
-        "one day's document, keyed by its date (any other name is history_day_invalid); a day "
-        "with no file reads as the empty text it is, and the PUT may write it, so absent and "
-        "empty are one state here, not a ghost parent"
-    ),
-    "/api/mcp/servers/{name}": "plain server detail; _definition_of rejects an unset name",
-    "/api/session/archive/{name}": "plain archive-file detail; file read rejects absence",
-    "/api/skills/proposals/{id}": "plain proposal detail; proposal store rejects absence",
-    "/api/voice/profiles/{id}": "plain profile detail; require_profile rejects absence",
-    "/api/workflows/batches/{name}": "plain batch detail; batch_start.state_of rejects absence",
-    "/api/workflows/runs/{run_id}": "plain run detail; service.status rejects absence",
-    "/api/ws/terminal/{session_id}": (
-        "WebSocket creation; session_id is a new client-selected key, not a parent"
-    ),
-}
+#: The selected routes no direct pair covers, one line each with the resolver or the endpoint
+#: contract that rules a ghost parent out, in the per-site format of ``tests/site_baseline.py``,
+#: each site ``GET <canonical path>``. A new route the census selects fails by name until a direct
+#: ghost/real pair covers it or it has its own line, with ``added`` and a reason, which the rails
+#: job lists in its summary; a route that is gone or now covered has its line deleted. Most deep
+#: terminal-parameter routes are plain detail or key reads; the two that list a collection for
+#: their parent (autonudge and ephemeral skills) are covered above. It replaced the exact counts
+#: ``len(nonterminal) == 90``, ``len(deep_terminal) == 19`` and ``len(selected) == 109``.
+SUBRESOURCE_READS = "tests/rails/baselines/subresource-reads.sites.jsonl"
+
+#: The vacuity floor: the walk reads the package's literal GET routes, about 400 of them.
+_GET_ROUTE_FLOOR = 300
 
 
 def _name(node: ast.AST) -> str:
@@ -224,34 +92,40 @@ def _literal(node: ast.AST) -> str | None:
     return None
 
 
-def _get_routes() -> dict[str, str]:
-    """Return every literal GET route in all of ``src/personalclaw`` by AST."""
+def _routes_of(tree: ast.AST, routes: dict[str, str]) -> None:
+    """Add every literal GET route *tree* registers to *routes*, canonical path to handler."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        verb = node.func.attr
+        path: str | None = None
+        handler = ""
+        if verb == "add_get" and node.args:
+            path = _literal(node.args[0])
+            handler = _name(node.args[1]) if len(node.args) > 1 else ""
+        elif verb == "add_route" and len(node.args) >= 3:
+            method = _literal(node.args[0])
+            if method and method.upper() == "GET":
+                path = _literal(node.args[1])
+                handler = _name(node.args[2])
+        elif verb in _ADD_VERBS:
+            continue
+        if path is None or not path.startswith("/api"):
+            continue
+        canonical = canonical_route(path)
+        previous = routes.setdefault(canonical, handler)
+        assert previous == handler, (
+            f"GET {canonical} registers more than once with different handlers: "
+            f"{previous!r}, {handler!r}"
+        )
+
+
+def _get_routes(planted: Iterable[ast.AST] = ()) -> dict[str, str]:
+    """Return every literal GET route in all of ``src/personalclaw`` by AST, and in each
+    *planted* module (the positive control's)."""
     routes: dict[str, str] = {}
-    for py, tree in source_index.package_trees():
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-                continue
-            verb = node.func.attr
-            path: str | None = None
-            handler = ""
-            if verb == "add_get" and node.args:
-                path = _literal(node.args[0])
-                handler = _name(node.args[1]) if len(node.args) > 1 else ""
-            elif verb == "add_route" and len(node.args) >= 3:
-                method = _literal(node.args[0])
-                if method and method.upper() == "GET":
-                    path = _literal(node.args[1])
-                    handler = _name(node.args[2])
-            elif verb in _ADD_VERBS:
-                continue
-            if path is None or not path.startswith("/api"):
-                continue
-            canonical = canonical_route(path)
-            previous = routes.setdefault(canonical, handler)
-            assert previous == handler, (
-                f"GET {canonical} registers more than once with different handlers: "
-                f"{previous!r}, {handler!r}"
-            )
+    for tree in [*(tree for _, tree in source_index.package_trees()), *planted]:
+        _routes_of(tree, routes)
     return routes
 
 
@@ -272,12 +146,16 @@ def _is_deep_terminal_param(path: str) -> bool:
     return literal_prefix >= 3
 
 
-def _census() -> tuple[dict[str, str], set[str], set[str]]:
-    routes = _get_routes()
+def _census(routes: dict[str, str]) -> tuple[dict[str, str], set[str], set[str]]:
     nonterminal = {path for path in routes if _has_nonterminal_param(path)}
     deep_terminal = {path for path in routes if _is_deep_terminal_param(path)}
     selected = {path: routes[path] for path in nonterminal | deep_terminal}
     return selected, nonterminal, deep_terminal
+
+
+def _sites(selected: Iterable[str]) -> list[str]:
+    """The baseline's sites: each selected route no direct pair covers, as ``GET <path>``."""
+    return [f"GET {path}" for path in sorted(set(selected) - set(PARENT_READ_COVERED))]
 
 
 def _directly_named_handlers() -> set[str]:
@@ -292,28 +170,69 @@ def _directly_named_handlers() -> set[str]:
     return names
 
 
-def test_all_src_get_census_is_fully_adjudicated():
-    selected, nonterminal, deep_terminal = _census()
-    assert len(nonterminal) == 90
-    assert len(deep_terminal) == 19
-    assert len(selected) == 109
+def test_every_selected_route_is_covered_or_listed_with_its_reason():
+    """Every route the census selects is driven by a direct ghost/real pair
+    (:data:`PARENT_READ_COVERED`) or listed in :data:`SUBRESOURCE_READS` with the reason it needs
+    none. A route neither holds fails by name, and a listed route that is gone, or that a direct
+    pair now covers, fails on its stale line."""
+    routes = _get_routes()
+    selected, nonterminal, deep_terminal = _census(routes)
+    assert len(routes) > _GET_ROUTE_FLOOR, (
+        f"read only {len(routes)} GET routes (floor {_GET_ROUTE_FLOOR}): the walk is broken, "
+        "not the code"
+    )
+    assert nonterminal and deep_terminal, "a route family selected nothing: the matcher is broken"
+    stale = sorted(set(PARENT_READ_COVERED) - set(selected))
+    assert not stale, f"covered routes the census no longer selects: {stale}"
+    site_baseline.check(_sites(selected), SUBRESOURCE_READS)
 
-    covered = set(PARENT_READ_COVERED)
-    excluded = set(PARENT_READ_EXCLUDE)
-    assert not covered & excluded, f"routes both covered and excluded: {sorted(covered & excluded)}"
-    assert set(selected) == covered | excluded, (
-        "GET census drift. Add a direct ghost/real pair or a written exclusion. "
-        f"unadjudicated={sorted(set(selected) - covered - excluded)}; "
-        f"stale={sorted((covered | excluded) - set(selected))}"
-    )
-    empty_reasons = sorted(
-        path for path, reason in PARENT_READ_EXCLUDE.items() if not reason.strip()
-    )
-    assert not empty_reasons, f"reasonless exclusions: {empty_reasons}"
+
+#: A module that registers a route of each family, and two the census does not select.
+_PLANTED = """\
+def setup(app):
+    app.router.add_get("/api/planted/{id}/children", api_planted_children)
+    app.router.add_route("GET", "/api/planted/{id}/stream", api_planted_stream)
+    app.router.add_get("/api/planted/deep/detail/{id}", api_planted_detail)
+    app.router.add_get("/api/planted/{id}", api_planted_one)
+    app.router.add_post("/api/planted/{id}/children", api_planted_add)
+"""
+_PLANTED_SITES = (
+    "GET /api/planted/{id}/children",
+    "GET /api/planted/{id}/stream",
+    "GET /api/planted/deep/detail/{id}",
+)
+
+
+def test_a_planted_route_fails_by_name_and_a_gone_or_covered_one_by_its_line(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The positive control, on the real list: the tree's routes with a planted module's fail,
+    naming its non-terminal and deep terminal-parameter GETs, and neither its shallow detail read
+    nor its POST is a site. The tree's sites less one, as if that route were gone, fail on its
+    stale line, and so does a listed route a direct pair now covers. No run writes the list."""
+    listed = (REPO / SUBRESOURCE_READS).read_text(encoding="utf-8")
+    routes = _get_routes()
+    selected, _, _ = _census(_get_routes([ast.parse(_PLANTED)]))
+    with pytest.raises(AssertionError) as failed:
+        site_baseline.check(_sites(selected), SUBRESOURCE_READS, None, prune=False)
+    message = str(failed.value)
+    for site in _PLANTED_SITES:
+        assert f"Site {site} is not listed" in message, message
+    assert message.count("is not listed") == len(_PLANTED_SITES), message
+    assert "is listed in" not in message, message
+    gone, *rest = _sites(_census(routes)[0])
+    with pytest.raises(AssertionError, match=f"Site {re.escape(gone)} is listed in"):
+        site_baseline.check(rest, SUBRESOURCE_READS, None, prune=False)
+    path = gone.removeprefix("GET ")
+    monkeypatch.setitem(PARENT_READ_COVERED, path, routes[path])
+    with pytest.raises(AssertionError, match=f"Site {re.escape(gone)} is listed in") as covered:
+        site_baseline.check(_sites(_census(routes)[0]), SUBRESOURCE_READS, None, prune=False)
+    assert str(covered.value).count("is listed in") == 1, covered.value
+    assert (REPO / SUBRESOURCE_READS).read_text(encoding="utf-8") == listed
 
 
 def test_covered_routes_still_target_directly_tested_handlers():
-    selected, _, _ = _census()
+    selected, _, _ = _census(_get_routes())
     named = _directly_named_handlers()
     drift = {
         path: {"expected": handler, "registered": selected.get(path)}

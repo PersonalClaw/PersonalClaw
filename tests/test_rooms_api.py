@@ -352,9 +352,10 @@ def test_a_ghost_room_cannot_export_as_an_empty_transcript(cfg):
     """A sub-resource read on a non-existent parent must 404, not render nothing.
 
     This is the ghost-parent/real-empty ambiguity `test_subresource_read_census.py` exists
-    to catch, and the reason `/api/rooms/{room_id}/export` is carried there as an
-    exclusion rather than needing its own pair in the parent-validation suite: the claim is
-    that `require_room` resolves the parent first, and this is that claim asserted.
+    to catch, and the reason `/api/rooms/{room_id}/export` is listed in its site baseline,
+    `subresource-reads.sites.jsonl`, rather than needing its own pair in the parent-validation
+    suite: the claim is that `require_room` resolves the parent first, and this is that claim
+    asserted.
     """
     response = asyncio.run(
         h.api_room_export(
