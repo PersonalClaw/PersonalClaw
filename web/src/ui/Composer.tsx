@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUp, Square, CornerDownLeft, ListPlus, Sparkles, Mic, Ear, Loader2, Paperclip, Check, MonitorUp } from 'lucide-react'
 import { IconButton } from './IconButton'
-import { duration, spring, physics, expr } from '../design/motion'
+import { duration, spring, physics, expr, sweep } from '../design/motion'
 import { AgentPill, ModelPill, ApprovalPill, ReasoningPill, ReplyStylePill, effortsForAgent, PlusMenu } from './composer/controls'
 import { MarkdownInput, type MarkdownInputHandle } from './composer/MarkdownInput'
 import { resolveSendButton } from './composer/sendButtonState'
@@ -187,6 +187,11 @@ export function Composer({
     : mic.muted
       ? 'Hands-free voice — paused while speaking'
       : `Hands-free voice — say “${handsFree?.confirmationPhrases[0] ?? 'go ahead'}” to send`
+  const sendKind = resolveSendButton({ processing: !!processing, streaming: !!streaming, canSend, canQueue: !!canQueue, canSteer: !!canSteer, justSent, held: !!sendHeldReason })
+  // While a turn runs the button is the Stop control: a stop square with a thin arc turning round
+  // it (`docs/design/agent-orb.md`). The lap is `design/motion`'s `sweep()`, which is null under
+  // reduced motion, and then no arc is drawn: a loop has no shorter version.
+  const stopSweep = sendKind === 'stop' ? sweep() : null
   const actions = (
     <div className="flex items-center gap-xs">
       {/* The reason rides `disabledReason`, NOT the label. Folding it into the label mutates the
@@ -245,38 +250,54 @@ export function Composer({
           onClick={() => setListening((v) => !v)} />
       )}
       {/* The send/stop/steer/sent/processing choice is a pure state machine
-          (resolveSendButton) so it's unit-testable without mounting the composer. */}
-      {(() => {
-        switch (resolveSendButton({ processing: !!processing, streaming: !!streaming, canSend, canQueue: !!canQueue, canSteer: !!canSteer, justSent, held: !!sendHeldReason })) {
-          // one-shot pre-send processing (e.g. the goal analyze pass) → a spinning
-          // send button, no stop/queue affordance.
-          case 'processing':
-            return <IconButton icon={Loader2} label="Processing…" filled size={40} className="[&_svg]:animate-spin" onClick={undefined} />
-          // mid-stream with a typed draft → STEER it into the running turn
-          // (injected at the next model boundary), not queued to run after.
-          case 'steer':
-            return <IconButton icon={CornerDownLeft} label="Steer — send into the running turn" filled size={40} onClick={() => onSend()} />
-          // mid-stream with a typed draft, on a turn that cannot take it in → it runs next.
-          case 'queue':
-            return <IconButton icon={ListPlus} label="Queue — sent when this turn ends" filled size={40} onClick={() => onSend()} />
-          case 'stop':
-            return <IconButton icon={Square} label="Stop" filled size={40} onClick={onStop} />
-          // Idle send. On send it briefly morphs arrow→check with a bounce bloom
-          // (the streaming spinner then takes over for the turn).
-          case 'sent':
-            return <IconButton icon={Check} label="Sent" filled size={40} onClick={undefined} iconKey="sent" bloom />
-          // Disabled until the draft meets minChars. The name stays "Send message" in every
-          // state — the reason rides `disabledReason` (the accessible description), so the
-          // button is still findable by its own name while it is unavailable.
-          case 'send-disabled':
-            return <IconButton icon={ArrowUp} label="Send message" disabledReason="Type a bit more first" filled={false} disabled size={40} onClick={undefined} iconKey="send" />
-          // Held while a file the message carries uploads; the reason names the file.
-          case 'send-held':
-            return <IconButton icon={ArrowUp} label="Send message" disabledReason={sendHeldReason} filled={false} disabled size={40} onClick={undefined} iconKey="send" />
-          case 'send':
-            return <IconButton icon={ArrowUp} label="Send message" filled disabled={false} size={40} onClick={fireSend} iconKey="send" />
-        }
-      })()}
+          (resolveSendButton) so it's unit-testable without mounting the composer. Every kind
+          renders in this one box, so a change of kind updates the same button in place: a Send
+          button with keyboard focus is the Stop control once the turn starts, still focused.
+          `data-stop-sweep` says which branch the Stop control took. */}
+      <span className="relative inline-flex" data-stop-sweep={sendKind === 'stop' ? (stopSweep ? 'animated' : 'instant') : undefined}>
+        {(() => {
+          switch (sendKind) {
+            // one-shot pre-send processing (e.g. the goal analyze pass) → a spinning
+            // send button, no stop/queue affordance.
+            case 'processing':
+              return <IconButton icon={Loader2} label="Processing…" filled size={40} className="[&_svg]:animate-spin" onClick={undefined} />
+            // mid-stream with a typed draft → STEER it into the running turn
+            // (injected at the next model boundary), not queued to run after.
+            case 'steer':
+              return <IconButton icon={CornerDownLeft} label="Steer — send into the running turn" filled size={40} onClick={() => onSend()} />
+            // mid-stream with a typed draft, on a turn that cannot take it in → it runs next.
+            case 'queue':
+              return <IconButton icon={ListPlus} label="Queue — sent when this turn ends" filled size={40} onClick={() => onSend()} />
+            case 'stop':
+              return <IconButton icon={Square} label="Stop" filled size={40} onClick={onStop} />
+            // Idle send. On send it briefly morphs arrow→check with a bounce bloom
+            // (the streaming spinner then takes over for the turn).
+            case 'sent':
+              return <IconButton icon={Check} label="Sent" filled size={40} onClick={undefined} iconKey="sent" bloom />
+            // Disabled until the draft meets minChars. The name stays "Send message" in every
+            // state — the reason rides `disabledReason` (the accessible description), so the
+            // button is still findable by its own name while it is unavailable.
+            case 'send-disabled':
+              return <IconButton icon={ArrowUp} label="Send message" disabledReason="Type a bit more first" filled={false} disabled size={40} onClick={undefined} iconKey="send" />
+            // Held while a file the message carries uploads; the reason names the file.
+            case 'send-held':
+              return <IconButton icon={ArrowUp} label="Send message" disabledReason={sendHeldReason} filled={false} disabled size={40} onClick={undefined} iconKey="send" />
+            case 'send':
+              return <IconButton icon={ArrowUp} label="Send message" filled disabled={false} size={40} onClick={fireSend} iconKey="send" />
+          }
+        })()}
+        {/* The sweep: a quarter arc in the button's own ink, just inside its rim, outside the
+            square. Decoration over the button, so it takes no pointer and no name. */}
+        {stopSweep && (
+          <motion.span aria-hidden data-stop-sweep-arc
+            className="pointer-events-none absolute inset-0 text-on-primary"
+            initial={{ rotate: 0 }} animate={{ rotate: 360 }} transition={stopSweep}>
+            <svg viewBox="0 0 40 40" fill="none" className="size-full">
+              <circle cx={20} cy={20} r={17} stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" pathLength={100} strokeDasharray="25 75" />
+            </svg>
+          </motion.span>
+        )}
+      </span>
     </div>
   )
 

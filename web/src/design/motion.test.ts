@@ -4,8 +4,8 @@ import { join } from 'node:path'
 
 import * as motion from './motion'
 import {
-  dragElastic, dragSpring, fadeEnter, instant, listItemEnter, overlayEnter, physics,
-  prefersReducedMotion, regionStagger, spring, swipeDismiss, viewTransition,
+  dragElastic, dragSpring, duration, fadeEnter, instant, listItemEnter, overlayEnter, physics,
+  prefersReducedMotion, regionStagger, spring, sweep, swipeDismiss, viewTransition,
 } from './motion'
 import { runtime } from './runtime'
 import { TOKENS } from './tokenRegistry'
@@ -460,6 +460,47 @@ describe('regionStagger — the surface entrance choreography', () => {
     // The one-mechanism property, made checkable. A `step` parameter would let call
     // sites drift apart again and there would be no test that could notice.
     expect(regionStagger.length).toBe(0)
+  })
+})
+
+// ── The Stop control's sweep ─────────
+// `sweep()` is the one decision behind the thin arc that turns round the composer's Stop control
+// while a turn runs (#3807). It is a loop, so the reduced-motion answer is an ABSENCE: an
+// indefinite animation cut to a zero length is still a loop (`ui/WavyProgress` says why). The
+// component half, that the composer draws the arc only on its Stop kind, lives in
+// `ui/composer/theStopControlSweepsWhileATurnRuns.test.tsx`.
+describe('sweep — the Stop control\'s turning arc', () => {
+  const LOADING = runtime.durationLoading
+  afterEach(() => { runtime.durationLoading = LOADING })
+
+  it('is one linear turn per Loading sweep, repeated for as long as it is shown', () => {
+    const t = sweep() as Record<string, unknown>
+    expect(t).not.toBeNull()
+    expect(t.duration).toBe(duration.loading)
+    expect(t.ease, 'an eased turn speeds up and slows down once a lap').toBe('linear')
+    expect(t.repeat).toBe(Infinity)
+    // A tween, never a spring: nothing to overshoot, and the spring census stays whole.
+    expect(t.type === undefined || t.type === 'tween').toBe(true)
+    for (const f of ['stiffness', 'damping', 'mass', 'bounce']) expect(t[f], f).toBeUndefined()
+  })
+
+  it('takes its lap from the Loading sweep slider, read at call time', () => {
+    runtime.durationLoading = 2.8
+    expect((sweep() as { duration: number }).duration).toBe(2.8)
+    runtime.durationLoading = 0.7
+    expect((sweep() as { duration: number }).duration).toBe(0.7)
+  })
+
+  it('returns NULL under prefers-reduced-motion, and reads it at call time', () => {
+    expect(sweep()).not.toBeNull()
+    setReducedMotion(true)
+    expect(sweep(), 'a loop under reduced motion must not start at all').toBeNull()
+    setReducedMotion(false)
+    expect(sweep()).not.toBeNull()
+  })
+
+  it('takes no arguments, so no call site can pick its own pace', () => {
+    expect(sweep.length).toBe(0)
   })
 })
 

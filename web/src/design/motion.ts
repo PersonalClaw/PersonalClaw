@@ -110,7 +110,7 @@ export const duration = {
   /** a progress fill, a slow fade, a single earned beat */
   get long(): number { return seconds(runtime.durationLong, 1000) },
   // One cycle of a loop:
-  /** a loading placeholder: the wavy progress crest */
+  /** a loading placeholder: the wavy progress crest; one lap of `sweep()` */
   get loading(): number { return seconds(runtime.durationLoading) },
   /** something live that waits on you: a drop target's ring and hint, a running task's ring */
   get beat(): number { return seconds(runtime.durationBeat) },
@@ -305,6 +305,19 @@ const REGION_STEP_FLOOR = 0.4
 export function regionStagger(): Transition | null {
   if (prefersReducedMotion()) return null
   return stagger(expr(REGION_STEP, REGION_STEP_FLOOR))
+}
+
+/** The sweep: one linear turn of a thin arc per Loading sweep (`duration.loading`), repeated for
+ *  as long as the arc is shown. The composer's Stop control wears it while a turn runs.
+ *
+ *  Returns `null` under `prefers-reduced-motion`, and `null` means NO SWEEP AT ALL: the caller
+ *  draws no arc. A loop has no shorter version to fall back to, since a zero-length lap repeated
+ *  forever is still a loop (`ui/WavyProgress` says why), so this answers with an absence, as
+ *  `regionStagger()` does. Read at CALL time, so a mid-session OS change and the Loading sweep
+ *  slider are both honored on the next turn. Parameterless, so no call site picks its own pace. */
+export function sweep(): Transition | null {
+  if (prefersReducedMotion()) return null
+  return { duration: duration.loading, ease: 'linear', repeat: Infinity }
 }
 
 // ─────────────────────────────────────────────────────────────────────────

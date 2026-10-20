@@ -290,7 +290,7 @@
   --duration-long: 500ms;    /* a progress fill, a slow fade */
   /* One cycle of a loop that runs until something stops it: */
   --duration-blink: 0.9s;    /* the reveal caret */
-  --duration-loading: 1.4s;  /* a loading placeholder: the skeleton's sheen, the blueprint's strokes, the wavy crest */
+  --duration-loading: 1.4s;  /* a loading placeholder: the skeleton's sheen, the blueprint's strokes, the wavy crest; the Stop control's sweep */
   --duration-beat: 1.6s;     /* something live that waits on you: a drop target's ring and hint, a running task's ring */
   --duration-shimmer: 2.2s;  /* the sheen across streaming text */
   --duration-scan: 2.6s;     /* the blueprint's scanning band */

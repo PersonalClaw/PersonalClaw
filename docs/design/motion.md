@@ -81,10 +81,11 @@ Under `prefers-reduced-motion: reduce`:
    You do not need to re-implement either. Do not disable a component's animation ad hoc.
 3. `useReducedMotion()` from framer-motion is the React-side read when you need to choose a
    *different shape* (an instant swap instead of a morph), not merely a shorter one.
-4. **Two helpers answer with an absence rather than a value**, because for them "less motion"
-   has no smaller version: `viewTransition()` runs its update with no transition at all, and
-   `regionStagger()` returns `null` so a surface renders its regions plain (§5a). A shorter
-   route crossfade is still a crossfade; a quicker cascade is still a cascade.
+4. **Three helpers answer with an absence rather than a value**, because for them "less motion"
+   has no smaller version: `viewTransition()` runs its update with no transition at all,
+   `regionStagger()` returns `null` so a surface renders its regions plain (§5a), and `sweep()`
+   returns `null` so the composer's Stop control draws no turning arc. A shorter route crossfade
+   is still a crossfade, a quicker cascade is still a cascade, and a faster loop is still a loop.
 
 **What must NOT collapse: direct manipulation.** Reduced motion removes decoration, never
 capability. A drag still follows the finger 1:1 — `dragElastic()` is deliberately *not* gated,
@@ -366,7 +367,7 @@ when a slider stops doing anything.
 | `--duration-medium` | 300ms | an entrance, the route crossfade |
 | `--duration-long` | 500ms | a progress fill, a slow fade, a single earned beat |
 | `--duration-blink` | 0.9s | one blink of the reveal caret |
-| `--duration-loading` | 1.4s | one sweep of a loading placeholder: the skeleton, the blueprint's strokes, the wavy crest |
+| `--duration-loading` | 1.4s | one sweep of a loading placeholder: the skeleton, the blueprint's strokes, the wavy crest; one lap of the Stop control's arc (`sweep()`) |
 | `--duration-beat` | 1.6s | one beat of something live that waits on you: a drop target, a running task |
 | `--duration-shimmer` | 2.2s | one sheen across streaming text |
 | `--duration-scan` | 2.6s | one pass of the blueprint's scanning band |
