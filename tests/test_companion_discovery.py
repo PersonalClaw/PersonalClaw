@@ -17,10 +17,11 @@ machine's multicast configuration) as well as against exact bytes.
 import json
 import socket
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import companion_discovery_shared
 import pytest
+from aiohttp import web
 
 from personalclaw.companion import discovery as disc
 
@@ -434,32 +435,104 @@ def test_status_shows_exactly_what_is_broadcast(stub_advertiser):
     assert st["addresses"] == [LAN_HOST]
 
 
-def test_discovery_cleanup_is_registered_before_the_app_is_frozen():
-    """The goodbye handler must be appended BEFORE ``runner.setup()`` freezes ``on_cleanup``.
+class _LoopbackSite(web.TCPSite):
+    """The gateway's listening site, on loopback whatever host it is handed. The host the gateway
+    asked for is recorded, so a test can boot a gateway that binds beyond loopback without
+    opening a socket beyond this machine."""
 
-    Registering it beside the advertiser's start — which is
-    where the bind host becomes known, and therefore the obvious place — raised
-    ``RuntimeError: Cannot modify frozen list``. The fail-safe swallowed it, so the gateway
-    came up fine and discovery simply never withdrew its record on shutdown. An ordering rail
-    because the constraint IS an ordering, and nothing else in the file expresses it.
+    asked: list[tuple[str, int]] = []
+
+    def __init__(self, runner, host=None, port=None, **kwargs):
+        _LoopbackSite.asked.append((host, port))
+        super().__init__(runner, "127.0.0.1", port, **kwargs)
+
+
+def _free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+#: How the gateway is started (``local_only``, its environment), the host it then binds, and what
+#: discovery shows while it runs: the address advertised (None for nothing) and the reason.
+_BINDS = [
+    pytest.param(True, {}, "127.0.0.1", None, "loopback_only", id="loopback-by-default"),
+    pytest.param(False, {}, "0.0.0.0", LAN_HOST, "advertising", id="every-interface"),
+    pytest.param(
+        False,
+        {"PERSONALCLAW_AUTH_MODE": "none"},
+        "127.0.0.1",
+        None,
+        "loopback_only",
+        id="no-sign-in-stays-on-loopback",
+    ),
+    pytest.param(
+        True,
+        {"PERSONALCLAW_BIND_HOST": LAN_HOST},
+        LAN_HOST,
+        LAN_HOST,
+        "advertising",
+        id="host-named",
+    ),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("local_only", "env", "bound", "address", "reason"), _BINDS)
+async def test_the_gateway_advertises_where_it_bound_and_withdraws_when_it_stops(
+    _isolate, monkeypatch, stub_advertiser, local_only, env, bound, address, reason
+):
+    """The real gateway (``start_dashboard``) with discovery on advertises the host and port it
+    actually bound, or nothing on loopback, and when it stops it sends the goodbye and forgets
+    the bind.
+
+    The bind host is an outcome (the env var, then ``local_only``, then the rule that a gateway
+    asking for no sign-in stays on loopback), so discovery has to be told it after it is decided.
+    The goodbye is one of the gateway's stop hooks: registered beside the advertiser's start,
+    after ``runner.setup()`` has frozen them, it raised ``Cannot modify frozen list``, the
+    fail-safe swallowed it, and the record stayed up after the gateway had gone.
     """
-    import pathlib
+    import personalclaw.dashboard.server as server_mod
 
-    from personalclaw.dashboard import lifecycle_hooks, server
+    (_isolate / "user").mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(_isolate))
+    monkeypatch.setenv("HOME", str(_isolate / "user"))
+    for name in (
+        "PERSONALCLAW_AUTH_MODE",
+        "PERSONALCLAW_BIND_HOST",
+        "PERSONALCLAW_BYPASS_LOCAL_NETWORKS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(disc, "_primary_lan_ipv4", lambda: LAN_HOST)
+    _LoopbackSite.asked = []
+    monkeypatch.setattr(server_mod.web, "TCPSite", _LoopbackSite)
+    _enable_discovery(True)
+    port = _free_port()
 
-    src = pathlib.Path(server.__file__).read_text(encoding="utf-8")
-    hooks = pathlib.Path(lifecycle_hooks.__file__).read_text(encoding="utf-8")
-    # The goodbye handler is one of the gateway's stop hooks, all appended by the one call below.
-    # Each `index` raises ValueError if absent, so this rail can never pass vacuously.
-    hooks.index("app.on_cleanup.append(_discovery_shutdown)")
-    append_at = src.index("register_lifecycle_hooks(app)")
-    freeze_at = src.index("await runner.setup()")
-    assert append_at < freeze_at, (
-        "on_cleanup is frozen by runner.setup(); registering the discovery shutdown after it "
-        "raises RuntimeError('Cannot modify frozen list.')"
+    runner, _state = await server_mod.start_dashboard(
+        sessions=MagicMock(count=0), port=port, local_only=local_only
     )
-    # And the start must stay AFTER the bind decision, which is what it depends on.
-    assert src.index("_discovery.set_gateway_bind(") > src.index("_bind_host = resolve_bind_host()")
+    try:
+        asked = [host for host, at in _LoopbackSite.asked if at == port]
+        running = disc.status()
+        advertisers = list(stub_advertiser.instances)
+        live = [adv.running for adv in advertisers]
+    finally:
+        await runner.cleanup()
+    stopped = disc.status()
+
+    assert asked == [bound]
+    assert running["reason"] == reason
+    if address is None:
+        assert (running["advertising"], advertisers) == (False, [])
+    else:
+        assert running["advertising"] is True
+        assert (running["addresses"], running["port"]) == ([address], port)
+        assert live == [True]
+    assert all(adv.stopped for adv in advertisers)
+    assert (stopped["advertising"], stopped["reason"]) == (False, "gateway_not_running")
 
 
 def test_state_change_is_audited(stub_advertiser, monkeypatch):

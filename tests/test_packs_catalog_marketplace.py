@@ -4,7 +4,7 @@ The three properties that make an inbound catalog safe, each asserted on the OUT
 rather than on the declaration:
 
 1. every configured catalog registers on the shared registry at COMMUNITY tier, and the
-   registration is REACHED at gateway startup (call-site asserted via AST);
+   gateway registers them when it starts (a booted gateway lists them in the Skills store);
 2. installing a catalog skill goes through the ``install_guarded`` chokepoint — the scan
    really runs (dangerous content is refused and never lands), and a clean install leaves
    a standard ``.pclaw-lock.json`` that ``verify_skill_integrity`` accepts;
@@ -17,6 +17,7 @@ marketplace), and one unreachable/garbage catalog never costs the other sources.
 import json
 
 import pytest
+from signed_in_gateway import signed_in_gateway
 
 from personalclaw.dashboard.handlers.skills import search_marketplaces_counted
 from personalclaw.packs.catalog_marketplace import (
@@ -135,31 +136,38 @@ def test_configured_catalogs_register_on_the_default_registry_at_community_tier(
     )
 
 
-def test_the_gateway_registers_the_skill_catalog_startup_hook():
-    """A marketplace nobody registers is a dead control — assert the CALL SITE, not just
-    that ``register_skill_catalogs`` exists."""
-    import ast
-    import pathlib
+@pytest.mark.asyncio
+async def test_the_gateway_offers_each_configured_catalog_from_its_first_request(
+    tmp_path, monkeypatch, clean_registry
+):
+    """A marketplace nobody registers is a dead control. The real gateway (``start_dashboard``),
+    started in a home whose config.json names two catalogs, lists both in the Skills store at
+    COMMUNITY tier from the first request it serves."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.json").write_text(
+        json.dumps(
+            {
+                "packs": {
+                    "skill_catalogs": [
+                        {"name": "team", "url": "https://cat.example/team/index.json"},
+                        {"name": "tap", "url": "https://tap.example/index.json"},
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert not [name for name in clean_registry.list() if name.startswith("catalog:")]
 
-    from personalclaw.dashboard import lifecycle_hooks, server
+    async with signed_in_gateway(tmp_path, monkeypatch) as gw:
+        status, listed = await gw.as_owner("GET", "/api/skills/marketplaces")
 
-    # The gateway appends its start hooks through the one call in `start_dashboard`.
-    assert "register_lifecycle_hooks(app)" in pathlib.Path(server.__file__).read_text()
-    src = pathlib.Path(lifecycle_hooks.__file__).read_text()
-    tree = ast.parse(src)
-    appended = {
-        node.args[0].id
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "append"
-        and isinstance(node.func.value, ast.Attribute)
-        and node.func.value.attr == "on_startup"
-        and node.args
-        and isinstance(node.args[0], ast.Name)
-    }
-    assert "_skill_catalogs_startup" in appended
-    assert "register_skill_catalogs" in src
+    assert status == 200, listed
+    assert [row for row in listed if row["type"] == "catalog"] == [
+        {"name": "catalog:tap", "type": "catalog", "trust_tier": "community"},
+        {"name": "catalog:team", "type": "catalog", "trust_tier": "community"},
+    ]
 
 
 def test_no_configured_catalogs_registers_nothing(clean_registry):

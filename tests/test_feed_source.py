@@ -19,14 +19,16 @@ as "the poll succeeded":
   not read as a pass);
 * **FTS + vector reach** — the same raw item is found by FTS and has a written embedding.
 
-No test opens a socket: `fetch_fn` is the provider's single fetch seam and every test
-injects a recorded response. Isolation: tmp_path db + PERSONALCLAW_HOME.
+No test fetches from the network: `fetch_fn` is the provider's single fetch seam and every test
+injects a recorded response (the one test that boots the gateway, on loopback, replaces
+`net.fetch` the default seam calls). Isolation: tmp_path db + PERSONALCLAW_HOME.
 """
 
 import json
 from pathlib import Path
 
 import pytest
+from signed_in_gateway import signed_in_gateway
 
 from personalclaw.knowledge.source_engine import SourceEngine
 from personalclaw.knowledge.source_identity import compose_guid, merge_key
@@ -43,6 +45,7 @@ pytestmark = pytest.mark.security
 
 
 STORY_URL = "https://blog.example.com/posts/one-story"
+FEED_URL = "https://feed.example.com/f"
 
 
 @pytest.fixture(autouse=True)
@@ -806,14 +809,59 @@ async def test_a_full_sources_feed_content_is_fenced_before_it_reaches_the_model
 # ── boot registration + no self-rolled network ──────────────────────────────────────
 
 
-def test_the_feed_provider_is_registered_at_boot():
+@pytest.mark.asyncio
+async def test_the_gateway_polls_a_feed_its_owner_creates(tmp_path, monkeypatch):
     """An unregistered provider ships INERT: the engine would enrol nothing for a
-    `watched-feed` source and every feed the user created would sit permanently unpolled."""
-    import personalclaw.dashboard.server as server_mod
+    `watched-feed` source and every feed the user created would sit permanently unpolled. The
+    real gateway (``start_dashboard``) offers the kind in the create flow, saves a feed made
+    through it, and its own engine's pass polls that feed through this provider, under the
+    SOURCE egress profile, into the store the gateway serves."""
+    from personalclaw.knowledge_providers.base import HEALTH_OK
+    from personalclaw.knowledge_providers.registry import list_providers
 
-    src = Path(server_mod.__file__).read_text(encoding="utf-8")
-    assert "FeedSourceProvider" in src
-    assert "register_provider(FeedSourceProvider(" in src
+    fetched: list[tuple[str, str]] = []
+
+    async def _fetch(url, *, policy=None, headers=None, **_kw):
+        fetched.append((url, getattr(policy, "name", "")))
+        return _Resp(
+            _rss(
+                ("Story one", "https://blog.example.com/1", "g1", "d", "a"),
+                ("Story two", "https://blog.example.com/2", "g2", "d", "b"),
+            )
+        )
+
+    monkeypatch.setattr("personalclaw.net.client.fetch", _fetch)
+    assert "watched-feed" not in {p.name for p in list_providers()}
+
+    async with signed_in_gateway(tmp_path, monkeypatch) as gw:
+        status, listing = await gw.as_owner("GET", "/api/knowledge/sources")
+        assert status == 200, listing
+        assert "watched-feed" in {kind["provider"] for kind in listing["kinds"]}
+        status, made = await gw.as_owner(
+            "POST",
+            "/api/knowledge/sources",
+            json={
+                "name": "Blog",
+                "provider": "watched-feed",
+                "spec": {"kind": "rss", "url": FEED_URL},
+                "enrichment": ENRICHMENT_RAW,
+            },
+        )
+        assert status == 201, made
+        sid = made["source"]["id"]
+        await gw.state._source_engine.tick()
+        store = gw.state.knowledge_store
+        titles = [
+            row["title"]
+            for row in store.db.execute(
+                "SELECT title FROM items WHERE source_id = ? ORDER BY title", (sid,)
+            ).fetchall()
+        ]
+        health = store.get_source(sid)["health_status"]
+
+    assert fetched == [(FEED_URL, "source")]
+    assert titles == ["Story one", "Story two"]
+    assert health == HEALTH_OK
 
 
 def test_the_provider_opens_no_socket_of_its_own():

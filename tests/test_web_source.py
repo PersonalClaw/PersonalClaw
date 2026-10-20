@@ -21,17 +21,21 @@ as "the poll succeeded":
 * **zero tokens in the detection path** — every model seam is patched to RAISE across a
   preview AND a poll, with a vacuity counterpart proving the patches are live.
 
-No test opens a socket: ``fetch_fn``/``render_fn`` are the provider's only two byte seams and
-every test injects a recorded response. Isolation: tmp_path db + PERSONALCLAW_HOME.
+No test fetches from the network: ``fetch_fn``/``render_fn`` are the provider's only two byte
+seams and every test injects a recorded response (the one test that boots the gateway, on
+loopback, replaces ``net.fetch`` the default seam calls). Isolation: tmp_path db +
+PERSONALCLAW_HOME.
 """
 
 import json
 
 import pytest
+from signed_in_gateway import signed_in_gateway
 
 from personalclaw.knowledge.source_engine import SourceEngine
 from personalclaw.knowledge.store import KnowledgeStore
 from personalclaw.knowledge_providers.base import (
+    ENRICHMENT_RAW,
     HEALTH_NEEDS_BROWSE,
     HEALTH_NEEDS_RENDER,
     HEALTH_OK,
@@ -1658,15 +1662,52 @@ def test_the_provider_imports_no_model_and_owns_no_socket():
     assert "from personalclaw.web.render import render_url" in src
 
 
-def test_the_web_source_provider_ships_registered():
+@pytest.mark.asyncio
+async def test_the_gateway_polls_a_page_its_owner_watches(tmp_path, monkeypatch):
     """A `watched-page` source with no enrolled provider is a row nothing polls, so the
-    registration is part of the feature rather than a wiring detail."""
-    from pathlib import Path
+    registration is part of the feature rather than a wiring detail. The real gateway
+    (``start_dashboard``) offers the kind in the create flow, saves a page made through it, and
+    its own engine's pass polls that page through this provider, under the SOURCE egress
+    profile, into the store the gateway serves."""
+    from personalclaw.knowledge_providers.registry import list_providers
 
-    import personalclaw.dashboard.server as server
+    fetched: list[tuple[str, str]] = []
 
-    src = Path(server.__file__).read_text(encoding="utf-8")
-    assert "register_provider(WebSourceProvider(" in src
+    async def _fetch(url, *, policy=None, headers=None, **_kw):
+        fetched.append((url, getattr(policy, "name", "")))
+        return _Resp(_changelog())
+
+    monkeypatch.setattr("personalclaw.net.client.fetch", _fetch)
+    assert "watched-page" not in {p.name for p in list_providers()}
+
+    async with signed_in_gateway(tmp_path, monkeypatch) as gw:
+        status, listing = await gw.as_owner("GET", "/api/knowledge/sources")
+        assert status == 200, listing
+        assert "watched-page" in {kind["provider"] for kind in listing["kinds"]}
+        status, made = await gw.as_owner(
+            "POST",
+            "/api/knowledge/sources",
+            json={
+                "name": "Changelog",
+                "provider": "watched-page",
+                "spec": {"url": PAGE_URL},
+                "enrichment": ENRICHMENT_RAW,
+            },
+        )
+        assert status == 201, made
+        sid = made["source"]["id"]
+        await gw.state._source_engine.tick()
+        store = gw.state.knowledge_store
+        titles = [row["title"] for row in _items(store, sid)]
+        health = store.get_source(sid)["health_status"]
+
+    assert fetched == [(PAGE_URL, "source")]
+    assert sorted(titles) == [
+        "Version 2.0.8 released today",
+        "Version 2.0.9 released today",
+        "Version 2.1.0 released today",
+    ]
+    assert health == HEALTH_OK
 
 
 # ── the CSS subset behaves like CSS, or refuses ─────────────────────────────────────
