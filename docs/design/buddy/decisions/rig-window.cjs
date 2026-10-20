@@ -23,8 +23,9 @@
 //   6. the system's reduced-motion setting on, emulated through the DevTools protocol: the loop
 //      again, the frames it ran, and how many times each pose value changed (a jump is once).
 //
-// The window is shown without taking focus and kept above other windows for the run, since a
-// covered window's frames are throttled and "at rest, visible" is the case the bar names.
+// The window is shown without taking focus in the screen's lower right corner, and kept above other
+// windows on every space, a full-screen app's among them, for the run: a covered window's frames are
+// throttled, and "at rest, visible" is the case the bar names.
 
 "use strict";
 
@@ -95,13 +96,19 @@ async function main() {
     token: config.token,
   });
 
+  const area = require("electron").screen.getPrimaryDisplay().workArea;
   const win = new BrowserWindow({
     width: 420,
     height: 600,
+    x: area.x + area.width - 420,
+    y: area.y + area.height - 600,
     show: false,
     alwaysOnTop: true,
     webPreferences: { session: ses, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
+  // A window that stays on the desktop's space is hidden whenever the owner works in a full-screen
+  // app, and a hidden window draws nothing.
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.showInactive();
   log("window shown");
   const wc = win.webContents;
@@ -127,7 +134,7 @@ async function main() {
 
   async function open(view, candidates) {
     await win.loadURL("about:blank");
-    await win.loadURL(`${origin}/#/buddy-rig?view=${view}&size=${config.size}${config.fps ? `&fps=${config.fps}` : ""}`);
+    await win.loadURL(`${origin}/#/buddy-rig?view=${view}&size=${config.size}&fps=${config.fps ?? 0}`);
     await until(`!!window.__buddyRig && document.querySelectorAll('[data-rig-candidate]').length === ${candidates}`);
     return js(`performance.getEntriesByType('resource').map((r) => new URL(r.name).pathname).filter((p) => p.startsWith('/assets/'))`);
   }

@@ -4,10 +4,12 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
 // The rig spike's measurement (#3887) reads a scratch window's raw numbers against the bars in
-// docs/design/buddy/rig.md and names the provisional rig by the issue's rule: the smallest by the
-// chunks only the candidate loads, among the candidates whose every run passes the at-rest and the
-// animating CPU bars. The window itself needs a gateway and a display; what it is read with does
-// not, so these hold that reading to the rule.
+// docs/design/buddy/rig.md and names the rig by the issue's rule: the smallest by the chunks only
+// the candidate loads, among the candidates whose every run passes the at-rest and the animating
+// CPU bars and retints within a frame. The memory bar is the buddy window's own bundle's to meet,
+// so until that bundle exists a run's working set is recorded beside it and left pending. The
+// window itself needs a gateway and a display; what it is read with does not, so these hold that
+// reading to the rule.
 
 const SCRIPT = path.resolve(__dirname, "..", "..", "docs", "design", "buddy", "decisions", "rig-measure.mjs");
 const load = () => import(pathToFileURL(SCRIPT).href);
@@ -86,6 +88,15 @@ describe("the numbers are read against the bars", () => {
     assert.equal(verdict(verdicts(slow), "Live retint").passes, false);
   });
 
+  it("memory is recorded and left pending, not failed: the bar is the buddy window's own bundle's", async () => {
+    const { verdicts } = await load();
+    const heavy = run("in-place", { rest: { rows: rows(0.1, 240 * 1024), callbacks: 0 } });
+    const v = verdict(verdicts(heavy), "Memory");
+    assert.equal(v.passes, null, "a whole-app renderer's working set is not the buddy window's");
+    assert.equal(v.pending, true);
+    assert.equal(v.value.renderer, 240);
+  });
+
   it("dials that do not scale, or a value that moves under reduced motion, fail", async () => {
     const { verdicts } = await load();
     const flat = run("layered");
@@ -111,11 +122,35 @@ describe("the provisional choice follows the issue's rule", () => {
     assert.equal(choice.choice, "in-place");
   });
 
+  it("a smaller candidate that takes a second frame to retint is passed over", async () => {
+    const { provisional } = await load();
+    const slow = { retint: { moving: { framesToFollow: { layered: 3 } }, still: { framesToFollow: { layered: 1 } } } };
+    const choice = provisional([sized("in-place", 3), sized("in-place", 3), sized("layered", 2, slow), sized("layered", 2)]);
+    assert.equal(choice.choice, "in-place");
+    assert.deepEqual(choice.rows.map((r) => [r.candidate, r.passesCpu, r.passesRetint]), [["in-place", true, true], ["layered", true, false]]);
+  });
+
   it("names none when none passes, or two tie", async () => {
     const { provisional } = await load();
     const over = { rest: { rows: rows(1), callbacks: 0 } };
     assert.equal(provisional([sized("in-place", 3, over), sized("layered", 2, over)]).choice, null);
     assert.equal(provisional([sized("in-place", 2), sized("layered", 2)]).choice, null);
+  });
+});
+
+describe("each run's file says the setting it ran at", () => {
+  it("the record's own setting, 48 px at the buddy's 30 frames a second, has the bare name", async () => {
+    const { runStem, BUDDY_FPS } = await load();
+    assert.equal(BUDDY_FPS, 30);
+    assert.equal(runStem({ os: "macos", candidate: "layered", size: 48, fps: 30 }), "macos-layered-");
+  });
+
+  it("another size, another rate or no cap at all names itself", async () => {
+    const { runStem } = await load();
+    assert.equal(runStem({ os: "macos", candidate: "in-place", size: 24, fps: 30 }), "macos-in-place-24px-");
+    assert.equal(runStem({ os: "linux", candidate: "in-place", size: 48, fps: 60 }), "linux-in-place-60fps-");
+    assert.equal(runStem({ os: "macos", candidate: "layered", size: 48, fps: 0 }), "macos-layered-uncapped-");
+    assert.equal(runStem({ os: "macos", candidate: "layered", size: 96, fps: 0 }), "macos-layered-96px-uncapped-");
   });
 });
 

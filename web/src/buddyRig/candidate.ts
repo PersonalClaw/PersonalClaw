@@ -16,7 +16,8 @@ export interface CandidateProps {
   dials?: string
   /** Hands the pose to the harness, whose probe measures how the dials move it. */
   onPose?: (pose: PoseHandle) => void
-  /** Paint at most this many frames a second, where the candidate owns its frame loop. */
+  /** The most frames a second the dots are painted at: the buddy's `BUDDY_FPS` unless set, and
+   *  `null` for every frame the display draws. */
   fps?: number | null
 }
 

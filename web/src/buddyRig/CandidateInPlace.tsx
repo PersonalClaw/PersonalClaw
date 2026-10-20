@@ -3,16 +3,16 @@
  *  Everything is drawn into one canvas with the agent orb's own engine and painter: the phase's
  *  drawing with the pose's density and arrangement, the whole orb's rise and fall inside the frame,
  *  and the badge and the wash drawn with the dots, in the alert's tone. One frame loop paints all of
- *  it, and runs only while the dots move or the pose does (`docs/design/buddy/rig.md`,
- *  "Candidates"). */
+ *  it, at most at the buddy's frame rate, and runs only while the dots move or the pose does
+ *  (`docs/design/buddy/rig.md`, "Candidates"). */
 
 import { useEffect, useMemo, useRef } from 'react'
 import { paintFrame, resolvePreset, type Dot } from 'thinking-orbs/engine'
 import { useMode } from '../app/theme'
-import { onEditorTokensChange } from '../design/editorTheme'
-import { STILL_AT, inkOf } from '../ui/AgentOrb'
+import { inkOf } from '../ui/AgentOrb'
 import { modeOf, poseFrame } from './arrange'
 import { useMayMove, useOnScreen, useRigInks, type CandidateProps } from './candidate'
+import { runDots, tintOf } from './dots'
 import { poseOf, rigLook, tunedDrawingFor, type BadgeMark } from './poses'
 import { usePose } from './usePose'
 
@@ -28,19 +28,6 @@ const GLYPHS: Record<BadgeMark, readonly string[]> = {
 /** How far the canvas reaches past the orb on each side, as a share of its size: room for the
  *  badge on the upper edge. */
 const PAD = 0.2
-
-/** An ink as the painter takes it. */
-function tintOf(ink: string | undefined): { r: number; g: number; b: number } | undefined {
-  if (!ink) return undefined
-  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(ink.trim())
-  if (hex) {
-    const h = hex[1].length === 3 ? hex[1].replace(/./g, (c) => c + c) : hex[1]
-    const n = parseInt(h, 16)
-    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 }
-  }
-  const fn = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i.exec(ink.trim())
-  return fn ? { r: Number(fn[1]), g: Number(fn[2]), b: Number(fn[3]) } : undefined
-}
 
 const dot = (x: number, y: number, r: number, a: number): Dot => ({ x, y, z: 0, r, white: 0, a })
 
@@ -80,7 +67,7 @@ function badgeDots(size: number, mark: BadgeMark, dy: number): { cx: number; cy:
   return { cx, cy, radius, dots }
 }
 
-export function CandidateInPlace({ phase, size, still = false, dials = '', onPose, fps = null }: CandidateProps) {
+export function CandidateInPlace({ phase, size, still = false, dials = '', onPose, fps }: CandidateProps) {
   const look = rigLook(phase)
   const pose = usePose(phase, dials)
   const mayMove = useMayMove()
@@ -127,34 +114,13 @@ export function CandidateInPlace({ phase, size, still = false, dials = '', onPos
         paintFrame(ctx, { dots: badge.dots, lines: [] }, dark, toneTint)
       }
     }
-    // The painter is this candidate's own, so a scheme change reaches it as the change lands: the
-    // tokens are read again and a still is painted at once, and a moving orb's next frame has them.
-    const retint = onEditorTokensChange(() => {
+    // A scheme change reaches the painter as the change lands: the tokens are read again and the
+    // dots repainted at once, moving or still.
+    const retint = () => {
       inkTint = tintOf(inkOf(inkToken))
       toneTint = tintOf(inkOf(toneToken))
-      if (!running) paint(STILL_AT)
-    })
-    if (!running) { paint(STILL_AT); return retint }
-    // Painted at once as well as on every frame after, so a change of pose shows in the frame it
-    // lands in rather than the one after.
-    let live = true
-    let raf = 0
-    let wait = 0
-    // A capped rate asks for no frame in between: it waits out the gap on a timer and then asks for
-    // the next frame, so the page draws nothing at all between two paints.
-    const next = () => {
-      if (!live) return
-      if (fps) wait = window.setTimeout(() => { if (live) raf = requestAnimationFrame(loop) }, 1000 / fps)
-      else raf = requestAnimationFrame(loop)
     }
-    const loop = () => {
-      if (!live) return
-      paint((performance.now() / 1000) * preset.speed)
-      next()
-    }
-    paint((performance.now() / 1000) * preset.speed)
-    next()
-    return () => { live = false; retint(); cancelAnimationFrame(raf); window.clearTimeout(wait) }
+    return runDots(paint, { running, fps, speed: preset.speed, retint })
   }, [frame, preset, size, mode, ink, tone, inkToken, toneToken, running, look.badge, values, phase, dials, fps])
 
   const pad = Math.round(size * PAD)

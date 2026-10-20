@@ -26,21 +26,25 @@ describe('the harness route', () => {
     expect(isBuddyRigHash(hash)).toBe(harness)
   })
 
-  it('opens on both candidates side by side at 48 px, drawing every frame', () => {
-    expect(rigViewOf('#/buddy-rig')).toEqual({ view: 'both', size: 48, fps: null })
+  it('opens on both candidates side by side at 48 px, at the buddy’s 30 frames a second', () => {
+    expect(rigViewOf('#/buddy-rig')).toEqual({ view: 'both', size: 48, fps: 30 })
   })
 
   it('reads the view, the size and the frame rate the measurement asks for', () => {
-    expect(rigViewOf('#/buddy-rig?view=in-place&size=96')).toEqual({ view: 'in-place', size: 96, fps: null })
-    expect(rigViewOf('#/buddy-rig?view=layered&size=18')).toEqual({ view: 'layered', size: 18, fps: null })
-    expect(rigViewOf('#/buddy-rig?view=none')).toEqual({ view: 'none', size: 48, fps: null })
-    expect(rigViewOf('#/buddy-rig?view=sheet')).toEqual({ view: 'sheet', size: 48, fps: null })
-    expect(rigViewOf('#/buddy-rig?view=in-place&fps=30')).toEqual({ view: 'in-place', size: 48, fps: 30 })
+    expect(rigViewOf('#/buddy-rig?view=in-place&size=96')).toEqual({ view: 'in-place', size: 96, fps: 30 })
+    expect(rigViewOf('#/buddy-rig?view=layered&size=18')).toEqual({ view: 'layered', size: 18, fps: 30 })
+    expect(rigViewOf('#/buddy-rig?view=none')).toEqual({ view: 'none', size: 48, fps: 30 })
+    expect(rigViewOf('#/buddy-rig?view=sheet')).toEqual({ view: 'sheet', size: 48, fps: 30 })
+    expect(rigViewOf('#/buddy-rig?view=in-place&fps=60')).toEqual({ view: 'in-place', size: 48, fps: 60 })
+  })
+
+  it('draws every frame the display does only when asked with fps=0, as the spike’s first runs did', () => {
+    expect(rigViewOf('#/buddy-rig?view=layered&fps=0')).toEqual({ view: 'layered', size: 48, fps: null })
   })
 
   it('falls back to the default for a view, a size or a rate it does not know', () => {
-    expect(rigViewOf('#/buddy-rig?view=canvas&size=20&fps=0')).toEqual({ view: 'both', size: 48, fps: null })
-    expect(rigViewOf('#/buddy-rig?fps=500')).toEqual({ view: 'both', size: 48, fps: null })
+    expect(rigViewOf('#/buddy-rig?view=canvas&size=20&fps=7')).toEqual({ view: 'both', size: 48, fps: 30 })
+    expect(rigViewOf('#/buddy-rig?fps=500')).toEqual({ view: 'both', size: 48, fps: 30 })
   })
 })
 

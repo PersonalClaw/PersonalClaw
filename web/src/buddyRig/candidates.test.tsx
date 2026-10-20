@@ -10,17 +10,21 @@
  *  - every still pose, and every pose and change under reduced motion, asks for none and is still
  *    painted once, so an orb that drew nothing cannot pass either.
  *
+ * Both paint their dots at most at the buddy's 30 frames a second, asking for no frame inside a
+ * gap, and every frame the display draws only when told to; the agent orb in chat keeps its own rate.
+ *
  * Then the two things the spike's record states for both: the ink follows the scheme without a
- * remount, and the badge's mark (not only its colour) says which waiting or failed state it is.
+ * remount, a moving orb's as soon as the change lands rather than at its next capped paint, and the
+ * badge's mark (not only its colour) says which waiting or failed state it is.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, waitFor } from '@testing-library/react'
+import { act, render, waitFor } from '@testing-library/react'
 import type { ComponentType } from 'react'
 import { CandidateInPlace } from './CandidateInPlace'
 import { CandidateLayered } from './CandidateLayered'
-import { RIG_PHASES, rigLook, type BuddySize, type RigPhase } from './poses'
+import { BUDDY_FPS, RIG_PHASES, rigLook, type BuddySize, type RigPhase } from './poses'
 
-type Candidate = ComponentType<{ phase: RigPhase; size: BuddySize; still?: boolean }>
+type Candidate = ComponentType<{ phase: RigPhase; size: BuddySize; still?: boolean; fps?: number | null }>
 const CANDIDATES: [string, Candidate][] = [['in place', CandidateInPlace], ['layered', CandidateLayered]]
 
 /** A 2D context that only counts what is drawn: any method call is tallied by name. */
@@ -80,20 +84,46 @@ const ACTIVE = RIG_PHASES.filter((p) => rigLook(p).moves)
 const STILL = RIG_PHASES.filter((p) => !rigLook(p).moves)
 const rigOf = (container: HTMLElement) => container.querySelector('[data-rig-candidate]') as HTMLElement
 const painted = () => instrument.calls.arc ?? 0
+/** One gap of the buddy's capped rate, and a millisecond over. */
+const GAP_MS = Math.ceil(1000 / BUDDY_FPS) + 1
 
 describe.each(CANDIDATES)('the %s candidate', (_name, Candidate) => {
   describe('with motion allowed', () => {
-    it.each(ACTIVE)('%s animates: a frame is asked for, and each frame asks for the next', (phase) => {
+    beforeEach(() => { vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }) })
+    afterEach(() => { vi.useRealTimers() })
+
+    it.each(ACTIVE)('%s animates: a frame is asked for after each gap, and each frame waits out the next', (phase) => {
       render(<Candidate phase={phase} size={48} />)
+      vi.advanceTimersByTime(GAP_MS)
       expect(frames.length, 'no frame was asked for live work').toBeGreaterThan(0)
       const before = frames.length
       frames.shift()!(16)
+      vi.advanceTimersByTime(GAP_MS)
       expect(frames.length, 'the loop did not go on').toBeGreaterThanOrEqual(before)
       expect(painted(), 'no dot was drawn').toBeGreaterThan(0)
     })
 
+    it(`caps its dots at the buddy’s ${BUDDY_FPS} frames a second, asking for no frame inside a gap`, () => {
+      render(<Candidate phase="tool" size={48} />)
+      expect(frames.length, 'a capped orb asked for a frame before its gap was out').toBe(0)
+      vi.advanceTimersByTime(GAP_MS)
+      expect(frames.length, 'the gap ran out and no frame was asked for').toBe(1)
+      frames.shift()!(GAP_MS)
+      expect(instrument.calls.clearRect, 'one clear a paint: at mount, then the frame after the gap').toBe(2)
+      expect(frames.length, 'it asked for the next frame at once instead of waiting').toBe(0)
+      vi.advanceTimersByTime(GAP_MS)
+      expect(frames.length, 'the loop stopped while capped').toBe(1)
+    })
+
+    it('paints every frame the display draws only when nothing caps it', () => {
+      render(<Candidate phase="tool" size={48} fps={null} />)
+      for (const t of [8.3, 16.7, 25, 33.4]) frames.shift()!(t)
+      expect(instrument.calls.clearRect).toBe(5)
+    })
+
     it.each(STILL)('%s holds: no frame, and painted once', (phase) => {
       const { container } = render(<Candidate phase={phase} size={48} />)
+      vi.advanceTimersByTime(GAP_MS)
       expect(frames.length, `${phase} asked for a frame`).toBe(0)
       expect(painted(), `${phase} was never painted`).toBeGreaterThan(0)
       expect(rigOf(container).dataset.rigMoving).toBe('false')
@@ -104,6 +134,7 @@ describe.each(CANDIDATES)('the %s candidate', (_name, Candidate) => {
       expect(frames.length).toBe(0)
       rerender(<Candidate phase="approval" size={48} />)
       expect(rigOf(container).dataset.rigMoving).toBe('true')
+      vi.advanceTimersByTime(GAP_MS)
       expect(frames.length, 'the pose moved without a frame').toBeGreaterThan(0)
     })
 
@@ -119,7 +150,9 @@ describe.each(CANDIDATES)('the %s candidate', (_name, Candidate) => {
       } as unknown as typeof IntersectionObserver
       try {
         const { container } = render(<Candidate phase="tool" size={48} />)
+        vi.advanceTimersByTime(GAP_MS)
         frames.splice(0).forEach((f) => f(16))
+        vi.advanceTimersByTime(GAP_MS)
         expect(frames.length, 'an orb out of view kept drawing').toBe(0)
         expect(rigOf(container).dataset.rigMoving).toBe('false')
         expect(painted(), 'it was never painted').toBeGreaterThan(0)
@@ -130,6 +163,7 @@ describe.each(CANDIDATES)('the %s candidate', (_name, Candidate) => {
 
     it('a still frame for the contact sheet holds even an active pose', () => {
       render(<Candidate phase="tool" size={48} still />)
+      vi.advanceTimersByTime(GAP_MS)
       expect(frames.length).toBe(0)
       expect(painted()).toBeGreaterThan(0)
     })
@@ -167,6 +201,27 @@ describe.each(CANDIDATES)('the %s candidate', (_name, Candidate) => {
     expect(painted(), 'the new ink was never painted').toBeGreaterThan(before)
   })
 
+  it('repaints a moving orb as the scheme change lands, not at its next capped paint', async () => {
+    document.documentElement.style.setProperty('--color-orb-alive', '#3366cc')
+    const { container } = render(<Candidate phase="tool" size={48} />)
+    const before = instrument.calls.clearRect
+    // The change reaches the page as a mutation, in a microtask. Inside act, React holds every render
+    // the change causes until the scope ends, so what is painted by then was painted by the change.
+    let atOnce = 0
+    let inkThen: string | undefined
+    await act(async () => {
+      document.documentElement.style.setProperty('--color-orb-alive', '#228844')
+      await Promise.resolve()
+      await Promise.resolve()
+      atOnce = instrument.calls.clearRect - before
+      inkThen = rigOf(container).dataset.rigInk
+    })
+    expect(inkThen, 'a render came first, so this says nothing about the change itself').toBe('#3366cc')
+    expect(atOnce, 'the new ink waited for a render or the next paint').toBeGreaterThan(0)
+    expect(frames.length, 'it waited for a frame').toBe(0)
+    expect(rigOf(container).dataset.rigInk).toBe('#228844')
+  })
+
   it.each([
     ['idle', null], ['thinking', 'working'], ['approval', 'approval'], ['input', 'input'], ['error', 'error'], ['done', 'done'],
   ] as [RigPhase, string | null][])('%s carries the badge %s', (phase, badge) => {
@@ -183,27 +238,11 @@ describe.each(CANDIDATES)('the %s candidate', (_name, Candidate) => {
 })
 
 describe('where the two differ', () => {
-  it('in place owns its frame loop, so it can paint at a capped rate and ask for no frame between', () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    try {
-      render(<CandidateInPlace phase="tool" size={48} fps={30} />)
-      expect(frames.length, 'a capped orb asked for a frame before its gap was out').toBe(0)
-      vi.advanceTimersByTime(34)
-      expect(frames.length, 'the gap ran out and no frame was asked for').toBe(1)
-      frames.shift()!(34)
-      expect(instrument.calls.clearRect, 'one clear a paint: at mount, then the frame after the gap').toBe(2)
-      expect(frames.length, 'it asked for the next frame at once instead of waiting').toBe(0)
-      vi.advanceTimersByTime(34)
-      expect(frames.length, 'the loop stopped while capped').toBe(1)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('and paints every frame when nothing caps it', () => {
-    render(<CandidateInPlace phase="tool" size={48} />)
-    for (const t of [8.3, 16.7, 25, 33.4]) frames.shift()!(t)
-    expect(instrument.calls.clearRect).toBe(5)
+  it.each([18, 24, 48, 96] as BuddySize[])('layered draws its dots at %s px itself, from the tuned drawing that size shares, rather than scaling a tuned canvas', (size) => {
+    const { container } = render(<CandidateLayered phase="tool" size={size} />)
+    const canvas = container.querySelector('canvas') as HTMLCanvasElement
+    expect(canvas.width, 'the canvas is a tuned size scaled to fit').toBe(size)
+    expect(canvas.style.width).toBe(`${size}px`)
   })
 
   it('in place draws the badge and the wash with the dots: one canvas and nothing else', () => {
