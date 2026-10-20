@@ -18,7 +18,12 @@ from aiohttp.client_exceptions import ClientConnectionResetError
 from personalclaw import approval_answer, approval_grants, session_keys
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
-from personalclaw.config.loader import AppConfig, default_workspace_dir, resolve_session_workspace
+from personalclaw.config.loader import (
+    AppConfig,
+    default_workspace_dir,
+    resolve_agent_bindings,
+    resolve_session_workspace,
+)
 from personalclaw.dashboard import chat_phase, headless_run, running_turn
 from personalclaw.dashboard.approval_state import (
     SESSION_APPROVAL_ACTIONS,
@@ -2025,6 +2030,20 @@ def _effort_not_honorable(provider: str, effort: str) -> str | None:
     return None
 
 
+def _runs_natively(session: Any) -> bool:
+    """Whether *session*'s turns run on the native agent, as the chat runner resolves its runtime:
+    its agent's, else the default agent's, else the global default. One that can't be resolved is
+    not judged as native."""
+    from personalclaw.providers.model_efforts import native_runtime
+
+    try:
+        bindings = resolve_agent_bindings(AppConfig.load(), session.agent or None)
+    except Exception:  # noqa: BLE001 — an unreadable config judges the level as before
+        logger.debug("could not resolve the runtime of %s", session.key, exc_info=True)
+        return False
+    return native_runtime(getattr(bindings, "provider", "") or "")
+
+
 async def api_chat_session_acp_agent(request: web.Request) -> web.Response:
     """POST /api/chat/sessions/{session}/acp-agent — bind a DISCOVERED ACP agent.
 
@@ -2147,10 +2166,11 @@ async def api_chat_session_reasoning_effort(request: web.Request) -> web.Respons
     """POST /api/chat/sessions/{session}/reasoning-effort — set reasoning effort.
 
     Body: {"reasoning_effort": "" | "low" | "medium" | "high" | "max"}.
-    "" = provider default (e.g. CC falls back to its opus heuristic).
+    "" = provider default (e.g. CC falls back to its opus heuristic), and is always taken.
 
-    Currently consumed by Claude Code only; ACP/OpenCode wired later via
-    the same `reasoning_effort_override` factory kwarg seam.
+    A native chat takes only a level its model declares (``providers.model_efforts``), and is
+    refused one it doesn't with the model and its levels named; an agent CLI's chat, a level its
+    runtime declares (``_effort_not_honorable``).
     """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
@@ -2179,8 +2199,15 @@ async def api_chat_session_reasoning_effort(request: web.Request) -> web.Respons
     # CURRENTLY bound runtime, because that is the backend that would have to honor it —
     # this endpoint does not change the binding. A no-op set (already this value) short-
     # circuits below without re-judging, so an effort pinned while a permissive runtime was
-    # bound cannot be re-refused by a later identical call.
-    _refusal = _effort_not_honorable(str(getattr(session, "acp_provider", "") or ""), effort)
+    # bound cannot be re-refused by a later identical call. A native chat is held to the levels
+    # its model declares, the rule its turns send by (`providers.model_efforts`).
+    _acp_runtime = str(getattr(session, "acp_provider", "") or "")
+    if not _acp_runtime and _runs_natively(session):
+        from personalclaw.providers.model_efforts import undeclared_effort
+
+        _refusal = await undeclared_effort(session.model or "", effort)
+    else:
+        _refusal = _effort_not_honorable(_acp_runtime, effort)
     if _refusal:
         return json_error("reasoning_effort_not_declared", message=_refusal, status=400)
     if session.reasoning_effort == effort:

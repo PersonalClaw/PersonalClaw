@@ -214,3 +214,31 @@ describe('the composer footer has one agent-and-model control and no separate ef
     expect(screen.queryByRole('button', { name: /Reasoning effort|^Effort/ }), 'no effort control outside the pill').toBeNull()
   })
 })
+
+// The pill names a level a native model declares from its value. `xhigh` read "Xhigh", which is no
+// word; it reads "Extra high" now, and `max` "Max", wherever the pill names a level.
+describe('the pill names each level in words', () => {
+  const TOP = {
+    ...DATA,
+    models: [
+      ...DATA.models,
+      { name: 'Acme:top', model_name: 'Top', provider: 'Acme', description: '', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+    ],
+  } as unknown as ComposerData
+
+  it('lists xhigh as Extra high and max as Max', () => {
+    render(<AgentModelPill data={TOP} agent="researcher" model="Acme:top" effort={'xhigh' as never} onSelect={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: /^Agent and model: / }))
+    expect(effortRow()?.textContent).toBe('Effort: Extra high')
+    expect(levels()).toEqual(['Default', 'Low', 'Medium', 'High', 'Extra high', 'Max'])
+  })
+
+  it('names Extra high when a switch sets it back to Default', () => {
+    const onSelect = vi.fn()
+    render(<AgentModelPill data={TOP} agent="researcher" model="Acme:top" effort={'xhigh' as never} onSelect={onSelect} />)
+    fireEvent.click(screen.getByRole('button', { name: /^Agent and model: / }))
+    fireEvent.click(screen.getByText('Wide'))
+    expect(onSelect).toHaveBeenCalledWith({ model: 'Acme:wide', reasoning: '' })
+    expect(screen.getByRole('status').textContent).toBe('Effort set to Default: Wide has no Extra high')
+  })
+})

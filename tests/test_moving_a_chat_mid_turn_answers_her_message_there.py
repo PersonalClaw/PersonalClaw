@@ -177,11 +177,30 @@ class _World:
             await provider.shutdown()
 
 
+def _bind_to_a_model_that_declares_high(session, monkeypatch) -> None:
+    """Bind *session* to a model on core's Anthropic wire, which declares every level: a native
+    chat is set only to a level its model declares, and the effort door sets ``high``."""
+    from personalclaw.llm import branded_specs
+    from personalclaw.llm.registry import ProviderEntry, ProviderRegistry, set_default_registry
+    from personalclaw.sdk.model import BrandedProviderSpec
+
+    monkeypatch.setitem(
+        branded_specs._REGISTERED_SPECS,
+        "acme-claude",
+        BrandedProviderSpec(type="acme-claude", protocol="anthropic"),
+    )
+    registry = ProviderRegistry()
+    registry.register_entry(ProviderEntry(name="Atlas", type="acme-claude", model=""))
+    set_default_registry(registry)  # conftest restores the singleton afterwards
+    session.model = "Atlas:claude-opus-4-8"
+
+
 @pytest_asyncio.fixture
 async def world(tmp_path, monkeypatch):
     # The handshake's settle wait for MCP start-up notices: this agent sends none.
     monkeypatch.setattr("personalclaw.acp.client._DRAIN_DURATION", 0.05)
     w = _World(tmp_path)
+    _bind_to_a_model_that_declares_high(w.session, monkeypatch)
     app = _api_app(w.state)
     app.router.add_post("/api/chat/sessions/{session}/agent", api_chat_session_agent)
     app.router.add_post("/api/chat/sessions/{session}/acp-agent", api_chat_session_acp_agent)
