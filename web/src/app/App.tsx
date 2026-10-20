@@ -3,7 +3,7 @@ import { MotionConfig, motion } from 'framer-motion'
 import { ease, duration } from '../design/motion'
 import { armCueAudio } from '../design/soundCues'
 import { installPushCuePlayback } from './pushCuePlayback'
-import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, Plus, Puzzle, Radar, Repeat, Settings, Smartphone, Sparkles, Store, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
+import { Bell, Blocks, BookOpen, Brain, Compass, Database, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, Library, ListChecks, Loader2, MessageSquare, Plus, Puzzle, Radar, Repeat, Settings, Smartphone, Sparkles, Store, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellThreadRail } from './threadRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
@@ -54,6 +54,8 @@ import { ViewModesProvider, useViewModeState } from './viewModes'
 import type { AppSummary } from '../lib/api'
 import { CapabilitiesSection } from '../pages/capabilities/CapabilitiesSection'
 import { isCapabilityRoute } from '../pages/capabilities/capabilityTabs'
+import { LibrarySection } from '../pages/library/LibrarySection'
+import { isLibraryRoute } from '../pages/library/libraryTabs'
 
 // Heavier / less-frequently-first-viewed pages are code-split so the initial
 // chat view loads lean (Monaco, graph SVG, settings panels, etc. load on demand).
@@ -75,6 +77,7 @@ const LoopSection = lazy(() => import('../pages/loop/LoopSection').then((m) => (
 const InboxPage = lazy(() => import('../pages/inbox/InboxPage').then((m) => ({ default: m.InboxPage })))
 const FilesSection = lazy(() => import('../pages/files/FilesSection').then((m) => ({ default: m.FilesSection })))
 const ArtifactsSection = lazy(() => import('../pages/artifacts/ArtifactsSection').then((m) => ({ default: m.ArtifactsSection })))
+const MemoryPage = lazy(() => import('../pages/library/MemoryPage').then((m) => ({ default: m.MemoryPage })))
 const AppsSection = lazy(() => import('../pages/apps/AppsSection').then((m) => ({ default: m.AppsSection })))
 const AppHostPage = lazy(() => import('../pages/apps/AppHostPage').then((m) => ({ default: m.AppHostPage })))
 const TerminalPage = lazy(() => import('../pages/terminal/TerminalPage').then((m) => ({ default: m.TerminalPage })))
@@ -85,17 +88,16 @@ const CompanionPage = lazy(() => import('../pages/companion/CompanionPage').then
 
 const NAV: NavItem[] = [
   // Primary group (no section header): the Dashboard is the home, then Chat,
-  // then Projects, then Knowledge.
+  // then Projects, then Library. Library is one destination (#3815): Knowledge, Memory, Files and
+  // Artifacts are its tabs, each at its own address (ROUTABLE below).
   { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
   { id: 'chat', label: 'Chat', icon: MessageSquare },
   { id: 'projects', label: 'Projects', icon: FolderKanban },
-  { id: 'knowledge', label: 'Knowledge', icon: BookOpen },
+  { id: 'library', label: 'Library', icon: Library },
   // Platform group (was "Workspace") — Tasks + Triggers moved in here.
   { id: 'tasks', label: 'Tasks', icon: ListChecks, section: 'Platform' },
   { id: 'inbox', label: 'Inbox', icon: Inbox, section: 'Platform' },
   { id: 'triggers', label: 'Triggers', icon: Zap, section: 'Platform' },
-  { id: 'files', label: 'Files', icon: Files, section: 'Platform' },
-  { id: 'artifacts', label: 'Artifacts', icon: FileCode, section: 'Platform' },
   { id: 'terminal', label: 'Terminal', icon: Terminal, section: 'Platform' },
   // Capabilities is one destination (#3817): Agents, Skills, Tools, Prompts, Apps and the Store
   // are its tabs, each still at its own address (ROUTABLE below). It has no section of its own: a
@@ -119,8 +121,9 @@ const NAV: NavItem[] = [
 // until a rail is built from `/api/dashboard/views`, the command palette below is how a user
 // reaches it. That is the palette's stated job (see its comment: the always-open door to a
 // surface the rail is holding back), not a workaround.
-// The five pages that are Capabilities' tabs keep their own addresses (`capabilityTabs.ts`).
-const ROUTABLE = new Set([...NAV.map((n) => n.id), 'agents', 'skills', 'tools', 'prompts', 'apps', 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control'])
+// The five pages that are Capabilities' tabs keep their own addresses (`capabilityTabs.ts`), and so
+// do Library's four (`libraryTabs.ts`).
+const ROUTABLE = new Set([...NAV.map((n) => n.id), 'agents', 'skills', 'tools', 'prompts', 'apps', 'knowledge', 'memory', 'files', 'artifacts', 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control'])
 /** The routes the shell renders ITSELF, full-screen, from an early return above the nav switch —
  *  `#/onboarding` and `#/companion`. Deliberately outside `NAV`/`ROUTABLE` (neither is a rail
  *  destination) and every bit as real as the ones inside it.
@@ -178,6 +181,10 @@ function renderPage(active: string, r: RouteProps) {
     case 'tasks': return <TasksSection {...r} />
     case 'projects': return <ProjectsSection {...r} />
     case 'knowledge': return <KnowledgeSection {...r} />
+    // Library's own address opens its first tab. After the tab's own case, so the route tables the
+    // censuses read place each page on its tab's route.
+    case 'library': return <KnowledgeSection {...r} />
+    case 'memory': return <MemoryPage {...r} />
     case 'inbox': return <InboxPage {...r} />
     case 'files': return <FilesSection {...r} />
     case 'artifacts': return <ArtifactsSection {...r} />
@@ -546,10 +553,12 @@ function AppInner() {
   const active = (rendered === 'loop' || rendered === 'loops' || rendered === 'code') ? 'projects'
     : rendered === 'app' ? `app/${(sub ?? '').split('/')[0]}`  // light the specific app tile
       : isCapabilityRoute(rendered) ? 'capabilities'  // each tab lights its destination
-        : rendered
-  // The destination drawn: a tab of Capabilities is Capabilities, so moving between its tabs keeps
-  // the strip (and the focus on it) where it is, and only the page under it changes.
-  const surface = isCapabilityRoute(rendered) ? 'capabilities' : rendered
+        : isLibraryRoute(rendered) ? 'library'
+          : rendered
+  // The destination drawn: a tab of Capabilities is Capabilities, and a tab of Library is Library,
+  // so moving between a destination's tabs keeps its strip (and the focus on it) where it is, and
+  // only the page under it changes.
+  const surface = isCapabilityRoute(rendered) ? 'capabilities' : isLibraryRoute(rendered) ? 'library' : rendered
   // Whether the sidebar lights a thread, the one the address opens (`threadRail.tsx`). While one is
   // lit, the destination its route belongs to (Chat, Projects) is not lit beside it: one row says
   // where you are. A hook, so it sits above the early returns (React #310).
@@ -824,6 +833,11 @@ function AppInner() {
     { id: 'go:apps', label: 'Apps', hint: 'Go to', icon: Blocks, keywords: 'Capabilities library installed', run: () => navigate('apps') },
     { id: 'go:store', label: 'Store', hint: 'Go to', icon: Store, keywords: 'Capabilities apps install browse', run: () => navigate('apps?view=store') },
     { id: 'act:add-tool-server', label: 'Add a tool server', hint: 'Action', icon: Plus, keywords: 'Capabilities tools mcp server connect', run: () => navigate('tools?add=1') },
+    // Library's tabs, each a row of its own: they left the sidebar (and Settings) for the one Library row.
+    { id: 'go:knowledge', label: 'Knowledge', hint: 'Go to', icon: BookOpen, keywords: 'Library notes documents sources reports graph', run: () => navigate('knowledge') },
+    { id: 'go:memory', label: 'Memory', hint: 'Go to', icon: Database, keywords: 'Library facts episodes lessons recall audit remember', run: () => navigate('memory') },
+    { id: 'go:files', label: 'Files', hint: 'Go to', icon: Files, keywords: 'Library workspace home outbox explorer', run: () => navigate('files') },
+    { id: 'go:artifacts', label: 'Artifacts', hint: 'Go to', icon: FileCode, keywords: 'Library made reports outputs', run: () => navigate('artifacts') },
     // The loop composer has no rail tile (loops start from Projects), so this row is its way in.
     { id: 'act:start-loop', label: 'Start a loop', hint: 'Action', icon: Repeat, keywords: 'loop goal code design autonomous plan run new', run: () => navigate('loop') },
     { id: 'act:settings', label: 'Open Settings', hint: 'Action', icon: Settings, run: () => navigate('settings') },
@@ -878,7 +892,7 @@ function AppInner() {
             <ErrorBoundary resetKey={rendered}>
               {/* Route cross-fade (global choreography): the new page fades in on
                   each route change — keyed on the destination drawn (`surface`: a tab of
-                  Capabilities is Capabilities) so switching sections reads
+                  Capabilities is Capabilities, a tab of Library is Library) so switching sections reads
                   as a continuous transition, not a hard cut. It no longer rises: a rail
                   click is the most frequent action in the app, and a page climbing 6px
                   each time is motion that explains nothing. Enter-only (no exit-wait)
@@ -909,7 +923,13 @@ function AppInner() {
                           {renderPage(rendered, { sub, navigate, navEpoch, query, setQuery })}
                         </CapabilitiesSection>
                       )
-                      : renderPage(rendered, { sub, navigate, navEpoch, query, setQuery })}
+                      : surface === 'library'
+                        ? (
+                          <LibrarySection route={rendered} navigate={navigate} fallback={<PageFallback />}>
+                            {renderPage(rendered, { sub, navigate, navEpoch, query, setQuery })}
+                          </LibrarySection>
+                        )
+                        : renderPage(rendered, { sub, navigate, navEpoch, query, setQuery })}
                   </ViewModesProvider>
                 </Suspense>
               </motion.div>

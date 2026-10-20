@@ -7,7 +7,7 @@ replace one of hers, the store keeps hers as it is and keeps nothing of the lear
 (``VectorMemoryStore.write_lesson``), and :func:`ask` puts the question to her: one proposal in the
 learning queue, which the Learning page lists and the Inbox raises, naming her lesson and the
 learned one. Accept keeps the learned one in place of hers, as a lesson she taught
-(:func:`install_accepted`; Settings → Memory → Audit can undo it). Reject keeps hers, and the
+(:func:`install_accepted`; Library → Memory → Audit can undo it). Reject keeps hers, and the
 queue's decision memory keeps the same question from being asked again, so a learned lesson she
 turned down is never kept over hers.
 """
@@ -43,7 +43,7 @@ _TITLE_MAX = 120
 #: and the Inbox's Approve, which is the same Accept.
 _ANSWERS = (
     "Accept (Approve in the Inbox) keeps the learned lesson instead: it is saved as a lesson of "
-    "yours, in place of what you taught (Settings → Memory → Audit can undo that). Reject, on the "
+    "yours, in place of what you taught (Library → Memory → Audit can undo that). Reject, on the "
     "Learning page, keeps what you taught, and the learned one is not offered again. Until you "
     "answer, what you taught is what PersonalClaw follows."
 )
@@ -206,7 +206,7 @@ def _store_of(memory: str, service: Any) -> "VectorMemoryStore | None":
 def install_accepted(data: dict, service: Any) -> None:
     """Her Accept of the question *data*: the learned lesson is saved as a lesson she taught in
     the memory it was learned in, and each lesson it would have replaced is retired toward it
-    (``VectorMemoryStore.keep_lesson_in_place_of``; Settings → Memory → Audit can undo it). One of
+    (``VectorMemoryStore.keep_lesson_in_place_of``; Library → Memory → Audit can undo it). One of
     hers she removed since is not there to retire. Refused, changing nothing, when that memory is
     not reachable or memory refuses the lesson: the question is still waiting."""
     held = _held(data)

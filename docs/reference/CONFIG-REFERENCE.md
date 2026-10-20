@@ -36,11 +36,11 @@ cap binds everything.
 ## Memory tuning (`memory.*`)
 
 The behavior toggles (L1 manifest, active recall, proactive check-ins, vault)
-are in Settings → Memory. These are the tuning constants under them:
+are in Library → Memory. These are the tuning constants under them:
 
 | Key | Default | What it does |
 |---|---|---|
-| `memory.semantic_confidence_threshold` | `0.8` | Confidence (0-1) an automatically learned semantic fact needs before memory keeps it; facts you add yourself are always kept. Settings → Memory → Learned-fact confidence. |
+| `memory.semantic_confidence_threshold` | `0.8` | Confidence (0-1) an automatically learned semantic fact needs before memory keeps it; facts you add yourself are always kept. Library → Memory → Learned-fact confidence. |
 | `memory.episodic_dedup_threshold` | `0.88` | Cosine similarity above which a new episodic record is treated as a duplicate and skipped. |
 | `memory.episodic_max_results` | `8` | Episodic records recalled per query. |
 | `memory.episodic_max_count` | `10000` | Episodic store size cap; oldest records are pruned past it. |
@@ -50,7 +50,7 @@ are in Settings → Memory. These are the tuning constants under them:
 | `memory.auto_promote_enabled` | `true` | Periodically promote the most-recalled facts into the L1 manifest. |
 | `memory.auto_promote_every_n` | `10` | Run promotion every N consolidations. |
 | `memory.auto_promote_max_per_run` | `5` | Max facts promoted per run. |
-| `memory.vault_path` | `memory-vault` | Where the readable markdown vault is written, relative to `~/.personalclaw` (absolute paths allowed). The mode selector (`off`/`mirror`/`two_way`) is in Settings → Memory. Only the DEFAULT path is a declared state entry, so a relocated vault is outside `personalclaw snapshot`. |
+| `memory.vault_path` | `memory-vault` | Where the readable markdown vault is written, relative to `~/.personalclaw` (absolute paths allowed). The mode selector (`off`/`mirror`/`two_way`) is in Library → Memory. Only the DEFAULT path is a declared state entry, so a relocated vault is outside `personalclaw snapshot`. |
 
 ## Skills automation (`skills.*`)
 

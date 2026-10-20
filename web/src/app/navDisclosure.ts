@@ -57,6 +57,18 @@ const EVENT = 'ne:nav-disclosure'
 /** No record at all → show everything (see "the upgrade marker" above). */
 const ABSENT: NavDisclosure = { mode: 'expert', pinned: [] }
 
+/** Rail ids that became tabs of one destination, each with the row that holds them now.
+ *  Knowledge, Files and Artifacts were rows a starter rail showed once visited, and are Library's
+ *  tabs (#3815). The pins this browser wrote still name them, so a pin is read as the row its page
+ *  went to: the rail keeps a row for every surface it had reached, and the next write stores it. */
+const MOVED_TO: ReadonlyMap<string, string> = new Map([['knowledge', 'library'], ['files', 'library'], ['artifacts', 'library']])
+
+/** The stored pins as today's rail ids: a moved page's pin is its destination's, each id once,
+ *  in arrival order. */
+function currentPins(stored: readonly string[]): string[] {
+  return [...new Set(stored.map((id) => MOVED_TO.get(id) ?? id))]
+}
+
 export function readNavDisclosure(): NavDisclosure {
   try {
     const raw = localStorage.getItem(KEY)
@@ -66,7 +78,7 @@ export function readNavDisclosure(): NavDisclosure {
       // A record that exists but names no mode is still a record — it was written by this
       // app, so it means "onboarded under this version" and starter is the honest read.
       mode: v?.mode === 'expert' ? 'expert' : 'starter',
-      pinned: Array.isArray(v?.pinned) ? v.pinned.filter((x): x is string => typeof x === 'string') : [],
+      pinned: Array.isArray(v?.pinned) ? currentPins(v.pinned.filter((x): x is string => typeof x === 'string')) : [],
     }
   } catch { return { ...ABSENT } }
 }

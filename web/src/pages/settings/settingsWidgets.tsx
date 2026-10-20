@@ -1,5 +1,5 @@
 import {
-  User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
+  User, Palette, MessageSquare, Plug, Cpu, FileText, Bot, AudioLines,
   Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins, Route, Trophy,
   MonitorSmartphone, Plug2, FileType2, LayoutDashboard, Smartphone, Rss, Package, FlaskConical, KeyRound,
   MessageCircle, Workflow, RefreshCcw, Gauge,
@@ -66,7 +66,6 @@ const useSecurity = () => useQuery('settings:security', () => api.securityStats(
 // two independent revalidation clocks — harmless, and cheaper to leave than to merge under the
 // panel's rails.
 const useSecretsVault = () => useQuery('settings:secrets-card', () => api.secrets(), { persist: true })
-const useMemoryStats = () => useQuery('settings:memory-stats', () => api.memoryStats(), { persist: true })
 // Today's spend for the Usage bento tile: the Usage panel's "Today", the day in the owner's
 // timezone that the daily cap counts. A ledger read that FAILS now rejects and the tile says so;
 // `null` is once again only what the ledger itself returns.
@@ -629,24 +628,6 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
                 ? `k=${Number(e.study_default_k) || 5} per arm · ablation every ${Number(e.ablation_cadence_days) || 30} days`
                 : 'Off — the four eval panels on Learning stay empty'}
             </div></>}
-        </BentoCard>
-      )
-    },
-  },
-  {
-    id: 'memory', group: 'AI & Models', label: 'Memory', icon: Database, size: 'md',
-    description: 'Semantic + episodic memory, consolidation, and retention.',
-    useSearchText() { const { data: m } = useMemoryStats(); return `memory semantic episodic events embedded retention ${m ? `${m.semantic_active} semantic ${m.episodic_active} episodic ${m.embedding_provider ?? ''}` : ''}` },
-    render(query, go) {
-      const { data: m, stale: mStale, status: mStatus, error: mErr, refresh: mRefresh } = useMemoryStats()
-      return (
-        <BentoCard icon={Database} title="Memory" query={query} onClick={() => go('memory')} loading={m === undefined}
-          footer={m?.embedding_provider ? <>Embedder: <span className="font-mono text-on-surface-var">{m.embedding_provider}</span></> : undefined} stale={mStale} failed={mStatus === 'error'} error={mErr} onRetry={mRefresh}>
-          {m && <div className="flex flex-wrap items-end gap-x-5 gap-y-2">
-            <BigStat value={m.semantic_active} caption="semantic" />
-            <BigStat value={m.episodic_active} caption="episodic" />
-            <BigStat value={m.events_count} caption="events" />
-          </div>}
         </BentoCard>
       )
     },

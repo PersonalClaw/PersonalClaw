@@ -65,7 +65,7 @@ describe('a learned preference in the turn ledger', () => {
   it('links to the list that pins or forgets it, at its row', () => {
     open()
     expect(screen.getByRole('link', { name: /Learned preferences/ }).getAttribute('href'))
-      .toBe(`#/settings/memory?tab=settings&pref=${encodeURIComponent(KEY)}`)
+      .toBe(`#/memory?tab=settings&pref=${encodeURIComponent(KEY)}`)
   })
 
   it('forgets it from right there, after the same confirm the list asks', async () => {

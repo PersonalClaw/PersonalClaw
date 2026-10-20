@@ -51,7 +51,7 @@ describe('the Home lens is on the page, not just in the file tree', () => {
       // `Decisions` is the seventh lens — a filtered view of the same library, not a new nav
       // section, because decisions ARE knowledge items.
       // Appended, so Home keeps the first slot this test is really about.
-      .toEqual(['Home', 'Library', 'Graph', 'Intents', 'Tags', 'Conflicts', 'Decisions'])
+      .toEqual(['Home', 'All items', 'Graph', 'Intents', 'Tags', 'Conflicts', 'Decisions'])
   })
 
   it('renders the shelves when Home is the active lens', async () => {

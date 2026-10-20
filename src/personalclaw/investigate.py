@@ -785,7 +785,7 @@ def _resolve_memory_record(entity_id: str, state) -> InvestigateContext | None:
         id=entity_id,
         title=f"Memory: {(rec.text or rec.value or entity_id)[:48]}",
         snapshot="\n".join(lines),
-        back_link="#/settings/memory",
+        back_link="#/memory",
         opening_prompt="Is this memory still accurate and worth keeping?",
     )
 
@@ -868,7 +868,7 @@ def _resolve_memory_lesson(entity_id: str, state) -> InvestigateContext | None:
         id=entity_id,
         title=f"Lesson: {rule[:48]}",
         snapshot="\n".join(lines),
-        back_link="#/settings/memory",
+        back_link="#/memory",
         opening_prompt="Why do you believe this, and does it still hold?",
     )
 

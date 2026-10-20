@@ -500,6 +500,8 @@
         "web/e2e/__screenshots__/visual.spec.ts/knowledge-reading-light-darwin.png",
         "web/e2e/__screenshots__/visual.spec.ts/learning-dark-darwin.png",
         "web/e2e/__screenshots__/visual.spec.ts/learning-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/library-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/library-light-darwin.png",
         "web/e2e/__screenshots__/visual.spec.ts/projects-dark-darwin.png",
         "web/e2e/__screenshots__/visual.spec.ts/projects-light-darwin.png",
         "web/e2e/__screenshots__/visual.spec.ts/prompts-dark-darwin.png",

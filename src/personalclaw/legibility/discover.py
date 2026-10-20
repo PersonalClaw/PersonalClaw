@@ -67,8 +67,8 @@ def _try(route: str, label: str, query: dict[str, str] | None = None) -> dict[st
 # ── The curated catalog ──────────────────────────────────────────────────────
 # Ordered by area, then by the order a new user would naturally meet each part.
 # Every ``route`` is a real SPA destination (App.tsx ROUTABLE) that the SPA does not
-# redirect away from — a tip must LAND where its label promised; Memory has no page
-# of its own, so its tip points at the Memory settings panel that owns it.
+# redirect away from — a tip must LAND where its label promised, so none names an
+# address the SPA's redirect table retires (web/src/app/routeRedirects.ts).
 CATALOG: tuple[DiscoverTip, ...] = (
     DiscoverTip(
         id="chat",
@@ -162,7 +162,7 @@ CATALOG: tuple[DiscoverTip, ...] = (
             "PersonalClaw remembers preferences and facts across conversations. Review "
             "and curate that memory so it keeps working from an accurate picture of you."
         ),
-        try_it=_try("settings/memory", "Review Memory"),
+        try_it=_try("memory", "Review Memory"),
         engaged_key="memory",
     ),
     DiscoverTip(

@@ -141,6 +141,8 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
   // mounts this page with an empty query and asserts the ITEM LIST's failed-read and empty-library
   // branches, both of which a different default lens hides. Making Home the landing view is a
   // one-word change here plus that file's re-scoping, which is a separate decision from building it.
+  // The view is called All items: Library is the destination this page is a tab of (#3815). Its key
+  // stays `library`, so a `?view=library` link from before still opens it.
   const [viewRaw, setView] = useQueryParam(query, setQuery, 'view', 'library', { replace: true })
   const view = viewRaw as View
   // search: the submitted query lives in the URL (?q); the input box is local
@@ -516,7 +518,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
           right={
             <HeaderActions>
               <HeaderSegmented ariaLabel="Knowledge view" value={view} onChange={(v) => setView(v as View)}
-                options={[{ key: 'home', label: 'Home', icon: Home }, { key: 'library', label: 'Library', icon: Library }, { key: 'graph', label: 'Graph', icon: Network }, { key: 'intents', label: 'Intents', icon: Target }, { key: 'tags', label: 'Tags', icon: TagIcon }, { key: 'conflicts', label: 'Conflicts', icon: Scale }, { key: 'decisions', label: 'Decisions', icon: Gavel }]} />
+                options={[{ key: 'home', label: 'Home', icon: Home }, { key: 'library', label: 'All items', icon: Library }, { key: 'graph', label: 'Graph', icon: Network }, { key: 'intents', label: 'Intents', icon: Target }, { key: 'tags', label: 'Tags', icon: TagIcon }, { key: 'conflicts', label: 'Conflicts', icon: Scale }, { key: 'decisions', label: 'Decisions', icon: Gavel }]} />
               {view === 'library' && (items?.length ?? 0) > 0 && (
                 // `priority="low"` so this sheds into the `…` menu before the primary action —
                 // it is a maintenance nicety, not the reason anyone opens the page.

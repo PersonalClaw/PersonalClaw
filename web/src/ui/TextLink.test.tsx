@@ -34,10 +34,10 @@ describe('TextLink', () => {
   })
 
   it('renders an <a href> when href is set, and stays bare (no flex) without an icon', () => {
-    const { getByRole } = render(<TextLink href="#/settings/memory">Manage in Memory</TextLink>)
+    const { getByRole } = render(<TextLink href="#/memory">Manage in Memory</TextLink>)
     const a = getByRole('link')
     expect(a.tagName).toBe('A')
-    expect(a).toHaveAttribute('href', '#/settings/memory')
+    expect(a).toHaveAttribute('href', '#/memory')
     // in-app hash link: no target/rel, and no inline-flex wrapper (flows inside text)
     expect(a).not.toHaveAttribute('target')
     expect(a).not.toHaveAttribute('rel')

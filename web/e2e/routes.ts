@@ -22,12 +22,11 @@ export const ROUTES: RouteEntry[] = [
   { route: 'dashboard', label: 'Home' },
   { route: 'chat', label: 'Chat', needsData: true },
   { route: 'projects', label: 'Projects', needsData: true },
-  { route: 'knowledge', label: 'Knowledge', needsData: true },
+  // Library opens its first tab, Knowledge; each tab's own address is in VIEW_ROUTES below.
+  { route: 'library', label: 'Library', needsData: true },
   { route: 'tasks', label: 'Tasks', needsData: true },
   { route: 'inbox', label: 'Inbox', needsData: true },
   { route: 'triggers', label: 'Triggers', needsData: true },
-  { route: 'files', label: 'Files', needsData: true },
-  { route: 'artifacts', label: 'Artifacts', needsData: true },
   { route: 'terminal', label: 'Terminal' },
   // Capabilities opens its first tab, Agents; each tab's own address is in VIEW_ROUTES below.
   { route: 'capabilities', label: 'Capabilities', needsData: true },
@@ -50,7 +49,7 @@ export const ROUTES: RouteEntry[] = [
 // src/pages/settings/SettingsPage.tsx — `settingsSubpageCoverage.test.ts` fails if the
 // two lists drift, so a new panel cannot ship unscanned.
 export const SETTINGS_PANELS = [
-  'account', 'design', 'chat', 'providers', 'models', 'search', 'prompts', 'memory', 'evals',
+  'account', 'design', 'chat', 'providers', 'models', 'search', 'prompts', 'evals',
   'agent', 'voice', 'apps', 'inbox', 'documents', 'notifications', 'security', 'secrets', 'devices',
   'sender-trust', 'guardrails',
   'external-access', 'audit',
@@ -84,14 +83,18 @@ export const SETTINGS_ROUTES: RouteEntry[] = SETTINGS_PANELS.map((id) => ({
 //
 // A destination's tabs that keep addresses of their own are its surfaces too: Capabilities' Agents,
 // Tools, Skills, Prompts and Apps (#3817) are each at the route their page has always had, so each
-// keeps the visual baseline and the scans it had as a sidebar row. Their routes are not nav ids, and
-// `routeManifestParity.test.ts` counts this tier among the scanned ones.
+// keeps the visual baseline and the scans it had as a sidebar row, and so are Library's Knowledge,
+// Files and Artifacts (#3815). Their routes are not nav ids, and `routeManifestParity.test.ts` counts
+// this tier among the scanned ones.
 export const VIEW_ROUTES: RouteEntry[] = [
   { route: 'agents', id: 'agents', label: 'Capabilities › Agents', needsData: true },
   { route: 'skills', id: 'skills', label: 'Capabilities › Skills', needsData: true },
   { route: 'tools', id: 'tools', label: 'Capabilities › Tools', needsData: true },
   { route: 'prompts', id: 'prompts', label: 'Capabilities › Prompts', needsData: true },
   { route: 'apps', id: 'apps', label: 'Capabilities › Apps', needsData: true },
+  { route: 'knowledge', id: 'knowledge', label: 'Library › Knowledge', needsData: true },
+  { route: 'files', id: 'files', label: 'Library › Files', needsData: true },
+  { route: 'artifacts', id: 'artifacts', label: 'Library › Artifacts', needsData: true },
   { route: 'knowledge?view=graph', id: 'knowledge-graph', label: 'Knowledge › Graph', needsData: true },
   // The reading experience, reached at `#/knowledge/item/<id>?read=1` — the sharable
   // reader URL `KnowledgeSection` navigates to (its `onOpenReader`). It belongs in VIEW_ROUTES,
@@ -131,11 +134,11 @@ export const VIEW_ROUTES: RouteEntry[] = [
 // One literal line per entry, never a `.map()`: `assert-no-route-skips.mjs` counts `route: '`
 // literals per tier to derive how many scans the run owes.
 export const SUBSTATE_ROUTES: RouteEntry[] = [
-  { route: 'settings/memory?tab=health', id: 'settings-memory-health', label: 'Settings › memory › health', needsData: true },
-  { route: 'settings/memory?tab=recall', id: 'settings-memory-recall', label: 'Settings › memory › recall', needsData: true },
-  { route: 'settings/memory?tab=inspect', id: 'settings-memory-inspect', label: 'Settings › memory › inspect', needsData: true },
-  { route: 'settings/memory?tab=audit', id: 'settings-memory-audit', label: 'Settings › memory › audit', needsData: true },
-  { route: 'settings/memory?tab=settings', id: 'settings-memory-settings', label: 'Settings › memory › settings', needsData: true },
+  { route: 'memory?tab=health', id: 'memory-health', label: 'Library › Memory › health', needsData: true },
+  { route: 'memory?tab=recall', id: 'memory-recall', label: 'Library › Memory › recall', needsData: true },
+  { route: 'memory?tab=inspect', id: 'memory-inspect', label: 'Library › Memory › inspect', needsData: true },
+  { route: 'memory?tab=audit', id: 'memory-audit', label: 'Library › Memory › audit', needsData: true },
+  { route: 'memory?tab=settings', id: 'memory-settings', label: 'Library › Memory › settings', needsData: true },
   { route: 'knowledge?view=home', id: 'knowledge-home', label: 'Knowledge › home', needsData: true },
   { route: 'knowledge?view=intents', id: 'knowledge-intents', label: 'Knowledge › intents', needsData: true },
   { route: 'knowledge?view=tags', id: 'knowledge-tags', label: 'Knowledge › tags', needsData: true },
@@ -215,6 +218,9 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
 // minting a visual baseline that would need platform-qualified review.
 export const NON_NAV_ROUTES: RouteEntry[] = [
   { route: 'mission-control', label: 'Mission Control', needsData: true },
+  // Library's Memory tab (#3815), the page Settings › Memory was, at an address of its own. Scanned
+  // as it was as a Settings page; like the Settings pages, it has no visual golden yet.
+  { route: 'memory', label: 'Library › Memory', needsData: true },
   { route: 'notifications', label: 'Notifications', needsData: true },
   { route: 'discover', label: 'Discover', needsData: true },
   // The app-hosting SHELL, reached with a name that is deliberately not installed. 🪤 The name

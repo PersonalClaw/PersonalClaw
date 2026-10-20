@@ -99,7 +99,7 @@ describe('The learned chip reaches the approve/edit surface in ONE action', () =
     ledger({ learnedOrigin: 'lesson', learned: 'Learned: keep replies short' })
     fireEvent.click(chip())
     const link = screen.getByRole('link', { name: /Review lessons in Memory/ })
-    expect(link.getAttribute('href')).toBe('#/settings/memory?tab=studio')
+    expect(link.getAttribute('href')).toBe('#/memory?tab=studio')
     expect(document.activeElement).toBe(link)
     expect(scrolled).toContain(link)
   })

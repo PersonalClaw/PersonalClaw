@@ -304,12 +304,12 @@ export function stampActivityOrigin(prev: Segment[], next: Segment[], origin?: s
  *    The BARE `#/skills` route lands on Installed skills, which shows no proposal at all —
  *    hence the query param.
  *  - `lesson` → the after-turn review calls `service.write_lesson()`, so the artifact is a
- *    LESSON in the lesson store. The Memory Studio (Settings → Memory) reads exactly that
+ *    LESSON in the lesson store. The Memory Studio (Library → Memory) reads exactly that
  *    store (`api.lessons()`) and its inspector edits/deletes a lesson. It deliberately
  *    does NOT route to the Learning page: that page is the `/api/learning/proposals`
  *    inbox, a different artifact class (flywheel `lesson_batch` proposals), which can
  *    neither show nor edit an after-turn lesson.
- *  - `facet` → `upsert_facet` writes a learned preference, and Settings → Memory → Learned
+ *  - `facet` → `upsert_facet` writes a learned preference, and Library → Memory → Learned
  *    preferences is where one is pinned or forgotten — the link opens that list at the row
  *    (`?pref=<key>`). The veto branch writes a lesson instead, and its chip says `lesson`.
  *
@@ -327,10 +327,10 @@ export function learnedSurface(origin?: string | null, ref?: string | null): Lea
     case 'proposal':
       return { href: '#/skills?mode=proposals', label: 'Review in Skill proposals →' }
     case 'lesson':
-      return { href: '#/settings/memory?tab=studio', label: 'Review lessons in Memory →' }
+      return { href: '#/memory?tab=studio', label: 'Review lessons in Memory →' }
     case 'facet':
       return {
-        href: `#/settings/memory?tab=settings${ref ? `&pref=${encodeURIComponent(ref)}` : ''}`,
+        href: `#/memory?tab=settings${ref ? `&pref=${encodeURIComponent(ref)}` : ''}`,
         label: 'Manage in Learned preferences →',
       }
     default:

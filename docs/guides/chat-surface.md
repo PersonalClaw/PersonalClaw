@@ -295,9 +295,9 @@ stop recalling them, and the daily history and the day's digest stop repeating t
 had replaced something memory held from earlier, the earlier version comes back.
 
 What also came from elsewhere stays: a lesson you taught in another chat too, a fact you edited in
-**Settings → Memory**, and what PersonalClaw drew from many chats together. So do the files you
+**Library → Memory**, and what PersonalClaw drew from many chats together. So do the files you
 attached to an ordinary chat (Files lists them), and the Knowledge entries, artifacts and skills you
-kept. You can remove any of those where it is listed: a lesson or a fact in **Settings → Memory**.
+kept. You can remove any of those where it is listed: a lesson or a fact in **Library → Memory**.
 
 Each deletion leaves one entry in **Settings → Audit log** (`chat.deleted`), naming the chat and
 never what it held. If the chat's history cannot be removed from disk, the page says so and the
