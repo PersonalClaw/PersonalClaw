@@ -24,6 +24,7 @@ whatever ``:latest`` resolves to while reporting on the commit under review.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import re
 import subprocess
@@ -209,11 +210,358 @@ def test_readme_extraction_joins_a_backslash_continued_command(tmp_path: Path) -
 
 def test_dockerfile_builds_the_spa() -> None:
     text = _DOCKERFILE.read_text(encoding="utf-8")
-    assert re.search(r"^FROM \S*node:\S+ AS web$", text, re.MULTILINE), (
-        "Dockerfile.backend needs a Node stage that builds the SPA; without it "
-        "setup.py's BuildWithWeb finds no web/dist and the image serves no dashboard"
+    assert re.search(
+        r"^FROM --platform=\$BUILDPLATFORM \S*node:\S+@sha256:[0-9a-f]{64} AS web$",
+        text,
+        re.MULTILINE,
+    ), (
+        "Dockerfile.backend needs a Node stage that builds the SPA, on the build platform and "
+        "on a base pinned by digest; without it setup.py's BuildWithWeb finds no web/dist and "
+        "the image serves no dashboard"
     )
     assert "npm run build --workspace=web" in text
+
+
+# ---------------------------------------------------------------------------
+# Which platform each stage builds on
+# ---------------------------------------------------------------------------
+#
+# The SPA is static files, the same on every architecture, so its stage builds once, on the
+# machine running the build (`--platform=$BUILDPLATFORM`). Built for arm64 under emulation, the
+# gateway image's SPA stage stalled in vite's chunk rendering for over 2 h 40 min, until the
+# release's image job hit its time limit. Every other stage's output runs in the image (a venv,
+# `node`, the runtime itself), so it is built for the target platform: a native arm64 image needs
+# arm64 binaries. For the same reason only the built files leave the SPA stage: the rest of it
+# (its `node`, the `node_modules` holding esbuild's binary) is built for the build machine.
+
+_WEB_DOCKERFILE = _REPO / "deploy" / "docker" / "Dockerfile.web"
+_BUILD_PLATFORM = "--platform=$BUILDPLATFORM"
+#: Each image's stage that builds the SPA, by its stage name.
+_SPA_STAGE = {"Dockerfile.backend": "web", "Dockerfile.web": "builder"}
+#: The one path another stage may take from the SPA stage: the built files.
+_SPA_OUTPUT = "/app/web/dist"
+
+
+def _instructions(text: str) -> list[list[str]]:
+    """Each instruction's words, with comment lines dropped and continued lines joined."""
+    kept = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    return [line.split() for line in re.sub(r"\\\n\s*", " ", kept).splitlines() if line.strip()]
+
+
+def _froms(text: str) -> list[tuple[str, list[str], str]]:
+    """Each FROM as (stage name, its flags, its base). The builder folds stage names to lower
+    case, in a FROM and in a reference to one, so the name is read folded."""
+    found = []
+    for words in _instructions(text):
+        if words[0].upper() != "FROM":
+            continue
+        flags = [w for w in words[1:] if w.startswith("--")]
+        plain = [w for w in words[1:] if not w.startswith("--")]
+        name = plain[2].lower() if len(plain) > 2 and plain[1].upper() == "AS" else ""
+        found.append((name, flags, plain[0] if plain else ""))
+    return found
+
+
+def _taken(words: list[str]) -> list[tuple[str, str]]:
+    """Each (stage, path) an instruction takes from another stage: a ``COPY --from``'s sources,
+    and a ``RUN --mount``'s ``from=`` with its ``source`` (the stage's root when it names none)."""
+    flags = list(itertools.takewhile(lambda w: w.startswith("--"), words[1:]))
+    keyword = words[0].upper()
+    taken = []
+    for flag in flags:
+        if keyword == "COPY" and flag.startswith("--from="):
+            sources = words[1 + len(flags) : -1]
+            taken += [(flag.removeprefix("--from="), source) for source in sources]
+        elif keyword == "RUN" and flag.startswith("--mount="):
+            pairs = (option.partition("=") for option in flag.removeprefix("--mount=").split(","))
+            options = {key: value for key, _eq, value in pairs}
+            if "from" in options:
+                taken.append((options["from"], options.get("source", options.get("src", "/"))))
+    return taken
+
+
+def platform_problems(name: str, text: str) -> list[str]:
+    """What breaks the rule: the SPA stage, and only it, builds on the build platform, and
+    nothing but its built files leaves it."""
+    spa = _SPA_STAGE[name]
+    froms = _froms(text)
+    stages = [stage for stage, _flags, _base in froms]
+    problems = []
+    if stages.count(spa) != 1:
+        problems.append(f"{name}: no single stage named {spa!r} builds the SPA")
+    for stage, flags, base in froms:
+        if stage == spa:
+            if flags != [_BUILD_PLATFORM]:
+                problems.append(
+                    f"{name}: the SPA stage {spa!r} has {flags}, not [{_BUILD_PLATFORM}]"
+                )
+        elif flags:
+            problems.append(
+                f"{name}: stage {stage or base!r} has {flags}; it builds for the target"
+            )
+        if base.lower() == spa:
+            problems.append(f"{name}: stage {stage!r} is built FROM the SPA stage {spa!r}")
+    for words in _instructions(text):
+        for source, path in _taken(words):
+            ref = source.lower()
+            if ref.isdigit() and int(ref) < len(stages):
+                ref = stages[int(ref)]
+            if ref == spa and path != _SPA_OUTPUT:
+                problems.append(
+                    f"{name}: {words[0].upper()} takes {path!r} from the SPA stage {spa!r}; "
+                    f"only {_SPA_OUTPUT} leaves it"
+                )
+    return problems
+
+
+@pytest.mark.parametrize("dockerfile", [_DOCKERFILE, _WEB_DOCKERFILE], ids=lambda p: p.name)
+def test_only_the_spa_stage_builds_on_the_build_platform(dockerfile: Path) -> None:
+    text = dockerfile.read_text(encoding="utf-8")
+    assert len(_froms(text)) >= 2, f"{dockerfile.name}: read fewer than two FROMs; retarget"
+    assert platform_problems(dockerfile.name, text) == []
+
+
+def _planted(name: str, edits: tuple[tuple[str, str], ...]) -> str:
+    """*name*'s text with each edit made once: the first match of its pattern replaced by its
+    text, taken as written."""
+    text = (_DOCKERFILE if name == "Dockerfile.backend" else _WEB_DOCKERFILE).read_text(
+        encoding="utf-8"
+    )
+    for pattern, new in edits:
+        text, found = re.subn(pattern, lambda _m, new=new: new, text, count=1, flags=re.M)
+        assert found, f"the plant found no {pattern!r} in {name}: retarget it"
+    return text
+
+
+def _on(stage: str) -> str:
+    """The start of *stage*'s FROM line, up to its first flag or its base."""
+    return rf"^FROM (?=\S.* AS {stage}$)"
+
+
+def _flag_of(stage: str) -> str:
+    """The SPA *stage*'s FROM line up to its base: ``FROM --platform=$BUILDPLATFORM ``."""
+    return rf"^FROM {re.escape(_BUILD_PLATFORM)} (?=\S+ AS {stage}$)"
+
+
+#: Each plant: what it is, the image, its edits, and the text one of the check's problems must
+#: carry, so a plant refused for another reason than its own does not pass.
+_PLATFORM_PLANTS: tuple[tuple[str, str, tuple[tuple[str, str], ...], str], ...] = (
+    *(
+        (
+            f"backend {stage} on the build platform",
+            "Dockerfile.backend",
+            ((_on(stage), f"FROM {_BUILD_PLATFORM} "),),
+            f"stage {stage!r} has [{_BUILD_PLATFORM!r}]; it builds for the target",
+        )
+        for stage in ("base", "deps", "builder", "node-runtime", "runtime")
+    ),
+    (
+        "web runtime on the build platform",
+        "Dockerfile.web",
+        ((_on("runtime"), f"FROM {_BUILD_PLATFORM} "),),
+        f"stage 'runtime' has [{_BUILD_PLATFORM!r}]; it builds for the target",
+    ),
+    (
+        "backend runtime on a fixed platform",
+        "Dockerfile.backend",
+        ((_on("runtime"), "FROM --platform=linux/amd64 "),),
+        "stage 'runtime' has ['--platform=linux/amd64']; it builds for the target",
+    ),
+    (
+        "web runtime on a fixed platform",
+        "Dockerfile.web",
+        ((_on("runtime"), "FROM --platform=linux/arm64 "),),
+        "stage 'runtime' has ['--platform=linux/arm64']; it builds for the target",
+    ),
+    (
+        "web runtime with the flag on a continued line",
+        "Dockerfile.web",
+        ((_on("runtime"), f"FROM \\\n    {_BUILD_PLATFORM} \\\n    "),),
+        f"stage 'runtime' has [{_BUILD_PLATFORM!r}]; it builds for the target",
+    ),
+    (
+        "web runtime with the flag after a comment line in its continuation",
+        "Dockerfile.web",
+        ((_on("runtime"), f"FROM \\\n    # the build machine's\n    {_BUILD_PLATFORM} "),),
+        f"stage 'runtime' has [{_BUILD_PLATFORM!r}]; it builds for the target",
+    ),
+    (
+        "backend spa without the flag",
+        "Dockerfile.backend",
+        ((_flag_of("web"), "FROM "),),
+        "the SPA stage 'web' has [], not",
+    ),
+    (
+        "web spa without the flag",
+        "Dockerfile.web",
+        ((_flag_of("builder"), "FROM "),),
+        "the SPA stage 'builder' has [], not",
+    ),
+    (
+        "backend spa on a fixed platform",
+        "Dockerfile.backend",
+        ((_flag_of("web"), "FROM --platform=linux/amd64 "),),
+        "the SPA stage 'web' has ['--platform=linux/amd64'], not",
+    ),
+    (
+        "web spa with a second flag",
+        "Dockerfile.web",
+        ((_on("builder"), "FROM --platform=linux/amd64 "),),
+        f"the SPA stage 'builder' has ['--platform=linux/amd64', {_BUILD_PLATFORM!r}], not",
+    ),
+    (
+        "a stage built on the spa",
+        "Dockerfile.backend",
+        ((r"^FROM deps AS builder$", "FROM web AS builder"),),
+        "stage 'builder' is built FROM the SPA stage 'web'",
+    ),
+    (
+        "a stage built on the spa, named in capitals",
+        "Dockerfile.backend",
+        ((r"^FROM deps AS builder$", "FROM WEB AS builder"),),
+        "stage 'builder' is built FROM the SPA stage 'web'",
+    ),
+    (
+        "no spa stage: renamed, and off the build platform",
+        "Dockerfile.backend",
+        ((_flag_of("web"), "FROM "), (r" AS web$", " AS spa")),
+        "no single stage named 'web' builds the SPA",
+    ),
+    (
+        "backend spa named in capitals, off the build platform",
+        "Dockerfile.backend",
+        ((_flag_of("web"), "FROM "), (r" AS web$", " AS WEB")),
+        "the SPA stage 'web' has [], not",
+    ),
+    (
+        "two spa stages",
+        "Dockerfile.backend",
+        ((r"^(?=FROM deps AS builder$)", f"FROM {_BUILD_PLATFORM} scratch AS web\n"),),
+        "no single stage named 'web' builds the SPA",
+    ),
+    (
+        "backend runtime copies node from the spa",
+        "Dockerfile.backend",
+        (
+            (
+                r"^COPY --from=node-runtime /usr/local/bin/node ",
+                "COPY --from=web /usr/local/bin/node ",
+            ),
+        ),
+        "COPY takes '/usr/local/bin/node' from the SPA stage 'web'",
+    ),
+    (
+        "backend runtime copies esbuild from the spa",
+        "Dockerfile.backend",
+        (
+            (
+                r"^(?=COPY --from=builder /opt/venv /opt/venv$)",
+                "COPY --from=web /app/node_modules/@esbuild /opt/esbuild\n",
+            ),
+        ),
+        "COPY takes '/app/node_modules/@esbuild' from the SPA stage 'web'",
+    ),
+    (
+        "backend builder copies node_modules from the spa",
+        "Dockerfile.backend",
+        (
+            (
+                r"^(?=COPY --from=web /app/web/dist \./web/dist$)",
+                "COPY --from=web /app/node_modules ./node_modules\n",
+            ),
+        ),
+        "COPY takes '/app/node_modules' from the SPA stage 'web'",
+    ),
+    (
+        "backend builder copies node_modules from the spa, named in capitals",
+        "Dockerfile.backend",
+        (
+            (
+                r"^(?=COPY --from=web /app/web/dist \./web/dist$)",
+                "COPY --from=WEB /app/node_modules ./node_modules\n",
+            ),
+        ),
+        "COPY takes '/app/node_modules' from the SPA stage 'web'",
+    ),
+    (
+        "backend builder copies node_modules from the spa by its index",
+        "Dockerfile.backend",
+        (
+            (
+                r"^(?=COPY --from=web /app/web/dist \./web/dist$)",
+                "COPY --from=2 /app/node_modules ./node_modules\n",
+            ),
+        ),
+        "COPY takes '/app/node_modules' from the SPA stage 'web'",
+    ),
+    (
+        "web runtime copies the whole of /app",
+        "Dockerfile.web",
+        ((r"^COPY --from=builder /app/web/dist ", "COPY --from=builder /app "),),
+        "COPY takes '/app' from the SPA stage 'builder'",
+    ),
+    (
+        "web runtime copies node beside the built files",
+        "Dockerfile.web",
+        (
+            (
+                r"^COPY --from=builder /app/web/dist ",
+                "COPY --from=builder /app/web/dist /usr/local/bin/node ",
+            ),
+        ),
+        "COPY takes '/usr/local/bin/node' from the SPA stage 'builder'",
+    ),
+    (
+        "backend builder mounts /app from the spa",
+        "Dockerfile.backend",
+        ((r"^RUN (?=rm -rf build/)", "RUN --mount=type=bind,from=web,source=/app,target=/s "),),
+        "RUN takes '/app' from the SPA stage 'web'",
+    ),
+    (
+        "backend builder mounts /app from the spa, by src=",
+        "Dockerfile.backend",
+        ((r"^RUN (?=rm -rf build/)", "RUN --mount=type=bind,from=web,src=/app,target=/s "),),
+        "RUN takes '/app' from the SPA stage 'web'",
+    ),
+    (
+        "backend builder mounts the spa stage's root",
+        "Dockerfile.backend",
+        ((r"^RUN (?=rm -rf build/)", "RUN --mount=type=bind,from=web,target=/s "),),
+        "RUN takes '/' from the SPA stage 'web'",
+    ),
+)
+
+
+def test_the_platform_check_refuses_each_plant(subtests: object) -> None:
+    assert len(_PLATFORM_PLANTS) == 29, "a plant was dropped from the table"
+    for label, name, edits, expect in _PLATFORM_PLANTS:
+        with row(subtests, plant=label):
+            problems = platform_problems(name, _planted(name, edits))
+            assert any(
+                expect in problem for problem in problems
+            ), f"{label}: no problem says {expect!r}; the check said {problems}"
+
+
+def test_the_two_spa_stages_start_from_the_same_line() -> None:
+    """One SPA recipe, two images: the FROM and the pin comment above it are the same in both,
+    but for the stage's name."""
+
+    def head(path: Path, stage: str) -> str:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        at = next(
+            i
+            for i, line in enumerate(lines)
+            if line.startswith("FROM ") and line.endswith(f" AS {stage}")
+        )
+        start = at
+        while start > 0 and lines[start - 1].startswith(("#   linux/", "# node:")):
+            start -= 1
+        return "\n".join(lines[start : at + 1]).removesuffix(f" AS {stage}")
+
+    backend = head(_DOCKERFILE, "web")
+    web = head(_WEB_DOCKERFILE, "builder")
+    assert backend.count("\n") >= 3, f"read too little above the backend's SPA FROM: {backend!r}"
+    assert backend == web
 
 
 def test_dockerfile_copies_the_spa_in_before_the_install_that_grafts_it() -> None:

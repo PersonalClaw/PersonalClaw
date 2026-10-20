@@ -551,22 +551,26 @@ def _pinned(rel: str, pattern: str) -> str:
 
 
 _DIGEST_REF = r"(?:[\w.-]+/)*({name}:[\w.-]+@sha256:[0-9a-f]{{64}})"
+#: A FROM line up to its image: the SPA stages build on the build platform, the one flag a FROM
+#: here carries. The image after it is still matched whole, digest included.
+_FROM = r"^FROM (?:--platform=\$BUILDPLATFORM )?"
 
 #: The image references the digest plants edit, as the tree pins them today.
 _UBUNTU = _pinned(
     ".github/workflows/breadth.yml", "container: " + _DIGEST_REF.format(name="ubuntu")
 )
-_NGINX = _pinned("deploy/docker/Dockerfile.web", "^FROM " + _DIGEST_REF.format(name="nginx"))
-_PYTHON = _pinned("deploy/docker/Dockerfile.backend", "^FROM " + _DIGEST_REF.format(name="python"))
-_NODE_BASE = _pinned("deploy/docker/Dockerfile.web", "^FROM " + _DIGEST_REF.format(name="node"))
+_NGINX = _pinned("deploy/docker/Dockerfile.web", _FROM + _DIGEST_REF.format(name="nginx"))
+_PYTHON = _pinned("deploy/docker/Dockerfile.backend", _FROM + _DIGEST_REF.format(name="python"))
+_NODE_BASE = _pinned("deploy/docker/Dockerfile.web", _FROM + _DIGEST_REF.format(name="node"))
 #: The comment line naming the node base's arm64 manifest, newline included.
 _NODE_ARM64 = _pinned(
     "deploy/docker/Dockerfile.web",
-    r"(#\s+linux/arm64 sha256:[0-9a-f]{64}\n)(?=FROM \S*node:)",
+    r"(#\s+linux/arm64 sha256:[0-9a-f]{64}\n)(?=FROM (?:--platform=\$BUILDPLATFORM )?\S*node:)",
 )
 _NODE_AMD64 = _pinned(
     "deploy/docker/Dockerfile.web",
-    r"#\s+linux/amd64 sha256:([0-9a-f]{64})\n#\s+linux/arm64 sha256:[0-9a-f]{64}\nFROM \S*node:",
+    r"#\s+linux/amd64 sha256:([0-9a-f]{64})\n#\s+linux/arm64 sha256:[0-9a-f]{64}\n"
+    r"FROM (?:--platform=\$BUILDPLATFORM )?\S*node:",
 )
 #: The Node `.nvmrc` names, which the images' node tag must equal.
 _NVMRC = (REPO / ".nvmrc").read_text(encoding="utf-8").strip()
