@@ -97,12 +97,13 @@ const NAV: NavItem[] = [
   { id: 'files', label: 'Files', icon: Files, section: 'Platform' },
   { id: 'artifacts', label: 'Artifacts', icon: FileCode, section: 'Platform' },
   { id: 'terminal', label: 'Terminal', icon: Terminal, section: 'Platform' },
-  // Capabilities group (was "Build"). Capabilities is one destination (#3817): Agents, Skills,
-  // Tools, Prompts, Apps and the Store are its tabs, each still at its own address (ROUTABLE
-  // below). Learning and Workflows keep their rows here until their own moves (#3815, #3816).
-  { id: 'capabilities', label: 'Capabilities', icon: Puzzle, section: 'Capabilities' },
-  { id: 'learning', label: 'Learning', icon: Brain, section: 'Capabilities' },
-  { id: 'workflows', label: 'Workflows', icon: Workflow, section: 'Capabilities' },
+  // Capabilities is one destination (#3817): Agents, Skills, Tools, Prompts, Apps and the Store
+  // are its tabs, each still at its own address (ROUTABLE below). It has no section of its own: a
+  // "Capabilities" header over a "Capabilities" row groups nothing. Learning and Workflows keep
+  // their rows beside it until their own moves (#3815, #3816).
+  { id: 'capabilities', label: 'Capabilities', icon: Puzzle, section: 'Platform' },
+  { id: 'learning', label: 'Learning', icon: Brain, section: 'Platform' },
+  { id: 'workflows', label: 'Workflows', icon: Workflow, section: 'Platform' },
   // The app pages the owner pinned (`navApps`) follow, under their own Apps header: an app's own
   // page is a working surface, not configuration (see appNavItems).
   // Settings is pinned to the very bottom of the rail (NavRail honors pinBottom).

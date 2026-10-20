@@ -227,7 +227,7 @@ export function NavRail({
           noise: five rows carrying "PLATFORM" over Inbox alone and "APPS" over Store alone —
           a heading per item, which groups nothing. The starter rail is one curated group by
           construction (essentials + what you have opened), and the sections it has are
-          "starter" and "everything". Expert keeps Platform / Capabilities / Apps untouched. */}
+          "starter" and "everything". Expert keeps Platform / Apps untouched. */}
       {topRows}
 
       {/* Progressive disclosure — the last row of scroll order, so it reads as "…and the

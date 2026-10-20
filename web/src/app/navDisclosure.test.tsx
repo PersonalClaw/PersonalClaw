@@ -313,8 +313,10 @@ describe('expert mode', () => {
     })
     // Persisted, so "permanently" is not just this render.
     expect(readNavDisclosure().mode).toBe('expert')
-    // And the section headers come back with the surfaces they group.
-    expect(sectionHeaders()).toEqual(expect.arrayContaining(['Platform', 'Capabilities']))
+    // And the section headers come back with the surfaces they group. Capabilities is a row, not a
+    // header over itself.
+    expect(sectionHeaders()).toContain('Platform')
+    expect(sectionHeaders()).not.toContain('Capabilities')
     // And the same control collapses again — a disclosure that only opens leaves a user who
     // expanded out of curiosity with no local undo.
     expect(await screen.findByRole('button', { name: /^Show fewer, hide \d+ surfaces$/ }))
