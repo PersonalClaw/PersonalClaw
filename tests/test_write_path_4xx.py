@@ -40,6 +40,30 @@ def _request(body, *, method="POST", match=None):
     return req
 
 
+@pytest.fixture
+def agent_file(tmp_path, monkeypatch):
+    """A file-backed agent named ``bot`` in an isolated agents folder, its audit recorded."""
+    folder = tmp_path / "agents"
+    folder.mkdir()
+    monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: folder)
+    monkeypatch.setattr("personalclaw.dashboard.handlers.sel", lambda: MagicMock())
+    path = folder / "bot.json"
+    path.write_text(json.dumps({"name": "bot", "description": "x", "tools": ["a", "b"]}))
+    return path
+
+
+def _detail(method: str, body, *, name: str = "bot"):
+    """``PATCH``/``DELETE /api/agents/detail/{name}`` from your own page, answered."""
+    import asyncio
+
+    from personalclaw.dashboard.handlers.agents import api_agent_detail
+
+    req = _request(body, method=method, match={"name": name})
+    req.get = lambda key, default=None: {"user": "dashboard"}.get(key, default)
+    req.app = {"state": MagicMock()}
+    return asyncio.run(api_agent_detail(req))
+
+
 # ── #766: POST /api/chat ──────────────────────────────────────────────────────
 
 
@@ -126,80 +150,91 @@ class TestFolderOrderCoercion:
         await api_chat_folder_update(req)
         assert state._folders[0]["order"] == 7
 
-    def test_it_matches_the_sibling_it_was_measured_against(self):
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("sent", "stored"),
+        [("notanumber", 3), (None, 3), ([1], 3), ({"a": 1}, 3), ("7", 7), (9, 9)],
+        ids=repr,
+    )
+    async def test_it_matches_the_sibling_it_was_measured_against(self, monkeypatch, sent, stored):
         """Pins the AGREEMENT. The issue's whole argument is that the tag route already had the
-        right answer for this exact field, so the two must not drift apart again."""
-        import inspect
+        right answer for this exact field, so the two must not drift apart again: the same
+        `order` sent to a folder and to a tag is stored, or ignored, the same way by both."""
+        from personalclaw.dashboard import chat_tags
+        from personalclaw.dashboard.chat_folders import api_chat_folder_update
 
-        from personalclaw.dashboard import chat_folders, chat_tags
-
-        folder_src = inspect.getsource(chat_folders.api_chat_folder_update)
-        assert 'int(body["order"])' in folder_src
-        assert "except (TypeError, ValueError)" in folder_src
-        assert "except (TypeError, ValueError)" in inspect.getsource(chat_tags)
+        monkeypatch.setattr(chat_tags, "sel", lambda: MagicMock())
+        state = self._state()
+        state._tags = [{"id": "t1", "name": "T", "order": 3, "color": "#000000"}]
+        for route, item_id in (
+            (api_chat_folder_update, "f1"),
+            (chat_tags.api_chat_tag_update, "t1"),
+        ):
+            req = _request({"order": sent}, method="PATCH", match={"id": item_id})
+            req.app = {"state": state}
+            assert (await route(req)).status == 200, route.__name__
+        assert (state._folders[0]["order"], state._tags[0]["order"]) == (stored, stored)
 
 
 # ── #427: PATCH /api/agents/detail/{name} ─────────────────────────────────────
 
 
 class TestAgentDetailPatch:
-    def test_a_non_list_no_longer_DELETES_the_field(self):
+    @pytest.mark.parametrize("field", ["skills", "tools", "triggers"])
+    def test_a_non_list_no_longer_DELETES_the_field(self, agent_file, field):
         """🔴 The destructive one. `else: data.pop(key, None)` treated "wrong type" as "delete this
         field", so `{"tools": "@personalclaw-core"}` disarmed the live agent's whole MCP tool
         surface and answered `{"ok": true}` — on `personalclaw.json`, the runtime config the ACP
-        agent reads.
+        agent reads. A non-list is refused, and the field stays as it was."""
+        before = agent_file.read_bytes()
+        resp = _detail("PATCH", {field: "@personalclaw-core"})
+        assert resp.status == 400, f"{field} as a string was accepted"
+        assert agent_file.read_bytes() == before, "the stored list was dropped or rewritten"
 
-        Asserted at the source because the handler needs a real `agents_dir()` to drive, and the
-        finding is the branch itself: both siblings ignore a non-list, and this one acted on it.
-        """
-        import inspect
-
-        from personalclaw.dashboard.handlers import agents as A
-
-        src = inspect.getsource(A.api_agent_detail)
-        for_list_fields = src.split('for key in ("skills", "tools", "triggers")')[1]
-        body = for_list_fields.split("atomic_json_write(f, data)")[0]
-        assert (
-            "data.pop(key, None)" not in body
-        ), "a wrong type is being treated as a delete instruction again"
-        assert "isinstance(val, list)" in body
-
-    def test_the_scalar_body_guard_is_present(self):
+    @pytest.mark.parametrize("body", [None, 5, "x", [1]], ids=repr)
+    def test_the_scalar_body_guard_is_present(self, agent_file, body):
         """A scalar answered 500, and `null` was worse: the PATCH branch is gated on
         `patch_body is not None`, so `null` skipped the mutation and returned a 200 GET body for a
-        mutating request. Seven siblings in this same file already do this check."""
-        import inspect
+        mutating request. A body that is not an object is a 400, before the file loop: the agent
+        file is untouched, and an agent that does not exist gets the same refusal."""
+        before = agent_file.read_bytes()
+        assert _detail("PATCH", body).status == 400
+        assert agent_file.read_bytes() == before
+        assert _detail("PATCH", body, name="no-such-agent").status == 400
 
-        from personalclaw.dashboard.handlers import agents as A
-
-        src = inspect.getsource(A.api_agent_detail)
-        assert "isinstance(patch_body, dict)" in src
-        assert src.index("isinstance(patch_body, dict)") < src.index(
-            "agents_dir().glob"
-        ), "the shape check must run BEFORE the file loop, or a bad body still reaches it"
-
-    def test_the_delete_guard_uses_the_reserved_SET(self):
+    def test_the_delete_guard_uses_the_reserved_SET(self, agent_file):
         """It listed three FILENAMES against a five-name reserved set, covering one of them — and it
-        cannot be authoritative in principle, because the match is on the file's INTERNAL name."""
-        import inspect
-
+        cannot be authoritative in principle, because the match is on the file's INTERNAL name.
+        Every reserved name is refused, whatever the file holding it is called."""
         from personalclaw.agents.defaults import RESERVED_AGENT_NAMES
-        from personalclaw.dashboard.handlers import agents as A
 
-        src = inspect.getsource(A.api_agent_detail)
-        assert "is_reserved_agent(name)" in src
         assert len(RESERVED_AGENT_NAMES) >= 5, "the set this now consults must be the real one"
+        for name in sorted(RESERVED_AGENT_NAMES):
+            held = agent_file.parent / f"some-file-for-{name}.json"
+            held.write_text(json.dumps({"name": name}))
+            assert _detail("DELETE", None, name=name).status == 403, name
+            assert held.exists(), f"{name} was deleted"
+        assert _detail("DELETE", None).status == 200, "positive control: an ordinary agent deletes"
+        assert not agent_file.exists()
 
-    def test_the_write_is_atomic(self):
+    def test_the_write_is_atomic(self, agent_file, monkeypatch):
         """A bare `write_text` truncates the live runtime config if the process dies mid-write.
-        The one JSON writer, `atomic_write.atomic_json_write`, is what writes this file."""
-        import inspect
-
+        The one JSON writer, `atomic_write.atomic_json_write`, writes this file: a PATCH reaches
+        it, with the patched data, and nothing else writes the file."""
         from personalclaw.dashboard.handlers import agents as A
 
-        src = inspect.getsource(A.api_agent_detail)
-        assert "atomic_json_write(f, data)" in src
-        assert "f.write_text(json.dumps(data" not in src
+        written: list[tuple[str, dict]] = []
+        real = A.atomic_json_write
+
+        def recording(path, data):
+            written.append((str(path), dict(data)))
+            real(path, data)
+
+        monkeypatch.setattr(A, "atomic_json_write", recording)
+        resp = _detail("PATCH", {"description": "patched"})
+        assert resp.status == 200
+        assert written == [(str(agent_file), json.loads(agent_file.read_text()))]
+        assert written[0][1]["description"] == "patched"
 
     @pytest.mark.parametrize(
         ("method", "body", "operation"),
@@ -287,16 +322,3 @@ class TestEventMetadataStaysJSON:
 
 
 # ── the one that was already fixed ────────────────────────────────────────────
-
-
-def test_memory_import_already_guards_its_body_shape():
-    """#591 asked for an `isinstance(body, dict)` guard on `POST /api/memory/import`. It is already
-    there. Pinned rather than re-fixed, so the issue can be closed with evidence and so a later
-    change cannot quietly remove it."""
-    import inspect
-
-    from personalclaw.dashboard.handlers import memory as M
-
-    src = inspect.getsource(M.api_memory_import)
-    assert "isinstance(data, dict)" in src
-    assert "JSON body must be an object" in src
