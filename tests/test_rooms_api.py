@@ -568,14 +568,14 @@ def test_every_refusal_row_emits_the_code_it_is_keyed_on():
 def test_the_room_surface_emits_no_computed_wire_code():
     """The rail this module's shape exists for, asserted where it can be read.
 
-    ``tests/test_http_error_codes_append_only.py`` holds a tree-wide CEILING on
+    ``tests/test_http_error_codes_append_only.py`` holds a tree-wide list of the
     ``json_error`` sites whose code is computed, because an expression in the code slot is
     the one way an unregistered wire code enters unseen. Eight such sites arrived with this
-    surface — every route's ``except RoomError`` — and raising that ceiling would have been
-    the re-baselined-ratchet move: the number goes green and the check it was protecting
-    stops policing the sites it was raised for. Pinned per-module here so a future route
+    surface — every route's ``except RoomError`` — and admitting them to that list would have
+    been the re-baselined-ratchet move: the rail goes green and the check it was protecting
+    stops policing the sites it was widened for. Pinned per-module here so a future route
     reverting to ``json_error(exc.code, ...)`` reds beside the code instead of only in a
-    tree-wide count somebody else has to attribute.
+    tree-wide list somebody else has to attribute.
     """
     from wire_error_envelopes import Census, scan_source
 

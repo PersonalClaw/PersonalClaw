@@ -823,11 +823,12 @@ def test_every_dialect_error_code_is_a_registered_literal():
     ``openai_error`` forwards a keyword-only ``code`` into ``json_error``, so the
     shared census scanner (which follows ``json_response`` payload wrappers and
     module-level string constants, not forwarded code parameters) counts it as a site
-    whose code it cannot read — and ``_DYNAMIC_CODE_SITE_CEILING`` was raised from 16
-    to 17 for it. That ceiling exists to stop a COMPUTED code entering the wire
-    unregistered, so this test restores exactly that guarantee at the level where the
-    indirection actually is: every ``openai_error`` call passes a bare literal, and
-    every one of those literals is in the append-only registry.
+    whose code it cannot read — and the site has its line, with this test as its reason,
+    in ``tests/rails/baselines/dynamic-error-codes.sites.jsonl``. That list exists to
+    stop a COMPUTED code entering the wire unregistered, so this test restores exactly
+    that guarantee at the level where the indirection actually is: every ``openai_error``
+    call passes a bare literal, and every one of those literals is in the append-only
+    registry.
 
     Parsed with ``ast`` rather than grepped, so an f-string in the code slot is a
     failure here rather than a string that happens to match.

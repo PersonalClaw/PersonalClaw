@@ -12,6 +12,7 @@ import pathlib
 from dataclasses import dataclass, field
 
 import source_index
+from site_baseline import code_site, numbered, scoped
 
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
 
@@ -36,9 +37,13 @@ class Census:
     #: ``(file, line, code)`` for every emitter call whose code is a string literal.
     emitter_literal_codes: list[tuple[str, int, str]] = field(default_factory=list)
     #: Emitter calls whose code is computed (``exc.reason``, an f-string, a constant
-    #: reference). Not statically checkable against the registry — counted so they
+    #: reference). Not statically checkable against the registry — listed so they
     #: cannot become a hiding place for unregistered codes.
     emitter_dynamic_sites: list[tuple[str, int]] = field(default_factory=list)
+    #: The same calls, each named as a site (``site_baseline.code_site``: the path, the
+    #: function it is in and the call's source), repeats in one function numbered ``#2``.
+    #: ``tests/rails/baselines/dynamic-error-codes.sites.jsonl`` lists them.
+    dynamic_code_sites: list[str] = field(default_factory=list)
     #: Flat/structured sites reached through a module-local response WRAPPER rather
     #: than at a ``json_response`` call directly. Kept in their own lists so the
     #: long-standing direct ceilings stay comparable across measurements.
@@ -215,6 +220,7 @@ def scan_source(source: str | ast.Module, rel: str, census: Census) -> None:
     wrappers, accounted = _response_wrappers(tree)
     for name in sorted(wrappers):
         census.wrapper_defs.append((rel, name))
+    dynamic: set[int] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -223,6 +229,7 @@ def scan_source(source: str | ast.Module, rel: str, census: Census) -> None:
             code = _static_code(node, constants)
             if code is None:
                 census.emitter_dynamic_sites.append((rel, node.lineno))
+                dynamic.add(id(node))
             else:
                 census.emitter_literal_codes.append((rel, node.lineno, code))
             continue
@@ -258,6 +265,11 @@ def scan_source(source: str | ast.Module, rel: str, census: Census) -> None:
             else:
                 bucket = census.structured_direct if has_code else census.flat
             bucket.append((rel, node.lineno))
+
+    if dynamic:
+        census.dynamic_code_sites += numbered(
+            code_site(rel, scope, node) for node, scope in scoped(tree) if id(node) in dynamic
+        )
 
 
 def scan() -> Census:

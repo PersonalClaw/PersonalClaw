@@ -183,7 +183,7 @@ async def handle_mcp(request: web.Request) -> web.Response:
         ``code: str`` parameter would read as tidier and be strictly worse: the
         emitter call inside it would be `json_error(code, ...)`, one dynamic site
         that the append-only registry check cannot inspect at all — and the census's
-        dynamic-code bucket is already at its ceiling. The tidier shape converts nine
+        list of dynamic-code sites only shrinks. The tidier shape converts nine
         countable sites into one uncountable one.
 
         Status and byte count are read off the response instead of being passed
@@ -219,8 +219,8 @@ async def handle_mcp(request: web.Request) -> web.Response:
     problem, status = admission_problem(SURFACE)
     if problem:
         # Two literal calls, not one `json_error(<ternary>)`: a computed code is opaque
-        # to the append-only registry check and lands in the census's dynamic-code
-        # bucket, which is at its ceiling. `admission_problem` returns only 404 or 503.
+        # to the append-only registry check and lands in the census's list of dynamic-code
+        # sites, which only shrinks. `admission_problem` returns only 404 or 503.
         if status == 503:
             return _refuse(
                 json_error("service_unavailable", status=503, headers=_NO_STORE),
