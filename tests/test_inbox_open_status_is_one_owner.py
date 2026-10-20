@@ -25,16 +25,19 @@ on someone's screen.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import re
-from types import SimpleNamespace
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
+from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 from inbox_open_status_is_one_owner_shared import REPO
+from table_rows import row
 
 from personalclaw import inbox as inbox_mod
 from personalclaw.dashboard import handlers_inbox as H
@@ -71,7 +74,6 @@ RESOLVED_STATUSES = frozenset(
     }
 )
 
-PKG = REPO / "src" / "personalclaw"
 WEB = REPO / "web" / "src"
 
 
@@ -132,35 +134,245 @@ def test_the_frontend_open_set_matches_the_server():
     assert {k for k, v in entries.items() if v == "false"} == set(RESOLVED_STATUSES)
 
 
-def test_every_consumer_reads_the_owner():
-    """The six call sites import the owner rather than carrying a private copy.
+#: Two redefinitions of "open", each the kind of edit to `inbox.py` a future change might make: one
+#: drops SEEN (the edit issue 493 undid), one adds DISMISSED. They move rows in opposite directions,
+#: so a consumer holding its own copy of the real pair answers differently from both.
+_REDEFINED = (
+    ("SEEN dropped", frozenset({"pending"})),
+    ("DISMISSED added", frozenset({"pending", "seen", "dismissed"})),
+)
 
-    Named individually because each one was its own spelling before, and because the census above
-    proves only that no SECOND definition exists — not that these modules consume the first.
+
+def _holders(value) -> list[tuple[ModuleType, str]]:
+    """Every module-level name in the product that holds *value*, the object itself."""
+    found = []
+    for mod in list(sys.modules.values()):
+        name = getattr(mod, "__name__", None)
+        if not isinstance(mod, ModuleType) or not isinstance(name, str):
+            continue
+        if name == "personalclaw" or name.startswith("personalclaw."):
+            found += [(mod, attr) for attr, held in list(vars(mod).items()) if held is value]
+    return found
+
+
+@contextmanager
+def _open_redefined(to: frozenset[str]) -> Iterator[pytest.MonkeyPatch]:
+    """Make *to* the one open set: every name in the product that holds the owner holds *to*
+    instead, as if `inbox.OPEN_STATUSES` had been written so. A consumer that reads the owner, by
+    its import or at call time, answers by *to*; a private copy is another object, keeps the
+    members it was written with, and answers as before.
+
+    A module first imported inside takes *to* from `inbox`, so it gets the owner back on the way
+    out with the rest: nothing after this test sees the redefinition."""
+    with pytest.MonkeyPatch.context() as mp:
+        for mod, attr in _holders(OPEN_STATUSES):
+            mp.setattr(mod, attr, to)
+        assert inbox_mod.OPEN_STATUSES is to
+        try:
+            yield mp
+        finally:
+            for mod, attr in _holders(to):
+                setattr(mod, attr, OPEN_STATUSES)
+
+
+def _open_ids(items, open_set) -> set[str]:
+    return {it.id for it in items if it.status in open_set}
+
+
+def _unsorted(i: int, status: str) -> InboxItem:
+    """A message from a polled source that nobody has sorted, which `POST /api/inbox/{id}/sort`
+    may send to the sorter while it is open."""
+    it = _item(i, status=status, kind="message")
+    it.classification = ""
+    it.source = "filesystem"
+    return it
+
+
+def _sort(state, item_id: str) -> tuple[int, dict]:
+    app = web.Application()
+    app["state"] = state
+    req = make_mocked_request(
+        "POST", f"/api/inbox/{item_id}/sort", match_info={"id": item_id}, app=app
+    )
+    resp = asyncio.run(H.api_inbox_sort(req))
+    return resp.status, json.loads(resp.body)
+
+
+def _the_inbox_handlers(home, monkeypatch, to) -> None:
+    """The Inbox page's counts and doors that ask whether a row is open: the kind chips, the owner
+    chips, the header counts, the open feed, and which rows a sort may be asked for."""
+    unsorted = [
+        _unsorted(11, ItemStatus.PENDING.value),
+        _unsorted(12, ItemStatus.SEEN.value),
+        _unsorted(13, ItemStatus.DISMISSED.value),
+    ]
+    items = [*_seed(), *unsorted]
+    want = _open_ids(items, to)
+    assert want != _open_ids(items, OPEN_STATUSES), "the redefinition must move a row"
+    st = _dashboard(home, monkeypatch, items)
+
+    kinds = {k["kind"]: k["open"] for k in _get(st, "/api/inbox/kinds")["kinds"]}
+    assert kinds == {
+        kind: sum(1 for it in items if it.item_kind == kind and it.id in want)
+        for kind in ("message", "proposal", "system")
+    }, f"the kind chips count {kinds}"
+    owners = _get(st, "/api/inbox/owners")["owners"]
+    assert sum(o["open"] for o in owners) == len(want), f"the owner chips count {owners}"
+    status = _get(st, "/api/inbox/status")
+    assert status["open_count"] == len(want), "the header count"
+    assert status["my_open_count"] == len(want), "the header's my-items count"
+    assert {r["id"] for r in _get(st, "/api/inbox/open")} == want, "the open feed"
+    for it in unsorted:
+        code, body = _sort(st, it.id)
+        if it.id in want:
+            assert code == 200 and body["id"] == it.id, f"sorting open {it.status} answered {code}"
+        else:
+            assert code == 409, f"sorting closed {it.status} answered {code}"
+            assert body["error"]["code"] == "inbox_item_not_sortable"
+
+
+def _the_renotify_policy(home, monkeypatch, to) -> None:
+    """A stale card is reminded about while open, and stays quiet once it is not, for every
+    status there is."""
+    from personalclaw.workflows.needs_input import (
+        RENOTIFY_AFTER_HOURS,
+        BlockKind,
+        NeedsInputItem,
+        should_renotify,
+    )
+
+    now = 1_000_000.0
+    stale = NeedsInputItem(
+        run_id="run-1",
+        node_id="node-1",
+        block_kind=BlockKind.NEEDS_INPUT,
+        blocker="b",
+        created_at=now - (RENOTIFY_AFTER_HOURS + 1) * 3600,
+    )
+    answers = {s.value: should_renotify(stale, now=now, status=s.value) for s in ItemStatus}
+    assert {s for s, (ok, _) in answers.items() if ok} == set(to), answers
+    for s, (ok, why) in answers.items():
+        assert ok or why == f"card is {s}", (s, why)
+
+
+#: The rows a gate's run left: one at node n1 for each status a close could meet, a sibling gate's
+#: row at n2, and a row of another run. (id, status, node, run)
+_GATE_ROWS = (
+    ("n1-pending", ItemStatus.PENDING, "n1", "run-1"),
+    ("n1-seen", ItemStatus.SEEN, "n1", "run-1"),
+    ("n1-dismissed", ItemStatus.DISMISSED, "n1", "run-1"),
+    ("n1-handled", ItemStatus.HANDLED, "n1", "run-1"),
+    ("n2-pending", ItemStatus.PENDING, "n2", "run-1"),
+    ("other-run", ItemStatus.PENDING, "n1", "run-2"),
+)
+
+_ENDED = "the workflow run was cancelled"
+
+
+def _closer(door, target: ItemStatus, scope: tuple[str, ...]):
+    """One door that closes a gate's rows: *door* closes, *target* is the status it closes to,
+    *scope* the nodes of run-1 whose rows it may close."""
+
+    def check(home, monkeypatch, to) -> None:
+        home.mkdir()
+        store = InboxStore(path=home / "inbox.json")
+        for row_id, status, node, run in _GATE_ROWS:
+            it = _item(len(store.items), status=status, kind="needs_input")
+            it.id = row_id
+            it.refs = {"workflow": run, "workflow_node": node}
+            store.add(it)
+        st = SimpleNamespace(_inbox_svc=SimpleNamespace(inbox=store, state=None))
+        want = {
+            row_id
+            for row_id, status, node, run in _GATE_ROWS
+            if run == "run-1" and node in scope and status in to
+        }
+        closed = door(st, store)
+        assert closed == len(want), f"closed {closed}, wanted {sorted(want)}"
+        for row_id, status, _node, _run in _GATE_ROWS:
+            it = store.items[row_id]
+            assert it.status == (target.value if row_id in want else status.value), row_id
+            ended = it.refs.get("ended")
+            if target is ItemStatus.EXPIRED and row_id in want:
+                assert ended == _ENDED, f"{row_id} does not say why it expired"
+            else:
+                assert ended is None, f"{row_id} carries an end it was not given: {ended!r}"
+
+    return check
+
+
+def _gate_lane(name: str):
+    from personalclaw.workflows import attention
+
+    return getattr(attention, name)
+
+
+_N1 = {"workflow": "run-1", "workflow_node": "n1"}
+
+#: Each consumer, checked under a redefined owner. The shared closers are the one implementation
+#: every emitter closes through, an answer (HANDLED) and an end with none (EXPIRED) alike; the
+#: workflow gate lane's two doors close through them with its own refs.
+_CONSUMERS = (
+    ("the inbox handlers", _the_inbox_handlers),
+    ("the renotify policy", _the_renotify_policy),
+    (
+        "inbox.resolve_attention_items",
+        _closer(
+            lambda st, store: resolve_attention_items(None, dict(_N1), store=store),
+            ItemStatus.HANDLED,
+            ("n1",),
+        ),
+    ),
+    (
+        "inbox.expire_attention_items",
+        _closer(
+            lambda st, store: expire_attention_items(None, dict(_N1), ended=_ENDED, store=store),
+            ItemStatus.EXPIRED,
+            ("n1",),
+        ),
+    ),
+    (
+        "attention.resolve_gate_item",
+        _closer(
+            lambda st, store: _gate_lane("resolve_gate_item")(st, "run-1", "n1"),
+            ItemStatus.HANDLED,
+            ("n1",),
+        ),
+    ),
+    (
+        "attention.expire_run_items",
+        _closer(
+            lambda st, store: _gate_lane("expire_run_items")(st, "run-1", ended=_ENDED),
+            ItemStatus.EXPIRED,
+            ("n1", "n2"),
+        ),
+    ),
+)
+
+
+def test_every_consumer_reads_the_owner(tmp_path, subtests):
+    """The call sites read the owner rather than carrying a private copy.
+
+    Named individually because each one was its own spelling before, and because the census in the
+    rails half proves only that no SECOND definition exists — not that these modules consume the
+    first. So "open" is redefined, as an edit to `inbox.py` would redefine it, and each consumer
+    must answer by the new set: the inbox handlers, the renotify policy, both shared closers (an
+    answered row and one ended unanswered close through one implementation, and that one reads the
+    one open set), and the workflow gate lane's two doors, which close through them rather than
+    re-implement the loop with a set of their own (#335). A private copy anywhere keeps the
+    members it was written with, and its row answers as before.
     """
     from personalclaw.proactive import collect
 
     assert collect.ATTENTION_STATUSES is OPEN_STATUSES, "the digest lane must alias the one set"
-    assert "OPEN_STATUSES" in (PKG / "dashboard" / "handlers_inbox.py").read_text(encoding="utf-8")
-    assert "OPEN_STATUSES" in (PKG / "workflows" / "needs_input.py").read_text(encoding="utf-8")
-
-    # `workflows/attention.py` USED to carry the resolve loop and was asserted here by name. It no
-    # longer does: #335 extracted the loop to `inbox.resolve_attention_items`, so a substring check
-    # on that module would now pass on a file that resolves nothing. Asserting the delegation and
-    # then the owner inside the surviving implementation keeps this non-vacuous — a private copy
-    # reappearing in attention.py would have to stop calling the shared resolver to hide from it.
-    attention_src = (PKG / "workflows" / "attention.py").read_text(encoding="utf-8")
-    assert (
-        "resolve_attention_items" in attention_src
-    ), "the workflow gate lane must delegate to the one resolve implementation, not re-implement it"
-    # Both ways a row closes on its request's behalf — answered (HANDLED) and ended unanswered
-    # (EXPIRED) — are the one implementation, and that one reads the one open set.
-    for closer in (resolve_attention_items, expire_attention_items):
-        assert "_close_attention_items(" in inspect.getsource(closer), closer.__name__
-    close_body = inspect.getsource(inbox_mod._close_attention_items)
-    assert (
-        "OPEN_STATUSES" in close_body
-    ), "the one resolve implementation must read the one open set"
+    assert len(_CONSUMERS) == 6
+    for n, (owner, to) in enumerate(_REDEFINED):
+        with _open_redefined(to) as mp:
+            for i, (consumer, check) in enumerate(_CONSUMERS):
+                with row(subtests, owner=owner, consumer=consumer):
+                    check(tmp_path / f"{n}-{i}", mp, to)
+    assert not _holders(_REDEFINED[0][1]) and not _holders(_REDEFINED[1][1])
+    assert inbox_mod.OPEN_STATUSES is OPEN_STATUSES
 
 
 def test_the_renotify_policy_reads_the_one_open_set():
@@ -236,29 +448,36 @@ _OPEN = 5
 _PENDING_ONLY = 3
 
 
-@pytest.fixture
-def state(tmp_path, monkeypatch):
-    """A dashboard state over stores on tmp_path, with the config home isolated.
+def _dashboard(home, monkeypatch, items):
+    """A dashboard state over stores in *home* holding *items*, with the config home isolated.
 
-    `api_inbox_status` calls `AppConfig.load()`; pointing `config_dir` at tmp_path keeps this
+    `api_inbox_status` calls `AppConfig.load()`; pointing `config_dir` at *home* keeps this
     suite off the real `~/.personalclaw` even for the read.
     """
     import personalclaw.config.loader as loader
 
-    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
-    inbox = InboxStore(path=tmp_path / "inbox.json")
-    for it in _seed():
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(loader, "config_dir", lambda: home)
+    inbox = InboxStore(path=home / "inbox.json")
+    for it in items:
         inbox.add(it)
-    inbox_state = InboxState(path=tmp_path / "inbox_state.json")
+    inbox_state = InboxState(path=home / "inbox_state.json")
     svc = SimpleNamespace(
         state=inbox_state,
         inbox=inbox,
         health=lambda: {"running": True, "stale": False},
+        sorter=SimpleNamespace(wake=lambda: None),
     )
     st = MagicMock()
     st._inbox_svc = svc
     st.broadcast_ws = lambda *a, **k: None
     return st
+
+
+@pytest.fixture
+def state(tmp_path, monkeypatch):
+    """A dashboard state over the seeded stores on tmp_path."""
+    return _dashboard(tmp_path, monkeypatch, _seed())
 
 
 def _get(state, path: str) -> dict | list:
@@ -273,6 +492,7 @@ _HANDLERS = {
     "/api/inbox": "api_inbox_list",
     "/api/inbox/open": "api_inbox_open_list",
     "/api/inbox/kinds": "api_inbox_kinds",
+    "/api/inbox/owners": "api_inbox_owners",
     "/api/inbox/status": "api_inbox_status",
 }
 
