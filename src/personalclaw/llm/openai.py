@@ -13,6 +13,7 @@ registration (capability descriptor + factory) lives in the standalone
 """
 
 import logging
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -54,6 +55,34 @@ _FINISH = "a finish_reason"
 from personalclaw.context_gauge import ContextGauge, prompt_text_chars  # noqa: E402
 from personalclaw.model_windows import declared_context_window as _declared_window  # noqa: E402
 from personalclaw.model_windows import resolved_context_window  # noqa: E402
+
+#: A reasoning model's name in a model id (o1, o3, o4 or gpt-5, prefixed or suffixed): such a
+#: model takes ``reasoning_effort``, and any other model refuses it. A name is a token, between
+#: characters that are not letters or digits, so an id in which ``o1`` is only part of another
+#: word names no reasoning model.
+_REASONING_MODEL = re.compile(r"(?<![a-z0-9])(?:o1|o3|o4|gpt-5)(?![a-z0-9])")
+
+#: The effort levels a reasoning model is sent as themselves.
+_REASONING_EFFORTS = ("low", "medium", "high")
+
+#: The level sent in place of one this wire has no rule for: OpenAI has no ``max``, and ``xhigh``
+#: is not taken by every reasoning model, so both are sent as ``high``.
+_EFFORT_STEP_DOWN = {"xhigh": "high", "max": "high"}
+
+
+def reasoning_efforts(model: str) -> tuple[str, ...]:
+    """The effort levels this wire sends ``model`` as themselves, lowest first: the reasoning
+    levels for a reasoning model, none for any other (:func:`_reasoning_effort`)."""
+    return _REASONING_EFFORTS if _REASONING_MODEL.search((model or "").lower()) else ()
+
+
+def _reasoning_effort(model: str, effort: str) -> str:
+    """The ``reasoning_effort`` a request to ``model`` carries for the session's ``effort``: ``""``
+    (send none) for no effort and for a model that does not reason, a level the wire has no rule
+    for as the nearest lower one (``_EFFORT_STEP_DOWN``), and any other value as it is."""
+    if not effort or not reasoning_efforts(model):
+        return ""
+    return _EFFORT_STEP_DOWN.get(effort, effort)
 
 
 def _read_cache_usage(usage: object) -> tuple[int, int]:
@@ -494,16 +523,11 @@ class OpenAIProvider(ModelProvider):
             request_kwargs["tools"] = tools
         if self._max_tokens is not None:
             request_kwargs["max_tokens"] = self._max_tokens
-        # Reasoning models (o-series / gpt-5*) accept ``reasoning_effort`` directly
-        # (minimal/low/medium/high). Pass ours through when set; map "max"→"high"
-        # (OpenAI has no "max"). Only send for a reasoning-capable model name;
-        # others reject it. "" = omit (model default).
-        if reasoning_effort:
-            _m = (model or self._model or "").lower()
-            if any(p in _m for p in ("o1", "o3", "o4", "gpt-5")):
-                request_kwargs["reasoning_effort"] = (
-                    "high" if reasoning_effort == "max" else reasoning_effort
-                )
+        # A reasoning model takes ``reasoning_effort`` directly; any other model refuses it, so
+        # it is sent only to one (``_reasoning_effort``). "" = omit (the model's default).
+        effort = _reasoning_effort(str(request_kwargs["model"]), reasoning_effort)
+        if effort:
+            request_kwargs["reasoning_effort"] = effort
         # Let extra_options override any default above (e.g. disable usage for
         # an endpoint that rejects stream_options).
         for key, value in self._extra_options.items():

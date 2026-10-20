@@ -64,8 +64,9 @@ class ModelInfo:
     ``extra`` carries provider-specific display fields the ollama UI shows
     (``owned_by``, ``parameter_size``, ``quantization``, ``family``, ``modified_at``).
     ``efforts`` are the reasoning-effort levels the model takes (``low``, ``high``, …), as its
-    provider's record of it declares them. ``[]`` means the record declares none, and the composer
-    then offers the model no effort choice: an id is no declaration.
+    provider's record of it declares them, or, for a model on core's own wire whose record says
+    nothing of them, as that wire sends them (``branded_specs.wire_efforts``). ``[]`` means none is
+    declared, and the composer then offers the model no effort choice.
     """
 
     id: str
@@ -679,11 +680,15 @@ def _record_efforts(
 ) -> list[str]:
     """The reasoning-effort levels ``record`` declares, by the vendor's own reading of its records.
 
-    No reading, no levels: an id says nothing about whether a model takes an effort. A reading that
-    raises costs that one model its levels, never the list.
+    With no reading of its own, a record declares the levels core's OpenAI-compatible wire sends
+    its model (``branded_specs.wire_efforts``): the wire this listing's models are served on. A
+    reading's answer is taken as it is, ``[]`` included, and one that raises costs that one model
+    its levels, never the list.
     """
     if efforts_of is None:
-        return []
+        from personalclaw.llm.branded_specs import wire_efforts
+
+        return list(wire_efforts("openai", str(record.get("id") or "")))
     try:
         return [str(e) for e in efforts_of(record)]
     except Exception:  # noqa: BLE001 — one record the vendor reading cannot read
@@ -716,7 +721,8 @@ async def openai_compatible_discover_models(
     vendor wrote it and returns its :class:`ModelInfo` capability tags (``[]`` for none). Without
     one, a record is read by its id and ``root`` (:func:`infer_capabilities`), the only fields
     every OpenAI-compatible server carries. ``efforts_of`` reads the same record for the
-    reasoning-effort levels the model takes (``[]`` for none); without one, a model declares none.
+    reasoning-effort levels the model takes (``[]`` for none); without one, a model declares the
+    levels core's OpenAI-compatible wire sends it (``branded_specs.wire_efforts``).
 
     The ``GET {base}/models`` discovery call routes through the ``net.fetch`` egress
     chokepoint (host classification, redirect-hop re-check, byte cap, timeout, SEL

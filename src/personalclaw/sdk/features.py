@@ -58,6 +58,12 @@ its chat, and a delivery of it made again changes nothing; a channel that acts o
 before the door or instead of it claims it first (``personalclaw.sdk.channel.claim_message``). A
 channel app that claims its messages declares it.
 
+``MODEL_EFFORTS``: a model app declares the reasoning-effort levels each of its models takes
+(``ModelInfo(efforts=…)``, ``register_branded_app(spec, efforts_of=…)`` or a curated row's
+``efforts``), and the composer offers a chat on that model exactly those; a model its app says
+nothing about declares what PersonalClaw's own wire sends it
+(``personalclaw.sdk.model.wire_efforts``). A model app that declares levels declares it.
+
 ``PAIRED_OWNER``: a channel keeps no owner but the one its owner pairing named
 (``personalclaw.sdk.channel.paired_owner``), has PersonalClaw forget any other owner it holds for
 the channel (``forget_owner``), and answers the code that paired its owner in PersonalClaw's words
@@ -96,6 +102,7 @@ from personalclaw.apps.core_features import (
     LINKS_NAME_THEIR_CHANNEL,
     MESSAGE_INSTRUCTIONS,
     MESSAGES_RUN_ONCE,
+    MODEL_EFFORTS,
     PAIRED_OWNER,
     PRE_TOOL_HOOKS,
     TOOL_CALL_SCREEN,
@@ -116,6 +123,7 @@ __all__ = [
     "LINKS_NAME_THEIR_CHANNEL",
     "MESSAGE_INSTRUCTIONS",
     "MESSAGES_RUN_ONCE",
+    "MODEL_EFFORTS",
     "PAIRED_OWNER",
     "PRE_TOOL_HOOKS",
     "TOOL_CALL_SCREEN",

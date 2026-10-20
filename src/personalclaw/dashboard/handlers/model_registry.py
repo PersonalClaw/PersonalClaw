@@ -948,6 +948,7 @@ async def api_models_chat(request: web.Request) -> web.Response:
             row["efforts"] = list(efforts)
         all_models.append(row)
 
+    from personalclaw.llm.branded_specs import registered_spec, wire_efforts
     from personalclaw.llm.registry import canonical_provider_type
     from personalclaw.providers.connection import (
         FAILED,
@@ -955,8 +956,15 @@ async def api_models_chat(request: web.Request) -> web.Response:
         settings_fingerprint,
     )
 
+    def _add_own(pname: str, ptype: str, mid: str) -> None:
+        # An instance's own model, offered because no listing names it, declares the levels its
+        # wire sends it when that wire is core's (an app's branded spec names its protocol); an app
+        # on a wire of its own says what that wire sends through its listing, not here.
+        spec = registered_spec(canonical_provider_type(ptype))
+        _add(pname, mid, list(wire_efforts(spec.protocol, mid)) if spec is not None else None)
+
     board = get_connection_board()
-    tasks = []  # (pname, has_pinned_model, pinned_model, coro)
+    tasks = []  # (pname, type, pinned_model, coro)
     for p in providers_cfg:
         pname = p.get("name", "")
         # An instance whose last check failed (unreachable, or its key rejected) offers
@@ -975,17 +983,17 @@ async def api_models_chat(request: web.Request) -> web.Response:
         if catalog is None:
             # No discovery available — surface the instance's own model if it names one.
             if pinned:
-                _add(pname, pinned)
+                _add_own(pname, p.get("type", ""), pinned)
             continue
-        tasks.append((pname, pinned, catalog.list_models()))
+        tasks.append((pname, p.get("type", ""), pinned, catalog.list_models()))
 
     if tasks:
-        results = await asyncio.gather(*(t[2] for t in tasks), return_exceptions=True)
-        for (pname, pinned, _), models_or_exc in zip(tasks, results):
+        results = await asyncio.gather(*(t[3] for t in tasks), return_exceptions=True)
+        for (pname, ptype, pinned, _), models_or_exc in zip(tasks, results):
             if isinstance(models_or_exc, BaseException) or not models_or_exc:
                 # Discovery failed / empty — fall back to the pinned model id.
                 if pinned:
-                    _add(pname, pinned)
+                    _add_own(pname, ptype, pinned)
                 continue
             for mi in models_or_exc:
                 if "chat" in (mi.capabilities or []):
@@ -1011,7 +1019,7 @@ async def api_models_chat(request: web.Request) -> web.Response:
                 caps = frozenset()
         if Capability.CHAT not in caps or _cannot_serve(entry.name):
             continue
-        _add(entry.name, entry.own_model)
+        _add_own(entry.name, entry.type, entry.own_model)
 
     return web.json_response(all_models)
 

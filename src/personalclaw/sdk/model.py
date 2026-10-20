@@ -49,7 +49,7 @@ from personalclaw.llm.base import (  # noqa: F401
     LLMEvent,
     ModelProvider,
 )
-from personalclaw.llm.branded_specs import BrandedProviderSpec  # noqa: F401
+from personalclaw.llm.branded_specs import BrandedProviderSpec, wire_efforts  # noqa: F401
 
 # What a model app's factory reads from its build kwargs — the per-call sampling temperature and
 # the output cap — so it is read ONE way. Five first-party apps each copied these lines
@@ -241,6 +241,9 @@ __all__ = [
     # Branded/generic protocol-provider app helpers (see sdk.provider_helpers).
     "BrandedProviderSpec",
     "register_branded_app",
+    # The reasoning-effort levels core's own wire for a protocol sends a model, which an app with a
+    # catalog of its own on that wire declares on the model's ``ModelInfo.efforts``.
+    "wire_efforts",
     # Media-model catalog contribution (stt/tts/image vendor catalogs).
     "MediaCatalog",
     "MediaModel",

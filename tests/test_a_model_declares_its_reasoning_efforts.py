@@ -5,7 +5,9 @@ set on a model with no effort setting and change nothing. A model now declares i
 it declares its jobs: through its provider's record of it. A vendor's listing is read by the app's
 ``efforts_of`` (beside ``capabilities_of``), and a curated record names its own ``efforts``. The
 levels reach ``ModelInfo.efforts`` and the composer's one model list (``GET /api/models/chat``),
-and a model whose record names none carries none, so the composer offers it no effort.
+and a model whose record says it takes none carries none, so the composer offers it no effort. A
+record that says nothing declares what core's own wire sends the model
+(``tests/test_core_wires_declare_the_efforts_they_send.py``).
 
 The listings below are recorded shapes, served by fakes; no vendor is called.
 """
@@ -81,8 +83,9 @@ def test_the_vendor_record_reaches_the_app_and_decides_the_levels(listing) -> No
     }
 
 
-def test_with_no_reading_of_its_own_a_record_declares_no_levels(listing) -> None:
-    """An id is no declaration: a listing the app does not read for levels offers none."""
+def test_with_no_reading_of_its_own_a_record_declares_only_what_its_wire_sends(listing) -> None:
+    """A listing the app does not read for levels declares what core's OpenAI wire sends each id
+    (``wire_efforts``), which for these ids is nothing."""
     listing(_VENDOR_RECORDS)
     rows = _run(openai_compatible_discover_models("https://api.acme.example/v1", "fake-key"))
     assert {r.id: r.efforts for r in rows} == {"acme-thinker": [], "acme-quick": []}
@@ -132,7 +135,8 @@ def test_a_branded_app_names_how_its_vendor_records_read_for_levels(listing) -> 
 
 
 def test_a_curated_record_names_its_own_levels() -> None:
-    """A wire with no models route lists the app's curated records, which say their levels."""
+    """A wire with no models route lists the app's curated records, which say their levels; a
+    record that says it takes none (``[]``) declares none, whatever its wire would send it."""
     from personalclaw.sdk.model import BrandedProviderSpec, register_branded_app
 
     spec = BrandedProviderSpec(
@@ -141,7 +145,7 @@ def test_a_curated_record_names_its_own_levels() -> None:
         default_base_url="https://api.acme.example",
         fallback_models=(
             {"id": "acme-deep", "capabilities": ["chat"], "efforts": ["low", "medium", "max"]},
-            {"id": "acme-flat", "capabilities": ["chat"]},
+            {"id": "acme-flat", "capabilities": ["chat"], "efforts": []},
         ),
     )
     with patch.object(llm_registry, "_default_registry", llm_registry.ProviderRegistry()):

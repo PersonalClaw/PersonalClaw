@@ -28,6 +28,7 @@ from personalclaw.sdk.features import (
     LINKS_NAME_THEIR_CHANNEL,
     MESSAGE_INSTRUCTIONS,
     MESSAGES_RUN_ONCE,
+    MODEL_EFFORTS,
     PAIRED_OWNER,
     PRE_TOOL_HOOKS,
     TOOL_CALL_SCREEN,
@@ -52,6 +53,7 @@ OFFERED_ONCE = {
     "links-name-their-channel",
     "message-instructions",
     "messages-run-once",
+    "model-efforts",
     "paired-owner",
     "pre-tool-hooks",
     "tool-call-screen",
@@ -73,6 +75,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "LINKS_NAME_THEIR_CHANNEL",
         "MESSAGE_INSTRUCTIONS",
         "MESSAGES_RUN_ONCE",
+        "MODEL_EFFORTS",
         "PAIRED_OWNER",
         "PRE_TOOL_HOOKS",
         "TOOL_CALL_SCREEN",
@@ -90,6 +93,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     assert LINKS_NAME_THEIR_CHANNEL == "links-name-their-channel"
     assert MESSAGE_INSTRUCTIONS == "message-instructions"
     assert MESSAGES_RUN_ONCE == "messages-run-once"
+    assert MODEL_EFFORTS == "model-efforts"
     assert PAIRED_OWNER == "paired-owner"
     assert PRE_TOOL_HOOKS == "pre-tool-hooks"
     assert TOOL_CALL_SCREEN == "tool-call-screen"
@@ -105,6 +109,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         LINKS_NAME_THEIR_CHANNEL,
         MESSAGE_INSTRUCTIONS,
         MESSAGES_RUN_ONCE,
+        MODEL_EFFORTS,
         PAIRED_OWNER,
         PRE_TOOL_HOOKS,
         TOOL_CALL_SCREEN,
@@ -812,6 +817,39 @@ def _message_instructions_hold() -> None:
     assert value.count("<untrusted_content") == 1 and "Seat 14C." not in outside_fences(value)
 
 
+def _model_efforts_hold() -> None:
+    """A model app declares the levels each of its models takes, on its record of the model, and
+    the composer's list carries them as declared; a model its app says nothing about declares what
+    core's own wire sends it (``wire_efforts``), and one its app says takes none declares none."""
+    import asyncio
+
+    from personalclaw.sdk.model import BrandedProviderSpec, ModelInfo, wire_efforts
+    from personalclaw.sdk.provider_helpers import BrandedCatalog
+
+    assert ModelInfo(id="m", name="m", efforts=["low", "high"]).to_dict()["efforts"] == [
+        "low",
+        "high",
+    ]
+    assert wire_efforts("anthropic", "claude-opus-4-6") == ("low", "medium", "high", "max")
+    assert wire_efforts("openai", "o3") == ("low", "medium", "high")
+    assert wire_efforts("openai", "gpt-4o") == ()
+    spec = BrandedProviderSpec(
+        type="acme-effort-feature",
+        protocol="anthropic",
+        fallback_models=(
+            {"id": "claude-opus-4-6", "capabilities": ["chat"], "efforts": ["high"]},
+            {"id": "claude-opus-4-8", "capabilities": ["chat"]},
+            {"id": "claude-haiku-4-5", "capabilities": ["chat"], "efforts": []},
+        ),
+    )
+    rows = asyncio.run(BrandedCatalog(spec, api_key="fake-key-test").list_models())
+    assert {r.id: r.efforts for r in rows} == {
+        "claude-opus-4-6": ["high"],
+        "claude-opus-4-8": ["low", "medium", "high", "xhigh", "max"],
+        "claude-haiku-4-5": [],
+    }
+
+
 #: The check that holds each offered feature to its contract. A name without one fails below.
 WITNESSES = {
     APPROVAL_ANSWERS: _approval_answers_hold,
@@ -824,6 +862,7 @@ WITNESSES = {
     LINKS_NAME_THEIR_CHANNEL: _links_name_their_channel_holds,
     MESSAGE_INSTRUCTIONS: _message_instructions_hold,
     MESSAGES_RUN_ONCE: _messages_run_once_hold,
+    MODEL_EFFORTS: _model_efforts_hold,
     PAIRED_OWNER: _paired_owner_holds,
     PRE_TOOL_HOOKS: _pre_tool_hooks_hold,
     TOOL_CALL_SCREEN: _tool_call_screen_holds,

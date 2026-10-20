@@ -151,6 +151,15 @@ PAIRED_OWNER = "paired-owner"
 #: message fenced once with where it came from. A core without it has no ``instruction`` on
 #: ``IncomingMessage``, so an app that hands one over fails to poll.
 MESSAGE_INSTRUCTIONS = "message-instructions"
+#: A model app declares the reasoning-effort levels each of its models takes, and the composer
+#: offers a chat on that model exactly those: ``ModelInfo(efforts=[…])`` on its record of the model,
+#: ``register_branded_app(spec, efforts_of=…)`` reading its vendor's records, or a curated
+#: ``fallback_models`` row's ``efforts`` key, ``[]`` declaring none. A model whose app says nothing
+#: of efforts declares what core's own wire sends it, and ``personalclaw.sdk.model.wire_efforts
+#: (protocol, model_id)`` says which levels those are, for an app with a catalog of its own. A core
+#: without it has no ``wire_efforts``, so an app that imports it does not load.
+MODEL_EFFORTS = "model-efforts"
+
 #: Every feature this core offers. A name is added with its contract and never taken away.
 CORE_FEATURES: frozenset[str] = frozenset(
     {
@@ -164,6 +173,7 @@ CORE_FEATURES: frozenset[str] = frozenset(
         LINKS_NAME_THEIR_CHANNEL,
         MESSAGE_INSTRUCTIONS,
         MESSAGES_RUN_ONCE,
+        MODEL_EFFORTS,
         PAIRED_OWNER,
         PRE_TOOL_HOOKS,
         TOOL_CALL_SCREEN,
