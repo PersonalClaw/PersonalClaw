@@ -17,8 +17,8 @@ channels" clause holds by construction rather than by promise:
   payload, so a tap on the chip could not be routed to the surface that approves or
   edits THAT artifact. ``kind`` stays ``"learned"`` because live consumers key on it.
 
-The last test is the rail for the "no new channel" clause: it pins the whole
-set of WS event names ``chat_runner`` broadcasts.
+The "no new channel" clause is driven: every emitter of either contract runs for real, and
+what it sends must be frames a turn already sends.
 """
 
 from __future__ import annotations
@@ -445,76 +445,188 @@ def test_the_three_origins_are_distinct_and_closed():
 
 # ── The change's "zero new WS/SSE channels" clause ────────────────────────────────
 
-#: Every WS event name ``chat_runner`` broadcasts, pinned. The vacuity floor below holds the
-#: regex to every ``broadcast_ws(`` call site in the module, so a miss here is a real new
-#: channel and not a regex that stopped matching. Both contracts above are additive payload on names
-#: ALREADY in this set (``meta`` on ``chat_segment``'s message; a key on
-#: ``activity_event``), so landing them must leave it byte-for-byte unchanged.
-#:
-#: This is a shared-module baseline, so it drifts on merge with changes that have nothing
-#: to do — and a rebaseline is only honest when the new name is provably not
-#: ours. ``queue_push`` arrived from ``57194f48`` (the ACP mid-turn steer echo) and
-#: appears **zero** times in the diff; that provenance, not the fact that the
-#: assertion was red, is what licensed adding it. ``approval`` LEFT with #3594, which moved a
-#: chat's pending approval onto the one approval registry (``request_approval``), so the chat
-#: runner stopped broadcasting a frame of its own for it. A removal, not a new channel.
-#: ``context_usage`` left the same way: the ring's reading is said through
-#: ``DashboardState.say_context_usage``, which also keeps it for session detail. ``queue_push``
-#: left too, with the requeue of the steers a finished turn did not take, which moved into
-#: ``running_turn.end_steers``: the turn still sends it, from there. ``question_card`` left the
-#: same way: an agent's question to its owner is put through ``owner_questions``, which sends the
-#: card and its ``question_resolved``, so the chat runner sends neither. ``heartbeat`` left
-#: because nothing read it: no client dispatches on it, and the socket's keep-alive is
-#: aiohttp's own ping (``tests/test_no_frame_or_flag_is_left_without_a_reader.py``).
-#: ``chat_status`` left with it: what the turn is doing is its phase, which ``chat_phase`` says
-#: for the runner in the one ``work_phase`` frame (a removal, not a new channel).
-_BASELINE_WS_EVENTS = {
+#: The frames a turn already sends: the runner's own, the ring's reading said through the state
+#: (``context_usage``), a steer it did not take, requeued (``queue_push``, from ``running_turn``),
+#: its phase (``work_phase``, from ``chat_phase``) and the follow-ups suggested after it
+#: (``chat_followups``, from ``chat_followups``). Both contracts above are payload on names
+#: already here (``meta`` on the turn's own message; a ``kind`` and an ``origin`` on
+#: ``activity_event``), so none of their emitters may send a name outside it.
+_TURN_WS_EVENTS = {
     "activity_event",
     "chat_chunk",
     "chat_done",
+    "chat_followups",
     "chat_message",
     "chat_segment",
     "chat_thinking",
     "chat_user_message",
     "chat_variant_switch",
+    "context_usage",
     "queue_pop",
+    "queue_push",
     "session_agent_switch",
     "session_clear",
     "token_usage",
     "tool_call",
     "tool_result",
+    "work_phase",
 }
 
-#: What a turn sends: the runner's own frames, the ring's reading said through the state, a
-#: steer it did not take, requeued (``queue_push``, from ``running_turn``), and its phase
-#: (``work_phase``, from ``chat_phase``), which also says whether the turn takes a steer: the
-#: ``turn_steerable`` frame that said so on its own is gone. None is a skills channel.
-_TURN_WS_EVENTS = _BASELINE_WS_EVENTS | {"context_usage", "queue_push", "work_phase"}
 
-_WS_NAME_RE = re.compile(r'broadcast_ws\(\s*"([a-z_]+)"')
+#: What starts a turn, by the role of the row it puts on the session (``None``: a subagent's report
+#: delivered to an idle chat, which puts none).
+_STARTED_BY = {
+    "user": "hello",
+    "nudge": "[auto-nudge cycle 2]\nkeep going",
+    None: "The research subagent finished: three sources, summary attached.",
+}
 
 
-def test_no_new_ws_channel_was_introduced():
-    src = Path(chat_runner.__file__).read_text()
-    found = _WS_NAME_RE.findall(src)
-    # Vacuity floor: the regex must still see EVERY call site, or an unmatched new channel
-    # would read as "no new channel".
-    assert len(found) == src.count("broadcast_ws("), (
-        "the event-name regex no longer covers every broadcast_ws call site — fix the rail "
-        "before trusting it"
+async def _a_turn(turn, role):
+    """A real turn three skills joined (one refused), started by *role*'s message."""
+    turn.state.broadcast_ws.reset_mock()
+    await turn(
+        {
+            "skill_decisions": [
+                _decision("git-hygiene", SkillLoadState.ADMITTED, 900),
+                _decision("release-notes", SkillLoadState.REFUSED, 0),
+                _decision("code-review", SkillLoadState.REDUCED, 140),
+            ]
+        },
+        role=role,
+        text=_STARTED_BY[role],
     )
-    assert set(found) == _BASELINE_WS_EVENTS
-    # Neither data contract may mint a channel named after itself.
-    assert not [n for n in set(found) if "skill" in n or "learn" in n]
+    return [(c.args[0], c.args[1]) for c in turn.state.broadcast_ws.call_args_list if c.args]
+
+
+def _a_review(monkeypatch, facet, lesson, worthwhile):
+    """The real after-turn review, with what its captures find set by the row."""
+    import personalclaw.after_turn_review as atr
+    import personalclaw.learning as learning
+
+    found = atr.Learned(*facet) if facet else None
+    monkeypatch.setattr(atr, "capture_preference_facet", lambda *_a, **_k: found)
+    monkeypatch.setattr(atr, "capture_glossary_term", lambda *_a, **_k: None)
+    monkeypatch.setattr(atr, "run_after_turn_review", lambda **_k: lesson)
+    monkeypatch.setattr(atr, "is_correction_signal", lambda *_a, **_k: True)
+    monkeypatch.setattr(atr, "record_procedural_outcomes", lambda *_a, **_k: None)
+    monkeypatch.setattr("personalclaw.memory_service.service_for", lambda _m: object())
+    monkeypatch.setattr(learning, "record_denial", lambda *_a, **_k: None)
+    state = _learning_state()
+    chat_runner._maybe_after_turn_review(
+        state,
+        _learning_session(),
+        user_message="no, use tabs",
+        assistant_text="understood",
+        tool_calls=6,
+        provider=None,
+        decision=SimpleNamespace(permitted=True, worthwhile=worthwhile, allowed=True),
+    )
+    return state.events
+
+
+async def _a_ladder(monkeypatch):
+    """The real skill-ladder review, its background pass run to the end."""
+    import personalclaw.after_turn_review as atr
+
+    async def _summary(**_k):
+        return "Proposed skill: tighten the release checklist"
+
+    monkeypatch.setattr(atr, "run_skill_ladder_review", _summary)
+    state = _learning_state()
+    chat_runner._maybe_skill_ladder_review(
+        state,
+        _learning_session(),
+        user_message="that was wrong",
+        assistant_text="fixed",
+        tool_calls=6,
+        decision=SimpleNamespace(permitted=True, worthwhile=True, allowed=True),
+    )
+    assert state._background_tasks, "the ladder scheduled nothing"
+    await asyncio.gather(*list(state._background_tasks))
+    return state.events
+
+
+def _a_stumble(monkeypatch):
+    """The real stumble arm, on a turn a skill joined and that went wrong."""
+    import personalclaw.after_turn_review as atr
+    from personalclaw.skills import refine
+
+    monkeypatch.setattr(
+        atr,
+        "detect_stumble",
+        lambda **_k: SimpleNamespace(trigger="correction", detail="use uv, not pip"),
+    )
+    monkeypatch.setattr(refine, "refine_target", lambda *_a: "git-hygiene")
+    monkeypatch.setattr(
+        refine, "propose_refinement", lambda **_k: SimpleNamespace(slug="git-hygiene")
+    )
+    state = _learning_state()
+    session = _learning_session()
+    session._skills_used = [{"name": "git-hygiene", "state": "admitted", "loaded_tokens": 900}]
+    chat_runner._maybe_refine_stumble(
+        state,
+        session,
+        "No, use uv instead of pip.",
+        "Ran pip install.",
+        [],
+        SimpleNamespace(skill_ladder=True, surface_chip=True),
+    )
+    return state.events
+
+
+#: Every emitter of the two contracts: ``(case, drive, the activity kind its payload rides, the
+#: learned chip's origin)``. *drive* runs the real emitter and returns the frames it sent.
+_EMITTERS = [
+    ("a turn the user started", lambda t, _mp: _a_turn(t, "user"), "skills", None),
+    ("a loop cycle's turn, on its nudge", lambda t, _mp: _a_turn(t, "nudge"), "skills", None),
+    ("a turn with no message of its own", lambda t, _mp: _a_turn(t, None), "skills", None),
+    (
+        "a standing preference, kept as a facet",
+        lambda _t, mp: _a_review(mp, ("facet", "keep it short", "pref.facet.k"), None, False),
+        "learned",
+        "facet",
+    ),
+    (
+        "a veto, kept as a lesson",
+        lambda _t, mp: _a_review(mp, ("lesson", "never force-push to main", ""), None, False),
+        "learned",
+        "lesson",
+    ),
+    (
+        "a correction the review keeps as a lesson",
+        lambda _t, mp: _a_review(mp, None, "always run make lint first", True),
+        "learned",
+        "lesson",
+    ),
+    ("a skill the ladder proposes", lambda _t, mp: _a_ladder(mp), "learned", "proposal"),
+    ("a refinement a stumble proposes", lambda _t, mp: _a_stumble(mp), "learned", "proposal"),
+]
 
 
 @pytest.mark.asyncio
-async def test_a_turn_carrying_skills_used_broadcasts_only_known_events(turn):
-    """The runtime half of the same clause: the payload rides existing traffic."""
-    await turn({"skill_decisions": [_decision("git-hygiene", SkillLoadState.ADMITTED, 900)]})
-    names = {c.args[0] for c in turn.state.broadcast_ws.call_args_list if c.args}
-    assert names, "the turn broadcast nothing — the harness, not the contract, broke"
-    assert names <= _TURN_WS_EVENTS, f"new channel(s): {sorted(names - _TURN_WS_EVENTS)}"
+async def test_each_contract_rides_a_frame_a_turn_already_sends(turn, subtests):
+    """The clause, driven: each place a skills record or a learned chip is sent, run for real,
+    sends no name a turn did not already send, none named after either contract, and its payload
+    is on ``activity_event`` with the kind (and, for a chip, the origin) a client keys on."""
+    from table_rows import row
+
+    assert len(_EMITTERS) == 8, "an emitter was dropped from the table"
+    for case, drive, kind, origin in _EMITTERS:
+        with row(subtests, case=case), pytest.MonkeyPatch.context() as mp:
+            sent = drive(turn, mp)
+            if asyncio.iscoroutine(sent):
+                sent = await sent
+            names = {name for name, _payload in sent}
+            new = sorted(names - _TURN_WS_EVENTS)
+            assert not new, f"{case}: new channel(s) {new}"
+            assert not [n for n in names if "skill" in n or "learn" in n], f"{case}: {names}"
+            carried = [p for n, p in sent if n == "activity_event" and p.get("kind") == kind]
+            assert len(carried) == 1, f"{case}: the payload rode no frame a turn sends: {sent}"
+            if kind == "skills":
+                assert [s["name"] for s in carried[0]["skills"]] == ["git-hygiene", "code-review"]
+            else:
+                assert carried[0]["origin"] == origin, f"{case}: {carried[0]}"
 
 
 # ── The LOOP half's two unguarded seams ───────────────────────────────────────────

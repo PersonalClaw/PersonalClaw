@@ -246,28 +246,84 @@ class TestConsumerAxes:
             await llm_helpers.one_shot_completion("hi", use_case="loops")
         assert resolve.call_args.args[0] == "loops"
 
-    def test_loop_judges_resolve_the_judge_axis_not_the_worker_axis(self):
-        """The judge axis inverts what this rail used to pin.
+    @pytest.mark.asyncio
+    async def test_every_loop_judge_resolves_the_judge_axis_metered(
+        self, isolated_store, monkeypatch, subtests
+    ):
+        """A judge grading on the binding that produced the work it grades repeats the worker's
+        mistakes. So every loop judge, each driven with its production resolution, resolves the
+        axis ``loops.judge_use_case`` names (``reasoning`` when it names none), never the worker's
+        ``loops``, and resolves that axis's model itself behind the spend guard
+        (``resolve_metered_model``), whatever the axis. The stage gate's judge walks the judge
+        axis's chain when it binds more than one model."""
+        from table_rows import row
 
-        It used to assert the judges resolved ``"loops"`` — the WORKER's axis — which
-        is precisely the defect: a judge grading on the binding that produced the work
-        it grades (correlated reviewer mistakes). All three judge call sites now resolve
-        ``judge_use_case()`` (``loops.judge_use_case``, default ``reasoning``), and the
-        worker's literal axis must not reappear at any of them.
-        """
-        from pathlib import Path
-
+        from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
         from personalclaw.loop import gates, judge
+        from personalclaw.providers import provider_bridge as pb
 
-        gates_src = Path(gates.__file__).read_text(encoding="utf-8")
-        judge_src = Path(judge.__file__).read_text(encoding="utf-8")
-        for src in (gates_src, judge_src):
-            assert 'resolve_provider_for_use_case("loops")' not in src
-            assert 'resolve_metered_model("loops")' not in src
-        # The axis's model itself, metered whichever axis it is (`resolve_metered_model`).
-        assert "resolve_metered_model(judge_use_case())" in gates_src
-        # Both assess_cycle and assess_cycle_skeptic.
-        assert judge_src.count("resolve_metered_model(judge_use_case())") == 2
+        class _Judge:
+            async def start(self):
+                pass
+
+            async def shutdown(self):
+                pass
+
+            async def stream(self, _prompt):
+                yield LLMEvent(
+                    kind=EVENT_TEXT_CHUNK,
+                    text='{"done": false, "done_reason": "not yet", "marginal_value": 2, '
+                    '"quality_score": 3, "regressed": false}',
+                )
+                yield LLMEvent(kind=EVENT_COMPLETE)
+
+        resolved: list[tuple] = []
+
+        # How ``resolve_metered_model`` asks for an axis: its model itself, behind the guard.
+        metered = ("_force_model_axis", "_model_axis_only", "_metered")
+
+        def _resolve(use_case, **kw):
+            guarded = tuple(kw.get(flag) is True for flag in metered)
+            resolved.append((use_case, guarded, kw.get("model_override")))
+            return _Judge()
+
+        monkeypatch.setattr(pb, "resolve_provider_for_use_case", _resolve)
+        monkeypatch.setattr(uc, "_known_provider_names", lambda: {"p1"})
+        finding = {"cycle": 1, "summary": "s"}
+
+        async def _primary():
+            return await judge.assess_cycle("goal", "dod", finding, [], loop_id="l1")
+
+        async def _skeptic():
+            return await judge.assess_cycle_skeptic("goal", "dod", finding, [], loop_id="l1")
+
+        async def _gate():
+            return await gates.judge_verdict("PASS or FAIL?", loop_id="l1")
+
+        sites = [
+            ("the primary judge", _primary, 1),
+            ("the skeptic", _skeptic, 1),
+            ("the stage gate's judge", _gate, 1),
+            ("the stage gate's judge over a chain", _gate, 2),
+        ]
+        named = [(None, "reasoning"), ("orchestration", "orchestration")]
+        assert len(sites) * len(named) == 8, "a row was dropped from the table"
+        for site, drive, bound in sites:
+            for setting, axis in named:
+                case = f"{site}, judge axis {setting or 'unset'}"
+                with row(subtests, case=case):
+                    loops = {} if setting is None else {"judge_use_case": setting}
+                    (isolated_store / "config.json").write_text(
+                        json.dumps({"agents": {}, "default_agent": "personalclaw", "loops": loops})
+                    )
+                    chain = ["p1:judge-a", "p1:judge-b"][:bound]
+                    uc.save_active_models({"loops": ["p1:worker"], axis: chain})
+                    resolved.clear()
+
+                    assert await drive(), f"{case}: the judge gave no verdict"
+
+                    override = "p1:judge-a" if bound > 1 else None
+                    assert resolved == [(axis, (True,) * 3, override)], f"{case}: {resolved}"
 
     @pytest.mark.asyncio
     async def test_a_chore_is_asked_of_the_background_axis(self, isolated_store):

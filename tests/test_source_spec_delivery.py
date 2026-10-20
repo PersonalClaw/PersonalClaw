@@ -456,19 +456,137 @@ async def test_a_provider_that_asks_is_handed_the_cap_the_engine_keeps(store):
     assert provider.calls == [{"source_id": sid, "max_items": 7}]
 
 
-def test_the_engine_has_exactly_one_poll_call_site():
-    """Clause 4 structurally: no second ``provider.poll`` shape left behind.
+class _Declares(KnowledgeSourceProvider):
+    """A provider that keeps every call made to its ``poll``; each subclass declares a set of
+    the engine's extras, by naming them, and nothing else."""
 
-    Two call sites is how this started — ``policy`` in one, bare in the other — and adding
-    the spec that way would have made four for one contract.
-    """
-    from pathlib import Path
+    def __init__(self, name: str):
+        self._name = name
+        self.calls: list[dict] = []
 
-    import personalclaw.knowledge.source_engine as mod
+    @property
+    def name(self) -> str:
+        return self._name
 
-    body = Path(mod.__file__).read_text(encoding="utf-8")
-    assert body.count("await provider.poll(") == 1
-    assert "**self._poll_kwargs(" in body
+    @property
+    def display_name(self) -> str:
+        return self._name
+
+    async def list_sources(self):
+        return []
+
+    async def search(self, query: str, limit: int = 10):
+        return []
+
+    async def get_item(self, item_id: str):
+        return None
+
+    def _took(self, source_id, cursor, **extras) -> SourcePollResult:
+        self.calls.append({"source_id": source_id, "cursor": cursor, **extras})
+        return SourcePollResult(cursor=f"after-{len(self.calls)}")
+
+
+class _DeclaresNothing(_Declares):
+    async def poll(self, source_id, cursor=""):
+        return self._took(source_id, cursor)
+
+
+class _DeclaresPolicy(_Declares):
+    async def poll(self, source_id, cursor="", *, policy=None):
+        return self._took(source_id, cursor, policy=policy)
+
+
+class _DeclaresSpec(_Declares):
+    async def poll(self, source_id, cursor="", *, spec=None):
+        return self._took(source_id, cursor, spec=spec)
+
+
+class _DeclaresMaxItems(_Declares):
+    async def poll(self, source_id, cursor="", *, max_items=None):
+        return self._took(source_id, cursor, max_items=max_items)
+
+
+class _DeclaresEvery(_Declares):
+    async def poll(self, source_id, cursor="", *, spec=None, policy=None, max_items=None):
+        return self._took(source_id, cursor, spec=spec, policy=policy, max_items=max_items)
+
+
+#: ``(provider shape, the extras it declares)``, each polled both ways the engine polls: a
+#: source polled on its own (``poll_source``) and the loop's pass over every due source (``tick``).
+_SHAPES = [
+    (_DeclaresNothing, ()),
+    (_DeclaresPolicy, ("policy",)),
+    (_DeclaresSpec, ("spec",)),
+    (_DeclaresMaxItems, ("max_items",)),
+    (_DeclaresEvery, ("spec", "policy", "max_items")),
+]
+_WAYS = ("poll_source", "tick")
+
+
+@pytest.mark.asyncio
+async def test_every_poll_hands_the_provider_exactly_the_extras_it_declares(
+    store, monkeypatch, subtests
+):
+    """Clause 4, driven: whichever way a source is polled, its provider is handed the cursor the
+    engine keeps and exactly the extras it names, each the engine's own: the row's spec as it is
+    when the poll starts, the engine's egress policy, and the cap from the config the engine
+    applies. Two call shapes is how this started (``policy`` in one, nothing in the other), and
+    the spec added that way would have made four for one contract. Two polls a row, the spec
+    edited between them, so a value kept from the first poll is told apart from one read for the
+    second."""
+    import time
+
+    from table_rows import row
+
+    policy = object()
+    monkeypatch.setattr(SourceEngine, "egress_policy", staticmethod(lambda: policy))
+    cfg = _cfg(max_items_per_poll=7)
+    clock = [time.time()]
+    assert len(_SHAPES) * len(_WAYS) == 10, "a row was dropped from the table"
+    for shape, declared in _SHAPES:
+        for way in _WAYS:
+            case = f"{shape.__name__} by {way}"
+            with row(subtests, case=case):
+                provider = shape(f"{shape.__name__.lower()}-{way}")
+                engine = SourceEngine(
+                    store,
+                    _FakeQueue(),
+                    providers_lister=lambda provider=provider: [provider],
+                    config_loader=lambda: cfg,
+                    now_fn=lambda: clock[0],
+                )
+                specs = [{"workspace": f"{case} 1"}, {"workspace": f"{case} 2"}]
+                sid = store.create_source(
+                    name=case, provider=provider.name, kind="app", spec=specs[0]
+                )
+                for n, spec in enumerate(specs):
+                    store.update_source(sid, spec=spec)
+                    clock[0] += 3600  # due again by every interval
+                    if way == "tick":
+                        await engine.tick()
+                    else:
+                        await engine.poll_source(store.get_source(sid), cfg)
+
+                expected = [
+                    {
+                        "source_id": sid,
+                        "cursor": "" if n == 0 else "after-1",
+                        **{
+                            name: {"spec": spec, "policy": policy, "max_items": 7}[name]
+                            for name in declared
+                        },
+                    }
+                    for n, spec in enumerate(specs)
+                ]
+                assert provider.calls == expected, f"{case}: {provider.calls}"
+                assert all(
+                    c.get("policy", policy) is policy for c in provider.calls
+                ), f"{case}: a policy other than the engine's"
+                polled = store.get_source(sid)
+                assert (polled["health_status"], store.get_source_cursor(sid)) == (
+                    "ok",
+                    "after-2",
+                ), case
 
 
 # ── resolve_source_spec: the published accessor, fail-CLOSED ──────────────────────────
