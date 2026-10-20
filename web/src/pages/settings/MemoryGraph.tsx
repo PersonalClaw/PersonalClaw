@@ -161,7 +161,7 @@ export function MemoryGraph({ data, focusRef, hopDepth = 1, onSelectRef, boxHeig
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet"
         className="h-full w-full touch-none select-none" style={{ cursor: drag.current ? 'grabbing' : 'grab' }}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerLeave={endDrag}>
-        <g transform={transform} style={{ transition: drag.current ? 'none' : 'transform 200ms ease-out' }}>
+        <g transform={transform} style={{ transition: drag.current ? 'none' : 'transform var(--duration-effects) ease-out' }}>
           {graph.edges.map((e, i) => {
             const a = pos.get(e.from), b = pos.get(e.to)
             if (!a || !b) return null

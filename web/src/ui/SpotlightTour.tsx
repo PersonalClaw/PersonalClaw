@@ -5,7 +5,7 @@ import { ArrowLeft, ArrowRight, Check, X, type LucideIcon } from 'lucide-react'
 import { Button } from './Button'
 import { IconButton } from './IconButton'
 import { useFocusTrap } from './useFocusTrap'
-import { ease, instant, spring } from '../design/motion'
+import { duration, ease, instant, spring } from '../design/motion'
 
 /** One stop on a spotlight tour. */
 export interface SpotlightStep {
@@ -189,7 +189,7 @@ export function SpotlightTour({ steps, index, label, onIndex, onExit }: {
             <motion.div data-tour-halo className="fixed rounded-lg"
               style={{ ...ring, outline: '2px solid var(--color-primary)' }}
               animate={{ opacity: [0.55, 0, 0.55], scale: [1, 1.05, 1] }}
-              transition={{ duration: 2.4, repeat: Infinity, ease: ease.emphasized }} />
+              transition={{ duration: duration.statusPulse, repeat: Infinity, ease: ease.emphasized }} />
           )}
         </div>
       ) : (

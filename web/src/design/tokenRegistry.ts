@@ -36,6 +36,8 @@ export interface ScalarToken {
   unit?: string
   /** runtime key (if this scalar also feeds the canvas / motion via runtime.ts) */
   runtimeKey?: 'glow' | 'animSpeed' | 'waveAmount' | 'surfaceAngle' | 'surfaceDistance' | 'dotSize' | 'dotDensity' | 'bounciness' | 'expressiveness' | 'dragElastic' | 'swipeVelocity' | 'swipeDistance'
+    | 'durationShort' | 'durationEffects' | 'durationMedium' | 'durationLong'
+    | 'durationLoading' | 'durationBeat' | 'durationBreath' | 'durationDrift' | 'statusPulse'
 }
 
 export interface SelectToken {
@@ -186,14 +188,30 @@ export const TOKENS: Token[] = [
   // the number; no CSS rule consumes this var.
   s('--swipe-dismiss-velocity', 'Swipe flick speed', 'Motion', 500, 100, 1500, 25, 'px/s', 'swipeVelocity'),
   s('--swipe-dismiss-distance', 'Swipe distance', 'Motion', 80, 20, 240, 5, 'px', 'swipeDistance'),
+  // Durations — the length of every animation and transition, declared in tokens.css and read
+  // with var() there and in components. A runtime key means JS reads it too, as `duration.*` in
+  // design/motion.ts, so one slider moves both. The steps a transition takes, in ms (0 = instant):
+  s('--duration-short', 'Short transition', 'Motion', 100, 0, 300, 10, 'ms', 'durationShort'),
+  s('--duration-effects', 'Fade', 'Motion', 200, 0, 500, 10, 'ms', 'durationEffects'),
+  s('--duration-medium', 'Medium transition', 'Motion', 300, 0, 800, 10, 'ms', 'durationMedium'),
+  s('--duration-long', 'Long transition', 'Motion', 500, 0, 1200, 10, 'ms', 'durationLong'),
+  // One cycle of a loop, in seconds. Never 0: a loop with no length repeats as fast as it can.
+  s('--duration-blink', 'Caret blink', 'Motion', 0.9, 0.3, 2, 0.1, 's'),
+  s('--duration-loading', 'Loading sweep', 'Motion', 1.4, 0.4, 4, 0.1, 's', 'durationLoading'),
+  s('--duration-beat', 'Live beat', 'Motion', 1.6, 0.6, 4, 0.1, 's', 'durationBeat'),
+  s('--duration-shimmer', 'Text shimmer', 'Motion', 2.2, 0.6, 6, 0.1, 's'),
+  s('--duration-scan', 'Placeholder scan', 'Motion', 2.6, 0.6, 6, 0.1, 's'),
+  s('--duration-breath', 'Glow breath', 'Motion', 3, 1, 8, 0.1, 's', 'durationBreath'),
+  s('--duration-drift', 'Slow drift', 'Motion', 7, 2, 16, 0.5, 's', 'durationDrift'),
 
   // ── Elevation & glass (frosted overlay intensity) ──
   s('--glass-blur', 'Glass blur', 'Elevation & glass', 16, 0, 40, 1, 'px'),
   s('--glass-alpha', 'Glass opacity', 'Elevation & glass', 0.72, 0.4, 1, 0.02),
   // Duration (seconds) of ONE outward pulse of the gateway-connectivity status
   // dot (top-right shell corner). Higher = slower, calmer pulse. The default 2.4s
-  // is a gentle breath; the built-in Tailwind ping (1s) read as too fast.
-  s('--status-pulse-speed', 'Status dot pulse', 'Motion', 2.4, 0.6, 6, 0.1, 's'),
+  // is a gentle breath; the built-in Tailwind ping (1s) read as too fast. The tour's halo is the
+  // same outward ring, so JS reads it too (`duration.statusPulse`).
+  s('--status-pulse-speed', 'Status dot pulse', 'Motion', 2.4, 0.6, 6, 0.1, 's', 'statusPulse'),
 ]
 
 export const GROUPS = ['Brand', 'Surfaces', 'Content', 'Semantic', 'Glow & gradient', 'Typography', 'Layout', 'Shape', 'Elevation & glass', '3D surface', 'Motion']

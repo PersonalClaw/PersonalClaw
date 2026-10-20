@@ -274,6 +274,29 @@
   --ease-emphasized-decel: cubic-bezier(0.05, 0.7, 0.1, 1);
   --ease-emphasized-accel: cubic-bezier(0.3, 0, 0.8, 0.15);
 
+  /* ── duration tokens: the length of every animation and transition (docs/design/motion.md §7).
+     Each is declared once, here, and has a slider in Settings → Design → Motion
+     (design/tokenRegistry.ts). The ones JS reads reach design/motion.ts's `duration` through
+     design/runtime.ts, so a slider moves the CSS and the JS together. CSS reads them with var(),
+     Tailwind as `duration-(--duration-short)`, and design/noLiteralDuration.test.ts fails on a
+     literal length anywhere else. Under reduced motion the global reset below flattens every
+     element's animations and transitions, whatever token they read, and the route crossfade is
+     never started.
+
+     The steps a transition takes once: */
+  --duration-short: 100ms;   /* press and hover feedback: a colour, a focus ring, a chevron */
+  --duration-effects: 200ms; /* a fade, and a small move that settles like one (spring.effects) */
+  --duration-medium: 300ms;  /* an entrance, the route crossfade */
+  --duration-long: 500ms;    /* a progress fill, a slow fade */
+  /* One cycle of a loop that runs until something stops it: */
+  --duration-blink: 0.9s;    /* the reveal caret */
+  --duration-loading: 1.4s;  /* a loading placeholder: the skeleton's sheen, the blueprint's strokes, the wavy crest */
+  --duration-beat: 1.6s;     /* something live that waits on you: a drop target's ring and hint, a running task's ring */
+  --duration-shimmer: 2.2s;  /* the sheen across streaming text */
+  --duration-scan: 2.6s;     /* the blueprint's scanning band */
+  --duration-breath: 3s;     /* a working glow breathing, and the blueprint once it is drawn */
+  --duration-drift: 7s;      /* slow idle motion: the terminal's beam, the mark's sway */
+
   /* ── elevation (soft ambient, no hard drop) ── */
   --shadow-composer: 0 2px 8px -2px rgb(0 0 0 / 0.16);
   --shadow-menu: 0 0 20px rgb(0 0 0 / 0.28);
@@ -623,7 +646,7 @@
 /* Blinking caret at the reveal head while the Code cockpit animates a file write
    (autonomous-writing effect). */
 @keyframes reveal-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
-.reveal-caret { animation: reveal-blink 0.9s step-end infinite; }
+.reveal-caret { animation: reveal-blink var(--duration-blink) step-end infinite; }
 
 /* Gateway-connectivity status dot: an outward-expanding pulse ring (same shape as
    Tailwind's `ping` — scale to 2 + fade — but the duration is customizable via
@@ -633,7 +656,7 @@
   75%, 100% { transform: scale(2.2); opacity: 0; }
 }
 .status-pulse {
-  animation: status-pulse var(--status-pulse-speed, 2.4s) cubic-bezier(0, 0, 0.2, 1) infinite;
+  animation: status-pulse var(--status-pulse-speed) cubic-bezier(0, 0, 0.2, 1) infinite;
 }
 
 /* Skeleton shimmer — placeholder blocks while a (cache-miss) fetch is in flight,
@@ -650,7 +673,7 @@
     var(--color-surface-container) 100%
   );
   background-size: 200% 100%;
-  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  animation: skeleton-shimmer var(--duration-loading) ease-in-out infinite;
 }
 
 /* Text shimmer — a moving sheen across live, in-progress text (e.g. the planner's
@@ -674,7 +697,7 @@
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: text-shimmer 2.2s linear infinite;
+  animation: text-shimmer var(--duration-shimmer) linear infinite;
 }
 
 /* Coral variant of the text shimmer — the streaming indicator's state label
@@ -693,7 +716,7 @@
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: text-shimmer 2.2s linear infinite;
+  animation: text-shimmer var(--duration-shimmer) linear infinite;
 }
 
 /* Blueprint construction — the streaming-widget placeholder sketches a wireframe
@@ -706,13 +729,17 @@
 .blueprint-stroke {
   stroke-dasharray: var(--bp-len, 600);
   stroke-dashoffset: var(--bp-len, 600);
-  animation: blueprint-draw 1.4s var(--ease-emphasized-decel) forwards;
+  animation: blueprint-draw var(--duration-loading) var(--ease-emphasized-decel) forwards;
 }
 @keyframes blueprint-breathe {
   0%, 100% { opacity: 0.55; }
   50%      { opacity: 0.95; }
 }
-.blueprint-breathe { animation: blueprint-breathe 3s ease-in-out 1.6s infinite; }
+/* It starts breathing a fade after the first stroke has drawn. */
+.blueprint-breathe {
+  animation: blueprint-breathe var(--duration-breath) ease-in-out
+    calc(var(--duration-loading) + var(--duration-effects)) infinite;
+}
 /* soft scanning band sweeping the blueprint left→right */
 @keyframes blueprint-scan {
   from { transform: translateX(-60%); }
@@ -725,7 +752,7 @@
     color-mix(in srgb, var(--color-primary) 14%, transparent),
     transparent
   );
-  animation: blueprint-scan 2.6s ease-in-out infinite;
+  animation: blueprint-scan var(--duration-scan) ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -738,9 +765,9 @@
    The hash router starts a View Transition when the ROUTE changes
    (`useHashRoute.ts` → `viewTransition()`), and the UA's default for it is a
    250ms cross-fade on its own curve. This is the taste layer over that default:
-   it puts the page change on the app's emphasized-decelerate curve at the
-   `duration.medium` used by every other entrance, so navigating reads as part of
-   one motion language rather than as a browser effect.
+   it puts the page change on the app's emphasized-decelerate curve at
+   `--duration-medium`, the length every other entrance takes, so navigating reads as
+   part of one motion language rather than as a browser effect.
 
    The MECHANISM is the JS gate, not this rule — deleting these two selectors
    leaves a (browser-flavoured) crossfade behind, it does not leave navigation
@@ -752,7 +779,7 @@
    second, unreachable mechanism — the same reasoning as `.crt-beam` below. */
 ::view-transition-old(root),
 ::view-transition-new(root) {
-  animation-duration: 300ms;
+  animation-duration: var(--duration-medium);
   animation-timing-function: var(--ease-emphasized-decel);
 }
 
@@ -786,7 +813,7 @@
     color-mix(in srgb, var(--color-primary) 10%, transparent),
     transparent
   );
-  animation: crt-beam 7s linear infinite;
+  animation: crt-beam var(--duration-drift) linear infinite;
 }
 
 /* ── elevation model ── */
@@ -995,7 +1022,7 @@
    Pure class toggles on the rendered SVG (no React re-render), so a large
    graph stays jank-free; opacity transitions keep enter/leave smooth. */
 @layer base {
-  .dag-node, .dag-edge { transition: opacity 160ms ease; }
+  .dag-node, .dag-edge { transition: opacity var(--duration-effects) ease; }
   svg.dag-hovering .dag-node:not(.dag-lit),
   svg.dag-hovering .dag-edge:not(.dag-lit) { opacity: 0.18; }
   /* Emphasize lineage edges: primary tone + heavier stroke. A cycle (bad) edge
@@ -1012,7 +1039,7 @@
      component renders and this rule reveals. `:focus-visible` only, so a mouse
      click never leaves a ring behind. */
   .dag-node-hit { outline: none; }
-  .dag-node-hit .dag-focus-ring { opacity: 0; transition: opacity 120ms ease; }
+  .dag-node-hit .dag-focus-ring { opacity: 0; transition: opacity var(--duration-short) ease; }
   .dag-node-hit:focus-visible .dag-focus-ring { opacity: 1; }
   /* A focused node stays legible while its own lineage highlight dims the rest. */
   svg.dag-hovering .dag-node:has(.dag-node-hit:focus-visible) { opacity: 1; }

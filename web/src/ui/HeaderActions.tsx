@@ -607,7 +607,7 @@ export function HeaderControl({
       data-type="label-s"
       className={cx(
         'inline-flex items-center justify-center gap-1.5 rounded-pill select-none shrink-0',
-        'transition-colors duration-100 disabled:opacity-40 disabled:pointer-events-none',
+        'transition-colors duration-(--duration-short) disabled:opacity-40 disabled:pointer-events-none',
         // Same dim as the native attribute, without swallowing the hover that shows the reason.
         'aria-disabled:opacity-40 aria-disabled:cursor-not-allowed',
         iconOnly ? 'size-10' : 'h-10 px-l',
@@ -793,7 +793,7 @@ export function HeaderModePill({ options, value, onChange, ariaLabel, disabled, 
         data-type="label-s"
         className={cx(
           'inline-flex items-center justify-center gap-1.5 rounded-pill select-none shrink-0',
-          'transition-colors duration-100 disabled:opacity-40 disabled:pointer-events-none',
+          'transition-colors duration-(--duration-short) disabled:opacity-40 disabled:pointer-events-none',
           // Same dim as the native attribute, without swallowing the hover that shows the reason.
           'aria-disabled:opacity-40 aria-disabled:cursor-not-allowed',
           iconOnly ? 'size-10' : 'h-10 px-l',

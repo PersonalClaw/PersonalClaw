@@ -72,7 +72,7 @@ export function ChatActivityPanel({ activity, onOpenFile, subagents = [], onKill
             <button key={t.key} type="button" role="tab" id={`act-tab-${t.key}`} aria-controls={`act-panel-${t.key}`}
               aria-selected={tab === t.key} tabIndex={tab === t.key ? 0 : -1} title={t.label} aria-label={t.label}
               onClick={() => setTab(t.key)}
-              data-type="caption" className={`flex-1 inline-flex items-center justify-center gap-[5px] h-7 rounded-pill border-none cursor-pointer transition-colors duration-150 ${
+              data-type="caption" className={`flex-1 inline-flex items-center justify-center gap-[5px] h-7 rounded-pill border-none cursor-pointer transition-colors duration-(--duration-short) ${
                 tab === t.key
                   ? 'bg-surface text-on-surface shadow-[0_1px_3px_rgb(0_0_0/0.08)]'
                   : 'bg-transparent text-on-surface-low'

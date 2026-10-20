@@ -471,7 +471,7 @@ export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regeneratin
         onPointerDown={onPointerDown} onPointerMove={onPointerMove}
         onPointerUp={endDrag} onPointerLeave={endDrag}
       >
-        <g transform={transform} style={{ transition: drag.current ? 'none' : 'transform 200ms ease-out' }}>
+        <g transform={transform} style={{ transition: drag.current ? 'none' : 'transform var(--duration-effects) ease-out' }}>
         {graph.edges.map((e, i) => {
           const a = pos.get(e.source), b = pos.get(e.target)
           if (!a || !b) return null

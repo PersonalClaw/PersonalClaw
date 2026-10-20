@@ -231,7 +231,7 @@ export const StepRow = forwardRef<HTMLLIElement, {
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ height: spring.spatialDefault, opacity: { duration: 0.18 } }}
+            transition={{ height: spring.spatialDefault, opacity: spring.effects }}
           >
             {/* 🔑 THE HANGING INDENT IS A DESKTOP AFFORDANCE AND A PHONE TAX. 4.75rem lines the step
                 body up under its title, past the 36px status node — worth it at 1024px and up, and

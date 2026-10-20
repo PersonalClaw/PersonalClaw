@@ -23,7 +23,7 @@ import { Markdown } from '../../ui/Markdown'
 import { SidePanel } from '../../ui/SidePanel'
 import { Modal } from '../../ui/Modal'
 import { thinkingGlow } from '../../design/gradients'
-import { spring, physics, messageEnter } from '../../design/motion'
+import { duration, spring, physics, messageEnter } from '../../design/motion'
 import { ContentSurface } from '../../ui/content/ContentSurface'
 import { resolveContentType } from '../../ui/content/contentTypes'
 import { api, ApiError, type GoalLoop, type LoopFinding, type LoopNudge, type LoopVerdict, type LoopCheck, type LoopCheckJudge, type Artifact, type TaskItem, type LoopSpend } from '../../lib/api'
@@ -616,7 +616,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
       {working ? (
         <span className="relative inline-flex items-center justify-center size-4">
           <motion.span aria-hidden className="absolute inset-[-7px] rounded-pill" style={{ background: thinkingGlow() }}
-            animate={{ opacity: [0.4, 0.9, 0.4] }} transition={{ duration: 3.2, ease: 'easeInOut', repeat: Infinity }} />
+            animate={{ opacity: [0.4, 0.9, 0.4] }} transition={{ duration: duration.breath, ease: 'easeInOut', repeat: Infinity }} />
           <Spark size={13} />
         </span>
       ) : (
@@ -1002,7 +1002,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                      <div className="rounded-lg bg-surface-container px-m py-2">
                        <div className="flex items-center gap-s">
                          <span className="relative inline-flex items-center justify-center size-5 shrink-0">
-                           {working && <motion.span aria-hidden className="absolute inset-[-6px] rounded-pill" style={{ background: thinkingGlow() }} animate={{ opacity: [0.3, 0.7, 0.3] }} transition={{ duration: 3, repeat: Infinity }} />}
+                           {working && <motion.span aria-hidden className="absolute inset-[-6px] rounded-pill" style={{ background: thinkingGlow() }} animate={{ opacity: [0.3, 0.7, 0.3] }} transition={{ duration: duration.breath, repeat: Infinity }} />}
                            <span className={working ? '' : 'text-on-surface-low'}><Spark size={13} /></span>
                          </span>
                          <span data-type="label-s" className="flex-1 truncate text-on-surface" style={fvs(500)}>Cycle {c.total_cycles + 1} · {working ? (statusText || 'working') : shownStatus.toLowerCase()}</span>

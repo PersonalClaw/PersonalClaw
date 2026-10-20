@@ -71,7 +71,7 @@ export function TurnHead({ running, phase, line, ending, onShown, className }: {
   const saying = running && (phase !== null || ending === null)
   return (
     <div data-turn-head data-turn-head-stage={stage}
-      className={cx('flex min-w-0 items-center gap-s transition-opacity duration-300 ease-out motion-reduce:transition-none', className)}
+      className={cx('flex min-w-0 items-center gap-s transition-opacity duration-(--duration-medium) ease-out motion-reduce:transition-none', className)}
       style={{ opacity: stage === 'leaving' ? 0 : 1 }}>
       <AgentOrb phase={shows.phase} />
       <p data-turn-line data-type="body-m" aria-live={saying ? 'polite' : 'off'} className="min-w-0 truncate text-on-surface-var">

@@ -10,7 +10,7 @@ import { copyText } from '../../app/clipboard'
  *  while the buttons keep their hover reveal: "Show timestamps" is a setting a reader switches ON to
  *  read times while scanning, and a time that only appears under the pointer does not do that.
  *  `focus-within` stays here rather than on the row, because it is the buttons that take focus. */
-const REVEAL = 'flex items-center gap-0.5 translate-y-0.5 opacity-0 transition duration-150'
+const REVEAL = 'flex items-center gap-0.5 translate-y-0.5 opacity-0 transition duration-(--duration-effects)'
   + ' group-hover/msg:translate-y-0 group-hover/msg:opacity-100 focus-within:translate-y-0 focus-within:opacity-100'
 
 /** A message's clock time, in the type role the design system reserves for it (`caption` — whose

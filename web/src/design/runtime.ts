@@ -46,4 +46,16 @@ export const runtime = {
   dragElastic: 0.9,
   swipeVelocity: 500, // px/s flick speed that dismisses
   swipeDistance: 80,  // px dragged that dismisses regardless of speed
+  // ── Durations (--duration-* / --status-pulse-speed), read by `duration` in design/motion.ts.
+  // Each holds its registry entry's number in that entry's unit, as the appearance store writes it:
+  // the transition steps in ms, a loop's cycle in seconds. `duration` turns both into seconds.
+  durationShort: 100,
+  durationEffects: 200,
+  durationMedium: 300,
+  durationLong: 500,
+  durationLoading: 1.4,
+  durationBeat: 1.6,
+  durationBreath: 3,
+  durationDrift: 7,
+  statusPulse: 2.4,
 }

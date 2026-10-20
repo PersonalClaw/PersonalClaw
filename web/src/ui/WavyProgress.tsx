@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 
-import { instant, prefersReducedMotion } from '../design/motion'
+import { duration, instant, prefersReducedMotion } from '../design/motion'
 
 /** Wavy progress — an animated sine wave in the accent
  *  gradient (replaces the flat M2 progress bar).
@@ -76,7 +76,7 @@ export function WavyProgress({
             strokeWidth={2.5}
             strokeLinecap="round"
             animate={{ pathOffset: [0, 1] }}
-            transition={{ duration: 1.4, ease: 'linear', repeat: Infinity }}
+            transition={{ duration: duration.loading, ease: 'linear', repeat: Infinity }}
             style={{ pathLength: 0.6 }}
           />
         )}
@@ -106,7 +106,7 @@ export function WavyProgress({
         strokeLinecap="round"
         style={{ pathLength: pct }}
         animate={{ pathLength: pct }}
-        transition={reduce ? instant : { ease: 'easeOut', duration: 0.4 }}
+        transition={reduce ? instant : { ease: 'easeOut', duration: duration.long }}
       />
     </svg>
   )

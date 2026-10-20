@@ -12,7 +12,7 @@ vi.mock('../lib/api', () => ({ api: { themes: () => new Promise(() => {}), theme
 const { AppearanceProvider } = await import('../app/appearance')
 const { ScalarControl } = await import('../ui/TokenControls')
 const { TOKENS } = await import('./tokenRegistry')
-const { physics } = await import('./motion')
+const { duration, physics } = await import('./motion')
 const { runtime } = await import('./runtime')
 
 // ── The dial the presets are supposed to track is a REAL, RENDERED control ───
@@ -35,7 +35,10 @@ function renderMotionGroup() {
 }
 
 const ORIGINAL_MATCH_MEDIA = window.matchMedia
-const DEFAULTS = { bounciness: runtime.bounciness, dragElastic: runtime.dragElastic, swipeVelocity: runtime.swipeVelocity, swipeDistance: runtime.swipeDistance }
+const DEFAULTS = {
+  bounciness: runtime.bounciness, dragElastic: runtime.dragElastic, swipeVelocity: runtime.swipeVelocity, swipeDistance: runtime.swipeDistance,
+  durationShort: runtime.durationShort, durationBreath: runtime.durationBreath,
+}
 
 beforeEach(() => {
   // jsdom has no matchMedia and the provider's useIsMobile calls it unguarded.
@@ -93,5 +96,19 @@ describe('Settings → Design → Motion sliders', () => {
       fireEvent.change(screen.getByRole('slider', { name: label }), { target: { value } })
       expect(runtime[key], `${label} did not reach runtime.${key}`).toBe(Number(value))
     }
+  })
+
+  it('a duration slider reads in its unit and moves the JS length with the CSS one', () => {
+    renderMotionGroup()
+    // A transition step is a whole number of milliseconds; "100.0ms" would be noise.
+    expect(screen.getByRole('slider', { name: 'Short transition' }).parentElement).toHaveTextContent('100ms')
+    expect(screen.getByRole('slider', { name: 'Glow breath' }).parentElement).toHaveTextContent('3.0s')
+
+    fireEvent.change(screen.getByRole('slider', { name: 'Short transition' }), { target: { value: '60' } })
+    expect(document.documentElement.style.getPropertyValue('--duration-short')).toBe('60ms')
+    expect(duration.short).toBe(0.06)
+    fireEvent.change(screen.getByRole('slider', { name: 'Glow breath' }), { target: { value: '4.5' } })
+    expect(document.documentElement.style.getPropertyValue('--duration-breath')).toBe('4.5s')
+    expect(duration.breath).toBe(4.5)
   })
 })

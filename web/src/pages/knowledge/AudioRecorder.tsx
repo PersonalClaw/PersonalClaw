@@ -150,7 +150,7 @@ export function AudioRecorder({ onRecorded, onClear }: { onRecorded: (file: File
           {/* Mic + live level ring */}
           <div className="relative grid size-20 place-items-center">
             {state === 'recording' && (
-              <span className="absolute inset-0 rounded-full" style={{ background: 'color-mix(in srgb, var(--color-danger) 25%, transparent)', transform: `scale(${1 + level * 0.6})`, transition: 'transform 120ms ease-out' }} />
+              <span className="absolute inset-0 rounded-full" style={{ background: 'color-mix(in srgb, var(--color-danger) 25%, transparent)', transform: `scale(${1 + level * 0.6})`, transition: 'transform var(--duration-short) ease-out' }} />
             )}
             <span className="relative grid size-16 place-items-center rounded-full"
               style={{ background: state === 'recording' ? 'var(--color-danger)' : 'var(--color-surface-high)', color: state === 'recording' ? 'var(--color-on-danger)' : 'var(--color-on-surface)' }}>

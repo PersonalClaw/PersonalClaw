@@ -149,7 +149,7 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
                         ariaExpanded={isOpen}
                         ariaLabel={`${isOpen ? 'Hide' : 'Show'} delivery detail for ${r.label}`}>
                         {hasConditions ? 'conditions' : 'detail'}
-                        <ChevronDown size={12} style={{ transform: isOpen ? 'rotate(180deg)' : undefined, transition: 'transform 150ms' }} />
+                        <ChevronDown size={12} style={{ transform: isOpen ? 'rotate(180deg)' : undefined, transition: 'transform var(--duration-short)' }} />
                       </Button>
                     </div>
                     {isOpen && (

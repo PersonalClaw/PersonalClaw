@@ -336,7 +336,8 @@ a tab, a filter, a search keystroke) and `replace` navigations, which are URL
 *corrections* rather than something the user navigated to. Fading the whole page under
 an opening panel — or once per keystroke — is the "motion that fights the task" the
 budget exists to prevent. The curve and duration live in `tokens.css` under
-`::view-transition-old/new(root)`; that rule is taste, and the JS is the mechanism.
+`::view-transition-old/new(root)`, on `--duration-medium` (§7); that rule is taste, and the JS is
+the mechanism.
 
 ---
 
@@ -354,6 +355,34 @@ tests will catch:
 `web/src/design/motion.test.ts` pins the round trip, both dials per preset, and the gesture
 thresholds. It is the rail to extend when you add to the system — and the first place to look
 when a slider stops doing anything.
+
+**Every duration is one of these tokens.** An animation or a transition takes its length from a
+`--duration-*` token in `tokens.css`, each with its slider:
+
+| Token | Default | For |
+|---|---|---|
+| `--duration-short` | 100ms | press and hover feedback: a colour, a focus ring, a chevron |
+| `--duration-effects` | 200ms | a fade, and a small move that settles like one |
+| `--duration-medium` | 300ms | an entrance, the route crossfade |
+| `--duration-long` | 500ms | a progress fill, a slow fade, a single earned beat |
+| `--duration-blink` | 0.9s | one blink of the reveal caret |
+| `--duration-loading` | 1.4s | one sweep of a loading placeholder: the skeleton, the blueprint's strokes, the wavy crest |
+| `--duration-beat` | 1.6s | one beat of something live that waits on you: a drop target, a running task |
+| `--duration-shimmer` | 2.2s | one sheen across streaming text |
+| `--duration-scan` | 2.6s | one pass of the blueprint's scanning band |
+| `--duration-breath` | 3s | one breath of a working glow |
+| `--duration-drift` | 7s | one cycle of slow idle motion: the terminal's beam, the mark's sway |
+
+CSS reads one with `var(--duration-short)`, Tailwind as `duration-(--duration-short)`, and JS as
+`duration.short` from `motion.ts`, which reads `runtime`, so the slider moves all three. A fade in
+JS takes `spring.effects`, which is the `effects` step on the effects curve, and the tour's halo
+reads the status dot's `--status-pulse-speed` as `duration.statusPulse`. A length that fits none of
+them is a new token, added in the three places above (plus a `duration` member when JS reads it),
+not a number at the call site:
+`design/noLiteralDuration.test.ts` fails on a literal length in an `animation` or `transition`
+declaration, an inline style, a Tailwind class or a framer transition. Reduced motion needs nothing
+per token: the sheet's global reset flattens every CSS animation and transition, `spring.effects`
+goes `instant`, and a loop is not started at all.
 
 ---
 
@@ -720,6 +749,9 @@ counts), `ui/navRailIsInstant.test.tsx`, `design/countsDoNotPop.test.tsx`,
 | `ui/motion/ContextMenu.tsx` | `overlayEnter` (scale and rise) | a menu enters with scale and rise; becomes opacity only on the smooth curve |
 
 ### What moves onto a token
+
+Each of these now reads a duration token (§7). A length that sat between two steps moved onto the
+step its role names in §7's table; this table records what the audit found.
 
 | File | Motion | Why |
 |---|---|---|

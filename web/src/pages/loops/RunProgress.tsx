@@ -22,7 +22,7 @@ export function RunProgress({ vm }: { vm: RunSnapshotViewModel }) {
     <>
       {showBar && (
         <div className="h-1 w-full bg-surface-container" title={`${vm.phaseDone} of ${vm.phaseTotal} stages done`}>
-          <div className="h-full transition-[width] duration-500"
+          <div className="h-full transition-[width] duration-(--duration-long)"
             style={{ width: `${pct}%`, background: vm.parked ? 'var(--color-warn)' : 'var(--color-primary)' }} />
         </div>
       )}

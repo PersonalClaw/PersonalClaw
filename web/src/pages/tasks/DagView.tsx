@@ -1,6 +1,6 @@
 import { useMemo, useRef, type ReactNode } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
-import { expr, exprHeavy } from '../../design/motion'
+import { duration, expr, exprHeavy } from '../../design/motion'
 import { accentChip } from '../../design/accent'
 
 /** A reusable, presentational SVG DAG renderer. It draws ALREADY-POSITIONED
@@ -214,7 +214,7 @@ export function DagView({
                 fill="none" stroke={ringTone} strokeWidth={2}
                 initial={false}
                 animate={reduce ? { opacity: 0.7 } : { opacity: [0.25, expr(0.85, 0.5), 0.25] }}
-                transition={reduce ? undefined : { duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+                transition={reduce ? undefined : { duration: duration.beat, repeat: Infinity, ease: 'easeInOut' }}
               />
             )}
             {/* ── The focusable, operable node surface ──

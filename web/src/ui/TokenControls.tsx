@@ -130,11 +130,11 @@ export function ScalarControl({ token }: { token: ScalarToken }) {
   const { scalarValue, setScalar, resetToken } = useAppearance()
   const val = scalarValue(token)
   const fieldId = `tokenscalar-${useId()}`
-  // Format by the token's declared unit: px/% round to an integer; a specific
+  // Format by the token's declared unit: px/%/ms round to an integer; a specific
   // unit (s, °, …) is appended to a 1-decimal value; a UNITLESS token is a
   // multiplier, shown as "1.00×".
   const u = token.unit ?? ''
-  const display = u === 'px' || u === '%'
+  const display = u === 'px' || u === '%' || u === 'ms'
     ? `${Math.round(val)}${u}`
     : u
       ? `${val.toFixed(1)}${u}`

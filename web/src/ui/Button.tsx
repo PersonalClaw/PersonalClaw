@@ -220,7 +220,7 @@ export function Button({
         // or be squeezed below its content in a tight flex row.
         'relative inline-flex shrink-0 items-center justify-center gap-s overflow-hidden whitespace-nowrap font-[450] select-none',
         shape === 'squircle' ? 'squircle' : 'rounded-pill',
-        'transition-colors duration-100 ease-[cubic-bezier(0.2,0,0,1)]',
+        'transition-colors duration-(--duration-short) ease-[cubic-bezier(0.2,0,0,1)]',
         // aria-disabled needs the same dimming as the native attribute, and must not
         // swallow pointer events (a hover has to reveal the title/tooltip).
         //

@@ -126,7 +126,7 @@ export function NavRail({
   // that sits at the end of them. Hand-tuning a second copy is how a 32px row becomes a 34px
   // row that only looks wrong next to its neighbour.
   const rowCls = (tone: string) => cx(
-    'group relative flex items-center gap-s w-full rounded-pill text-left transition-colors duration-100',
+    'group relative flex items-center gap-s w-full rounded-pill text-left transition-colors duration-(--duration-short)',
     collapsed ? 'justify-center px-0' : 'px-s',
     tone,
   )

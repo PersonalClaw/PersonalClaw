@@ -122,7 +122,7 @@ export function IconButton({
         // next target 4px away so the undersized-target spacing exception does not apply either. Same
         // shape as the `Segmented` tab fix: a declared size means nothing until something says it cannot
         // be taken away. Census at 390px across 12 surfaces: 2 squeezed sites, both this control.
-        'group relative inline-flex shrink-0 items-center justify-center rounded-pill transition-colors duration-100',
+        'group relative inline-flex shrink-0 items-center justify-center rounded-pill transition-colors duration-(--duration-short)',
         disabled
           ? 'text-on-surface-var opacity-40 cursor-not-allowed'
           : filled
@@ -144,7 +144,7 @@ export function IconButton({
       {showHalo && (
         <span
           aria-hidden
-          className="pointer-events-none absolute inset-0 rounded-pill opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+          className="pointer-events-none absolute inset-0 rounded-pill opacity-0 transition-opacity duration-(--duration-short) group-hover:opacity-100"
           style={{ background: 'radial-gradient(circle at center, color-mix(in srgb, var(--color-primary) 16%, transparent), transparent 70%)' }}
         />
       )}
