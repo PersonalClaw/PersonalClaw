@@ -1536,6 +1536,8 @@ export interface ChatSessionSummary {
   run_state: RunState
   created?: string; last_activity_ts?: string; last_ts?: string; pinned?: boolean
   folder_id?: string; tags?: string[]; color_index?: number | null
+  /** The project the chat belongs to, live or kept only on disk; `""` for none. */
+  project_id?: string
   last_message?: string; prompt_preview?: string
   // Session origin: 'manual' (user-initiated) vs a worker started by a goal loop /
   // code project. Worker sessions carry the originating entity's id +
