@@ -252,68 +252,167 @@ async def test_boot_rotates_run_history_without_a_legacy_service(tmp_path, monke
     assert rotate.await_count == 1
 
 
-def test_boot_has_no_legacy_timer_left_to_arm(tmp_path):
+async def _booted(tmp_path, monkeypatch):
+    """A gateway after `_init_cron`, and the tasks its boot started (by coroutine name)."""
+    from unittest.mock import AsyncMock, patch
+
+    import personalclaw.config.loader as loader
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.schedule_history import ScheduleRunStore
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.gateway.config_dir", lambda: tmp_path)
+    cfg = AppConfig()
+    with patch.object(cfg, "load_credentials", return_value={}):
+        orch = GatewayOrchestrator(cfg, no_dashboard=True, no_crons=False, no_open=True)
+    before = asyncio.all_tasks()
+    with patch.object(ScheduleRunStore, "rotate_all", AsyncMock()):
+        await orch._init_cron()
+    started = asyncio.all_tasks() - before
+    return orch, started
+
+
+def _cancel(tasks) -> None:
+    for task in tasks:
+        task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_boot_has_no_legacy_timer_left_to_arm(tmp_path, monkeypatch):
     """🔴 The double-fire guard, now unconditional. Measured on the owner's real store at the
     cutover: both engines held `j-at` and `j-cron` after the migration, so arming both would
     fire each twice. The cutover stopped arming the legacy timer, and the class that owned
-    it is deleted, so there is no second engine left to arm by accident."""
-    import inspect
+    it is deleted, so a boot starts one clock engine and nothing else that fires on time."""
+    orch, started = await _booted(tmp_path, monkeypatch)
+    try:
+        names = sorted(task.get_coro().__qualname__ for task in started)
+        assert names.count("GatewayOrchestrator._clock_loop") == 1, names
+        assert not [n for n in names if "Schedule" in n or "cron" in n.lower()], names
+        assert not hasattr(orch, "cron_svc"), "a legacy service is still held"
+    finally:
+        _cancel(started)
+    with pytest.raises(ImportError):
+        from personalclaw.schedule import ScheduleService  # noqa: F401
 
-    from personalclaw.gateway import GatewayOrchestrator
 
-    src = inspect.getsource(GatewayOrchestrator._init_cron)
-    # Strip comments: the boot path still EXPLAINS what retired, and the property under test is
-    # about the CODE. Asserting on prose would make a docstring edit fail a behaviour test.
-    code = "\n".join(ln for ln in src.split("\n") if not ln.strip().startswith("#"))
-    assert "cron_svc" not in code
-    assert "ScheduleService(" not in code
-
-
-def test_boot_starts_the_clock_loop(tmp_path):
+@pytest.mark.asyncio
+async def test_boot_starts_the_clock_loop(tmp_path, monkeypatch):
     """A loop nobody launches is the defect this file opens with."""
-    import inspect
+    orch, started = await _booted(tmp_path, monkeypatch)
+    try:
+        assert orch._clock_task in started, "boot started no clock loop"
+        assert orch._clock_task.get_coro().__qualname__ == "GatewayOrchestrator._clock_loop"
+        assert not orch._clock_task.done(), "the clock loop stopped at boot"
+    finally:
+        _cancel(started)
 
-    from personalclaw.gateway import GatewayOrchestrator
 
-    src = inspect.getsource(GatewayOrchestrator._init_cron)
-    assert "_clock_loop" in src
-    assert "_clock_task" in src
-
-
-def test_shutdown_cancels_the_clock_loop():
+def test_shutdown_cancels_the_clock_loop(tmp_path, monkeypatch):
     """A dangling clock task across shutdown leaks a firing loop into the next process."""
-    import inspect
+    from test_gateway import _make_orchestrator, _mock_dashboard_state, _mock_sessions
 
+    import personalclaw.config.loader as loader
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    orch = _make_orchestrator()
+    orch.sessions = _mock_sessions()
+    orch.dashboard_state = _mock_dashboard_state()
+
+    async def stop() -> bool:
+        orch._clock_task = asyncio.create_task(asyncio.sleep(3600))
+        await orch._shutdown()
+        return orch._clock_task.cancelled()
+
+    assert asyncio.run(stop()), "the clock loop outlived the shutdown"
+
+
+class _Recorder:
+    """An action provider that records what each fire handed it."""
+
+    name = "loop-recorder"
+
+    def __init__(self) -> None:
+        self.seen: list[tuple[str, dict]] = []
+
+    async def execute(self, action_config, ctx, timeout=30):
+        from personalclaw.action_providers.base import ActionResult
+
+        self.seen.append((ctx.event, dict(action_config)))
+        return ActionResult(success=True, stdout="ok")
+
+
+def _fire_with(recorder, monkeypatch, tmp_path):
+    """A bare orchestrator whose action lookup finds *recorder*; the home is *tmp_path*."""
+    import personalclaw.action_providers as ap
+    import personalclaw.config.loader as loader
     from personalclaw.gateway import GatewayOrchestrator
 
-    src = inspect.getsource(GatewayOrchestrator._shutdown)
-    assert "_clock_task" in src
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.gateway.config_dir", lambda: tmp_path)
+    monkeypatch.setattr(ap, "get_action_provider", lambda name: recorder)
+    return object.__new__(GatewayOrchestrator)
 
 
-def test_one_dispatch_path_serves_both_clock_and_file_fires():
+def _store_trigger(tid: str, workflow: dict, kind: str = "clock"):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        id=tid, kind=kind, workflow=workflow, capabilities={"providers": [_Recorder.name]}
+    )
+
+
+def test_one_dispatch_path_serves_both_clock_and_file_fires(tmp_path, monkeypatch):
     """🔴 The clock loop and the file-watch loop must execute an action the same way. Two
-    near-identical dispatches were the dual path the clean break forbids, so `_fire_file_trigger`
-    delegates to `_fire_store_trigger`."""
-    import inspect
-
+    near-identical dispatches were the dual path the clean break forbids, so a file fire goes
+    through the store dispatch a clock fire takes, and that dispatch takes the source's event
+    name rather than hard-coding one."""
     from personalclaw.gateway import GatewayOrchestrator
 
-    src = inspect.getsource(GatewayOrchestrator._fire_file_trigger)
-    assert "_fire_store_trigger" in src
-    # And the shared dispatch must not hard-code one source's event name.
-    shared = inspect.getsource(GatewayOrchestrator._fire_store_trigger)
-    assert "event: str" in shared
+    recorder = _Recorder()
+    orch = _fire_with(recorder, monkeypatch, tmp_path)
+    shared = GatewayOrchestrator._fire_store_trigger
+    through: list[str] = []
+
+    async def spy(self, trigger, payload, **kwargs):
+        through.append(trigger.id)
+        return await shared(self, trigger, payload, **kwargs)
+
+    monkeypatch.setattr(GatewayOrchestrator, "_fire_store_trigger", spy)
+    TriggerStore(base_dir=tmp_path).upsert(
+        Trigger(
+            id="file:notes",
+            name="Notes",
+            kind="file",
+            enabled=True,
+            spec={"paths": ["~/x/**"]},
+            workflow={"provider": _Recorder.name, "config": {"n": 1}},
+            capabilities={"providers": [_Recorder.name]},
+        )
+    )
+    asyncio.run(orch._fire_file_trigger({"trigger_id": "file:notes", "changed": ["/x/a"]}))
+    asyncio.run(
+        orch._fire_store_trigger(
+            _store_trigger("clock:j", {"provider": _Recorder.name, "config": {"n": 2}}),
+            {"kind": "clock"},
+        )
+    )
+    assert through == ["file:notes", "clock:j"], "a file fire took a dispatch of its own"
+    assert recorder.seen == [("file.changed", {"n": 1}), ("trigger.fired", {"n": 2})]
 
 
-def test_the_shared_dispatch_reads_both_action_shapes(tmp_path):
+def test_the_shared_dispatch_reads_both_action_shapes(tmp_path, monkeypatch):
     """A migrated cron nests its action under `workflow.inline`; the chat tools write a flat
     `{provider, config}`. Reading only one would render half a real store's triggers unfireable."""
-    import inspect
-
-    from personalclaw.gateway import GatewayOrchestrator
-
-    src = inspect.getsource(GatewayOrchestrator._fire_store_trigger)
-    assert "inline" in src
+    recorder = _Recorder()
+    orch = _fire_with(recorder, monkeypatch, tmp_path)
+    shapes = {
+        "clock:inline": {"inline": {"provider": _Recorder.name, "config": {"shape": "inline"}}},
+        "clock:flat": {"provider": _Recorder.name, "config": {"shape": "flat"}},
+    }
+    for tid, workflow in shapes.items():
+        asyncio.run(orch._fire_store_trigger(_store_trigger(tid, workflow), {"kind": "clock"}))
+    assert [config for _, config in recorder.seen] == [{"shape": "inline"}, {"shape": "flat"}]
 
 
 # ── the live refresh a scheduled fire pushes ──
@@ -402,17 +501,16 @@ def test_the_legacy_refresh_callback_is_gone():
     already pushes both kinds in its own `finally` — so keeping the seam would have meant a
     configurable hook that nothing configures and a duplicate broadcast on the one path it reached.
     """
-    import inspect
-
-    import pytest
-
     from personalclaw.gateway import GatewayOrchestrator
 
     # The whole class is deleted, which is a stronger statement than "the method is gone".
     with pytest.raises(ImportError):
         from personalclaw.schedule import ScheduleService  # noqa: F401
-    src = inspect.getsource(GatewayOrchestrator)
-    assert "set_refresh_callback" not in src
+    assert not hasattr(GatewayOrchestrator, "set_refresh_callback")
+    # And the one broadcast a fire makes is the gateway's own, pushed once per fire.
+    state = _RecordingState()
+    _orch_with_state(state)._push_trigger_refresh()
+    assert state.pushed == [("crons", "cron_history")], "a second broadcast path is back"
 
 
 # ── The two SEPARATE wake sources, both of which had no caller ──
