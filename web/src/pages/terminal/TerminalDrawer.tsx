@@ -18,15 +18,23 @@ import { bindingLabel } from '../../app/keymap'
 const HEIGHT_KEY = 'terminal-drawer-h'
 const MIN_H = 160, MAX_FRAC = 0.85, DEF_H = 320
 
-/** Quick terminal drawer — a slide-up bottom panel reachable from ANY page
- *  (toggle ⌘`, or the ⌘K command). Holds its own PTY session tab(s), shares the
- *  same backend session pool as the full Terminal page, and reuses TerminalView
- *  (so exit/reconnect/restart all work identically). "Open full" jumps to the
- *  Terminal page. Drag the top edge to resize; height persists. */
+/** Where "Open full" goes: the Terminal page on *session*, the one the drawer shows, so it is that
+ *  session the page opens at full height and not the page's first. The page lists every live
+ *  session the drawer and it share, and picks its first when *session* is gone. */
+export function fullTerminalRoute(session?: string): string {
+  return session ? `terminal?active=${encodeURIComponent(session)}` : 'terminal'
+}
+
+/** The terminal: a slide-up bottom drawer on every page (⌘J or ⌘`, the shell's corner toggle, the
+ *  palette). Holds its own PTY session tab(s), shares the same backend session pool as the full
+ *  Terminal page, and reuses TerminalView (so exit/reconnect/restart all work identically). "Open
+ *  full" hands the session it shows to the Terminal page (`fullTerminalRoute`). Drag the top edge
+ *  to resize; height persists. */
 export function TerminalDrawer({ open, onClose, onOpenFull }: {
   open: boolean
   onClose: () => void
-  onOpenFull: () => void
+  /** Open the Terminal page on *session*, the drawer's shown session (none while it has none). */
+  onOpenFull: (session?: string) => void
 }) {
   const [tabs, setTabs] = useState<TermTab[]>([])
   const [active, setActive] = useState('')
@@ -137,7 +145,7 @@ export function TerminalDrawer({ open, onClose, onOpenFull }: {
                 {busy ? <Loader2 size={13} className="animate-spin" /> : <Plus size={14} />}
               </SquareIconButton>
             </div>
-            <SquareIconButton icon={Maximize2} iconSize={13} label="Open full terminal" onClick={onOpenFull} className="shrink-0" />
+            <SquareIconButton icon={Maximize2} iconSize={13} label="Open full terminal" onClick={() => onOpenFull(active || undefined)} className="shrink-0" />
             <SquareIconButton icon={ChevronDown} iconSize={15} label={`Hide terminal (${bindingLabel('drawer')})`} onClick={onClose} className="shrink-0" />
           </div>
 

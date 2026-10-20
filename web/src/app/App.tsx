@@ -31,7 +31,7 @@ import { CommandPalette, keymapCommands, type Command } from './CommandPalette'
 import { THREAD_NUMBERS, useBoundRunner, useKeyBinding, type CommandId } from './keymap'
 import { chatRoute, nextNeedsYouRoute } from './globalKeys'
 import { notify } from './appSdk'
-import { TerminalDrawer } from '../pages/terminal/TerminalDrawer'
+import { TerminalDrawer, fullTerminalRoute } from '../pages/terminal/TerminalDrawer'
 import { Toaster } from '../ui/Toaster'
 import { useApprovalToasts } from './useApprovalToasts'
 import { useNativeNotifications } from '../lib/nativeNotifications'
@@ -397,7 +397,7 @@ function AppInner() {
   // every widget host inherits routing; a mounted chat page claims the bridge ahead
   // of this fallback, keeping a chat-born action in its own conversation.
   useWidgetActionLauncher()
-  // quick terminal drawer (reachable from any page) — toggled by ⌘` / ⌘K.
+  // The terminal drawer, on every page: ⌘J or ⌘`, the corner's toggle and the palette.
   const [termDrawer, setTermDrawer] = useState(false)
   // a command queued by "Run in terminal" while no terminal was live yet — sent
   // once a session registers (the drawer opens, its TerminalView registers).
@@ -885,7 +885,8 @@ function AppInner() {
       {/* Self-update step progression (WS `update_progress`) — shell-level so the
           modal appears from ANY page while an update pipeline runs. */}
       <UpdateProgressOverlay />
-      <TerminalDrawer open={termDrawer} onClose={() => setTermDrawer(false)} onOpenFull={() => { setTermDrawer(false); navigate('terminal') }} />
+      <TerminalDrawer open={termDrawer} onClose={() => setTermDrawer(false)}
+        onOpenFull={(session) => { setTermDrawer(false); navigate(fullTerminalRoute(session)) }} />
     </div>
   )
 }
