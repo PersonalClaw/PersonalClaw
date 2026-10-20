@@ -37,6 +37,8 @@ RAIL = "tests/rails/test_planted.py"
 #: The sites the base commit has, sorted. ``c`` and ``m`` are neighbours in the file.
 BASE_SITES = ("a", "c", "m", "x", "z")
 TODAY = "2026-10-19"
+#: The file GitHub names for a step's job summary.
+JOB_SUMMARY = "GITHUB_STEP_SUMMARY"
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -94,6 +96,12 @@ def _commit(repo: Path, message: str) -> str:
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", message)
     return _git(repo, "rev-parse", "HEAD")
+
+
+@pytest.fixture(autouse=True)
+def _no_job_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On GitHub every step has a job summary, and these planted lines are not this run's."""
+    monkeypatch.delenv(JOB_SUMMARY, raising=False)
 
 
 @pytest.fixture
@@ -260,6 +268,31 @@ def test_a_line_the_branch_adds_needs_added_and_a_reason(
     added = check(_found(repo), BASELINE, root=repo, prune=False)
     assert [line.site for line in added] == ["p"]
     assert f"added {TODAY}: p: p is planted" in capsys.readouterr().out
+
+
+def test_every_line_a_branch_adds_reaches_the_job_summary_with_its_reason(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The review reads the job summary, not a passing test's captured output: each line the
+    branch adds, to a baseline or to the registry, is written there with its date and reason.
+    A check that adds nothing, or has no base to compare with, writes nothing."""
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv(JOB_SUMMARY, str(summary))
+    base = _git(repo, "rev-parse", "main")
+    check(list(BASE_SITES), BASELINE, base, root=repo, prune=False)
+    _plant(repo, "p")
+    _lines(repo, *(_site(site, **({"added": TODAY} if site == "p" else {})) for site in "acmpxz"))
+    check(_found(repo), BASELINE, None, root=repo, prune=False)
+    assert not summary.exists(), "a check that added nothing wrote to the job summary"
+    check(_found(repo), BASELINE, base, root=repo, prune=False)
+    _write(repo / NEW, _site("q"))
+    _write(repo / REGISTRY, _registration(), _registration(NEW, ceiling=1, added=TODAY))
+    check_registry(_baselines(repo), base, root=repo, prune=False)
+    text = summary.read_text(encoding="utf-8")
+    assert f"{BASELINE}: 1 line this branch adds (compared with the base {base[:12]})" in text
+    assert f"added {TODAY}: p: p is planted" in text
+    assert f"{REGISTRY}: 1 line this branch adds" in text
+    assert f"added {TODAY}: {NEW}: the planted census" in text
 
 
 def test_a_check_never_claims_a_comparison_it_did_not_make(

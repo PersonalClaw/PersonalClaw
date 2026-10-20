@@ -5343,6 +5343,184 @@ EACH_RAILS_HALF_RUNS_ONCE_ON_ITS_OWN_LEG = Row(
 ROWS = (*ROWS, EACH_RAILS_HALF_RUNS_ONCE_ON_ITS_OWN_LEG)
 
 
+# ── Each rails half compares the site baselines with the gate's base (#3930) ────────────────
+# A site baseline (tests/site_baseline.py) read against the gate's base commit admits a line the
+# base lacks only with `added` and a reason, and writes each such line to the job summary. With no
+# base it compares the file with the working tree alone, which passes: a rails job that lost its
+# base would let a branch grow its own list unseen. So the step that runs tests/rails reads
+# BASE_SHA from the job's `base` step, an earlier step that fetches the base as apps-contract's
+# does (the pull request's base, or on a push to main the commit it replaced), and the catalogue's
+# rails entry gives its step the same `{base}`.
+
+_BASE_STEP = "base"
+_BASE_OUTPUT = "${{ steps.base.outputs.ref }}"
+_BASE_SOURCE = "apps-contract"
+
+
+def _step_with_id(steps: list[dict[str, Any]], step_id: str) -> tuple[int, dict[str, Any]] | None:
+    return next(((n, step) for n, step in enumerate(steps) if step.get("id") == step_id), None)
+
+
+def _dict_steps(job: object) -> list[dict[str, Any]]:
+    steps = job.get("steps") if isinstance(job, dict) else None
+    return [step for step in steps or [] if isinstance(step, dict)]
+
+
+def _without_name(step: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in step.items() if key != "name"}
+
+
+def rails_base_violations(root: Path) -> list[str]:
+    """ci.yml's rails job has a ``base`` step that is apps-contract's but for its name, before
+    the step that runs tests/rails, whose env takes ``BASE_SHA`` from that step's ``ref``; and the
+    catalogue's rails entry sets ``BASE_SHA`` to ``{base}`` on the step that runs tests/rails."""
+    workflow = yaml.safe_load((root / _CI).read_text(encoding="utf-8")) or {}
+    jobs = workflow.get("jobs") or {}
+    if not isinstance(jobs.get(catalogue.MERGE_NEEDS_JOB), dict):
+        return [f"ci.yml has no {catalogue.MERGE_NEEDS_JOB} job"]
+    bad: list[str] = []
+    steps = _dict_steps(jobs[catalogue.MERGE_NEEDS_JOB])
+    found = _step_with_id(steps, _BASE_STEP)
+    wanted = _step_with_id(_dict_steps(jobs.get(_BASE_SOURCE)), _BASE_STEP)
+    if found is None:
+        bad.append(
+            f"ci.yml's rails job has no step with id {_BASE_STEP!r}, so no base commit is"
+            " fetched and BASE_SHA names none"
+        )
+    elif wanted is None:
+        bad.append(f"ci.yml's {_BASE_SOURCE} job has no step with id {_BASE_STEP!r} to match")
+    elif _without_name(found[1]) != _without_name(wanted[1]):
+        bad.append(
+            f"ci.yml's rails job's {_BASE_STEP!r} step is not {_BASE_SOURCE}'s, so it may"
+            " fetch or name another commit than the gate's base"
+        )
+    variable = site_baseline.BASE_VARIABLE
+    rails_at = [
+        n
+        for n, step in enumerate(steps)
+        if any(_runs_rails(words) for words in _commands(str(step.get("run", ""))))
+    ]
+    if not rails_at:
+        bad.append("ci.yml's rails job has no step that runs tests/rails")
+    for n in rails_at:
+        name, value = steps[n].get("name"), (steps[n].get("env") or {}).get(variable)
+        if value != _BASE_OUTPUT:
+            bad.append(
+                f"ci.yml's rails step {name!r} takes {variable} from {value!r}, not"
+                f" {_BASE_OUTPUT}: its site baselines are compared with no base, or another"
+            )
+        elif found is not None and found[0] > n:
+            bad.append(f"ci.yml's rails job fetches its base after the step {name!r}")
+    try:
+        entry = catalogue.read(root).job(catalogue.MERGE_NEEDS_JOB)
+    except (OSError, KeyError, catalogue.CatalogueError) as exc:
+        return [*bad, f"{catalogue.CATALOGUE}'s rails entry cannot be read: {exc}"]
+    for n, step in enumerate(entry.command, 1):
+        if _runs_rails(list(step.argv)) and step.env.get(variable) != "{base}":
+            bad.append(
+                f"rails: command step {n} runs tests/rails with {variable}="
+                f"{step.env.get(variable)!r}, not {{base}}"
+            )
+    return bad
+
+
+def _edits(*edits: tuple[str, str, str]) -> Callable[[Path], None]:
+    """One edit in each of several files, ``(rel, old, new)``, each of which must find its
+    text."""
+
+    def plant(root: Path) -> None:
+        for rel, old, new in edits:
+            text = (root / rel).read_text(encoding="utf-8")
+            assert old in text, f"the plant found no {old!r} in {rel}"
+            _write(root, rel, text.replace(old, new, 1))
+
+    return plant
+
+
+_RAILS_BASE_ENV = "        env:\n          BASE_SHA: ${{ steps.base.outputs.ref }}\n"
+_RAILS_JUNIT_TOML = '"--junitxml=reports/junit-rails-{shard}.xml"]'
+_RAILS_BASE_TOML = _RAILS_JUNIT_TOML + ', env = { BASE_SHA = "{base}" } },'
+#: The rails job's base step, by the name only it has, and its first lines.
+_RAILS_BASE_NAME = (
+    "      - name: fetch the base commit (each site baseline is compared with its copy there)\n"
+)
+_RAILS_BASE_HEAD = (
+    _RAILS_BASE_NAME
+    + "        id: base\n        env:\n"
+    + "          BASE_SHA: ${{ github.event.pull_request.base.sha }}\n"
+)
+_RAILS_LATER_STEP = "      # Same argument as `test-shard`'s upload step, one artifact per half.\n"
+
+
+def _base_step_after_the_rails(root: Path) -> None:
+    """The rails job's base step, unchanged, moved to just after the step that runs a half."""
+    text = (root / _CI).read_text(encoding="utf-8")
+    start = text.index(_RAILS_BASE_NAME)
+    end = text.index("\n      - ", start) + 1
+    block, text = text[start:end], text[:start] + text[end:]
+    assert _RAILS_LATER_STEP in text, f"no {_RAILS_LATER_STEP!r} in {_CI}"
+    _write(root, _CI, text.replace(_RAILS_LATER_STEP, block + _RAILS_LATER_STEP, 1))
+
+
+EACH_RAILS_HALF_COMPARES_WITH_THE_GATES_BASE = Row(
+    name="each rails half compares the site baselines with the gate's base",
+    check=rails_base_violations,
+    scaffold=_rails_legs_scaffold,
+    controls=(
+        Control(
+            "a rails step with no BASE_SHA fails, in ci.yml and the catalogue alike",
+            _edits(
+                (_CI, _RAILS_HALF_STEP + _RAILS_BASE_ENV, _RAILS_HALF_STEP),
+                (catalogue.CATALOGUE, _RAILS_BASE_TOML, _RAILS_JUNIT_TOML + " },"),
+            ),
+            expect="takes BASE_SHA from None",
+        ),
+        _plant(
+            "BASE_SHA taken from the commit under test fails",
+            _CI,
+            _RAILS_HALF_STEP + _RAILS_BASE_ENV,
+            _RAILS_HALF_STEP + _RAILS_BASE_ENV.replace("steps.base.outputs.ref", "github.sha"),
+            expect="takes BASE_SHA from '${{ github.sha }}'",
+        ),
+        _plant(
+            "a rails job with no base step fails",
+            _CI,
+            _RAILS_BASE_HEAD,
+            _RAILS_BASE_HEAD.replace("        id: base\n", ""),
+            expect="has no step with id 'base'",
+        ),
+        _plant(
+            "a base step that names the head as the base fails",
+            _CI,
+            _RAILS_BASE_HEAD,
+            _RAILS_BASE_HEAD.replace(".base.sha", ".head.sha"),
+            expect="'base' step is not apps-contract's",
+        ),
+        Control(
+            "the base step moved after the step that runs tests/rails fails",
+            _base_step_after_the_rails,
+            expect="fetches its base after the step",
+        ),
+        _plant(
+            "a catalogue rails step with no BASE_SHA fails",
+            catalogue.CATALOGUE,
+            _RAILS_BASE_TOML,
+            _RAILS_JUNIT_TOML + " },",
+            expect="rails: command step 1 runs tests/rails with BASE_SHA=None, not {base}",
+        ),
+        _plant(
+            "the base step renamed passes",
+            _CI,
+            _RAILS_BASE_NAME,
+            _RAILS_BASE_NAME.replace("its copy there", "the base's copy"),
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, EACH_RAILS_HALF_COMPARES_WITH_THE_GATES_BASE)
+
+
 # ── Every push to main checks the commits it lands, with main's previous check (#3908) ───────
 # Each push checks only `before..sha`, so a run that never finishes leaves its commits unchecked
 # for good. The check therefore runs in a workflow of its own that no later run can cancel or
@@ -6319,14 +6497,20 @@ class _Line:
 
 
 def _step_env(step: dict[str, Any]) -> tuple[tuple[str, str], ...]:
-    """A workflow step's own env, less the variables a placeholder stands for, each value with
-    its ``${{ }}`` placeholders read as the placeholder (an entry's env value may name one, as
-    ``blob-report/shard-{shard}`` does). A shell spelling stays as it is: GitHub leaves it."""
+    """A workflow step's own env, less each variable a placeholder stands for that its run: block
+    reads, each value with its ``${{ }}`` placeholders read as the placeholder (an entry's env
+    value may name one, as ``blob-report/shard-{shard}`` does). A shell spelling stays as it is:
+    GitHub leaves it. A variable the block reads, as the harness scan reads ``$BASE_SHA``, is how
+    the placeholder reaches the argv, which holds it as the placeholder; one the block does not
+    read reaches the process, as ``BASE_SHA`` reaches the rails' site baselines, so it is the
+    step's env like any other."""
+    run = str(step.get("run", ""))
+    read = {name for name in _PLACEHOLDER_VARIABLES if re.search(rf"\$\{{?{name}\b", run)}
     return tuple(
         sorted(
             (str(k), _norm(str(v), expressions_only=True))
             for k, v in (step.get("env") or {}).items()
-            if str(k) not in _PLACEHOLDER_VARIABLES
+            if str(k) not in read
         )
     )
 
@@ -6643,14 +6827,7 @@ def _plant_files(
 ) -> Control:
     """A violation planted by one edit in each of several files, ``(rel, old, new)``, each of
     which must find its text: for a change the catalogue and its workflow make together."""
-
-    def plant(root: Path) -> None:
-        for rel, old, new in edits:
-            text = (root / rel).read_text(encoding="utf-8")
-            assert old in text, f"the plant {name!r} found no {old!r} in {rel}"
-            _write(root, rel, text.replace(old, new, 1))
-
-    return Control(name, plant, fails, expect)
+    return Control(name, _edits(*edits), fails, expect)
 
 
 #: collection-parses's one pytest step, as breadth.yml and the catalogue spell it.
@@ -6796,6 +6973,13 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             'env = { PERSONALCLAW_REQUIRE_BROWSE_PROOF = "1", PERSONALCLAW_SKIP_APP_BACKENDS',
             "env = { PERSONALCLAW_SKIP_APP_BACKENDS",
             expect="browse-live: command step 1",
+        ),
+        _plant(
+            "the rails step's BASE_SHA gone from ci.yml alone fails",
+            _CI,
+            _RAILS_HALF_STEP + _RAILS_BASE_ENV,
+            _RAILS_HALF_STEP,
+            expect="rails: command step 1",
         ),
         _plant(
             "the workflow step's environment changed without its entry",

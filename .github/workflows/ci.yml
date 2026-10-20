@@ -1579,6 +1579,29 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The commit each site baseline (tests/site_baseline.py) is compared with, fetched as
+      # apps-contract fetches it: a line the base's copy lacks passes only with `added` and a
+      # reason, and is written to this job's summary. The CI contract row "each rails half
+      # compares the site baselines with the gate's base" holds this step to apps-contract's.
+      - name: fetch the base commit (each site baseline is compared with its copy there)
+        id: base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "${BASE_SHA:-}" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+            echo "ref=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${BEFORE:-}" ] \
+               && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            # A push to main: the commit it replaced, since origin/main is this commit.
+            echo "base: the previous main commit $BEFORE"
+            git fetch --no-tags --depth=1 origin "$BEFORE"
+            echo "ref=$BEFORE" >> "$GITHUB_OUTPUT"
+          else
+            git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/origin/main"
+            echo "ref=origin/main" >> "$GITHUB_OUTPUT"
+          fi
       - name: Set up the toolchain
         uses: ./.github/actions/setup
         with:
@@ -1588,8 +1611,10 @@ jobs:
         run: uv sync --locked --extra dev
       # This half's modules of tests/rails, on four workers. The two halves' junit together list
       # every rail this run ran, so a rail red on main can be traced to the pull request's run
-      # that ran it.
+      # that ran it. BASE_SHA is the base step's commit, which the site baselines read.
       - name: the rails, half ${{ matrix.shard }} of 2 (tests/rails)
+        env:
+          BASE_SHA: ${{ steps.base.outputs.ref }}
         run: uv run pytest -n 4 --dist worksteal -q tests/rails --shard-list tools/ci/rails-half-${{ matrix.shard }}.txt --junitxml=reports/junit-rails-${{ matrix.shard }}.xml
       # Same argument as `test-shard`'s upload step, one artifact per half.
       - name: Upload JUnit results (rails half ${{ matrix.shard }})

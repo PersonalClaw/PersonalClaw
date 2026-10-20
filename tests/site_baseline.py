@@ -21,11 +21,12 @@ Order is not checked, since a union merge keeps each side's new lines where that
 ``SITE_BASELINE_PRUNE=1``, and each check then deletes its stale and repeated lines and sorts the
 file. It never adds a line.
 
-**A branch cannot grow its own list.** Given the pull request's base commit in ``BASE_SHA``, the
-file is compared with the base's copy of it. A line the base does not have is an added exception:
-it passes only with ``"added": "YYYY-MM-DD"`` and its reason, and each is printed for the job
-summary. A line the base has and the branch deleted is a fixed site. With no
-base, a local run, the file is compared with the working tree only, and the check says so.
+**A branch cannot grow its own list.** Given the pull request's base commit in ``BASE_SHA``, as
+the rails job's ``base`` step fetches it, the file is compared with the base's copy of it. A line
+the base does not have is an added exception: it passes only with ``"added": "YYYY-MM-DD"`` and
+its reason, and each is printed and written to the job summary (``GITHUB_STEP_SUMMARY``), where
+the review reads it. A line the base has and the branch deleted is a fixed site. With no base, a
+local run, the file is compared with the working tree only, and the check says so.
 
 **Nor by its file.** Every baseline file is registered in :data:`REGISTRY`, one line each: its
 path, the rail that checks it, what it replaces, and the ceiling it replaced at conversion. The
@@ -79,6 +80,9 @@ REGISTRY_RAIL = (
 
 #: The commit a check compares against, as the gate passes it. Unset or empty: no base.
 BASE_VARIABLE = "BASE_SHA"
+
+#: The file GitHub gives each step for its job's summary; unset off GitHub.
+SUMMARY_VARIABLE = "GITHUB_STEP_SUMMARY"
 
 #: Set to ``1`` by ``--prune``: each check deletes its stale and repeated lines.
 PRUNE_VARIABLE = "SITE_BASELINE_PRUNE"
@@ -306,6 +310,23 @@ def _added_since(
     return added, failures
 
 
+def _report(rel: str, compared: str, added: list[Line]) -> None:
+    """Print each line this branch added, and write them to the job summary when there is one:
+    a passing test's output is captured, so the summary is where the review sees them."""
+    lines = [f"added {line.added}: {line.site}: {line.reason}" for line in added]
+    for text in lines:
+        print(text)
+    summary = os.environ.get(SUMMARY_VARIABLE)
+    if not (lines and summary):
+        return
+    count = f"{len(lines)} line{'s' if len(lines) > 1 else ''}"
+    with open(summary, "a", encoding="utf-8") as out:
+        out.write(
+            f"### {rel}: {count} this branch adds ({compared})\n\n"
+            "~~~text\n" + "".join(text + "\n" for text in lines) + "~~~\n\n"
+        )
+
+
 def _fail(rel: str, compared: str, failures: list[str]) -> None:
     if failures:
         raise AssertionError("\n".join([f"{rel} ({compared}):", *("  " + f for f in failures)]))
@@ -349,7 +370,8 @@ def check(
     prune: bool | None = None,
 ) -> list[Line]:
     """Hold the sites a rail *found* to the baseline at *path*; return the lines this branch
-    added, each printed. Raises :class:`AssertionError` naming every failure.
+    added, each printed and written to the job summary (:func:`_report`). Raises
+    :class:`AssertionError` naming every failure.
 
     *base* is the commit to compare with: by default the gate's (:data:`BASE_VARIABLE`); ``None``
     for none. *prune*, by default :data:`PRUNE_VARIABLE`, deletes stale and repeated lines first.
@@ -367,8 +389,7 @@ def check(
     if at_base is not None:
         added, more = _added_since(lines, at_base, set(found), _SITES)
         failures += more
-    for line in added:
-        print(f"added {line.added}: {line.site}: {line.reason}")
+    _report(rel, compared, added)
     _fail(rel, compared, failures)
     return added
 
@@ -418,8 +439,7 @@ def check_registry(
             was, now = before.get(line.site), line.fields.get("ceiling")
             if isinstance(was, int) and isinstance(now, int) and now > was:
                 failures.append(f"{line.site} raises its ceiling from {was} to {now}")
-    for line in added:
-        print(f"added {line.added}: {line.site}: {line.reason}")
+    _report(REGISTRY, compared, added)
     _fail(REGISTRY, compared, failures)
     return added
 
