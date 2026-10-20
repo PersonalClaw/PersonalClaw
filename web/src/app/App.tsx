@@ -5,6 +5,7 @@ import { armCueAudio } from '../design/soundCues'
 import { installPushCuePlayback } from './pushCuePlayback'
 import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, Radar, Repeat, Settings, Smartphone, Sparkles, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
+import { ShellThreadRail } from './threadRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
 import { IncidentBanner } from './IncidentBanner'
 import { ModelWaits } from '../ui/ModelWaitNotice'
@@ -540,6 +541,10 @@ function AppInner() {
   const active = (rendered === 'loop' || rendered === 'loops' || rendered === 'code') ? 'projects'
     : rendered === 'app' ? `app/${(sub ?? '').split('/')[0]}`  // light the specific app tile
       : rendered
+  // Whether the sidebar lights a thread, the one the address opens (`threadRail.tsx`). While one is
+  // lit, the destination its route belongs to (Chat, Projects) is not lit beside it: one row says
+  // where you are. A hook, so it sits above the early returns (React #310).
+  const [threadLit, setThreadLit] = useState(false)
 
   // Auto-pin on visit. Reaching a surface is the strongest signal it belongs in your rail, so
   // a visit to one the starter rail is holding back REVEALS it permanently. This is what makes
@@ -817,8 +822,15 @@ function AppInner() {
           leaves a notice in its place, and the page beside it and ⌘K keep working. */}
       {!railHidden && (
         <WidgetBoundary what="the navigation" compact className="m-s self-start">
-          <NavRail items={railItems} activeId={active} onSelect={onNavSelect} collapsed={railCollapsed}
+          <NavRail items={railItems} activeId={threadLit ? '' : active} onSelect={onNavSelect} collapsed={railCollapsed}
             overlay={isMobile} overlayOpen={isMobile && mobileNavOpen} onScrimClick={() => setMobileNavOpen(false)} material={material}
+            threads={(
+              // Its own boundary: threads that throw leave a notice in their place, and the
+              // destinations around them keep working.
+              <WidgetBoundary what="your threads" className="mx-s">
+                <ShellThreadRail route={route} sub={sub} onOpen={onNavSelect} onLit={setThreadLit} />
+              </WidgetBoundary>
+            )}
             disclosure={{
               expanded: navMode === 'expert',
               moreCount,
