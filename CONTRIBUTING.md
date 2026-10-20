@@ -505,8 +505,10 @@ is outstanding. `restore` refuses to overwrite a file you edited after the mutat
   in a group in [`ASSET_LICENSES.json`](ASSET_LICENSES.json): a project-owned group
   if the project made it, or a third-party group with its source, version, copyright
   lines and sha256 if it did not, plus its notice in
-  `web/public/THIRD_PARTY_NOTICES.txt`. `make asset-licenses` checks the tree and
-  `make asset-licenses-built` checks what the web build emits.
+  `web/public/THIRD_PARTY_NOTICES.txt`. A font is always third-party, and
+  `web/src/design/fonts.css` serves only a font recorded that way.
+  `make asset-licenses` checks the tree and `make asset-licenses-built` checks
+  what the web build emits.
 - **A new npm dependency brings its own notice.** `npm run build` writes
   `THIRD_PARTY_NOTICES_NPM.txt` into `web/dist` from what it bundled, so there is
   nothing to add by hand. The build fails when a bundled package declares no licence
