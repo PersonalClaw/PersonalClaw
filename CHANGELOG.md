@@ -33,6 +33,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The gateway and web images build their dashboard once, on the build machine, instead of under emulation for arm64.**
 - **Filled icon buttons such as the composer's send and stop, a page header's primary and danger actions, and an app's primary header action show their keyboard focus ring in the page's ink colour, like the primary and danger buttons, where the coral ring matched the button's own colour and could barely be seen.**
+- **A chat on Auto, or on any model that declares no effort levels, runs at Default effort, where one that had stored a level kept running at it with no control left to show or change it; the composer says it set Default.**
 
 ## [0.2.3] — 2026-10-19
 

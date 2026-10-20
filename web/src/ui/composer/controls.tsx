@@ -123,7 +123,9 @@ export type AgentModelPick = { agent?: string; model?: string; reasoning?: Reaso
  *  that declares none has no effort row, and no other effort control exists.
  *
  *  A switch to an agent or a model that lacks the chat's level sets the effort back to Default in
- *  the same pick, and the pill says so beside itself until it is next opened.
+ *  the same pick, and the pill says so beside itself until it is next opened. A chat already on one
+ *  that lacks it (Auto with a level stored earlier) is set back to Default the same way, once the
+ *  lists are read, so no turn runs at a level the pill does not show.
  *
  *  `parts` is the host's choice of halves (the composer's `controls.agent`, `.model` and
  *  `.reasoning`); a pill offering one half names only that dimension. */
@@ -215,6 +217,18 @@ export function AgentModelPill({ data, agent, model, effort, onSelect, parts, co
   const levels = showEffort ? effortsFor(data, agent, model) : []
   const rows: EffortLevel[] = [{ value: '', label: 'Default' }, ...levels]
   const current = rows.find((l) => l.value === effort)?.label ?? levelName(effort)
+  // A chat already on an agent and model that lack its level (stored when every native model
+  // offered one, a starter's, another tab's) has no effort row to show it, so it runs at Default:
+  // the pill writes Default, as a switch to them would, and says so. Not before the lists are read,
+  // when every model would look as if it declared none.
+  const lacksLevel = showEffort && !!effort && !!data && (data.ready ?? true) && !levels.some((l) => l.value === effort)
+  useEffect(() => {
+    if (!lacksLevel) return
+    onSelect({ reasoning: '' })
+    setNote(`Effort set to Default: ${acp ? agent : onAuto ? 'Auto' : modelName(model)} has no ${current}`)
+    // Once per binding that lacks its level: the host's `onSelect` and `data` are new each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lacksLevel, agent, model, effort])
   /** Apply an agent or model pick. One that lacks the chat's level takes the effort back to
    *  Default in the same write, and the pill says so. */
   const pick = (patch: { agent?: string; model?: string }, name: string) => {

@@ -618,7 +618,9 @@ The same pill sets the reasoning effort, in a row under the chosen model, only w
 declares the levels it takes: an agent CLI's runtime declares them, and a native model's provider
 declares them in its record of the model. A model that declares none has no effort row, and nor
 does Auto. A switch to a model without the chat's level sets the effort back to Default, and the
-pill says so: **Effort set to Default: <model> has no High**.
+pill says so: **Effort set to Default: <model> has no High**. A chat opened already on such a model,
+Auto included, with a level it stored earlier is set back to Default the same way, so no turn runs
+at a level the pill does not show.
 
 ## What gets recorded
 

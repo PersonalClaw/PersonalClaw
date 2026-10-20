@@ -139,6 +139,63 @@ describe('a switch to a model without the chat’s level falls back to Default a
   })
 })
 
+// A chat can already be on an agent and model that lack its level: one stored when every native
+// model offered Low to Max, a starter's level on a chat at Auto, or another tab's. The
+// pill shows such a chat no effort row, so the level was sent each turn with no control to see or
+// change it. The chat now runs at Default, as a switch to that model would set it, and the pill says
+// so beside itself.
+describe('a chat already on a model without its level runs at Default, and the pill says so', () => {
+  /** The pill as a chat opens on it: mounted, not opened. */
+  function mounted({ agent = 'researcher', model = 'Auto', effort = '' }: Pick = {}, data: ComposerData = DATA) {
+    const onSelect = vi.fn()
+    const view = render(<AgentModelPill data={data} agent={agent} model={model} effort={effort as never} onSelect={onSelect} />)
+    return { onSelect, view }
+  }
+  const note = () => screen.queryByRole('status')?.textContent ?? null
+
+  it.each([
+    ['on Auto', { model: 'Auto', effort: 'high' }, 'Effort set to Default: Auto has no High'],
+    ['on a native model that declares none', { model: 'Acme:flat', effort: 'high' }, 'Effort set to Default: Flat has no High'],
+    ['on a native model without that level', { model: 'Acme:deep', effort: 'max' }, 'Effort set to Default: Deep has no Max'],
+    ['on an agent CLI whose runtime declares none', { agent: 'Plain CLI', model: 'Auto', effort: 'high' }, 'Effort set to Default: Plain CLI has no High'],
+  ])('%s', (_, sel, said) => {
+    const { onSelect } = mounted(sel)
+    expect(onSelect.mock.calls).toEqual([[{ reasoning: '' }]])
+    expect(note()).toBe(said)
+  })
+
+  it('writes Default once, not on every render', () => {
+    const { onSelect, view } = mounted({ model: 'Auto', effort: 'high' })
+    view.rerender(<AgentModelPill data={{ ...DATA }} agent="researcher" model="Auto" effort={'high' as never} onSelect={onSelect} />)
+    expect(onSelect).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['a native model that declares the level', { model: 'Acme:deep', effort: 'high' }],
+    ['an agent CLI whose runtime declares the level', { agent: 'Example coder', model: 'Auto', effort: 'high' }],
+    ['a chat on Default', { model: 'Auto', effort: '' }],
+  ])('%s keeps its effort, without a word', (_, sel) => {
+    const { onSelect } = mounted(sel)
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(note()).toBeNull()
+  })
+
+  it('nothing is judged before the lists are read, when every model would look as if it declared none', () => {
+    const { onSelect, view } = mounted({ model: 'Acme:deep', effort: 'high' }, { ...DATA, models: [], ready: false })
+    expect(onSelect).not.toHaveBeenCalled()
+    view.rerender(<AgentModelPill data={{ ...DATA, ready: true }} agent="researcher" model="Acme:deep" effort={'high' as never} onSelect={onSelect} />)
+    expect(onSelect, 'Deep declares High').not.toHaveBeenCalled()
+    view.rerender(<AgentModelPill data={{ ...DATA, ready: true }} agent="researcher" model="Auto" effort={'high' as never} onSelect={onSelect} />)
+    expect(onSelect.mock.calls).toEqual([[{ reasoning: '' }]])
+  })
+
+  it('a pill that offers no effort leaves the chat’s effort to its host', () => {
+    const onSelect = vi.fn()
+    render(<AgentModelPill data={DATA} agent="researcher" model="Auto" effort={'high' as never} onSelect={onSelect} parts={{ agent: true, model: true, effort: false }} />)
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+})
+
 describe('the composer footer has one agent-and-model control and no separate effort control', () => {
   const CONTROLS = { agent: true, model: true, approval: false, reasoning: true, attach: false, mic: false, optimize: false }
 
