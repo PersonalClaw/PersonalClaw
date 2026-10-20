@@ -63,6 +63,14 @@ an ellipsis.
 
 A line is cut at a word boundary with an ellipsis; the work's name is cut first, never the state.
 
+The templates, the cut and this table are `web/src/lib/buddy/copy.ts`, and each surface reads its
+limit there by name. The name is cut first, down to 12 characters; then the text the line carries
+from elsewhere (an approval's brief, a question, a reason, a tool's label), down to 8; then the
+line's optional part goes whole: the time in "since <time>", the listening line's hint, or the
+return summary's "While you were away:". The state's own words, its counts, times and chord are
+never cut. Durations read as the app's `fmtElapsed` writes them (`web/src/lib/duration.ts`), and
+clock times as `clockTime` does.
+
 ## Tests
 
 Every state has a line on every surface that shows lines; no rendered line exceeds its surface's
