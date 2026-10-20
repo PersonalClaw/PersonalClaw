@@ -46,7 +46,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
   # ── Resolve the release every leg verifies ──────────────────────────────────────────────
@@ -112,15 +111,18 @@ jobs:
         # The image this job ran on, so a runner image that moves is visible in the log.
         run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false   # nothing in this leg pushes
       - name: Pull the released gateway image and drive the README's single-container smoke
         id: check
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -euo pipefail
-          IMAGE="ghcr.io/personalclaw/personalclaw-gateway:${VERSION}"
-          docker pull --platform linux/amd64 "$IMAGE"
-          python3 tools/docker_single_container_smoke.py --image "$IMAGE"
+          docker pull --platform linux/amd64 \
+            "ghcr.io/personalclaw/personalclaw-gateway:${VERSION}"
+          python3 tools/docker_single_container_smoke.py \
+            --image "ghcr.io/personalclaw/personalclaw-gateway:${VERSION}"
       - name: Record what this leg deliberately did not measure
         id: gap
         # The arm64 image needs QEMU (slow) or an arm runner, and #4330 leaves the choice
@@ -172,6 +174,8 @@ jobs:
         # The image this job ran on, so a runner image that moves is visible in the log.
         run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false   # nothing in this leg pushes
       - name: The AppImage and the deb, as a stranger downloads them
         id: check
         env:
@@ -223,7 +227,7 @@ jobs:
           ./PersonalClaw-*.AppImage --appimage-extract > /dev/null
           BACKEND=squashfs-root/resources/backend-dist/personalclaw-backend/personalclaw-backend
           test -x "$BACKEND"
-          "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$(pwd)/$BACKEND"
+          sh "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$(pwd)/$BACKEND"
       - name: Write the leg's verdict
         if: always()
         env:
@@ -263,6 +267,8 @@ jobs:
         # The image this job ran on, so a runner image that moves is visible in the log.
         run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false   # nothing in this leg pushes
       - name: The dmg, as a stranger downloads and mounts it
         id: check
         env:
@@ -314,10 +320,10 @@ jobs:
           echo "mounted: $DMG -> $APP"
           # The signature state AS SHIPPED inside the dmg: ad-hoc signed, valid seal, no
           # third-party authority (scripts/verify_macos_app_signature.sh owns the rules).
-          "$GITHUB_WORKSPACE/scripts/verify_macos_app_signature.sh" "$APP"
+          sh "$GITHUB_WORKSPACE/scripts/verify_macos_app_signature.sh" "$APP"
           BACKEND="$APP/Contents/Resources/backend-dist/personalclaw-backend/personalclaw-backend"
           test -x "$BACKEND"
-          "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$BACKEND"
+          sh "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$BACKEND"
       - name: Write the leg's verdict
         if: always()
         env:
@@ -353,6 +359,9 @@ jobs:
     # `always()` so the issue is kept even when a leg failed — but never when `resolve`
     # itself was skipped: a Release run that never published has nothing to report on.
     if: ${{ always() && needs.resolve.result == 'success' }}
+    permissions:
+      contents: read
+      issues: write   # the one "did not verify" issue; nothing else reaches it
     runs-on: ubuntu-24.04
     # Measured small: it reads artifacts and calls `gh`. A false red must not be bounded by
     # optimism, though, so this clears the two `gh api` calls by an order of magnitude.
