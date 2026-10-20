@@ -820,6 +820,11 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
                     else ""
                 ),
                 "folder_id": meta.get("folder_id", ""),
+                # The project it belongs to, as restoring the chat reads it (a string or none), so
+                # a chat lists under the same project whether it is live or kept only on disk.
+                "project_id": (
+                    meta["project_id"] if isinstance(meta.get("project_id"), str) else ""
+                ),
                 "pinned": bool(meta.get("pinned")),
                 "tags": [t for t in meta.get("tags", []) if isinstance(t, str)],
                 "color_index": meta.get("color_index"),

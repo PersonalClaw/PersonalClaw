@@ -312,8 +312,9 @@ function isoSeconds(raw: unknown): number | null {
   return Number.isFinite(ms) ? ms / 1000 : null
 }
 
-/** A loop's card title: its name, else its task's first line. */
-function loopTitle(l: Pick<LoopInput, 'name' | 'task'>): string {
+/** A loop's card title: its name, else its task's first line. The sidebar's thread rows name a
+ *  loop by it too (`useThreads`). */
+export function loopTitle(l: Pick<LoopInput, 'name' | 'task'>): string {
   return firstLine(l.name) || firstLine(l.task) || 'Loop'
 }
 
