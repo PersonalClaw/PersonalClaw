@@ -1,7 +1,7 @@
 """An effort the runtime declared it cannot honor must be refused, not persisted.
 
-The composer already hides its effort pill when the bound agent declares no options
-(``effortsForAgent`` → ``[]``), but both write paths accepted, PERSISTED and echoed back an
+The composer already hides its effort row when the bound agent declares no options
+(``effortsFor`` → ``[]``), but both write paths accepted, PERSISTED and echoed back an
 effort regardless: codex measured ``supported_efforts: []`` and a bind with
 ``reasoning_effort: "low"`` was still stored on the session and in its history metadata. A
 control the provider cannot honor is worse than a missing one — it is a setting the user is

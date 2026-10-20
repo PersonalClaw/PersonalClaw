@@ -887,7 +887,12 @@ export interface DiscoveredAgent {
   // runtime has no effort axis → composer hides the reasoning control.
   supported_efforts?: { value: string; label: string }[]
 }
-export interface ModelItem { name: string; model_name: string; description: string; provider: string }
+export interface ModelItem {
+  name: string; model_name: string; description: string; provider: string
+  /** The reasoning-effort levels the model takes, as its provider's record declares them. Absent
+   *  when it declares none, and then the composer offers it no effort choice. */
+  efforts?: string[]
+}
 
 // App Platform
 // An app's declared permission scope, exactly as `Permissions.to_dict()` emits it

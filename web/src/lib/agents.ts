@@ -161,7 +161,7 @@ export async function ensureBindableAgentName(value: string, discovered: Record<
 }
 
 /** A model option shaped for the Combobox, grouped by provider. Mirrors the
- *  chat composer's ModelPill (value=model.name, label=model_name||name,
+ *  chat composer's agent-and-model pill (value=model.name, label=model_name||name,
  *  group=provider) so a model dropdown reads identically everywhere. */
 export interface ModelOption { value: string; label: string; group: string; description?: string }
 

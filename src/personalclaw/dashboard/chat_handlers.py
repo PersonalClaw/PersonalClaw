@@ -1987,8 +1987,8 @@ async def api_chat_session_agent(request: web.Request) -> web.Response:
 def _effort_not_honorable(provider: str, effort: str) -> str | None:
     """Why *effort* cannot be honored on ACP runtime *provider*, or None if it can.
 
-    The composer already hides its effort pill when the bound agent declares no options
-    (``effortsForAgent`` → ``[]``), but the API accepted, PERSISTED and echoed back an
+    The composer already hides its effort row when the bound agent declares no options
+    (``effortsFor`` → ``[]``), but the API accepted, PERSISTED and echoed back an
     effort regardless — so the axis existed on the wire for a runtime that had reported it
     does not exist, and the value rode into the session metadata where a later read treats
     it as a real pin. A control the provider cannot honor is worse than a missing one: it

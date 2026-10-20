@@ -545,7 +545,7 @@ class ZedAdapterDialect(ACPDialect):
 
         # Effort is a per-turn SETTING, not an agent identity: surface the backend's
         # declared effort options VERBATIM as supported_efforts (the composer's
-        # ReasoningPill populates from these + applies them via set_effort_request).
+        # effort row populates from these + applies them via set_effort_request).
         # Exactly ONE base agent per runtime — no effort-agent explosion. The
         # "default" level is the empty selection ("" = backend default), so it isn't
         # listed as a pickable value.

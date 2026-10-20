@@ -13,8 +13,8 @@ import { loadAcpDiscovered } from './agents'
  *  `api.agents()` used to be indistinguishable from a genuinely empty roster —
  *  and the agent picker read that as "No agents available", asserting the user
  *  has no agents installed when in truth nothing had been read. `agentsErr`
- *  exists so the picker can tell the two apart; see `AgentPill` in
- *  `ui/composer/controls.tsx`. The models legs need no equivalent: neither model
+ *  exists so the picker can tell the two apart; see the agent half of
+ *  `AgentModelPill` in `ui/composer/controls.tsx`. The models legs need no equivalent: neither model
  *  path states an emptiness (see that file's branch table). */
 export function useComposerData() {
   const [agents, setAgents] = useState<AgentDef[]>([])

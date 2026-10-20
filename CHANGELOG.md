@@ -20,6 +20,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **The composer has one pill for the agent and the model; it offers a reasoning effort, under the chosen model, only for a model that declares its levels, and a switch to a model without the chat's level sets it back to Default and says so.**
 - **CI: `make gate` reuses a job's earlier clean pass on the same tree, inputs and machine, for the jobs whose class allows it, and says which job it reused and from which commit; `--no-reuse` runs every job.**
 - **Navigation and sending are instant; motion is kept for panels and moves.**
 

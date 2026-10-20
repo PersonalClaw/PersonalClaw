@@ -97,8 +97,8 @@ _JOB_WORDS = {
 }
 
 
-async def _listed_jobs(refs: list[str]) -> dict[tuple[str, str], list[str]]:
-    """What each ``provider:model`` ref's own provider lists the model for, where it says so.
+async def _listings(refs: list[str]) -> dict[tuple[str, str], list[Any]]:
+    """Each ``provider:model`` ref's rows in its own provider's listing, where it lists the model.
 
     A ref is in the answer, keyed ``(provider, model)``, only when its provider is a configured
     instance whose catalog lists the model. One whose provider could not be asked (no catalog,
@@ -142,16 +142,29 @@ async def _listed_jobs(refs: list[str]) -> dict[tuple[str, str], list[str]]:
 
     names = list(catalogs)
     listings = await asyncio.gather(*(_rows(catalogs[n]) for n in names), return_exceptions=True)
-    out: dict[tuple[str, str], list[str]] = {}
+    out: dict[tuple[str, str], list[Any]] = {}
     for name, rows in zip(names, listings):
         if isinstance(rows, BaseException):
             logger.debug("models of %s could not be listed to check a binding", name, exc_info=rows)
             continue
         for row in rows:
             if row.id in wanted[name]:
-                jobs = out.setdefault((name, row.id), [])
-                jobs.extend(c for c in row.capabilities or [] if c not in jobs)
+                out.setdefault((name, row.id), []).append(row)
     return out
+
+
+def _union(rows: list[Any], attr: str) -> list[str]:
+    """``attr`` of every listed row of one model, each value once, in the order first listed."""
+    out: list[str] = []
+    for row in rows:
+        out.extend(v for v in getattr(row, attr, None) or [] if v not in out)
+    return out
+
+
+async def _listed_jobs(refs: list[str]) -> dict[tuple[str, str], list[str]]:
+    """What each ``provider:model`` ref's own provider lists the model for, where it says so
+    (:func:`_listings` says which refs are in the answer)."""
+    return {key: _union(rows, "capabilities") for key, rows in (await _listings(refs)).items()}
 
 
 def _cannot_serve(use_case: str, provider: str, model: str, jobs: list[str]) -> str:
@@ -858,7 +871,9 @@ async def api_models_chat(request: web.Request) -> web.Response:
     Each entry carries BOTH ``model_name`` and ``model_id`` (the same bare id)
     plus ``name``/``provider``/``description`` — a superset shape so every
     consumer (composer model pill reads model_name; agent/chat pickers read
-    name/model_id) works off one endpoint.
+    name/model_id) works off one endpoint. An entry whose provider's record declares the
+    reasoning-effort levels the model takes carries them as ``efforts``; one that declares none
+    has no ``efforts``, and the composer offers it no effort choice.
     """
     active = load_active_models()
     chat_active = active.get("chat", [])
@@ -867,9 +882,15 @@ async def api_models_chat(request: web.Request) -> web.Response:
     chat_active = [ref for ref in chat_active if names_model(ref)]
     # Nor is one its own provider lists for something other than chat, bound before the PUT
     # checked: a turn on it fails. One its provider does not describe is offered as bound.
-    jobs_of = await _listed_jobs(chat_active)
+    listings = await _listings(chat_active)
+
+    def _rows_of(ref: str) -> list[Any] | None:
+        return listings.get(split_ref(ref) or ("", ref))
+
     chat_active = [
-        ref for ref in chat_active if "chat" in jobs_of.get(split_ref(ref) or ("", ref), ["chat"])
+        ref
+        for ref in chat_active
+        if (rows := _rows_of(ref)) is None or "chat" in _union(rows, "capabilities")
     ]
     if chat_active:
         result = []
@@ -878,15 +899,17 @@ async def api_models_chat(request: web.Request) -> web.Response:
                 provider_name, model_id = model_ref.split(":", 1)
             else:
                 provider_name, model_id = "", model_ref
-            result.append(
-                {
-                    "name": model_id if not provider_name else model_ref,
-                    "model_name": model_id,
-                    "model_id": model_id,
-                    "provider": provider_name,
-                    "description": model_id,
-                }
-            )
+            row: dict[str, Any] = {
+                "name": model_id if not provider_name else model_ref,
+                "model_name": model_id,
+                "model_id": model_id,
+                "provider": provider_name,
+                "description": model_id,
+            }
+            efforts = _union(_rows_of(model_ref) or [], "efforts")
+            if efforts:
+                row["efforts"] = efforts
+            result.append(row)
         return web.json_response(result)
 
     # Fallback: no active selection — discover chat-capable models from every
@@ -911,18 +934,19 @@ async def api_models_chat(request: web.Request) -> web.Response:
     providers_cfg = [p for p in config_rows if not _cannot_serve(p.get("name", ""))]
     all_models: list[dict[str, Any]] = []
 
-    def _add(pname: str, mid: str) -> None:
+    def _add(pname: str, mid: str, efforts: list[str] | None = None) -> None:
         if not str(mid or "").strip():
             return  # a listing row with no id is no model to offer
-        all_models.append(
-            {
-                "name": f"{pname}/{mid}" if pname else mid,
-                "model_name": mid,
-                "model_id": mid,
-                "provider": pname,
-                "description": mid,
-            }
-        )
+        row: dict[str, Any] = {
+            "name": f"{pname}/{mid}" if pname else mid,
+            "model_name": mid,
+            "model_id": mid,
+            "provider": pname,
+            "description": mid,
+        }
+        if efforts:
+            row["efforts"] = list(efforts)
+        all_models.append(row)
 
     from personalclaw.llm.registry import canonical_provider_type
     from personalclaw.providers.connection import (
@@ -965,7 +989,7 @@ async def api_models_chat(request: web.Request) -> web.Response:
                 continue
             for mi in models_or_exc:
                 if "chat" in (mi.capabilities or []):
-                    _add(pname, mi.id)
+                    _add(pname, mi.id, getattr(mi, "efforts", None))
 
     # Entries an APP registers itself rather than a config.json row — the bundled floor model —
     # contribute their pinned model when they can serve. They are what a fresh install actually

@@ -93,7 +93,10 @@ class BrandedCatalog(ModelCatalog):
     catalog — see :meth:`list_models` and #955.
 
     ``capabilities_of`` reads what the vendor's own model records say each model does (see
-    :func:`openai_compatible_discover_models`); without one, a model is read by its id."""
+    :func:`openai_compatible_discover_models`); without one, a model is read by its id.
+    ``efforts_of`` reads the same records for the reasoning-effort levels each model takes, and a
+    curated ``fallback_models`` row names its own ``efforts``; without either, a model declares
+    none."""
 
     def __init__(
         self,
@@ -103,9 +106,11 @@ class BrandedCatalog(ModelCatalog):
         api_key: str = "",
         default_model: str = "",
         capabilities_of: Callable[[dict[str, Any]], list[str]] | None = None,
+        efforts_of: Callable[[dict[str, Any]], list[str]] | None = None,
     ) -> None:
         self._spec = spec
         self._capabilities_of = capabilities_of
+        self._efforts_of = efforts_of
         self._endpoint = endpoint or spec.default_base_url
         # Only the EXPLICIT key is stored; the env / subscription hops are resolved per call
         # by `_resolved_key` (a catalog instance outlives a `claude login`, so freezing the
@@ -144,6 +149,7 @@ class BrandedCatalog(ModelCatalog):
                 id=m["id"],
                 name=m.get("name", m["id"]),
                 capabilities=list(m.get("capabilities", infer_capabilities(m["id"]))),
+                efforts=[str(e) for e in m.get("efforts") or ()],
             )
             for m in self._spec.fallback_models
         ]
@@ -186,6 +192,7 @@ class BrandedCatalog(ModelCatalog):
                 api_key,
                 default_base=self._spec.default_base_url,
                 capabilities_of=self._capabilities_of,
+                efforts_of=self._efforts_of,
             )
         except ModelDiscoveryError as exc:
             fallback = self._fallback()
@@ -226,6 +233,7 @@ class BrandedCatalog(ModelCatalog):
                 api_key,
                 default_base=self._spec.default_base_url,
                 capabilities_of=self._capabilities_of,
+                efforts_of=self._efforts_of,
             )
         except ModelDiscoveryError as exc:
             return ConnectionResult(
@@ -306,6 +314,7 @@ def register_branded_app(
     spec: BrandedProviderSpec,
     *,
     capabilities_of: Callable[[dict[str, Any]], list[str]] | None = None,
+    efforts_of: Callable[[dict[str, Any]], list[str]] | None = None,
 ) -> tuple[Callable, Callable, Callable]:
     """Wire a branded/generic protocol provider app into the default registry and
     return its ``(_factory, create_provider, create_catalog)`` trio.
@@ -321,6 +330,11 @@ def register_branded_app(
     (``["chat", "image_modality"]``, ``["embedding"]``, ``[]`` for none). An app whose vendor
     describes its models passes one, so a picker offers each model for what the vendor says; one
     whose vendor lists bare ids leaves it out, and its models are read by their ids.
+
+    ``efforts_of`` reads the same record for the reasoning-effort levels the model takes
+    (``["low", "medium", "high"]``, ``[]`` for none). The composer offers a model an effort choice
+    only when it declares levels, so an app whose vendor says how deep a model reasons passes one;
+    a curated ``fallback_models`` row says it with its own ``efforts`` key.
     """
 
     def _factory(
@@ -399,6 +413,7 @@ def register_branded_app(
             api_key=str(opts.get("api_key") or ""),
             default_model=str(model or opts.get("default_model") or opts.get("model") or ""),
             capabilities_of=capabilities_of,
+            efforts_of=efforts_of,
         )
 
     # ── Registration (import-time side effect, like every model app) ──
