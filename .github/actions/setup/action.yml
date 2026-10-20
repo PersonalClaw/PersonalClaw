@@ -1,9 +1,10 @@
 name: Set up the toolchain
 description: >-
-  uv with the job's exact Python, and Node from .nvmrc, for a ci.yml job. The job checks out
-  the repository first (a local action loads only from a checkout) and keeps its own installs
-  (`uv sync`, `npm ci`) and its junit upload, which runs after its tests: a composite action
-  has no post step.
+  uv with the job's exact Python, Node from .nvmrc, and the programs a catalogue job needs that
+  the runner image may lack, for a ci.yml, pr.yml or merge.yml job. The job checks out the
+  repository first (a local action loads only from a checkout) and keeps its own installs
+  (`uv sync`, `npm ci`, which `run-job` runs for a catalogue entry) and its junit upload, which
+  runs after its tests: a composite action has no post step.
 inputs:
   python-version:
     description: The exact Python (X.Y.Z) setup-uv installs. Empty sets up no uv.
@@ -16,6 +17,13 @@ inputs:
       setup-node's `cache`. Empty passes none, which leaves setup-node's own default: that caches
       npm too, because package.json's packageManager names npm.
     default: npm
+  programs:
+    description: >-
+      The programs of a catalogue job's toolchain that run-job finds on PATH and does not install
+      (tools/ci/plan.py SETUP_PROGRAMS: tmux, shellcheck, dash), space-separated, as the plan's
+      matrix names them. Each one PATH lacks is installed from the runner's package manager.
+      Empty installs none.
+    default: ""
 runs:
   using: composite
   steps:
@@ -35,3 +43,34 @@ runs:
       with:
         node-version-file: .nvmrc
         cache: ${{ inputs.node-cache }}
+    # A program that is missing reds here, in this step, rather than as a skip later: run-job
+    # refuses a job whose toolchain program is not on PATH, and a test gated on the program
+    # would otherwise read its absence as a pass. Only the programs SETUP_PROGRAMS names, each
+    # name checked before anything installs, and none read as a pattern (`set -f`).
+    - name: Install the programs the job's toolchain names
+      if: inputs.programs != ''
+      shell: bash
+      env:
+        PROGRAMS: ${{ inputs.programs }}
+      run: |
+        set -euf
+        for tool in $PROGRAMS; do
+          case "$tool" in
+            tmux) ;;
+            shellcheck) ;;
+            dash) ;;
+            *) echo "the setup action installs tmux, shellcheck and dash, not $tool" >&2; exit 1 ;;
+          esac
+        done
+        updated=""
+        for tool in $PROGRAMS; do
+          if command -v "$tool" >/dev/null 2>&1; then continue; fi
+          case "$RUNNER_OS" in
+            Linux)
+              if [ -z "$updated" ]; then sudo apt-get update -qq; updated=yes; fi
+              sudo apt-get install -y --no-install-recommends "$tool" ;;
+            macOS) brew install "$tool" ;;
+            *) echo "no installer known for $tool on RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
+          esac
+          command -v "$tool"
+        done

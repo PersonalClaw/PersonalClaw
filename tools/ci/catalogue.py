@@ -2,10 +2,11 @@
 
 One entry per validation job says what the job runs, on what, for which tiers, what it reads
 from outside the tree, and whether its result may stand for a later run of the same inputs.
-Nothing runs from the catalogue yet: the workflows still run their own ``run:`` lines, and the
-CI contract table's row "every catalogue command is the workflow's" holds the two to each other:
-each entry's steps are its ci.yml jobs' lines, token for token and in order, and each line of
-those jobs that validates something is one entry's step.
+``ci.yml`` and ``breadth.yml`` still run their own ``run:`` lines (``pr.yml`` and ``merge.yml``,
+on dispatch only, run each job through ``run-job``), and the CI contract table's row "every
+catalogue command is the workflow's" holds the two to each other: each entry's steps are its
+ci.yml jobs' lines, token for token and in order, and each line of those jobs that validates
+something is one entry's step.
 
 A command is a list of steps, each an argv run from the repository root (or from ``workdir``
 under it), with its own ``env`` set on top of its job's. A value only the runner knows is spelled

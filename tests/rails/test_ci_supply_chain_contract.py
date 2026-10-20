@@ -271,6 +271,21 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
                 "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0",
                 "actions/github-script@v9",
             ),
+            # The tier workflows (#3915) are read as every workflow is.
+            _plant(
+                "an action by tag in pr.yml",
+                ".github/workflows/pr.yml",
+                "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2",
+                "actions/upload-artifact@v7",
+                expect="actions/upload-artifact@v7 is not pinned by commit SHA",
+            ),
+            _plant(
+                "an action by branch in merge.yml",
+                ".github/workflows/merge.yml",
+                "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2",
+                "actions/download-artifact@main",
+                expect="actions/download-artifact@main is not pinned by commit SHA",
+            ),
             _plant(
                 "an action by branch",
                 _RELEASE_YML,

@@ -44,9 +44,10 @@ and ``jobs=<JSON list>``, on stdout, and the plan on stderr.
 
 ``--matrix`` prints the plan as a job matrix (:func:`matrix`): one entry per planned job and
 shard, keyed as ``run-job`` keys its record, each with the stage it runs in after the planned
-jobs whose output it uses. With ``--outputs`` it adds two lines, ``matrix=<JSON>`` (the
-``include`` list a ``strategy.matrix`` reads) and ``keys=<JSON list>`` (every entry's key, the
-plan a results stage judges the uploaded records against).
+jobs whose output it uses. With ``--outputs`` it adds ``matrix=<JSON>`` (the ``include`` list a
+``strategy.matrix`` reads), ``keys=<JSON list>`` (every entry's key, the plan a results stage
+judges the uploaded records against), and a ``matrix-<job>=<JSON>`` line for each workflow job
+that runs part of it (:func:`stage_jobs`): ``build``, ``test`` and ``test-<k>``.
 
 Standard library only, like every ``tools/ci`` module. Pathspecs are read as git reads them;
 a test holds :func:`reaches` to ``git ls-files`` over the forms the catalogue accepts, and the
@@ -73,7 +74,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
 
-from . import catalogue, rails_census, shards
+from . import catalogue, rails_census, shards, verdict
 from .catalogue import Catalogue, Job, Override
 
 #: What :func:`rails_floor` says when no passing rails run is recorded.
@@ -412,6 +413,17 @@ def _plan(
 # ── the plan as a job matrix ─────────────────────────────────────────────────────────────────
 
 
+#: The toolchain words that are a program the setup action (``.github/actions/setup``) installs
+#: from the runner's package manager when the image lacks it: ``run-job`` installs ``uv-sync``,
+#: ``npm-ci`` and ``chromium`` itself, the action sets up ``uv`` and ``node`` from the entry's
+#: ``python`` and ``node``, and ``run-job`` finds every other program on PATH or cannot run.
+SETUP_PROGRAMS: tuple[str, ...] = ("tmux", "shellcheck", "dash")
+
+#: The workflow job that runs the stage-1 entries a later entry waits for, and the one that runs
+#: every other stage-1 entry beside it. Stage ``k`` from 2 is run by ``test-<k>``.
+BUILD_JOB, TEST_JOB = "build", "test"
+
+
 def matrix_key(job: Job, shard: int | None) -> str:
     """The key of one matrix entry: ``run-job``'s record key for that job and shard, so a
     workflow's results stage can name exactly which planned record is missing."""
@@ -428,7 +440,13 @@ def matrix(cat: Catalogue, planned: Plan) -> dict[str, Any]:
     workflow runs one matrix per stage, each after the one before. ``keys`` lists every entry's
     key: the plan a results stage judges the run's records against. A planned job the catalogue
     does not hold, or an ``after`` that makes a cycle, raises ValueError naming it, so the
-    command plans nothing and its caller runs everything."""
+    command plans nothing and its caller runs everything.
+
+    What the workflow's test stage needs besides: ``slug``, the key as the record artifact's
+    name spells it (``verdict.record_slug``); ``history``, whether the checkout needs the whole
+    history (a step names ``{base}``, which ``run-job`` reads as the merge-base with
+    ``origin/main``); ``programs``, the toolchain's :data:`SETUP_PROGRAMS`; and
+    ``external``, the job's external inputs (the shard plan, a partner checkout)."""
     by_id = {j.id: j for j in cat.jobs}
     gone = [j for j in planned.jobs if j not in by_id]
     if gone:
@@ -460,9 +478,33 @@ def matrix(cat: Catalogue, planned: Plan) -> dict[str, Any]:
                     "container": job.container or "",
                     "after": list(waits[job_id]),
                     "stage": stage(job_id),
+                    "slug": verdict.record_slug(matrix_key(job, shard)),
+                    "history": any("base" in step.placeholders() for step in job.command),
+                    "programs": [t for t in job.toolchain if t in SETUP_PROGRAMS],
+                    "external": list(job.external_inputs),
                 }
             )
     return {"include": include, "keys": [e["key"] for e in include]}
+
+
+def stage_jobs(grid: Mapping[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """A matrix's entries by the workflow job that runs them, each list in plan order, and only
+    the jobs with an entry: :data:`BUILD_JOB`, the stage-1 entries a later entry waits for;
+    :data:`TEST_JOB`, every other stage-1 entry, which waits for nothing and starts beside
+    ``build``; and ``test-<k>`` for stage ``k`` from 2, after the stage before it (``test-2``
+    after ``build``). So a long stage-1 entry no other entry needs never holds back the stages
+    that wait on the build."""
+    entries = list(grid["include"])
+    waited = {a for e in entries for a in e["after"]}
+    out: dict[str, list[dict[str, Any]]] = {}
+    for e in entries:
+        if e["stage"] == 1:
+            name = BUILD_JOB if e["id"] in waited else TEST_JOB
+        else:
+            name = f"{TEST_JOB}-{e['stage']}"
+        out.setdefault(name, []).append(e)
+    # By stage, and build before test within stage 1.
+    return dict(sorted(out.items(), key=lambda item: (item[1][0]["stage"], item[0] != BUILD_JOB)))
 
 
 # ── the rails floor ──────────────────────────────────────────────────────────────────────────
@@ -767,6 +809,10 @@ def main(argv: list[str]) -> int:
             include = {"include": grid["include"]}
             print("matrix=" + json.dumps(include, separators=(",", ":"), sort_keys=True))
             print("keys=" + json.dumps(grid["keys"], separators=(",", ":")))
+            # One more line per workflow job that runs part of it, each its own `include`.
+            for name, entries in stage_jobs(grid).items():
+                part = json.dumps({"include": entries}, separators=(",", ":"), sort_keys=True)
+                print(f"matrix-{name}={part}")
         return 0
     if grid is not None:
         print(json.dumps(grid, sort_keys=True, indent=1))

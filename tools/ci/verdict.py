@@ -635,14 +635,23 @@ ATTEMPT_TEXT = re.compile(r"[1-9][0-9]{0,5}")
 RUN_ID_TEXT = re.compile(r"[1-9][0-9]{0,18}")
 
 
+def record_slug(key: str) -> str:
+    """A record key as its artifact's name spells it: lowercase, with each run of anything but a
+    letter, a digit or ``-`` one ``-`` (``python-suite (2/4)`` is ``python-suite-2-4``). The plan's
+    matrix carries it, since a workflow cannot work it out from the key. A key with nothing left
+    is refused."""
+    slug = re.sub(r"[^a-z0-9-]+", "-", key.lower()).strip("-") if isinstance(key, str) else ""
+    if not slug:
+        raise Refused(f"a record's key must name a job, got {key!r}")
+    return slug
+
+
 def record_artifact(key: str, *, run_id: int, attempt: int) -> str:
     """The artifact name a test-stage entry uploads its record under: the key's slug, the run and
     the attempt, so a rerun's records never overwrite the first attempt's. :func:`read_records`
     reads a record only from the folder this names for its own key and attempt in the run it
     judges, so another run's artifact, or a renamed one, is refused."""
-    slug = re.sub(r"[^a-z0-9-]+", "-", key.lower()).strip("-") if isinstance(key, str) else ""
-    if not slug:
-        raise Refused(f"a record's key must name a job, got {key!r}")
+    slug = record_slug(key)
     for name, value in (("run_id", run_id), ("attempt", attempt)):
         if not _whole(value) or value < 1:
             raise Refused(

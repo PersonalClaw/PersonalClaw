@@ -13,6 +13,7 @@ import pytest
 
 from tools.ci import catalogue, jobs
 from tools.ci import plan as planner
+from tools.ci import verdict
 
 pytestmark = pytest.mark.security
 
@@ -135,6 +136,10 @@ def test_an_entry_carries_what_its_job_needs_to_run() -> None:
         "container": "",
         "after": [],
         "stage": 1,
+        "slug": "python-suite-2-3",
+        "history": False,
+        "programs": [],
+        "external": [],
     }
     assert by_key["python-suite-macos (1/2)"]["runs-on"] == "macos-26"
     assert by_key["web"]["shard"] == "" and by_key["web"]["python"] == ""
@@ -239,6 +244,147 @@ def test_the_real_merge_tier_puts_each_job_after_the_jobs_whose_output_it_uses()
     assert stage["e2e"] == 3
 
 
+def _real() -> catalogue.Catalogue:
+    path = catalogue.REPO / catalogue.CATALOGUE
+    return catalogue.load(path.read_text(encoding="utf-8"), str(path))
+
+
+def _real_entries(tier: str) -> list[dict]:
+    cat = _real()
+    return planner.matrix(cat, planner.plan(cat, tier, None, overrides=()))["include"]
+
+
+@pytest.mark.parametrize("tier", ["change", "merge", "breadth"])
+def test_an_entrys_slug_names_the_artifact_its_record_is_uploaded_under(tier: str) -> None:
+    # A workflow cannot slugify a key, so the entry carries the slug the verdict's artifact name
+    # is built from: the test stage uploads `ci-record-<slug>-<run id>-<attempt>`, and the
+    # results stage reads a record only from the folder record_artifact names for its key.
+    for e in _real_entries(tier):
+        for run_id, attempt in ((1, 1), (40123456789, 3)):
+            assert verdict.record_artifact(e["key"], run_id=run_id, attempt=attempt) == (
+                f"{verdict.RECORD_ARTIFACT_PREFIX}{e['slug']}-{run_id}-{attempt}"
+            ), e["key"]
+
+
+def test_the_slug_is_the_record_artifacts_for_keys_of_every_shape() -> None:
+    slugs = {
+        "static": "static",
+        "python-suite (2/4)": "python-suite-2-4",
+        "e2e-shard (1/2)": "e2e-shard-1-2",
+        "A_b  c": "a-b-c",
+        "x/y": "x-y",
+        "-Lead-": "lead",
+    }
+    for key, slug in slugs.items():
+        assert verdict.record_slug(key) == slug, key
+        assert verdict.record_artifact(key, run_id=7, attempt=1) == (
+            f"{verdict.RECORD_ARTIFACT_PREFIX}{slug}-7-1"
+        )
+    with pytest.raises(verdict.Refused):
+        verdict.record_slug("(/)")
+
+
+def test_an_entry_names_the_programs_the_setup_action_puts_on_path() -> None:
+    by_id = {e["id"]: e for e in _real_entries("merge")}
+    # run-job installs uv-sync, npm-ci and chromium itself and finds every other program on
+    # PATH, so the setup action installs the ones a runner image may lack, in the catalogue's
+    # order: the installer's linters for static, tmux for the suites' real-daemon leg.
+    assert by_id["static"]["programs"] == ["shellcheck", "dash"]
+    assert by_id["python-suite"]["programs"] == ["tmux"]
+    assert by_id["python-suite-macos"]["programs"] == ["tmux"]
+    assert by_id["web-unit"]["programs"] == []
+
+
+def test_every_toolchain_word_is_set_up_by_exactly_one_party() -> None:
+    # uv and node by the setup action's python-version and node inputs; the installs by
+    # run-job; the programs by the setup action's programs input. A word in none of them would
+    # leave a job that cannot run on a runner, and a word in two would be set up twice.
+    parties = [{"uv", "node"}, set(jobs.INSTALL_ARGV), set(planner.SETUP_PROGRAMS)]
+    assert set().union(*parties) == set(catalogue.TOOLCHAINS)
+    assert sum(len(p) for p in parties) == len(catalogue.TOOLCHAINS)
+    assert set(planner.SETUP_PROGRAMS) <= set(jobs.PROGRAMS)
+
+
+def test_an_entry_takes_the_whole_history_when_its_job_reads_a_base() -> None:
+    by_id = {e["id"]: e for e in _real_entries("merge")}
+    # apps-contract's step names {base}, which run-job reads as the merge-base with origin/main,
+    # and a depth-1 checkout does not hold it. static's scan reads the whole tree, no base.
+    assert by_id["apps-contract"]["history"] is True
+    assert by_id["static"]["history"] is False
+    assert by_id["python-suite"]["history"] is False
+    assert by_id["web-build"]["history"] is False
+    # A job whose step takes a diff's base, in a catalogue of its own.
+    text = _TEXT.replace(
+        'command = [{ argv = ["uv", "run", "pytest", "tests/rails"] }]',
+        'command = [{ argv = ["uv", "run", "pytest", "tests/rails", "--base", "{base}"] }]',
+    )
+    by_key = {e["key"]: e for e in _matrix(None, text)["include"]}
+    assert by_key["rails"]["history"] is True and by_key["security"]["history"] is False
+
+
+def test_an_entry_names_its_external_inputs() -> None:
+    by_id = {e["id"]: e for e in _real_entries("merge")}
+    # The shard plan a suite shard reads, and the partner checkout apps-contract reads.
+    assert by_id["python-suite"]["external"] == ["shard-history"]
+    assert by_id["apps-contract"]["external"] == ["apps-partner", "package-index"]
+    assert by_id["rails"]["external"] == []
+
+
+# ── the workflow jobs a matrix is run by ─────────────────────────────────────────────────────
+
+
+def _split(paths: list[str] | None = None, text: str = _TEXT) -> dict[str, list[str]]:
+    jobs_ = planner.stage_jobs(_matrix(paths, text))
+    return {name: [e["key"] for e in entries] for name, entries in jobs_.items()}
+
+
+def test_stage_one_splits_into_what_a_later_stage_waits_for_and_the_rest() -> None:
+    # `build` holds the stage-1 entries a later entry uses; `test` the stage-1 entries nothing
+    # waits for, which start beside `build`; `test-<k>` stage k from 2. So the suites never
+    # hold back the stage that waits on the build.
+    assert _split() == {
+        "build": ["web-build"],
+        "test": [
+            "rails",
+            "python-suite (1/3)", "python-suite (2/3)", "python-suite (3/3)",
+            "python-suite-macos (1/2)", "python-suite-macos (2/2)",
+            "security",
+        ],
+        "test-2": ["web"],
+    }  # fmt: skip
+
+
+def test_a_stage_job_with_no_entry_is_not_named() -> None:
+    cat = _cat()
+    narrowed = planner.Plan("merge", False, ("rails", "web"), {"rails": ["x"], "web": ["x"]}, ())
+    assert {
+        name: [e["key"] for e in entries]
+        for name, entries in planner.stage_jobs(planner.matrix(cat, narrowed)).items()
+    } == {"test": ["rails", "web"]}
+
+
+def test_the_real_tiers_split_into_their_workflows_stage_jobs() -> None:
+    merge = {
+        name: [e["id"] for e in entries]
+        for name, entries in planner.stage_jobs({"include": _real_entries("merge")}).items()
+    }
+    assert list(merge) == ["build", "test", "test-2", "test-3"]
+    assert merge["build"] == ["web-build"]
+    assert merge["test-2"] == ["package", "e2e-shard", "e2e-shard", "e2e-stateful"]
+    assert merge["test-3"] == ["e2e"]
+    change = planner.stage_jobs({"include": _real_entries("change")})
+    assert list(change) == ["test"]
+    # Every entry is in exactly one job, in plan order within it.
+    for tier in ("change", "merge", "breadth"):
+        entries = _real_entries(tier)
+        split = planner.stage_jobs({"include": entries})
+        flat = [e["key"] for job in split.values() for e in job]
+        assert sorted(flat) == sorted(e["key"] for e in entries)
+        for job in split.values():
+            keys = [e["key"] for e in job]
+            assert keys == [e["key"] for e in entries if e["key"] in keys]
+
+
 def test_the_real_breadth_tier_carries_a_container_entrys_container() -> None:
     root = catalogue.REPO
     path = root / catalogue.CATALOGUE
@@ -279,12 +425,21 @@ def test_the_command_adds_the_matrix_and_keys_to_its_output_lines(tmp_path: Path
     done = _cli(tmp_path, "--matrix", "--outputs")
     assert done.returncode == 0, done.stderr
     lines = done.stdout.splitlines()
-    assert [line.split("=", 1)[0] for line in lines] == ["full", "jobs", "matrix", "keys"]
+    assert [line.split("=", 1)[0] for line in lines] == [
+        "full", "jobs", "matrix", "keys", "matrix-build", "matrix-test", "matrix-test-2",
+    ]  # fmt: skip
     matrix = json.loads(lines[2].split("=", 1)[1])
     # The object a workflow's `strategy.matrix` reads holds `include` alone: any other key
     # would become a matrix dimension and multiply the jobs.
     assert set(matrix) == {"include"}
     assert json.loads(lines[3].split("=", 1)[1]) == [e["key"] for e in matrix["include"]]
+    # One line per stage job with an entry, each its own `include` alone, together the matrix.
+    split = {line.split("=", 1)[0]: json.loads(line.split("=", 1)[1]) for line in lines[4:]}
+    assert all(set(m) == {"include"} for m in split.values())
+    split_keys = [e["key"] for m in split.values() for e in m["include"]]
+    assert sorted(split_keys) == sorted(json.loads(lines[3].split("=", 1)[1]))
+    assert [e["key"] for e in split["matrix-build"]["include"]] == ["web-build"]
+    assert [e["key"] for e in split["matrix-test-2"]["include"]] == ["web"]
 
 
 def test_without_matrix_the_output_lines_are_unchanged(tmp_path: Path) -> None:

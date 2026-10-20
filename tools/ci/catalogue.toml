@@ -1,11 +1,11 @@
 # The catalogue of CI's validation jobs, read by tools/ci/catalogue.py.
 #
-# One [[job]] per job. Nothing runs from this file yet: ci.yml still runs its own run: lines,
-# and the CI contract table's row "every catalogue command is the workflow's" holds the two to
-# each other: each step below is a run: line of the ci.yml job it maps to, token for token and in
-# order, and each run: line of that job that validates something is one entry's step. Change a
-# command in both places, in the same commit. docs/maintainers/ci.md ("The catalogue") says what
-# each field means and how to add a job.
+# One [[job]] per job. ci.yml still runs its own run: lines (pr.yml and merge.yml, on dispatch
+# only, run each job through run-job), and the CI contract table's row "every catalogue command
+# is the workflow's" holds the two to each other: each step below is a run: line of the ci.yml
+# job it maps to, token for token and in order, and each run: line of that job that validates
+# something is one entry's step. Change a command in both places, in the same commit.
+# docs/maintainers/ci.md ("The catalogue") says what each field means and how to add a job.
 #
 # A step is an argv run from the repository root, or from `workdir` under it, with `env` (its
 # workflow step's own env) set on top of its job's. A value only the runner knows is a

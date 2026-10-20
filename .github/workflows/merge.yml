@@ -1,0 +1,646 @@
+# Merge — the merge tier's verdict on one candidate (#3915), on dispatch only for now.
+#
+# ONE SHAPE: PLAN, BUILD, TEST, RESULTS. `changes` plans the merge tier with main's planner
+# (tools/ci/plan.py) and prints the plan as a job matrix: one entry per planned catalogue job and
+# shard. Each entry runs as ONE command, `python -m tools.ci run-job <id> [--shard i/N]`, after
+# the setup action (.github/actions/setup), so the catalogue (tools/ci/catalogue.toml) is what
+# runs, token for token. `build` runs the entries a later entry uses (web-build's dist), `test`
+# every other entry that waits for nothing, beside it, and `test-2` and `test-3` the entries that
+# use the output of the stage before. Each entry uploads its job's record under the name
+# tools/ci/verdict.py's record_artifact gives it, and `results` judges the plan's keys against
+# those records with main's verdict.py. A planned entry with no record, a cancelled, skipped or
+# red one, a record of another head, run or later attempt, and a failed job of this run each
+# read red: nothing missing can read as a pass.
+#
+# DISPATCH ONLY, BESIDE ci.yml. ci.yml stays the check every pull request and every push to main
+# runs, so no check a pull request reports today moves. This runs when it is dispatched, to time
+# a merge run of a branch without doubling every pull request's cost. Its result posts no check
+# of its own and is no gate yet: the pull request and push triggers come with the change that
+# retires ci.yml, and `merge-verdict` is the trusted controller's alone (#3910). pr.yml is the
+# change tier's half of the same shape.
+#
+# The run's records are kept 30 days: the controller and the push replay (#3919) read them at
+# merge, after the run. Every other artifact is kept as long as ci.yml keeps its own.
+#
+# The CI contract table (tests/rails/test_ci_contract.py) holds this file to the shape: every
+# job is a stage job or orchestration, each orchestration job runs a closed list of lines, each
+# stage job runs only run-job, no trigger is trusted and no job holds a write. See
+# docs/maintainers/ci.md, "The tier workflows".
+name: Merge
+
+on:
+  workflow_dispatch: {}
+
+# One run per commit at a time, and a run in flight is never cancelled: a later dispatch of the
+# same commit waits.
+concurrency:
+  group: merge-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # Every uv step uses a uv-managed CPython, never the runner image's own (see ci.yml's env).
+  UV_PYTHON_PREFERENCE: only-managed
+
+jobs:
+  changes:
+    # ── The plan, and main's check of this run's catalogue ──────────────────────────────────
+    # The changed paths are what this commit changed against main's tip. The planner and its
+    # rules are main's, archived from main's tip into a folder of their own, never this
+    # checkout's, as ci.yml's `changes` plans. Only the keys and the stage jobs' matrices are
+    # published, each read back first; an answer that is not a plan publishes nothing and fails
+    # the job, so `results` reads an empty plan and a failed job, red.
+    #
+    # The check step runs main's `catalogue-check` over this checkout's catalogue (#3909), as
+    # ci.yml's does: a refusal fails this job, which `results` reads in `needs`, so the verdict
+    # is red. It is this job's last step, so nothing after it runs only on its green.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read   # main's recent CI runs and their telemetry, for the rails floor
+    outputs:
+      keys: ${{ steps.plan.outputs.keys }}
+      build: ${{ steps.plan.outputs.build }}
+      test: ${{ steps.plan.outputs.test }}
+      test-2: ${{ steps.plan.outputs.test-2 }}
+      test-3: ${{ steps.plan.outputs.test-3 }}
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # Depth 1 deliberately: the planner reads a path LIST and the catalogue, never history.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: plan the tier with main's planner, as a matrix per stage job
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.sha }}
+          TIER: merge
+          STAGE_JOBS: build test test-2 test-3
+        run: |
+          set -uo pipefail
+          listed="$RUNNER_TEMP/changed.json"
+          changed="$RUNNER_TEMP/changed.txt"
+          # Each name as a JSON string on a line of its own, so a name with a newline in it stays
+          # one name. A failed enumeration is the empty list, which plans the whole tier.
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/main...${HEAD_SHA}" \
+            --jq '.files[].filename | @json' > "$listed" || : > "$listed"
+          python3 -c 'import json, sys; names = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]; assert all(isinstance(n, str) and "\0" not in n for n in names); sys.stdout.write("".join(n + "\0" for n in names))' "$listed" > "$changed" || : > "$changed"
+          echo "enumerated $(tr -cd '\000' < "$changed" | wc -c) changed path(s)"
+          judge="$RUNNER_TEMP/judge"
+          if ! { rm -rf "$judge" && mkdir -p "$judge" \
+                 && git fetch --no-tags --depth=1 origin refs/heads/main \
+                 && git archive FETCH_HEAD tools/ci | tar -x -C "$judge"; }; then
+            echo "::error title=no plan::main's tools/ci could not be fetched, so nothing is planned and the verdict is red. Re-run the job."
+            exit 1
+          fi
+          : > "$RUNNER_TEMP/plan.err"
+          answer=$(cd "$judge" && python3 -m tools.ci plan "$TIER" \
+                     --catalogue "$GITHUB_WORKSPACE/tools/ci/catalogue.toml" \
+                     --trusted-areas "$judge/tools/ci/areas.toml" \
+                     --root "$GITHUB_WORKSPACE" --paths "$changed" -z \
+                     --repo "$GITHUB_REPOSITORY" --outputs --matrix \
+                     2> "$RUNNER_TEMP/plan.err") || answer=""
+          cat "$RUNNER_TEMP/plan.err" >> "$GITHUB_STEP_SUMMARY"
+          sed -n '/^::warning[ :]/p' "$RUNNER_TEMP/plan.err"
+          printf '%s\n' "$answer" > "$RUNNER_TEMP/answer.txt"
+          # Published: the keys, and each stage job's matrix, read back as JSON. Refused: no
+          # keys, a line twice, a stage job this workflow does not run, an entry in a container
+          # or with a slug no artifact name can hold, and stage jobs that run other entries than
+          # the keys name.
+          if ! python3 -I - "$RUNNER_TEMP/answer.txt" "$STAGE_JOBS" > "$RUNNER_TEMP/published.txt" <<'EOF'
+          import json, re, sys
+          lines = {}
+          for line in open(sys.argv[1], encoding="utf-8").read().splitlines():
+              name, sep, value = line.partition("=")
+              if not sep or name in lines:
+                  sys.exit(f"not one line per output: {line[:80]!r}")
+              lines[name] = value
+          keys = json.loads(lines.pop("keys", "null"))
+          if not isinstance(keys, list) or not keys or not all(isinstance(k, str) and k for k in keys):
+              sys.exit("no plan: the keys are not a list of job keys")
+          runs = sys.argv[2].split()
+          extra = sorted(set(lines) - {"full", "jobs", "matrix"} - {f"matrix-{job}" for job in runs})
+          if extra:
+              sys.exit(f"the plan has stage jobs this workflow does not run: {extra}")
+          ran = []
+          for job in runs:
+              if f"matrix-{job}" not in lines:
+                  continue
+              grid = json.loads(lines[f"matrix-{job}"])
+              if not isinstance(grid, dict) or list(grid) != ["include"] or not grid["include"]:
+                  sys.exit(f"{job}: not a matrix of entries")
+              for entry in grid["include"]:
+                  if entry["container"] or not re.fullmatch("[a-z0-9-]+", entry["slug"]):
+                      sys.exit(f"{job}: an entry this workflow cannot run: {entry['key']!r}")
+                  ran.append(entry["key"])
+              print(f"{job}={json.dumps(grid, separators=(',', ':'), sort_keys=True)}")
+          if sorted(ran) != sorted(keys):
+              sys.exit("the stage jobs run other entries than the plan's keys")
+          print(f"keys={json.dumps(keys, separators=(',', ':'))}")
+          EOF
+          then
+            echo "::error title=no plan::the planner answered no plan this workflow can run, so nothing runs and the verdict is red. The lines above, and the summary, say why."
+            exit 1
+          fi
+          tee -a "$GITHUB_OUTPUT" < "$RUNNER_TEMP/published.txt"
+      - name: main's tools/ci checks this run's catalogue
+        id: catalogue-check
+        run: |
+          set -uo pipefail
+          judge="$RUNNER_TEMP/judge"
+          if [ "${GITHUB_REF:-}" = "refs/heads/main" ]; then
+            echo "a run of main: the catalogue under test is main's own"
+            exit 0
+          fi
+          rc=0
+          (cd "$judge" && python3 -m tools.ci catalogue-check \
+             --catalogue "$GITHUB_WORKSPACE/tools/ci/catalogue.toml" \
+             --against "$judge/tools/ci/catalogue.toml") || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=catalogue refused::main's tools/ci refuses this run's catalogue (exit $rc); the lines above say why."
+            exit 1
+          fi
+
+  shard-plan:
+    # ── One shard plan for the run (#3923), as ci.yml's `shard-plan` makes it ────────────────
+    # The suite's legs read it (a planned entry whose job reads `shard-history`): every file in
+    # exactly one shard of each leg, balanced by main's ci.yml durations.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read   # main's recent completed runs and their telemetry history
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: plan the suite's shards, once for every leg of this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 -m tools.ci shards plan --repo "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID"
+          --leg test-shard:ci.yml:junit-test-shard-:4
+          --leg test-macos:ci.yml:junit-test-macos-:4
+          --out "$RUNNER_TEMP/shard-plan/plan.json"
+      - name: every collectable file is in exactly one shard of each leg
+        run: python3 -m tools.ci shards check --plan "$RUNNER_TEMP/shard-plan/plan.json"
+      - name: Upload the shard plan
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shard-plan
+          path: ${{ runner.temp }}/shard-plan/plan.json
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    # ── The entries a later stage uses ───────────────────────────────────────────────────────
+    # Every stage job runs the same steps over its own part of the matrix: the setup action,
+    # then the entry's one run-job line, then its record, its reports and any output a later
+    # entry reads. Each is skipped when the plan gives it no entry.
+    name: ${{ matrix.key }}
+    needs: [changes]
+    if: ${{ !cancelled() && needs.changes.outputs.build != '' }}
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.build) }}
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # The whole history for an entry that diffs against a base, which run-job reads as the
+      # merge-base with origin/main; one commit for every other.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: ${{ matrix.history && '0' || '1' }}
+      - name: the partner checkout the entry reads (apps-partner)
+        if: ${{ contains(matrix.external, 'apps-partner') }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: PersonalClaw/PersonalClawApps
+          path: .ci-apps
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
+        with:
+          python-version: ${{ matrix.python }}
+          node: ${{ matrix.node }}
+          programs: ${{ join(matrix.programs, ' ') }}
+      - name: the shard plan this run made
+        if: ${{ contains(matrix.external, 'shard-history') }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: shard-plan
+          path: ${{ runner.temp }}/shard-plan
+      - name: the dashboard web-build built (web-dist)
+        if: ${{ contains(matrix.after, 'web-build') }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-dist
+          path: web/dist
+      - name: every browser leg's blob report
+        if: ${{ contains(matrix.after, 'e2e-shard') || contains(matrix.after, 'e2e-stateful') }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: e2e-blob-*
+          merge-multiple: true
+          path: web/blob-report
+      - name: the entry's catalogue job, through run-job
+        env:
+          JOB: ${{ matrix.id }}
+          SHARD: ${{ matrix.shard }}
+        run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job"
+      - name: Upload the entry's record
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-record-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/run-job/records/
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Upload the entry's reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reports-${{ matrix.slug }}-${{ github.run_attempt }}
+          path: |
+            reports/
+            web/e2e-report.json
+            web/test-results/
+            web/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+      # The run's one vite build, stamped, which package and the browser legs read.
+      # `include-hidden-files`: the stamp is web/dist/.build-inputs.json.
+      - name: Upload the build (web-dist)
+        if: ${{ matrix.id == 'web-build' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-dist
+          path: web/dist/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
+      - name: Upload the leg's blob report
+        if: ${{ always() && (matrix.id == 'e2e-shard' || matrix.id == 'e2e-stateful') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-blob-${{ matrix.slug }}
+          path: web/blob-report/
+          if-no-files-found: ignore
+          retention-days: 7
+          overwrite: true
+
+  test:
+    # ── Every other entry of stage 1, beside `build` ────────────────────────────────────────
+    name: ${{ matrix.key }}
+    needs: [changes, shard-plan]
+    if: ${{ !cancelled() && needs.changes.outputs.test != '' }}
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.test) }}
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # The whole history for an entry that diffs against a base, which run-job reads as the
+      # merge-base with origin/main; one commit for every other.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: ${{ matrix.history && '0' || '1' }}
+      - name: the partner checkout the entry reads (apps-partner)
+        if: ${{ contains(matrix.external, 'apps-partner') }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: PersonalClaw/PersonalClawApps
+          path: .ci-apps
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
+        with:
+          python-version: ${{ matrix.python }}
+          node: ${{ matrix.node }}
+          programs: ${{ join(matrix.programs, ' ') }}
+      - name: the shard plan this run made
+        if: ${{ contains(matrix.external, 'shard-history') }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: shard-plan
+          path: ${{ runner.temp }}/shard-plan
+      - name: the dashboard web-build built (web-dist)
+        if: ${{ contains(matrix.after, 'web-build') }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-dist
+          path: web/dist
+      - name: every browser leg's blob report
+        if: ${{ contains(matrix.after, 'e2e-shard') || contains(matrix.after, 'e2e-stateful') }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: e2e-blob-*
+          merge-multiple: true
+          path: web/blob-report
+      - name: the entry's catalogue job, through run-job
+        env:
+          JOB: ${{ matrix.id }}
+          SHARD: ${{ matrix.shard }}
+        run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job"
+      - name: Upload the entry's record
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-record-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/run-job/records/
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Upload the entry's reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reports-${{ matrix.slug }}-${{ github.run_attempt }}
+          path: |
+            reports/
+            web/e2e-report.json
+            web/test-results/
+            web/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+      # The run's one vite build, stamped, which package and the browser legs read.
+      # `include-hidden-files`: the stamp is web/dist/.build-inputs.json.
+      - name: Upload the build (web-dist)
+        if: ${{ matrix.id == 'web-build' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-dist
+          path: web/dist/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
+      - name: Upload the leg's blob report
+        if: ${{ always() && (matrix.id == 'e2e-shard' || matrix.id == 'e2e-stateful') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-blob-${{ matrix.slug }}
+          path: web/blob-report/
+          if-no-files-found: ignore
+          retention-days: 7
+          overwrite: true
+
+  test-2:
+    # ── The entries that use the build: package and the browser legs ───────────────────────
+    name: ${{ matrix.key }}
+    needs: [changes, build]
+    if: ${{ !cancelled() && needs.changes.outputs.test-2 != '' }}
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.test-2) }}
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # The whole history for an entry that diffs against a base, which run-job reads as the
+      # merge-base with origin/main; one commit for every other.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: ${{ matrix.history && '0' || '1' }}
+      - name: the partner checkout the entry reads (apps-partner)
+        if: ${{ contains(matrix.external, 'apps-partner') }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: PersonalClaw/PersonalClawApps
+          path: .ci-apps
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
+        with:
+          python-version: ${{ matrix.python }}
+          node: ${{ matrix.node }}
+          programs: ${{ join(matrix.programs, ' ') }}
+      - name: the shard plan this run made
+        if: ${{ contains(matrix.external, 'shard-history') }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: shard-plan
+          path: ${{ runner.temp }}/shard-plan
+      - name: the dashboard web-build built (web-dist)
+        if: ${{ contains(matrix.after, 'web-build') }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-dist
+          path: web/dist
+      - name: every browser leg's blob report
+        if: ${{ contains(matrix.after, 'e2e-shard') || contains(matrix.after, 'e2e-stateful') }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: e2e-blob-*
+          merge-multiple: true
+          path: web/blob-report
+      - name: the entry's catalogue job, through run-job
+        env:
+          JOB: ${{ matrix.id }}
+          SHARD: ${{ matrix.shard }}
+        run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job"
+      - name: Upload the entry's record
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-record-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/run-job/records/
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Upload the entry's reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reports-${{ matrix.slug }}-${{ github.run_attempt }}
+          path: |
+            reports/
+            web/e2e-report.json
+            web/test-results/
+            web/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+      # The run's one vite build, stamped, which package and the browser legs read.
+      # `include-hidden-files`: the stamp is web/dist/.build-inputs.json.
+      - name: Upload the build (web-dist)
+        if: ${{ matrix.id == 'web-build' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-dist
+          path: web/dist/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
+      - name: Upload the leg's blob report
+        if: ${{ always() && (matrix.id == 'e2e-shard' || matrix.id == 'e2e-stateful') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-blob-${{ matrix.slug }}
+          path: web/blob-report/
+          if-no-files-found: ignore
+          retention-days: 7
+          overwrite: true
+
+  test-3:
+    # ── The entries that use the stage before: e2e, which merges the legs' reports ───────────
+    name: ${{ matrix.key }}
+    needs: [changes, build, test-2]
+    if: ${{ !cancelled() && needs.changes.outputs.test-3 != '' }}
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.test-3) }}
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # The whole history for an entry that diffs against a base, which run-job reads as the
+      # merge-base with origin/main; one commit for every other.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: ${{ matrix.history && '0' || '1' }}
+      - name: the partner checkout the entry reads (apps-partner)
+        if: ${{ contains(matrix.external, 'apps-partner') }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: PersonalClaw/PersonalClawApps
+          path: .ci-apps
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
+        with:
+          python-version: ${{ matrix.python }}
+          node: ${{ matrix.node }}
+          programs: ${{ join(matrix.programs, ' ') }}
+      - name: the shard plan this run made
+        if: ${{ contains(matrix.external, 'shard-history') }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: shard-plan
+          path: ${{ runner.temp }}/shard-plan
+      - name: the dashboard web-build built (web-dist)
+        if: ${{ contains(matrix.after, 'web-build') }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-dist
+          path: web/dist
+      - name: every browser leg's blob report
+        if: ${{ contains(matrix.after, 'e2e-shard') || contains(matrix.after, 'e2e-stateful') }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: e2e-blob-*
+          merge-multiple: true
+          path: web/blob-report
+      - name: the entry's catalogue job, through run-job
+        env:
+          JOB: ${{ matrix.id }}
+          SHARD: ${{ matrix.shard }}
+        run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job"
+      - name: Upload the entry's record
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-record-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/run-job/records/
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Upload the entry's reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reports-${{ matrix.slug }}-${{ github.run_attempt }}
+          path: |
+            reports/
+            web/e2e-report.json
+            web/test-results/
+            web/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+      # The run's one vite build, stamped, which package and the browser legs read.
+      # `include-hidden-files`: the stamp is web/dist/.build-inputs.json.
+      - name: Upload the build (web-dist)
+        if: ${{ matrix.id == 'web-build' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-dist
+          path: web/dist/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
+      - name: Upload the leg's blob report
+        if: ${{ always() && (matrix.id == 'e2e-shard' || matrix.id == 'e2e-stateful') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-blob-${{ matrix.slug }}
+          path: web/blob-report/
+          if-no-files-found: ignore
+          retention-days: 7
+          overwrite: true
+
+  results:
+    # ── The run's verdict, by main's verdict.py ─────────────────────────────────────────────
+    # It runs whatever ran before it (`always()`), so a cancelled or failed job, or a stage that
+    # never started, is read rather than leaving no verdict. Main's copy of tools/ci/verdict.py,
+    # read from the API, judges the plan's keys against the records this run's entries uploaded
+    # and against `needs`; this checkout's copy never judges itself. It is standard-library
+    # Python, run under `python3 -I`, so nothing this run brings is installed or imported.
+    needs: [changes, shard-plan, build, test, test-2, test-3]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read   # main's tools/ci/verdict.py, read from the API
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # One folder per artifact, as the verdict reads them.
+      - name: every entry's record
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ci-record-*
+          path: ${{ runner.temp }}/records
+      - name: the verdict over the plan's keys and the run's records
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEEDS: ${{ toJSON(needs) }}
+          KEYS: ${{ needs.changes.outputs.keys }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -u
+          judge="$RUNNER_TEMP/verdict.py"
+          if ! gh api -H "Accept: application/vnd.github.raw" \
+               "repos/${GITHUB_REPOSITORY}/contents/tools/ci/verdict.py?ref=main" > "$judge"; then
+            echo "::error title=no verdict::main's tools/ci/verdict.py could not be read, so nothing judged this run. Re-run the job."
+            exit 1
+          fi
+          printf '%s' "$NEEDS" > "$RUNNER_TEMP/needs.json"
+          printf '%s' "${KEYS:-[]}" > "$RUNNER_TEMP/keys.json"
+          mkdir -p "$RUNNER_TEMP/records"
+          python3 -I "$judge" --plan "$RUNNER_TEMP/keys.json" --needs "$RUNNER_TEMP/needs.json" \
+            --head "$HEAD_SHA" --run-head "$HEAD_SHA" --records "$RUNNER_TEMP/records" \
+            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
