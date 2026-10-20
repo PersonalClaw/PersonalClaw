@@ -72,7 +72,55 @@ function gated(t: Transition): Transition {
 const SPATIAL_DEFAULT: Transition = { type: 'spring', stiffness: 380, damping: 30, mass: 1 }
 const SPATIAL_FAST: Transition = { type: 'spring', stiffness: 800, damping: 34, mass: 1 }
 const SPATIAL_SLOW: Transition = { type: 'spring', stiffness: 200, damping: 26, mass: 1 }
-const EFFECTS: Transition = { duration: 0.2, ease: [0.2, 0, 0, 1] }
+const EFFECTS_EASE: [number, number, number, number] = [0.2, 0, 0, 1]
+/** The effects tween, rebuilt only when `--duration-effects` moves: its length is read per call,
+ *  and the reference stays the same between moves, as the spatial tiers' do. */
+let effectsLength = -1
+let effectsTween: Transition = {}
+function currentEffects(): Transition {
+  const length = duration.effects
+  if (length !== effectsLength) {
+    effectsLength = length
+    effectsTween = { duration: length, ease: EFFECTS_EASE }
+  }
+  return effectsTween
+}
+
+/** A token's number as a length in seconds, never negative. */
+const seconds = (n: number, perSecond = 1): number => Math.max(0, n) / perSecond
+
+/** The duration tokens, in seconds: the JS face of the `--duration-*` custom properties in
+ *  `tokens.css`, so a CSS rule, a Tailwind class (`duration-(--duration-short)`) and a framer
+ *  transition take one length from one name. Each member reads `runtime`, which the appearance
+ *  store fills from the token's registry entry, so the slider in Settings → Design → Motion moves
+ *  all three. Read at CALL time, never cached, for the reason the presets are getters: a variant
+ *  that carries one must be a function, or it keeps the length it read at import.
+ *
+ *  These are raw lengths, not transitions, and they carry no reduced-motion answer of their own.
+ *  A fade takes its length through `spring.effects`, which `gated()` collapses; a loop is not
+ *  started at all under reduced motion (`ui/WavyProgress` says why a zero-length loop is worse).
+ *  `design/noLiteralDuration.test.ts` fails on a length written as a number anywhere else. */
+export const duration = {
+  /** press and hover feedback: a colour, a focus ring, a chevron */
+  get short(): number { return seconds(runtime.durationShort, 1000) },
+  /** a fade, and a small move that settles like one; `spring.effects` takes it */
+  get effects(): number { return seconds(runtime.durationEffects, 1000) },
+  /** an entrance, the route crossfade */
+  get medium(): number { return seconds(runtime.durationMedium, 1000) },
+  /** a progress fill, a slow fade, a single earned beat */
+  get long(): number { return seconds(runtime.durationLong, 1000) },
+  // One cycle of a loop:
+  /** a loading placeholder: the wavy progress crest */
+  get loading(): number { return seconds(runtime.durationLoading) },
+  /** something live that waits on you: a drop target's ring and hint, a running task's ring */
+  get beat(): number { return seconds(runtime.durationBeat) },
+  /** a working glow breathing */
+  get breath(): number { return seconds(runtime.durationBreath) },
+  /** slow idle motion: the mark's sway */
+  get drift(): number { return seconds(runtime.durationDrift) },
+  /** an outward pulse ring: the status dot's, and the tour's halo (`--status-pulse-speed`) */
+  get statusPulse(): number { return seconds(runtime.statusPulse) },
+}
 
 /** The RAW tiers — the fixed-damping counterpart to `physics`.
  *
@@ -107,8 +155,11 @@ export const spring = {
    *  Reduced motion still collapses it, because a 0.2s crossfade is 0.2s of motion the
    *  user asked not to have, and because `instant` is this module's one reduced-motion
    *  answer everywhere else (`bouncy`, `swipeDismiss`, `viewTransition`). A 200ms fade
-   *  here would be a second doctrine in the file whose whole job is to hold one. */
-  get effects(): Transition { return gated(EFFECTS) },
+   *  here would be a second doctrine in the file whose whole job is to hold one.
+   *
+   *  Its length is `duration.effects`, the `--duration-effects` token, so the Fade slider
+   *  reaches every fade that takes it. */
+  get effects(): Transition { return gated(currentEffects()) },
 }
 
 /** A bounce spring whose overshoot scales with `runtime.bounciness` (0 → critically
@@ -156,12 +207,11 @@ export const ease = {
   emphasizedAccel: [0.34, 0, 0.75, 0.12] as [number, number, number, number],
 }
 
-export const duration = { short: 0.1, medium: 0.3, long: 0.5 }
-
-/** Message entrance — rise + fade with emphasized-decelerate (entrances). */
+/** Message entrance — rise + fade with emphasized-decelerate (entrances). `animate` is a
+ *  function so the length is read per animation, not once at import. */
 export const messageEnter: Variants = {
   initial: { opacity: 0, y: 8 },
-  animate: { opacity: 1, y: 0, transition: { duration: duration.medium, ease: ease.emphasizedDecel } },
+  animate: () => ({ opacity: 1, y: 0, transition: { duration: duration.medium, ease: ease.emphasizedDecel } }),
 }
 
 /** The entrance for what the owner opens many times an hour: a menu, the command palette,
@@ -197,13 +247,13 @@ export const overlayEnter: Variants = {
   exit: () => ({ opacity: 0, transition: spring.effects }),
 }
 
-/** Thinking glow — slow opacity/scale pulse. */
+/** Thinking glow — slow opacity/scale pulse, one `duration.breath` per cycle. */
 export const thinkingPulse: Variants = {
-  animate: {
+  animate: () => ({
     opacity: [0.45, 0.85, 0.45],
     scale: [1, 1.04, 1],
-    transition: { duration: 3.2, ease: 'easeInOut', repeat: Infinity },
-  },
+    transition: { duration: duration.breath, ease: 'easeInOut', repeat: Infinity },
+  }),
 }
 
 /** Stagger a container's children by a fixed step. For FIRST-RUN moments only — the

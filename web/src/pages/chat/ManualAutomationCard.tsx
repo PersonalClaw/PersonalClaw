@@ -59,7 +59,7 @@ export function ManualAutomationCard({ refObj }: { refObj: ManualAutomationRef }
   }
 
   return (
-    <motion.div {...messageEnter} className="my-s flex flex-col gap-s rounded-xl border border-outline-variant p-m">
+    <motion.div variants={messageEnter} initial="initial" animate="animate" className="my-s flex flex-col gap-s rounded-xl border border-outline-variant p-m">
       <div className="flex min-w-0 items-center gap-s">
         <Hand size={15} className="shrink-0 text-on-surface-low" aria-hidden />
         <span data-type="label-s" className="min-w-0 flex-1 truncate text-on-surface" style={fvs(500)}>{refObj.name}</span>

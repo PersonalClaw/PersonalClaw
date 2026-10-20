@@ -332,7 +332,7 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
       {/* hover-revealed action pill (frameless mode) — also keyboard-reachable
           via focus-within so the controls aren't mouse-only. */}
       {!expanded && !streaming && (
-        <div className="absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-pill border border-outline-variant/40 bg-surface-container/90 px-1 py-0.5 opacity-0 backdrop-blur-sm transition-opacity duration-100 focus-within:opacity-100 group-hover/widget:opacity-100">
+        <div className="absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-pill border border-outline-variant/40 bg-surface-container/90 px-1 py-0.5 opacity-0 backdrop-blur-sm transition-opacity duration-(--duration-short) focus-within:opacity-100 group-hover/widget:opacity-100">
           {actionCluster}
         </div>
       )}

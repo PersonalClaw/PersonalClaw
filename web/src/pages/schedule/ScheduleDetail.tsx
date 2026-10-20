@@ -351,7 +351,7 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
           seconds. A status, so it is announced; its tone is the row's. */}
       {ranFlash && !err && (
         <p role="status" data-type="label-s"
-          className={`inline-flex items-center gap-1.5 transition-opacity duration-500 ${fading ? 'opacity-0' : 'opacity-100'}`}
+          className={`inline-flex items-center gap-1.5 transition-opacity duration-(--duration-long) ${fading ? 'opacity-0' : 'opacity-100'}`}
           style={{ color: ranFlash.tone }}>
           <ranFlash.icon size={14} aria-hidden />{ranFlash.label}
         </p>

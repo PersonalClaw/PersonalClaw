@@ -6,6 +6,10 @@ interface Props {
   height?: number
 }
 
+/** When the stroke at `step` starts drawing: the strokes start a fade's length
+ *  (`--duration-effects`) apart, so the frame, the header and the content land in that order. */
+const strokeDelay = (step: number) => ({ animationDelay: `calc(var(--duration-effects) * ${step})` })
+
 export function BlueprintSkeleton({ width = 480, height = 280 }: Props) {
   const reduce = useReducedMotion()
   const strokeLen = 600
@@ -33,7 +37,7 @@ export function BlueprintSkeleton({ width = 480, height = 280 }: Props) {
           stroke="var(--color-outline-variant)"
           strokeWidth="1.5"
           className={reduce ? '' : 'blueprint-stroke'}
-          style={{ animationDelay: '0s' }}
+          style={strokeDelay(0)}
         />
         {/* header bar */}
         <rect
@@ -43,7 +47,7 @@ export function BlueprintSkeleton({ width = 480, height = 280 }: Props) {
           stroke="var(--color-outline-variant)"
           strokeWidth="1"
           className={reduce ? '' : 'blueprint-stroke'}
-          style={{ animationDelay: '0.2s' }}
+          style={strokeDelay(1)}
         />
         {/* main content block */}
         <rect
@@ -54,7 +58,7 @@ export function BlueprintSkeleton({ width = 480, height = 280 }: Props) {
           strokeWidth="1"
           opacity="0.5"
           className={reduce ? '' : 'blueprint-stroke'}
-          style={{ animationDelay: '0.4s' }}
+          style={strokeDelay(2)}
         />
         {/* side details — 3 lines */}
         {[0, 1, 2].map((i) => (
@@ -68,7 +72,7 @@ export function BlueprintSkeleton({ width = 480, height = 280 }: Props) {
             stroke="var(--color-outline-variant)"
             strokeWidth="1"
             className={reduce ? '' : 'blueprint-stroke'}
-            style={{ animationDelay: `${0.6 + i * 0.15}s` }}
+            style={strokeDelay(3 + i * 0.75)}
           />
         ))}
         {/* bottom CTA */}
@@ -80,7 +84,7 @@ export function BlueprintSkeleton({ width = 480, height = 280 }: Props) {
           strokeWidth="1.5"
           opacity="0.6"
           className={reduce ? '' : 'blueprint-stroke'}
-          style={{ animationDelay: '1.0s' }}
+          style={strokeDelay(5)}
         />
       </svg>
       {/* scanning glow band */}

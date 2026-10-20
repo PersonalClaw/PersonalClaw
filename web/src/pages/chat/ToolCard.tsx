@@ -74,7 +74,7 @@ export function ToolCard({ seg }: { seg: ToolSegment }) {
       <AnimatePresence initial={false}>
         {open && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-            transition={{ height: spring.spatialFast, opacity: { duration: 0.15 } }}>
+            transition={{ height: spring.spatialFast, opacity: spring.effects }}>
             <div className="border-t border-outline-variant/30 px-3 py-2">
               {seg.purpose && <p data-type="caption" className="mb-1.5 text-on-surface-var">{seg.purpose}</p>}
               {/* Schema-driven / native-override INPUT (raw fallback inside). */}

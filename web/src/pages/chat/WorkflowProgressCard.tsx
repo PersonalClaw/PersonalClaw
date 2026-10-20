@@ -114,7 +114,7 @@ export function BatchStartCard({ name }: { name: string }) {
         ? `Allowed. Starting ${count}…`
         : `Waits for your Allow before any of ${count} start.`
   return (
-    <motion.div {...messageEnter} className="my-s flex flex-col gap-s rounded-xl border border-outline-variant p-m">
+    <motion.div variants={messageEnter} initial="initial" animate="animate" className="my-s flex flex-col gap-s rounded-xl border border-outline-variant p-m">
       <div className="flex min-w-0 items-center gap-s">
         <Workflow size={15} className="shrink-0 text-on-surface-low" />
         <span data-type="label-s" className="min-w-0 flex-1 truncate text-on-surface" style={fvs(500)}>
@@ -229,7 +229,7 @@ function RunProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
   // pre-fix behaviour was worse — the card erased itself entirely on any failure).
   if (!vm && loadFailed) {
     return (
-      <motion.div {...messageEnter} className="my-s flex items-center gap-s rounded-xl border border-outline-variant p-m">
+      <motion.div variants={messageEnter} initial="initial" animate="animate" className="my-s flex items-center gap-s rounded-xl border border-outline-variant p-m">
         <Workflow size={15} className="shrink-0 text-on-surface-low" />
         <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface-var">Couldn't load this workflow run</span>
         <Button variant="ghost-accent" size="xs" onClick={() => load()}>Try again</Button>
@@ -251,7 +251,7 @@ function RunProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
 
   return (
     <motion.div
-      {...messageEnter}
+      variants={messageEnter} initial="initial" animate="animate"
       className="my-s flex flex-col gap-s rounded-xl border border-outline-variant p-m"
     >
       <div className="flex min-w-0 items-center gap-s">

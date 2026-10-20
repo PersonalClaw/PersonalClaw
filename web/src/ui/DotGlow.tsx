@@ -674,7 +674,7 @@ export function DotGlow({
       <div
         ref={focusBloomRef}
         data-dot-glow-focus
-        className="absolute transition-opacity duration-200"
+        className="absolute transition-opacity duration-(--duration-effects)"
         style={{
           borderRadius: 'var(--radius-xli)',
           boxShadow: FOCUS_BLOOM,

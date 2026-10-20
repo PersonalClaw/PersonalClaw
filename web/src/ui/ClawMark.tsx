@@ -1,11 +1,17 @@
 import { motion, useReducedMotion } from 'framer-motion'
 
+import { duration } from '../design/motion'
+
 /** The mark's outline in its 512-unit box: two talons. One declaration, drawn both by the SVG below
  *  and by the backdrop's `claw` dot glyph (`ui/DotGlow`). */
 export const CLAW_MARK_PATH =
   'M256 16C106 76 46 226 46 226c0 45 60 90 90 90 90 0 180-195 135-285l-15-15zm45 15c30 60 0 135 0 135 120 30 120 180 75 330 75-75 90-150 90-210 0-90-15-225-165-255z'
 /** The outline's bounds in the same units, which is what centres the dot glyph on its point. */
 export const CLAW_MARK_BOX = { x: 46, y: 16, width: 420, height: 480 } as const
+
+/** The blob morphs a little slower than the mark sways (8 cycles to 7), so the two never fall
+ *  into step; both ride the `--duration-drift` token. */
+const BLOB_SLOWER = 8 / 7
 
 /** PersonalClaw brand mark — the claw silhouette painted with the ACTIVE scheme's
  *  gradient (reads --grad-1..4, which the appearance store re-tints per scheme),
@@ -28,7 +34,7 @@ export function ClawMark({ size = 24, animated = false, idGradient = 'claw-grad'
       role="img"
       aria-label="PersonalClaw"
       animate={spin ? { rotate: [0, 6, -3, 0] } : undefined}
-      transition={spin ? { duration: 7, ease: 'easeInOut', repeat: Infinity } : undefined}
+      transition={spin ? { duration: duration.drift, ease: 'easeInOut', repeat: Infinity } : undefined}
       style={{ display: 'block' }}
     >
       <defs>
@@ -63,7 +69,7 @@ export function ClawMark({ size = 24, animated = false, idGradient = 'claw-grad'
           '42% 58% 63% 37% / 45% 45% 55% 55%',
         ],
       }}
-      transition={reduce ? undefined : { duration: 8, ease: 'easeInOut', repeat: Infinity }}
+      transition={reduce ? undefined : { duration: duration.drift * BLOB_SLOWER, ease: 'easeInOut', repeat: Infinity }}
     >
       {svg}
     </motion.div>

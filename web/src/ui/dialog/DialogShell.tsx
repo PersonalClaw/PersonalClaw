@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { AlertTriangle } from 'lucide-react'
-import { spring, physics, expr } from '../../design/motion'
+import { duration, spring, physics, expr } from '../../design/motion'
 import { useFocusTrap } from '../useFocusTrap'
 import { unavailableWhen } from '../unavailable'
 import type { DialogField, DialogResult, DialogRequest } from './dialogStore'
@@ -105,7 +105,7 @@ export function DialogShell({ request, onClose }: {
             <motion.span className={`mt-0.5 shrink-0 ${danger ? 'text-danger' : 'text-on-surface-var'}`}
               initial={danger ? { scale: 0.6 } : false}
               animate={danger ? { scale: [0.6, 1.18, 1] } : {}}
-              transition={{ duration: 0.42, ease: 'easeOut', delay: 0.08 }}>
+              transition={{ duration: duration.long, ease: 'easeOut', delay: duration.short }}>
               {Icon ? <Icon size={18} /> : <AlertTriangle size={18} />}
             </motion.span>
           )}

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUp, Square, CornerDownLeft, ListPlus, Sparkles, Mic, Ear, Loader2, Paperclip, Check, MonitorUp } from 'lucide-react'
 import { IconButton } from './IconButton'
-import { spring, physics, expr } from '../design/motion'
+import { duration, spring, physics, expr } from '../design/motion'
 import { AgentPill, ModelPill, ApprovalPill, ReasoningPill, ReplyStylePill, effortsForAgent, PlusMenu } from './composer/controls'
 import { MarkdownInput, type MarkdownInputHandle } from './composer/MarkdownInput'
 import { resolveSendButton } from './composer/sendButtonState'
@@ -311,7 +311,7 @@ export function Composer({
               opacity: dragOver ? [0.7 + expr(0.3, 0.4), 0.85 + expr(0.15, 0.4), 0.7 + expr(0.3, 0.4)] : focused ? 0.55 + expr(0.4, 0.4) : 0,
               borderRadius: (isMobile && !focused && !dragOver) ? 'var(--radius-2xl)' : 'calc(var(--radius-xli) + 1px)',
             }}
-            transition={dragOver ? { opacity: { duration: 1.4, ease: 'easeInOut', repeat: Infinity }, borderRadius: spring.spatialDefault } : spring.spatialDefault}
+            transition={dragOver ? { opacity: { duration: duration.beat, ease: 'easeInOut', repeat: Infinity }, borderRadius: spring.spatialDefault } : spring.spatialDefault}
             style={{ background: 'conic-gradient(from 0deg, var(--ring-stop-1), var(--ring-stop-2), var(--ring-stop-3), var(--ring-stop-4), var(--ring-stop-1))' }} />
         )}
         {/* Awake shadow is the composer's OWN token, not the cards' `--shadow-lift`: that
@@ -342,7 +342,7 @@ export function Composer({
               >
                 <motion.span
                   animate={{ y: [0, -expr(4, 0.3), 0] }}
-                  transition={{ duration: 1.6, ease: 'easeInOut', repeat: Infinity }}
+                  transition={{ duration: duration.beat, ease: 'easeInOut', repeat: Infinity }}
                 >
                   <Paperclip size={16} />
                 </motion.span>

@@ -1,5 +1,5 @@
 import { motion, useReducedMotion } from 'framer-motion'
-import { spring } from '../design/motion'
+import { instant, spring } from '../design/motion'
 
 /** A circular progress arc for loop cycle progress — the ring beside a loop row that
  *  reads "how far through its cycle budget this run is".
@@ -52,7 +52,7 @@ export function ProgressRing({ pct, tone, size = 28, label }: {
         strokeDasharray={c}
         initial={false}
         animate={{ strokeDashoffset: offset }}
-        transition={reduce ? { duration: 0 } : spring.spatialSlow}
+        transition={reduce ? instant : spring.spatialSlow}
         transform={`rotate(-90 ${size / 2} ${size / 2})`}
       />
     </svg>

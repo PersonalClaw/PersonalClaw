@@ -140,8 +140,8 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
         {open ? (
           // ── Expanded: the same surface now hosts a search header + option list.
           //    layout on this inner wrapper keeps it from stretching as the
-          //    surface scales; it fades in just after the shape starts changing.
-          <motion.div layout="position" initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { delay: 0.04 } }}>
+          //    surface scales; it fades in on the effects curve as the shape changes.
+          <motion.div layout="position" initial={{ opacity: 0 }} animate={{ opacity: 1, transition: spring.effects }}>
             <div className="relative p-2">
               <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-low pointer-events-none" />
               {/* 🔴 Measured on `#/triggers/new` before this: the input had no role, no aria-expanded,

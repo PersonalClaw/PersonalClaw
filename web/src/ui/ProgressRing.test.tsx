@@ -92,7 +92,8 @@ describe('the divergence this primitive resolves', () => {
   it('reduced motion sets the arc directly instead of easing it', () => {
     const src = read('ui/ProgressRing.tsx')
     expect(src).toMatch(/useReducedMotion/)
-    expect(src).toMatch(/reduce \? \{ duration: 0 \} : spring\.spatialSlow/)
+    // `instant`, the motion module's zero-length answer, rather than a `{ duration: 0 }` of its own.
+    expect(src).toMatch(/reduce \? instant : spring\.spatialSlow/)
   })
 
   it('neither page declares its own ProgressRing any more', () => {
