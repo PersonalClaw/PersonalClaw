@@ -29,6 +29,18 @@ Only a test keeps the two from drifting, and this is it. It holds the record's o
   brief's first constraint links both, and the originality checks in the brief and in the test
   plan link the agent orb's component, whose dots the buddy shares on purpose. None of them keeps
   a list of its own, which would drift from the one it copies.
+* **Every pose is drawn, and only the poses the brief names.** The census reads the v0.3.0 set
+  from the brief's own words (the family table's phases, the focused card's orb for each family,
+  presence, the answers, and the tray's and the dock's stills at each size, with their template
+  versions) and holds ``poses/`` to it: a source for each, none for anything else, and a motion
+  frame beside each pose that moves, whose ``.svg`` is its reduced-motion still.
+* **Each source is drawn in parts a renderer moves, in the tokens, and round.** One whole orb with
+  its pivot holds the dots, the badge and the wash; every colour is a token ``tokens.css`` has (a
+  template's is black, which the menu bar recolours); and no transform squashes or stretches it.
+* **At 18 px the four families are told apart** by the orb's density and arrangement and by its
+  badge, in colour and as templates, and every tray still as a template differs from the others
+  by its badge or its dots. The contact sheets show every pose at 18, 24, 48 and 96 px and every
+  still at its size, in light and dark, each with its words beside it, for the owner to look at.
 
 Each check returns what is wrong, as sentences. The last test plants one defect for each check and
 sees it reported, so none of them can pass by looking at nothing.
@@ -36,13 +48,16 @@ sees it reported, so none of them can pass by looking at nothing.
 
 from __future__ import annotations
 
+import collections
 import copy
+import itertools
 import json
 import re
 import shutil
+import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import source_index
 import table_rows
@@ -184,6 +199,33 @@ COMPARISONS = (
     ("test-plan.md", "Pixels", "side by side", ("../agent-orb.md#the-component",)),
 )
 
+#: The drawn poses: a source for every pose and still the brief's v0.3.0 set names, rendered from
+#: the pose table (``web/src/buddyRig/poseSet.ts``) on the agent orb's drawing, with the contact
+#: sheets in ``sheets/`` beside them. A pose's ``.svg`` is its reduced-motion still, and a pose
+#: that moves has a ``.motion.svg`` too, the instant its motion is drawn at.
+POSES = FOLDER / "poses"
+CHARACTER = FOLDER / "character.md"
+POSES_HEADING = "The poses"
+FAMILIES = ("quiet", "active", "waiting", "blocked")
+#: The brief's lists of the rest of the set, by the bold words each opens with.
+CARD = "The focused status card's orb,"
+LISTS = (("Presence:", "presence"), ("Answers:", "answer"))
+STILLS = "Still orbs for the tray and the dock:"
+MOTION = ".motion.svg"
+#: The sizes the contact sheet draws every pose at, and its two modes.
+SHEET_SIZES = (18, 24, 48, 96)
+MODES = ("light", "dark")
+#: The size the four families are told apart at by the orb's density and arrangement alone.
+SMALLEST = 18
+#: How far apart two orbs' dots are to be told apart: this many times as many dots, or this share
+#: of the orb's size in how far they reach from its centre or where their middle sits.
+DENSITY_APART = 1.25
+ARRANGEMENT_APART = 0.05
+#: The properties that carry a colour, and the one ink a template image is drawn in, which the
+#: menu bar recolours.
+COLOUR_PROPERTIES = ("fill", "stroke", "stop-color", "color")
+TEMPLATE_INK = "black"
+
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _RULE = re.compile(r"^\|(\s*:?-+:?\s*\|)+\s*$")
@@ -192,6 +234,12 @@ _TOKEN = re.compile(r"`([A-Za-z]+)`")
 _COLOR = re.compile(r"`(--color-[a-z0-9-]+)`")
 _DEFINED = re.compile(r"^\s*(--color-[a-z0-9-]+)\s*:", re.MULTILINE)
 _TASK = re.compile(r"#\d+")
+_PAREN = re.compile(r"\s*\([^)]*\)")
+_ITEMS = re.compile(r",\s*|\s+and\s+")
+_BELONGS = re.compile(r"(.+?) (?:is|are) (\w+)")
+_VAR = re.compile(r"^var\((--color-[a-z0-9-]+)\)$")
+#: A transform that keeps the orb round: moves, turns, and scales that take one factor.
+_ROUND = re.compile(r"^(?:\s*(?:translate\([^)]*\)|rotate\([^)]*\)|scale\(\s*[-+\d.e]+\s*\)))*\s*$")
 
 Table = tuple[str, str, str, list[str], list[list[str]]]
 
@@ -622,6 +670,302 @@ def _defined_colours() -> set[str]:
     return set(_DEFINED.findall(TOKENS.read_text(encoding="utf-8")))
 
 
+# ── the poses, as drawn ──────────────────────────────────────────────────────────────────────
+
+
+class Named(NamedTuple):
+    """A source the brief's v0.3.0 set names. A *pose* is drawn at the contact sheet's four sizes;
+    a *still* is one of the tray's and the dock's, at one size, in colour or as a template."""
+
+    kind: str
+    family: str
+    size: int = 0
+    template: bool = False
+
+
+class Look(NamedTuple):
+    """What a drawn orb shows at a glance: how many dots, how far they reach from the orb's
+    centre and how far their middle sits below it (each in orb sizes), and the badge's mark."""
+
+    dots: int
+    reach: float
+    height: float
+    badge: str
+
+
+def _slug(words: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", words.strip().lower()).strip("-")
+
+
+def _named(text: str) -> list[str]:
+    """The names a list of the brief gives, to the end of its first sentence: each parenthesis
+    dropped, split at commas and at "and", and a leading "the" dropped."""
+    first = _PAREN.sub("", text).split(". ")[0].rstrip(".")
+    return [_slug(re.sub(r"^the\s+", "", part)) for part in _ITEMS.split(first) if part.strip()]
+
+
+def _labelled(items: list[str], label: str) -> str | None:
+    """The text after *label*, the bold words one list item opens with, or ``None``."""
+    found = [item[len(label) + 4 :] for item in items if item.startswith(f"**{label}**")]
+    return found[0].strip() if len(found) == 1 else None
+
+
+def brief_sources(brief: str) -> tuple[dict[str, Named], list[str]]:
+    """Every source the brief's v0.3.0 set names, by its file's stem, and each part of the set the
+    brief no longer says in a way this can read, as a sentence. Read from the brief's own words
+    under "The poses": the family table's phases; the focused card's orb for each family; the
+    presence and answer lists; and the tray's and the dock's stills at each size it gives, with a
+    template version of each when it asks for them."""
+    found: list[str] = []
+    rows = [
+        row
+        for _, section, _, header, table in tables(brief)
+        if section == POSES_HEADING and header[:2] == ["Family", "Phases"]
+        for row in table
+    ]
+    families = [row[0].lower() for row in rows]
+    if families != list(FAMILIES):
+        found.append(f"the brief's family table lists {families}, not the four families")
+    named: dict[str, Named] = {}
+    for row in rows:
+        for phase in row[1].split(", "):
+            named[f"{row[0].lower()}-{_slug(phase)}"] = Named("pose", row[0].lower())
+    items = bullets(brief, POSES_HEADING)
+    card = _labelled(items, CARD)
+    if card is None or "for each family" not in card:
+        found.append(f"the brief no longer gives {CARD!r} for each family")
+    else:
+        named.update({f"card-{family}": Named("pose", family) for family in families})
+    for label, prefix in LISTS:
+        text = _labelled(items, label)
+        if text is None:
+            found.append(f"the brief no longer lists {label!r}")
+            continue
+        named.update({f"{prefix}-{name}": Named("pose", "") for name in _named(text)})
+    text = _labelled(items, STILLS)
+    if text is None or ", at " not in text:
+        found.append(f"the brief no longer lists {STILLS!r} with their sizes")
+        return named, found
+    stills, _, rest = text.partition(", at ")
+    sizes = [int(size) for size in re.findall(r"\d+", rest.split(" px")[0])]
+    template = "template" in rest.split(". ")[0]
+    of: dict[str, str] = {}
+    for clause in rest.partition("pose: ")[2].split(". ")[0].split("; "):
+        match = _BELONGS.match(clause.strip())
+        if match:
+            of.update({_slug(name): match.group(2) for name in _ITEMS.split(match.group(1))})
+    for still in [_slug(name) for name in stills.split(", ")]:
+        if still not in of:
+            found.append(f"the brief does not say which family the {still} still belongs to")
+        for size in sizes:
+            for flat in (False, True) if template else (False,):
+                stem = f"tray-{still}-{size}" + ("-template" if flat else "")
+                named[stem] = Named("still", of.get(still, ""), size, flat)
+    return named, found
+
+
+def _svg(path: Path) -> ET.Element:
+    return ET.fromstring(path.read_text(encoding="utf-8"))
+
+
+def _local(element: ET.Element) -> str:
+    return element.tag.rpartition("}")[2]
+
+
+def _parts(root: ET.Element, part: str) -> list[ET.Element]:
+    return [element for element in root.iter() if element.get("data-part") == part]
+
+
+def _stem(name: str) -> tuple[str, bool]:
+    """A source file's pose and whether it is the pose's motion frame."""
+    if name.endswith(MOTION):
+        return name[: -len(MOTION)], True
+    return name.removesuffix(".svg"), False
+
+
+def census_problems(brief: str, folder: Path) -> list[str]:
+    """Where the drawn sources and the brief's v0.3.0 set disagree, each a sentence: a pose or a
+    still the brief names with no source, a source of a pose the brief does not name, a source
+    that says it is another, and a pose that moves without its motion frame (or a motion frame
+    beside a pose that holds still). Every pose's ``.svg`` is its reduced-motion still."""
+    named, found = brief_sources(brief)
+    files = sorted(p.name for p in folder.iterdir() if p.is_file()) if folder.is_dir() else []
+    have = set(files)
+    for stem in sorted(named):
+        if f"{stem}.svg" not in have:
+            found.append(f"{stem}: the brief names it, and it has no source")
+    for name in files:
+        stem, motion = _stem(name)
+        if not name.endswith(".svg"):
+            found.append(f"poses/{name} is no pose source: every source is an SVG")
+            continue
+        if stem not in named:
+            found.append(f"poses/{name} is a pose the brief does not name")
+            continue
+        root = _svg(folder / name)
+        frame = "motion" if motion else "still"
+        if root.get("data-pose") != stem or root.get("data-frame") != frame:
+            found.append(
+                f"poses/{name} says it is {root.get('data-pose')}'s {root.get('data-frame')} frame"
+            )
+        if motion:
+            continue
+        moves = root.get("data-moves") == "true"
+        if moves and named[stem].kind == "still":
+            found.append(f"poses/{name}: a tray or dock still never moves")
+        elif moves and f"{stem}{MOTION}" not in have:
+            found.append(f"{stem} moves, and has no motion frame")
+        elif not moves and f"{stem}{MOTION}" in have:
+            found.append(f"poses/{stem}{MOTION}: {stem} holds still, so it has no motion frame")
+    return found
+
+
+def source_problems(folder: Path, defined: set[str]) -> list[str]:
+    """Where a source is not drawn in the parts a renderer moves, keeps a colour out of the
+    tokens, or squashes the orb, each a sentence. A source has one whole orb, with its pivot and
+    size, holding its dots (circles, and the lines of a drawing that has them), its badge when it
+    has one and its wash; a template has no wash, since one colour cannot show it. Every colour is
+    a ``--color-`` token ``tokens.css`` defines, set in a style, and a template's is black, which
+    the menu bar recolours. Every transform keeps the orb round: a move, a turn, or one scale for
+    both axes, and every dot is a circle."""
+    paths = sorted(folder.glob("*.svg"))
+    found: list[str] = [] if paths else [f"{folder.name}/ holds no source"]
+    for path in paths:
+        name = f"poses/{path.name}"
+        root = _svg(path)
+        template = root.get("data-template") == "true"
+        orbs, dots = _parts(root, "orb"), _parts(root, "dots")
+        if len(orbs) != 1 or len(dots) != 1 or dots[0] not in list(orbs[0].iter()):
+            found.append(f"{name}: not one whole orb holding its dots")
+        elif len((orbs[0].get("data-pivot") or "").split()) != 2 or not orbs[0].get("data-orb"):
+            found.append(f"{name}: its whole orb names no pivot and size")
+        if dots and {_local(e) for e in dots[0].iter()} - {"g", "circle", "line"}:
+            found.append(f"{name}: its dots hold something other than dots and lines")
+        if bool(root.get("data-badge")) != bool(_parts(root, "badge")):
+            found.append(f"{name}: its badge and the badge it says it has disagree")
+        if template and _parts(root, "wash"):
+            found.append(f"{name}: a template has no wash")
+        for element in root.iter():
+            if _local(element) == "ellipse":
+                found.append(f"{name}: draws an ellipse, and the orb's dots are round")
+            for attr in COLOUR_PROPERTIES:
+                if element.get(attr) is not None:
+                    found.append(f"{name}: names a colour as its {attr} attribute, not a style")
+            for declaration in (element.get("style") or "").split(";"):
+                prop, _, value = (part.strip() for part in declaration.partition(":"))
+                if prop not in COLOUR_PROPERTIES:
+                    continue
+                token = _VAR.match(value)
+                if template and value != TEMPLATE_INK:
+                    found.append(f"{name}: a template is drawn in {TEMPLATE_INK}, not {value!r}")
+                elif not template and not (token and token.group(1) in defined):
+                    found.append(f"{name}: its {prop} is {value!r}, not a token tokens.css has")
+            transform = element.get("transform")
+            if transform is not None and not _ROUND.match(transform):
+                found.append(f"{name}: {transform!r} squashes or stretches the orb")
+    return found
+
+
+def look_of(path: Path) -> Look:
+    """What the source at *path* shows at a glance, measured from its parts."""
+    root = _svg(path)
+    orb = _parts(root, "orb")[0]
+    cx, cy = (float(v) for v in (orb.get("data-pivot") or "0 0").split())
+    size = float(orb.get("data-orb") or 1)
+    dots = [
+        (float(e.get("cx", 0)), float(e.get("cy", 0)))
+        for e in _parts(root, "dots")[0].iter()
+        if _local(e) == "circle"
+    ]
+    if not dots:
+        return Look(0, 0.0, 0.0, root.get("data-badge") or "")
+    reach = sum(((x - cx) ** 2 + (y - cy) ** 2) ** 0.5 for x, y in dots) / len(dots) / size
+    height = (sum(y for _, y in dots) / len(dots) - cy) / size
+    return Look(len(dots), reach, height, root.get("data-badge") or "")
+
+
+def _apart(a: Look, b: Look) -> bool:
+    """Whether two orbs differ by their dots' density or arrangement."""
+    dense = max(a.dots, b.dots) >= DENSITY_APART * max(1, min(a.dots, b.dots))
+    arranged = max(abs(a.reach - b.reach), abs(a.height - b.height)) >= ARRANGEMENT_APART
+    return dense or arranged
+
+
+def small_size_problems(brief: str, folder: Path) -> list[str]:
+    """Where two families' stills can be mistaken at the tray's smallest sizes, each a sentence.
+    At 18 px each family's first still in the brief (in colour and as a template) differs from
+    each other family's by its dots' density or arrangement, and by its badge. As templates, at
+    every size, each of the stills differs from every other by its badge or its dots, since a
+    template carries the state in shape alone."""
+    named, found = brief_sources(brief)
+    stills = {stem: n for stem, n in named.items() if n.kind == "still"}
+    for flat in (False, True):
+        picks: dict[str, str] = {}
+        for stem, n in stills.items():
+            if n.size == SMALLEST and n.template == flat:
+                picks.setdefault(n.family, stem)
+        as_what = " as templates" if flat else ""
+        if sorted(picks) != sorted(FAMILIES):
+            found.append(f"at {SMALLEST} px{as_what}, the stills cover {sorted(picks)}")
+            continue
+        absent = [stem for stem in picks.values() if not (folder / f"{stem}.svg").is_file()]
+        if absent:
+            found.append(f"at {SMALLEST} px{as_what}, there is nothing to measure for {absent}")
+            continue
+        looks = {family: look_of(folder / f"{picks[family]}.svg") for family in FAMILIES}
+        for a, b in itertools.combinations(FAMILIES, 2):
+            if not _apart(looks[a], looks[b]):
+                found.append(
+                    f"at {SMALLEST} px{as_what}, {a} and {b} have the same density and arrangement"
+                )
+            if looks[a].badge == looks[b].badge:
+                found.append(f"at {SMALLEST} px{as_what}, {a} and {b} have the same badge")
+    sizes = sorted({n.size for n in stills.values()})
+    for size in sizes:
+        drawn = {
+            stem: look_of(folder / f"{stem}.svg")
+            for stem, n in stills.items()
+            if n.template and n.size == size and (folder / f"{stem}.svg").is_file()
+        }
+        for a, b in itertools.combinations(sorted(drawn), 2):
+            if drawn[a].badge == drawn[b].badge and not _apart(drawn[a], drawn[b]):
+                found.append(f"as templates at {size} px, {a} and {b} look the same")
+    return found
+
+
+def sheet_problems(brief: str, folder: Path) -> list[str]:
+    """Where the contact sheets do not show what the brief names, each a sentence: every pose in
+    light and dark at 18, 24, 48 and 96 px, and every still in light and dark at its own size,
+    each with its words beside it; and nothing the brief does not name."""
+    named, found = brief_sources(brief)
+    cells: dict[str, set[tuple[str, int]]] = {}
+    for path in sorted((folder / "sheets").glob("*.svg")):
+        for element in _svg(path).iter():
+            pose = element.get("data-sheet-pose")
+            if pose is None:
+                continue
+            words = element.get("data-words") or ""
+            mode, size = element.get("data-mode") or "", int(element.get("data-size") or 0)
+            texts = [(t.text or "").strip() for t in element.iter() if _local(t) == "text"]
+            if not words or words not in texts:
+                found.append(f"sheets/{path.name}: {pose} at {size} px in {mode} has no words")
+            cells.setdefault(pose, set()).add((mode, size))
+    for stem, n in sorted(named.items()):
+        sizes = SHEET_SIZES if n.kind == "pose" else (n.size,)
+        missing = sorted(
+            {(mode, size) for mode in MODES for size in sizes} - cells.get(stem, set()),
+            key=lambda cell: (cell[1], cell[0]),
+        )
+        if missing:
+            shown = ", ".join(f"{size} px in {mode}" for mode, size in missing)
+            found.append(f"the contact sheet does not show {stem} at {shown}")
+    found += [
+        f"the contact sheet shows {pose}, which the brief does not name"
+        for pose in sorted(set(cells) - set(named))
+    ]
+    return found
+
+
 # ── the record as committed ──────────────────────────────────────────────────────────────────
 
 
@@ -671,6 +1015,27 @@ def test_the_buddy_points_at_what_it_shares_with_the_agent_orb_and_what_it_adds(
     assert comparison_problems(_record_texts()) == []
 
 
+def test_every_pose_and_still_the_brief_names_has_a_source_and_no_other() -> None:
+    brief = source_index.text(CHARACTER)
+    named, unread = brief_sources(brief)
+    assert unread == []
+    kinds = collections.Counter(n.kind for n in named.values())
+    assert kinds == {"pose": 15 + 4 + 7 + 3, "still": 6 * 3 * 2}, "the brief was misread"
+    assert census_problems(brief, POSES) == []
+
+
+def test_every_source_is_drawn_in_parts_in_the_tokens_and_never_squashes_the_orb() -> None:
+    assert source_problems(POSES, _defined_colours()) == []
+
+
+def test_at_18_px_the_four_families_differ_by_density_arrangement_and_badge() -> None:
+    assert small_size_problems(source_index.text(CHARACTER), POSES) == []
+
+
+def test_the_contact_sheet_shows_every_pose_at_its_sizes_in_light_and_dark_with_words() -> None:
+    assert sheet_problems(source_index.text(CHARACTER), POSES) == []
+
+
 def test_anchors_follow_githubs_rule() -> None:
     assert slug("1. One phase contract") == "1-one-phase-contract"
     assert slug("The expanded card, top to bottom") == "the-expanded-card-top-to-bottom"
@@ -704,6 +1069,21 @@ def _copy_of_the_record(tmp_path: Path, name: str, extra: str) -> Path:
     path = folder / name
     path.write_text(path.read_text(encoding="utf-8") + extra, encoding="utf-8")
     return folder
+
+
+def _copy_of_the_poses(tmp_path: Path, edit: Callable[[Path], object]) -> Path:
+    """A copy of the drawn poses with *edit* applied to it."""
+    folder = tmp_path / "poses"
+    shutil.copytree(POSES, folder)
+    edit(folder)
+    return folder
+
+
+def _replaced(path: Path, old: str, new: str) -> None:
+    """*path* with its first *old* replaced by *new*."""
+    text = path.read_text(encoding="utf-8")
+    assert old in text, f"{old!r} is no longer in {path.name}, so nothing would be planted"
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
 def test_each_check_reports_a_planted_defect(subtests: Any, tmp_path: Path) -> None:
@@ -831,7 +1211,100 @@ def test_each_check_reports_a_planted_defect(subtests: Any, tmp_path: Path) -> N
             " rig.md#candidates",
         ),
     ]
-    assert len(planted) == 16, "a planted defect was dropped from the table"
+    brief = source_index.text(CHARACTER)
+    planted += [
+        (
+            "a pose the brief names, with its source gone",
+            lambda: census_problems(
+                brief,
+                _copy_of_the_poses(
+                    tmp_path / "gone", lambda f: (f / "presence-waking.svg").unlink()
+                ),
+            ),
+            "presence-waking: the brief names it, and it has no source",
+        ),
+        (
+            "a source of a pose the brief does not name",
+            lambda: census_problems(
+                brief,
+                _copy_of_the_poses(
+                    tmp_path / "extra",
+                    lambda f: shutil.copy(f / "presence-peek.svg", f / "presence-hidden.svg"),
+                ),
+            ),
+            "poses/presence-hidden.svg is a pose the brief does not name",
+        ),
+        (
+            "a pose that moves, with its motion frame gone",
+            lambda: census_problems(
+                brief,
+                _copy_of_the_poses(
+                    tmp_path / "still", lambda f: (f / f"active-thinking{MOTION}").unlink()
+                ),
+            ),
+            "active-thinking moves, and has no motion frame",
+        ),
+        (
+            "the brief naming one more presence pose",
+            lambda: census_problems(brief.replace(" floating,", " floating, hidden,", 1), POSES),
+            "presence-hidden: the brief names it, and it has no source",
+        ),
+        (
+            "a literal colour in a source",
+            lambda: source_problems(
+                _copy_of_the_poses(
+                    tmp_path / "ink",
+                    lambda f: _replaced(
+                        f / "active-thinking.svg", "var(--color-orb-alive)", "#e5533d"
+                    ),
+                ),
+                _defined_colours(),
+            ),
+            "poses/active-thinking.svg: its fill is '#e5533d', not a token",
+        ),
+        (
+            "the whole orb squashed",
+            lambda: source_problems(
+                _copy_of_the_poses(
+                    tmp_path / "squash",
+                    lambda f: _replaced(
+                        f / "active-thinking.svg",
+                        'transform="translate(0 0)"',
+                        'transform="scale(1 0.8)"',
+                    ),
+                ),
+                _defined_colours(),
+            ),
+            "poses/active-thinking.svg: 'scale(1 0.8)' squashes or stretches the orb",
+        ),
+        (
+            "two families alike at 18 px",
+            lambda: small_size_problems(
+                brief,
+                _copy_of_the_poses(
+                    tmp_path / "alike",
+                    lambda f: shutil.copy(f / "tray-needs-you-18.svg", f / "tray-error-18.svg"),
+                ),
+            ),
+            "at 18 px, waiting and blocked have the same density and arrangement",
+        ),
+        (
+            "the contact sheet missing a pose in dark",
+            lambda: sheet_problems(
+                brief,
+                _copy_of_the_poses(
+                    tmp_path / "sheet",
+                    lambda f: _replaced(
+                        f / "sheets" / "families.svg",
+                        'data-sheet-pose="quiet-idle" data-mode="dark" data-size="18"',
+                        'data-sheet-pose="quiet-idle" data-mode="dim" data-size="18"',
+                    ),
+                ),
+            ),
+            "the contact sheet does not show quiet-idle at 18 px in dark",
+        ),
+    ]
+    assert len(planted) == 24, "a planted defect was dropped from the table"
     for name, check, expected in planted:
         with table_rows.row(subtests, defect=name):
             reported = check()

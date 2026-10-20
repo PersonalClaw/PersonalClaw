@@ -25,14 +25,14 @@ green in one view, coral in another, and "needs you" is blue for loops but orang
 
 | Phase | Meaning | Family | Tone |
 |---|---|---|---|
-| `queued` | accepted, not started yet | active | open |
+| `queued` | accepted, not started yet | active | alive |
 | `thinking` | started, no output yet | active | alive |
 | `searching` | searching knowledge, the web or the files | active | alive |
 | `tool` | running any other tool | active | alive |
 | `planning` | making or revising a plan | active | alive |
 | `delegating` | handing work to helpers | active | alive |
 | `streaming` | writing its answer | active | alive |
-| `listening` | push-to-talk capture is live | active | open |
+| `listening` | push-to-talk capture is live | active | warn |
 | `approval` | waiting on the owner's yes | waiting | warn |
 | `input` | waiting on the owner's answer | waiting | info |
 | `done` | finished | quiet | ok |
@@ -50,9 +50,10 @@ phase's line is in [`copy.md`](copy.md#one-line-per-state).
 - Push-to-talk reports listening from every capture source (the composer, hands-free, the Knowledge
   recorder), and the shell passes it to the gateway and every window.
 - One tone per phase across every surface: coral (the scheme's primary) for alive, warn for an
-  approval, info for a question, danger for an error, ok for done. Two tones are still open:
-  `queued`'s, and `listening`'s, because the microphone chip is the in-app half of the
-  capture-safety indicator and recolouring it is the maintainer's call ([#3833]).
+  approval, info for a question, danger for an error, ok for done. Queued work is alive like the
+  rest of the active family, and listening keeps the warn tone: the microphone chip is the in-app
+  half of the capture-safety indicator, and it keeps the system's own microphone colour (the
+  maintainer's call, 2026-10-20, [#3833]).
 
 ## 2. One list of what is waiting on the owner
 
