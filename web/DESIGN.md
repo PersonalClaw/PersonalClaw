@@ -266,6 +266,11 @@ Controls are pill-shaped and tonal; every interactive component has default, hov
 ### Navigation
 - **NavRail:** drag-resizable side rail (196px default, 64px icon-only collapsed) on rail tone (#1f1f1f); active item carries a tonal fill + coral accent; mobile becomes a 264px overlay drawer with scrim.
 
+### Status line
+- **The strip:** 24px along the window's bottom edge, under the rail and the work surface, on the canvas with a hairline above; caption type in Ink Low. No accent, no glow, nothing that moves.
+- **The connection:** a still 8px dot in its state's semantic tone (OK Green connected, Warn Orange connecting, Danger Red disconnected), alone while connected, with the state in words beside it otherwise. It never pulses: a resting animation says nothing the colour does not.
+- **Its banner:** a lost connection that lasts escalates to a glass-sky notice over the page, below the shell corners, with a Danger Red glyph and body ink, so nothing moves under the owner when it comes and goes.
+
 ### Motion (component-level doctrine)
 - **Spatial springs** (stiffness 200–800, visible overshoot) for position/scale; **effects curve** (0.2s, `cubic-bezier(0.2,0,0,1)`, critically damped) for opacity/color.
 - **Four named presets — `physics.snappy` / `smooth` / `fluid` / `playful`** — are the whole spring vocabulary; `playful` marks the ~3–4 sanctioned personality moments (menu open, success bloom). All four interpolate toward calm via the user's bounciness setting and all four collapse to an instant swap under reduced motion. Full author guide, including the budget and the gesture helpers: [`docs/design/motion.md`](../docs/design/motion.md).

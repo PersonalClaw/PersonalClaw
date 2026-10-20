@@ -1694,8 +1694,8 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
             <div className="flex items-center gap-2 text-on-surface"><RotateCw size={14} /> Restart the gateway to finish</div>
             <div className="mt-1 text-on-surface-low" data-type="label-s">
               {app.enabled
-                ? `The installed version is running, but ${app.restartReason}. Restart it from System status, top right.`
-                : `This app is turned off, but ${app.restartReason}. Restart the gateway from System status, top right.`}
+                ? `The installed version is running, but ${app.restartReason}. Restart it from System status, bottom left.`
+                : `This app is turned off, but ${app.restartReason}. Restart the gateway from System status, bottom left.`}
             </div>
           </div>
         )}

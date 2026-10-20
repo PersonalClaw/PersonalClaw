@@ -92,7 +92,7 @@ describe('the shell keeps the work surface opaque over the material', () => {
 
   it('clears its root only while the material shows, and paints <main> the canvas then', () => {
     expect(app).toMatch(/const material = useWindowMaterial\(\)/)
-    expect(app).toMatch(/<div className="flex h-full" style=\{\{ background: material \? 'transparent' : 'var\(--color-canvas\)' \}\}>/)
+    expect(app).toMatch(/<div className="flex h-full flex-col" style=\{\{ background: material \? 'transparent' : 'var\(--color-canvas\)' \}\}>/)
     expect(app).toMatch(/<main className="relative flex-1 min-w-0" style=\{material \? \{ background: 'var\(--color-canvas\)' \} : undefined\}>/)
   })
 

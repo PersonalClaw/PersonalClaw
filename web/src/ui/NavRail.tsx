@@ -267,8 +267,8 @@ export function NavRail({
       )}
 
       {/* flex spacer pushes pinned items (e.g. Settings) to the bottom. The live
-          system widget now lives in the app-shell top-right corner (ShellCorners),
-          collapsed to a gateway-connectivity dot. */}
+          system widget lives in the status line at the window's bottom left
+          (app/StatusLine), collapsed to the gateway connection. */}
       <div className="mt-auto" />
       {pinnedItems.map((item) => renderItem(item, false))}
     </nav>

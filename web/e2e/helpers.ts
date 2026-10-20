@@ -222,13 +222,13 @@ const CONNECTIVITY_RESOLVED = /System status — Gateway connected/
 /** Block until the SHELL's self-polling chrome has RESOLVED — not merely mounted.
  *
  *  🪤 THIS IS THE HARNESS'S PRIMARY NON-DETERMINISM, AND IT IS GLOBAL TO EVERY ROUTE.
- *  `ShellCornerRight` (`web/src/ui/ShellCorners.tsx:50`) hosts three independently
- *  self-polling controls, each of which renders NOTHING — or something different — until
- *  its own fetch answers:
- *    · `NotificationBell` (`:77`) — unread badge absent until its count answers.
- *    · `DegradedChip`     (`:81`) — absent until its degraded read answers, then a pill.
- *    · `SystemWidget`     (`:84`) — dot starts ORANGE (`connecting`), turns GREEN on the
- *                                   first `/api/system` answer.
+ *  The shell hosts three independently self-polling controls, each of which renders
+ *  NOTHING — or something different — until its own fetch answers:
+ *    · `NotificationBell` (`ShellCornerRight`) — unread badge absent until its count answers.
+ *    · `DegradedChip`     (`ShellCornerRight`) — absent until its degraded read answers, then a pill.
+ *    · `SystemWidget`     (the status line, `web/src/app/StatusLine.tsx`) — dot starts ORANGE
+ *                         with "Connecting to gateway…" beside it, and turns GREEN, alone, on the
+ *                         first `/api/system` answer (`web/src/app/gatewayConnection.tsx`).
  *  `useVisiblePoll` (`web/src/lib/useVisiblePoll.ts:26`) fires its first fetch from inside
  *  a `useEffect`, i.e. AFTER first paint — so the first render of every route is painted
  *  with all three controls COLD, and a screenshot taken before they resolve is a different
@@ -470,12 +470,12 @@ export async function settleEntranceAnimations(page: Page, timeout = 2_000): Pro
         w.__pcFadeSample = sample
         const midFade = previous === undefined || previous !== sample
         // 🪤 INFINITE animations must NOT count as "still settling", or this predicate is
-        // VACUOUS on every route. `SystemWidget` renders a `.status-pulse` ring whenever the
-        // gateway is connected (`SystemWidget.tsx:83-85`), and that class is
-        // `animation: status-pulse … infinite` (`web/src/design/tokens.css:436`). It lives in
-        // the SHELL, so it is present on every surface the harness visits and never reaches
-        // `finished` — which means a bare `playState === 'running'` test can never go true
-        // once the dot turns green. `waitForFunction` therefore always ran to its 2s timeout
+        // VACUOUS on every route that has one. `SystemWidget` rendered a `.status-pulse` ring
+        // whenever the gateway was connected (its dot now holds still), and that class is
+        // `animation: status-pulse … infinite` (`web/src/design/tokens.css`). It lived in
+        // the SHELL, so it was present on every surface the harness visits and never reaches
+        // `finished` — which meant a bare `playState === 'running'` test could never go true
+        // once the dot turned green. `waitForFunction` therefore always ran to its 2s timeout
         // and the `.catch()` below swallowed it. The docstring's escape hatch ("a route with
         // a permanently-animating element degrades to today's behaviour") reads as a rare
         // case; it was EVERY case, and it is exactly how a screenshot could still land

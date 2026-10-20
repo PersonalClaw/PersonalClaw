@@ -29,18 +29,23 @@ vi.mock('../lib/api', async (orig) => {
   }
 })
 
+// The control reads the connection from the shell's one reading of it.
+vi.mock('../lib/useChatSocket', () => ({ useChatSocket: () => {} }))
+
 const { SystemWidget } = await import('./SystemWidget')
+const { GatewayConnectionProvider } = await import('../app/gatewayConnection')
+const renderWidget = () => render(<GatewayConnectionProvider><SystemWidget /></GatewayConnectionProvider>)
 
 describe('the background agents list', () => {
   it('🔴 names a trigger’s agent by its title, not by its framed task', async () => {
-    render(<SystemWidget />)
+    renderWidget()
     fireEvent.click(screen.getByRole('button', { name: /System status/ }))
     expect(await screen.findByText('Call the dentist')).toBeTruthy()
     expect(screen.queryByText(/You are running unattended/)).toBeNull()
   })
 
   it('and an agent nobody named by its task’s first line', async () => {
-    render(<SystemWidget />)
+    renderWidget()
     fireEvent.click(screen.getByRole('button', { name: /System status/ }))
     expect(await screen.findByText('Summarize the open issues')).toBeTruthy()
   })

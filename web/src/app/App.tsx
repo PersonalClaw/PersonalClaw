@@ -8,6 +8,9 @@ import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellThreadRail } from './threadRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
 import { IncidentBanner } from './IncidentBanner'
+import { DisconnectedBanner } from './DisconnectedBanner'
+import { GatewayConnectionProvider } from './gatewayConnection'
+import { StatusLine } from './StatusLine'
 import { ModelWaits } from '../ui/ModelWaitNotice'
 import { SignedOutScreen } from './SignedOutScreen'
 import { useSignedOut } from '../lib/signedOut'
@@ -817,90 +820,100 @@ function AppInner() {
     ...keymapCommands(keyRunners),
   ]
   return (
-    <div className="flex h-full" style={{ background: material ? 'transparent' : 'var(--color-canvas)' }}>
-      {/* The rail sits in a boundary, as each corner control does in ShellCorners: one that throws
-          leaves a notice in its place, and the page beside it and ⌘K keep working. */}
-      {!railHidden && (
-        <WidgetBoundary what="the navigation" compact className="m-s self-start">
-          <NavRail items={railItems} activeId={threadLit ? '' : active} onSelect={onNavSelect} collapsed={railCollapsed}
-            overlay={isMobile} overlayOpen={isMobile && mobileNavOpen} onScrimClick={() => setMobileNavOpen(false)} material={material}
-            threads={(
-              // Its own boundary: threads that throw leave a notice in their place, and the
-              // destinations around them keep working.
-              <WidgetBoundary what="your threads" className="mx-s">
-                <ShellThreadRail route={route} sub={sub} onOpen={onNavSelect} onLit={setThreadLit} />
-              </WidgetBoundary>
-            )}
-            disclosure={{
-              expanded: navMode === 'expert',
-              moreCount,
-              onToggle: () => setNavMode(navMode === 'expert' ? 'starter' : 'expert'),
-            }} />
-        </WidgetBoundary>
-      )}
-      <main className="relative flex-1 min-w-0" style={material ? { background: 'var(--color-canvas)' } : undefined}>
-        {/* App-shell corner regions — float above page content, not a header row */}
-        <ShellCornerLeft collapsed={railCollapsed} onToggle={toggleNav} focusMode={railHidden} />
-        <ShellCornerRight terminalOpen={termDrawer} onToggleTerminal={() => setTermDrawer((v) => !v)} navigate={navigate} />
-        {/* Guardrails incident banner — spans the content area on every page while
-            incident mode is active. Renders nothing otherwise. */}
-        <IncidentBanner />
-        {/* A request a page is waiting for while the local model it needs is busy: why, and what
-            happens next. Over the page, below the corner band (TopBar's own clearance), rather than
-            in its flow, so nothing moves under you for the few seconds it shows. A chat's own
-            waits show in that chat. */}
-        <div className="pointer-events-none absolute inset-x-0 z-30 px-l"
-          style={{ top: 'max(var(--shell-corner-lh, 52px), var(--shell-corner-rh, 44px))' }}>
-          <ModelWaits session="" floating className="mx-auto w-full max-w-[36rem]" />
-        </div>
-        <ErrorBoundary resetKey={rendered}>
-          {/* Route cross-fade (global choreography): the new page fades in on
-              each route change — keyed on `rendered` so switching sections reads
-              as a continuous transition, not a hard cut. It no longer rises: a rail
-              click is the most frequent action in the app, and a page climbing 6px
-              each time is motion that explains nothing. Enter-only (no exit-wait)
-              keeps navigation instant; MotionConfig at the root swaps this for no
-              motion under Reduce Motion.
+    // One reading of the gateway connection for the status line, its banner and the System status
+    // card under it.
+    <GatewayConnectionProvider>
+      <div className="flex h-full flex-col" style={{ background: material ? 'transparent' : 'var(--color-canvas)' }}>
+        <div className="flex min-h-0 flex-1">
+          {/* The rail sits in a boundary, as each corner control does in ShellCorners: one that throws
+              leaves a notice in its place, and the page beside it and ⌘K keep working. */}
+          {!railHidden && (
+            <WidgetBoundary what="the navigation" compact className="m-s self-start">
+              <NavRail items={railItems} activeId={threadLit ? '' : active} onSelect={onNavSelect} collapsed={railCollapsed}
+                overlay={isMobile} overlayOpen={isMobile && mobileNavOpen} onScrimClick={() => setMobileNavOpen(false)} material={material}
+                threads={(
+                  // Its own boundary: threads that throw leave a notice in their place, and the
+                  // destinations around them keep working.
+                  <WidgetBoundary what="your threads" className="mx-s">
+                    <ShellThreadRail route={route} sub={sub} onOpen={onNavSelect} onLit={setThreadLit} />
+                  </WidgetBoundary>
+                )}
+                disclosure={{
+                  expanded: navMode === 'expert',
+                  moreCount,
+                  onToggle: () => setNavMode(navMode === 'expert' ? 'starter' : 'expert'),
+                }} />
+            </WidgetBoundary>
+          )}
+          <main className="relative flex-1 min-w-0" style={material ? { background: 'var(--color-canvas)' } : undefined}>
+            {/* App-shell corner regions — float above page content, not a header row */}
+            <ShellCornerLeft collapsed={railCollapsed} onToggle={toggleNav} focusMode={railHidden} />
+            <ShellCornerRight terminalOpen={termDrawer} onToggleTerminal={() => setTermDrawer((v) => !v)} navigate={navigate} />
+            {/* Guardrails incident banner — spans the content area on every page while
+                incident mode is active. Renders nothing otherwise. */}
+            <IncidentBanner />
+            {/* A request a page is waiting for while the local model it needs is busy: why, and what
+                happens next. Over the page, below the corner band (TopBar's own clearance), rather than
+                in its flow, so nothing moves under you for the few seconds it shows. A chat's own
+                waits show in that chat. A lost connection's banner shows here too, for the same reason:
+                a restart is usually back in seconds. */}
+            <div className="pointer-events-none absolute inset-x-0 z-30 flex flex-col gap-s px-l"
+              style={{ top: 'max(var(--shell-corner-lh, 52px), var(--shell-corner-rh, 44px))' }}>
+              <DisconnectedBanner className="mx-auto w-full max-w-[36rem]" />
+              <ModelWaits session="" floating className="mx-auto w-full max-w-[36rem]" />
+            </div>
+            <ErrorBoundary resetKey={rendered}>
+              {/* Route cross-fade (global choreography): the new page fades in on
+                  each route change — keyed on `rendered` so switching sections reads
+                  as a continuous transition, not a hard cut. It no longer rises: a rail
+                  click is the most frequent action in the app, and a page climbing 6px
+                  each time is motion that explains nothing. Enter-only (no exit-wait)
+                  keeps navigation instant; MotionConfig at the root swaps this for no
+                  motion under Reduce Motion.
 
-              🔴 The code-split boundary sits INSIDE this element, never around it. Around it, a
-              lazy component anywhere in a page that suspends after the page painted made React
-              hide THIS element (`display: none !important`) and detach its ref. On the reveal,
-              framer-motion re-mounts it and jumps every value back to `initial` so the entrance
-              can replay — but the replay runs from its effect after a RENDER, and a Suspense
-              reveal re-renders nothing here. So the page came back pinned at opacity 0 (and,
-              while it still rose, translateY(6px)) until something re-rendered the shell: the blank Files page. In
-              here, a suspension hides only the page, and this element is never hidden at all. */}
-          <motion.div
-            key={rendered}
-            className="h-full"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: duration.medium, ease: ease.emphasizedDecel }}
-          >
-            <Suspense fallback={<PageFallback />}>
-              <ViewModesProvider value={viewModes}>{renderPage(rendered, { sub, navigate, navEpoch, query, setQuery })}</ViewModesProvider>
-            </Suspense>
-          </motion.div>
-        </ErrorBoundary>
-      </main>
-      <CommandPalette commands={commands} navigate={navigate} />
-      {/* The replayable product tour — shell-level because its stops
-          are shell surfaces (the rail, chat, inbox, the home approvals band, settings) and
-          it walks between them. Renders NOTHING until the onboarding done screen or the
-          Discover hub's "Replay the tour" card asks for it. */}
-      <ProductTour route={rendered} navigate={navigate} />
-      {/* The active personality's decorative shell element.
-          Renders NOTHING for the default identity and for every standard scheme;
-          under a personality that declares one it mounts an aria-hidden,
-          pointer-events-none overlay from the closed SHELL_ELEMENTS registry. */}
-      <PersonalityShellElement />
-      <Toaster />
-      <DialogHost />
-      {/* Self-update step progression (WS `update_progress`) — shell-level so the
-          modal appears from ANY page while an update pipeline runs. */}
-      <UpdateProgressOverlay />
-      <TerminalDrawer open={termDrawer} onClose={() => setTermDrawer(false)}
-        onOpenFull={(session) => { setTermDrawer(false); navigate(fullTerminalRoute(session)) }} />
-    </div>
+                  🔴 The code-split boundary sits INSIDE this element, never around it. Around it, a
+                  lazy component anywhere in a page that suspends after the page painted made React
+                  hide THIS element (`display: none !important`) and detach its ref. On the reveal,
+                  framer-motion re-mounts it and jumps every value back to `initial` so the entrance
+                  can replay — but the replay runs from its effect after a RENDER, and a Suspense
+                  reveal re-renders nothing here. So the page came back pinned at opacity 0 (and,
+                  while it still rose, translateY(6px)) until something re-rendered the shell: the blank Files page. In
+                  here, a suspension hides only the page, and this element is never hidden at all. */}
+              <motion.div
+                key={rendered}
+                className="h-full"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: duration.medium, ease: ease.emphasizedDecel }}
+              >
+                <Suspense fallback={<PageFallback />}>
+                  <ViewModesProvider value={viewModes}>{renderPage(rendered, { sub, navigate, navEpoch, query, setQuery })}</ViewModesProvider>
+                </Suspense>
+              </motion.div>
+            </ErrorBoundary>
+          </main>
+        </div>
+        {/* Ambient state at the bottom of the window, on every page and in focus mode. */}
+        <StatusLine />
+        <CommandPalette commands={commands} navigate={navigate} />
+        {/* The replayable product tour — shell-level because its stops
+            are shell surfaces (the rail, chat, inbox, the home approvals band, settings) and
+            it walks between them. Renders NOTHING until the onboarding done screen or the
+            Discover hub's "Replay the tour" card asks for it. */}
+        <ProductTour route={rendered} navigate={navigate} />
+        {/* The active personality's decorative shell element.
+            Renders NOTHING for the default identity and for every standard scheme;
+            under a personality that declares one it mounts an aria-hidden,
+            pointer-events-none overlay from the closed SHELL_ELEMENTS registry. */}
+        <PersonalityShellElement />
+        <Toaster />
+        <DialogHost />
+        {/* Self-update step progression (WS `update_progress`) — shell-level so the
+            modal appears from ANY page while an update pipeline runs. */}
+        <UpdateProgressOverlay />
+        <TerminalDrawer open={termDrawer} onClose={() => setTermDrawer(false)}
+          onOpenFull={(session) => { setTermDrawer(false); navigate(fullTerminalRoute(session)) }} />
+      </div>
+    </GatewayConnectionProvider>
   )
 }

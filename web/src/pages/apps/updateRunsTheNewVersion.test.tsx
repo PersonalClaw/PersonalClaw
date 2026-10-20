@@ -123,7 +123,7 @@ describe('what an update could not take out of the gateway is said, not hidden',
   it("the app's panel keeps saying it until a restart", async () => {
     await openInLibrary([app({ restartReason: REASON })])
     expect(screen.getByText('Restart the gateway to finish')).toBeTruthy()
-    expect(screen.getByText(`The installed version is running, but ${REASON}. Restart it from System status, top right.`)).toBeTruthy()
+    expect(screen.getByText(`The installed version is running, but ${REASON}. Restart it from System status, bottom left.`)).toBeTruthy()
   })
 
   it("a turned-off app's panel does not say that it is running", async () => {
@@ -133,7 +133,7 @@ describe('what an update could not take out of the gateway is said, not hidden',
     const { AppsSection } = await import('./AppsSection')
     render(<AppsSection query={{ view: 'library', open: 'growth' }} setQuery={() => {}} navigate={() => {}} />)
     await waitFor(() => expect(screen.getByText('Restart the gateway to finish')).toBeTruthy())
-    expect(screen.getByText(`This app is turned off, but ${REASON}. Restart the gateway from System status, top right.`)).toBeTruthy()
+    expect(screen.getByText(`This app is turned off, but ${REASON}. Restart the gateway from System status, bottom left.`)).toBeTruthy()
     expect(screen.queryByText(/The installed version is running/), 'a turned-off app read as running').toBeNull()
   })
 
