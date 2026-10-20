@@ -178,7 +178,6 @@ _KEYS = frozenset(
         "shards",
         "needs_node",
         "needs_browser",
-        "full_history",
         "after",
         "install_exemptions",
         "retiring",
@@ -338,7 +337,6 @@ class Job:
     shards: int = 1
     needs_node: bool = False
     needs_browser: bool = False
-    full_history: bool = False
     after: tuple[str, ...] = ()
     install_exemptions: tuple[Exemption, ...] = ()
     #: The issue that retires the job (``#<number>``). The job is still the catalogue's and
@@ -697,7 +695,6 @@ def _job(raw: object, n: int, problems: list[str]) -> Job | None:
         shards=fields.count("shards", 1) or 1,
         needs_node=fields.flag("needs_node"),
         needs_browser=fields.flag("needs_browser"),
-        full_history=fields.flag("full_history"),
         after=fields.strings("after"),
         install_exemptions=tuple(exemptions),
         retiring=retiring,

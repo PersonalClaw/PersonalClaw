@@ -164,7 +164,7 @@ Run on the repo venv, from the repo root:
 .venv/bin/python -m harness explain T1.foo    # what commands/rules/tests a task owes
 .venv/bin/python -m harness run T1.foo         # execute the task's required profiles
 .venv/bin/python -m harness run --diff         # diff-aware selection
-.venv/bin/python -m harness scan               # boundary scanner
+.venv/bin/python -m harness scan               # boundary scanner, every tracked file (what CI runs)
 .venv/bin/python -m harness scan --diff --base <sha>  # only what changed since <sha>
 .venv/bin/python -m harness fanout-measure obs.json  # token-matched fan-out verdict
 ```

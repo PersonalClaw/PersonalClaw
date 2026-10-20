@@ -684,7 +684,7 @@ def test_a_live_value_that_is_not_a_boolean_is_refused(value: str) -> None:
     assert "rails: live is true or false" in problems
 
 
-@pytest.mark.parametrize("flag", ["needs_node", "needs_browser", "full_history"])
+@pytest.mark.parametrize("flag", ["needs_node", "needs_browser"])
 def test_each_flag_that_is_not_a_boolean_is_refused(flag: str) -> None:
     problems = _refused(_with("timeout_min = 10", f'timeout_min = 10\n{flag} = "true"'))
     assert f"rails: {flag} is true or false" in problems

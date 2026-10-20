@@ -2,8 +2,8 @@
 
 These prove each check actually FIRES on a synthetic violation (a check that never fires is
 worthless) and that touched-area → profile forcing works. That the scanner produces ZERO
-error-level findings on the real repo, or it's noise, is the rail
-``tests/rails/test_harness_scanner_tree.py``, which runs once per CI run in the rails job.
+error-level findings on the real repo, or it's noise, is CI's: ``python -m harness scan`` over
+the whole tree, in the static job's harness step (and in breadth's rails-macos leg).
 """
 
 from __future__ import annotations
@@ -353,3 +353,123 @@ def test_scan_takes_its_base_and_fails_on_one_it_cannot_find(
     assert "does not name a commit" in capsys.readouterr().err
     assert cli.main(["scan", "--base", first]) == 2, "--base without --diff names nothing"
     assert len(scanned) == 1, "a refused base must not fall through to a scan"
+
+
+# ── The whole-tree scan (`scan`, no `--diff`): what CI's static job runs ───────────
+
+#: The scanner's own module: a whole-tree listing that does not hold it in the checkout is not
+#: this tree's.
+_OWN = "harness/scanner.py"
+
+
+def _tree_with_the_scanner(root: Path) -> None:
+    """``a.txt``, ``b.txt`` and ``c.txt`` over three commits, then the scanner's own module, as
+    this repository tracks it."""
+    _three_commits(root)
+    (root / "harness").mkdir()
+    _commit(root, {_OWN: "x = 1\n"}, "four")
+
+
+def test_a_whole_tree_scan_reads_every_tracked_file_and_no_changed_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every file git tracks, whatever the last commit touched, judged in full."""
+    _tree_with_the_scanner(tmp_path)
+    (tmp_path / "untracked.txt").write_text("u\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "_repo_root", lambda: tmp_path)
+    scanned: list[tuple[list[str], object]] = []
+
+    def fake_scan(files, root, changed_lines=None):
+        scanned.append((sorted(str(f.relative_to(root)) for f in files), changed_lines))
+        return []
+
+    monkeypatch.setattr(cli.scanner, "scan", fake_scan)
+
+    assert cli.main(["scan"]) == 0
+    assert scanned == [(["a.txt", "b.txt", "c.txt", _OWN], None)]
+
+
+def test_a_whole_tree_scan_fails_on_an_error_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _tree_with_the_scanner(tmp_path)
+    monkeypatch.setattr(cli, "_repo_root", lambda: tmp_path)
+    finding = scanner.Finding("a-check", scanner.ERROR, tmp_path / "a.txt", 1, "what", "why", "fix")
+    monkeypatch.setattr(cli.scanner, "scan", lambda files, root, changed_lines=None: [finding])
+
+    assert cli.main(["scan"]) == 1
+
+
+def _git_fails_partway(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``git ls-files`` lists some files, then exits 128, as on an index it cannot read."""
+    real = subprocess.run
+
+    def run(argv, *args, **kwargs):
+        if list(argv[:2]) == ["git", "ls-files"]:
+            return subprocess.CompletedProcess(
+                argv, 128, stdout=f"{_OWN}\na.txt\n", stderr="fatal: index file corrupt\n"
+            )
+        return real(argv, *args, **kwargs)
+
+    monkeypatch.setattr(cli.subprocess, "run", run)
+
+
+#: ``(what is planted, what the refusal says)``.
+_NOT_THIS_TREE = (
+    ("not a repository", "git ls-files exits 128"),
+    ("a repository that tracks nothing", "git lists no tracked file"),
+    ("a listing git fails partway through", "git ls-files exits 128"),
+    ("a listing without the scanner's own module", f"git lists no {_OWN}"),
+    ("the scanner's module listed but not in the checkout", "the checkout holds no such file"),
+)
+
+
+@pytest.mark.parametrize("entry", ["harness scan", "harness run's scan profile"])
+@pytest.mark.parametrize("planted, says", _NOT_THIS_TREE, ids=[p for p, _ in _NOT_THIS_TREE])
+def test_a_whole_tree_scan_of_a_listing_that_is_not_this_trees_fails(
+    planted: str,
+    says: str,
+    entry: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A scan of nothing is no scan, and a scan of part of the tree is not the tree's: where git
+    fails or lists no file, or its listing does not hold the scanner's own module in the
+    checkout, the scan fails rather than printing clean, from either entry that scans the
+    whole tree."""
+    if planted == "not a repository":
+        (tmp_path / "harness").mkdir()
+        (tmp_path / _OWN).write_text("x = 1\n", encoding="utf-8")
+    elif planted == "a repository that tracks nothing":
+        _git_init(tmp_path)
+        (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    elif planted == "a listing git fails partway through":
+        _tree_with_the_scanner(tmp_path)
+        _git_fails_partway(monkeypatch)
+    elif planted == "a listing without the scanner's own module":
+        _three_commits(tmp_path)
+    else:
+        _tree_with_the_scanner(tmp_path)
+        (tmp_path / _OWN).unlink()
+    monkeypatch.setattr(cli, "_repo_root", lambda: tmp_path)
+    scanned: list[object] = []
+    monkeypatch.setattr(
+        cli.scanner, "scan", lambda files, root, changed_lines=None: scanned.append(files) or []
+    )
+
+    if entry == "harness scan":
+        assert cli.main(["scan"]) == 2
+    else:
+        assert cli._run_scan_if_selected(["scan"]) == 2
+    assert says in capsys.readouterr().err
+    assert scanned == [], "a scan of a listing that is not the tree's must not run, let alone pass"
+
+
+@pytest.mark.parametrize("flag", ["--d", "--di", "--dif", "--bas=main"])
+def test_the_scan_takes_its_flags_spelled_whole(flag: str) -> None:
+    """``--dif`` is no ``--diff``: read as a prefix, a step spelled short would scan a diff
+    while it reads as the whole tree's scan."""
+    with pytest.raises(SystemExit) as exc:
+        cli.build_parser().parse_args(["scan", flag])
+    assert exc.value.code == 2

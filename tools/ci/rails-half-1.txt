@@ -67,7 +67,6 @@ tests/rails/test_gateway_base_owner_tree.py
 tests/rails/test_general_kind_as_run_tree.py
 tests/rails/test_ghcr_anonymous_pull_tree.py
 tests/rails/test_guardrails_ladder_tree.py
-tests/rails/test_harness_scanner_tree.py
 tests/rails/test_home_path_census.py
 tests/rails/test_home_resolver_is_not_bound_at_import_tree.py
 tests/rails/test_host_facts_single_source_tree.py
