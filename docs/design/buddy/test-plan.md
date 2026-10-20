@@ -33,8 +33,10 @@ Each test maps to an acceptance criterion of an implementation task.
 - Every surface (peek, compact, expanded with each alert kind, floating with a bubble, the tray's
   still orbs, the phone's two views) in light and dark, and in high contrast.
 - At 18 px, each family's still is told apart from the other three by the orb's density and its
-  badge alone, and so is each tray still as a one-colour template image: the maintainer's review
-  of the contact sheet ([`character.md`](character.md#the-poses)).
+  badge alone, and so is each tray still as a one-colour template image: the census of the drawn
+  poses and its 18 px scan in `tests/rails/test_buddy_design_matrix.py`
+  ([`character.md`](character.md#the-drawn-poses)). The contact sheets stay for the maintainer to
+  look at any time; they are not a gate.
 - Side by side with other products' status indicators and assistant orbs, from public material,
   nothing the buddy adds to the agent orb (its outline, badge, wash, poses, gestures and presence),
   nor the whole orb, shows a drawn form or choreography a viewer would recognise as another

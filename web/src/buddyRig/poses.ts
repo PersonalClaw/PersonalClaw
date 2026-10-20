@@ -112,8 +112,9 @@ export const BUDDY_SIZES: readonly BuddySize[] = [18, 24, 48, 96]
 
 /** Which of the agent orb's two tuned drawings a buddy size shares: 18 and 24 px draw from the
  *  20 px drawing's dot counts and radii, 48 and 96 px from the 64 px drawing's, each at its own size
- *  (`docs/design/buddy/decisions/rig.md`, "Sizes"). */
-export function tunedDrawingFor(size: BuddySize): AgentOrbSize {
+ *  (`docs/design/buddy/decisions/rig.md`, "Sizes"). The tray's stills and the presence poses' own
+ *  sizes (16 to 22 px, and 56) follow the same line. */
+export function tunedDrawingFor(size: number): AgentOrbSize {
   return size < 32 ? 20 : 64
 }
 

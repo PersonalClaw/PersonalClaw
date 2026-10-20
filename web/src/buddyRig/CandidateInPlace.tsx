@@ -7,65 +7,15 @@
  *  (`docs/design/buddy/rig.md`, "Candidates"). */
 
 import { useEffect, useMemo, useRef } from 'react'
-import { paintFrame, resolvePreset, type Dot } from 'thinking-orbs/engine'
+import { paintFrame, resolvePreset } from 'thinking-orbs/engine'
 import { useMode } from '../app/theme'
 import { inkOf } from '../ui/AgentOrb'
 import { modeOf, poseFrame } from './arrange'
 import { useMayMove, useOnScreen, useRigInks, type CandidateProps } from './candidate'
 import { runDots, tintOf } from './dots'
-import { poseOf, rigLook, tunedDrawingFor, type BadgeMark } from './poses'
+import { PAD, badgeDots, washDots } from './inPlaceParts'
+import { poseOf, rigLook, tunedDrawingFor } from './poses'
 import { usePose } from './usePose'
-
-/** The badge's marks as dots: rows of a small matrix, 1 where a dot sits. */
-const GLYPHS: Record<BadgeMark, readonly string[]> = {
-  working: ['10101'],
-  approval: ['010', '010', '010', '000', '010'],
-  input: ['110', '001', '010', '000', '010'],
-  error: ['101', '010', '101'],
-  done: ['00001', '00010', '10100', '01000'],
-}
-
-/** How far the canvas reaches past the orb on each side, as a share of its size: room for the
- *  badge on the upper edge. */
-const PAD = 0.2
-
-const dot = (x: number, y: number, r: number, a: number): Dot => ({ x, y, z: 0, r, white: 0, a })
-
-/** The wash: a soft field of dots rising from the orb's lower edge, strongest at the edge. */
-function washDots(size: number, strength: number, dy: number): Dot[] {
-  const out: Dot[] = []
-  const c = size / 2
-  const step = size / 14
-  const r = Math.max(0.35, size * 0.016)
-  for (let y = c; y <= size; y += step) {
-    const half = Math.sqrt(Math.max(0, c * c - (y - c) * (y - c)))
-    const rise = (y - c) / c
-    for (let x = c - half; x <= c + half; x += step) out.push(dot(x, y + dy, r, strength * 0.55 * rise ** 1.4))
-  }
-  return out
-}
-
-/** The badge: a ring of dots on the orb's upper edge with its mark inside, drawn with the dots. */
-function badgeDots(size: number, mark: BadgeMark, dy: number): { cx: number; cy: number; radius: number; dots: Dot[] } {
-  const radius = Math.max(4, size * 0.17)
-  const cx = size * 0.86
-  const cy = size * 0.14 + dy
-  const dots: Dot[] = []
-  const ring = 14
-  const r = Math.max(0.35, radius * 0.09)
-  for (let i = 0; i < ring; i++) {
-    const a = (i / ring) * 2 * Math.PI
-    dots.push(dot(cx + Math.cos(a) * radius * 0.92, cy + Math.sin(a) * radius * 0.92, r, 1))
-  }
-  const rows = GLYPHS[mark]
-  const cols = rows[0].length
-  const cell = (radius * 1.15) / Math.max(rows.length, cols)
-  rows.forEach((row, j) => [...row].forEach((on, i) => {
-    if (on !== '1') return
-    dots.push(dot(cx + (i - (cols - 1) / 2) * cell, cy + (j - (rows.length - 1) / 2) * cell, Math.max(0.35, cell * 0.4), 1))
-  }))
-  return { cx, cy, radius, dots }
-}
 
 export function CandidateInPlace({ phase, size, still = false, dials = '', onPose, fps }: CandidateProps) {
   const look = rigLook(phase)

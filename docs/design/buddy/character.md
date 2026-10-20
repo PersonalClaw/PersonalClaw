@@ -69,13 +69,15 @@ buddy's stills stand in on the tray and the dock only to show its state, while B
 ## The choice
 
 Made on 2026-10-18, at gate one ([#3830]): the maintainer chose none of the three directions below,
-and in their place an animated orb made of dots, in the same visual language as the agent orb. The
-rest of this file is the design worked out from that choice, which the maintainer reviews with the
-poses. They are drawn next, at real sizes, with the side-by-side check of what the buddy adds and
-of the whole orb ([the constraints](#constraints)) recorded here beside them, where the
-originality record cites it ([#4570]). With no body, the buddy needs no body colour: the
-warm-neutral token the brief asked for is withdrawn, and nothing is added to the design system for
-the buddy.
+and in their place an animated orb made of dots, in the same visual language as the agent orb. Its
+colour is the scheme's primary while an agent is alive and Ink Variant where nothing is, and it is
+no creature: it has no eyes, mouth or limb. The rest of this file is the design worked out from
+that choice. The v0.3.0 poses are now drawn at real sizes ([the drawn poses](#the-drawn-poses)),
+with contact sheets the maintainer can look at any time; the side-by-side check of what the buddy
+adds and of the whole orb ([the constraints](#constraints)) is recorded here beside them once it is
+made, where the originality record cites it ([#4570]). With no body, the buddy needs no body
+colour: the warm-neutral token the brief asked for is withdrawn, and nothing is added to the design
+system for the buddy.
 
 ### Three directions to explore
 
@@ -100,9 +102,9 @@ streaming (writing), listening, approval, question, error, done, idle, restartin
 | Waiting | approval, input | full and still, in the primary: drawn in tight for an approval, lifted a little for a question, with the alert's wash | "!" in the warn tone for an approval, "?" in the info tone for a question |
 | Blocked | error, offline | settled low and still, in the neutral: with the danger wash for an error, dimmed while offline | a mark in the danger tone for an error; the offline mark |
 
-Two tones stay open, as the phase contract leaves them: queued's and listening's, so those two
-phases may yet leave the primary ([`signals.md`](signals.md#1-one-phase-contract)). The rest of the
-set:
+The phase contract's two last tones are settled ([`signals.md`](signals.md#1-one-phase-contract)):
+queued work is drawn in the primary like the rest of the active family, and listening keeps the
+warn tone for its microphone, while its dots stay the primary's. The rest of the set:
 
 - **The focused status card's orb,** at the card's size, for each family.
 - **Presence:** peek (the orb just below the top edge), compact, expanded (the orb large), floating,
@@ -130,6 +132,67 @@ with one meaning:
 
 Nothing else; a motion never means two things.
 
+## The drawn poses
+
+Every pose of the v0.3.0 set, and every still the tray and the dock show, is drawn on the agent
+orb's drawing the way the rig's in-place candidate draws it ([#3887],
+[`decisions/rig.md`](decisions/rig.md)): the dots are the agent orb's engine's, moved by the rig's
+poses (their density, how far they spread, how far they sink and their swirl), and the badge and the
+wash are drawn as dots in the alert's tone. The layered candidate reads the same table of poses and
+the parts stay apart, so whichever extension the rig settles on draws these sources without rework.
+One table holds them all (`web/src/buddyRig/poseSet.ts`), `web/src/buddyRig/poseSources.ts` draws
+them, and a test holds the committed files to what the table draws.
+
+- **A file per pose, its still.** `poses/<pose>.svg` is the pose as it shows under reduced motion:
+  `<family>-<phase>` for each phase in the table above, `card-<family>` for the focused card's orb,
+  and `presence-<name>` and `answer-<name>` for the lists below it. A pose that moves has
+  `poses/<pose>.motion.svg` beside it, the instant its motion is drawn at: the active family's dots
+  mid-motion, the peek half above the top edge, the waking orb not yet at full brightness, the nod
+  at the bottom of its dip, the shake at its widest, and the badge half folded as an answer
+  elsewhere closes it.
+- **In parts, round, in the tokens.** Each source is one whole orb, its pivot at its centre,
+  holding its dots, its wash and its badge as separate groups, and the whole orb only moves, turns
+  or scales by one factor. Every colour is a token set in a style (`--color-orb-alive`,
+  `--color-orb-rest` and the alert tones), so one file is the pose in light, in dark and in every
+  scheme. A dot's depth is its opacity, which is how the agent orb's painter shades a tinted dot
+  toward the canvas.
+- **Sizes.** A pose is drawn at the room its surface gives the orb
+  ([`surfaces.md`](surfaces.md#the-room-budget)): 48 px for the families, the focused card and the
+  answers, 22 for the peek and the compact island, and 56 floating. Below 24 px the badge drops its
+  ring of dots and its mark fills it, since a ring that small reads as a blur.
+- **The tray's and the dock's stills** are `poses/tray-<still>-<size>.svg` at 16, 18 and 22 px,
+  each its family's still with the badge inside the square, and beside each a `-template.svg`: black
+  on clear with no wash, for the macOS menu bar, which recolours it. The rasters the tray and the
+  dock load are their task's export ([#3896]).
+- **The marks the buddy adds:** the microphone while listening and a slash while offline, beside the
+  agent orb's "!", "?" and "×", the working mark and the check.
+- **What the drawing settles:** presence and the answers are drawn on the working pose, the one an
+  alert interrupts and an answer goes back to; dozing dims it to 60%, sleeping dims the idle orb to
+  40%, and offline dims the error's settled dots to 55% with no wash. Every amplitude is the default
+  dials'.
+
+The contact sheets show every pose at 18, 24, 48 and 96 px, light above dark, each with its words
+beside it and its motion frame at 48 px, and every still at its size in colour and as a template,
+with the 18 px ones also at four times: [the four families](poses/sheets/families.svg),
+[the focused card's orb](poses/sheets/card.svg), [presence](poses/sheets/presence.svg),
+[the answers](poses/sheets/answers.svg) and [the tray and the dock](poses/sheets/tray.svg). They are
+drawn in the default scheme, for the maintainer to look at whenever they like; they are not a gate.
+
+The checks. `tests/rails/test_buddy_design_matrix.py` reads the set from this file's own words (the
+family table's phases, the focused card's orb for each family, the presence and answer lists, and
+the stills at each size with their template versions) and holds `poses/` to it: a source for each,
+none for a pose this file does not name, and a motion frame beside each pose that moves. It holds
+each source to its parts, its tokens and its round outline. At 18 px it tells the four families
+apart by their dots, at least a quarter more of them or 5% of the orb's size in how far they reach
+from its centre or where their middle sits, and by their badge, in colour and as templates; and it
+holds the contact sheets to every pose at its sizes in both modes, with its words.
+`web/src/buddyRig/poseSources.test.ts` holds the files to the table and the table to the phase
+contract. After a change to the table, redraw them from `web/`:
+
+```bash
+PC_WRITE_BUDDY_POSES=1 npx vitest run src/buddyRig/poseSources.test.ts
+```
+
 ## Later work
 
 ### Play and drop poses
@@ -155,6 +218,8 @@ an export of the chosen rig ([`rig.md`](rig.md#the-portable-sprite-sheet)).
 
 [#3807]: https://github.com/PersonalClaw/PersonalClaw/issues/3807
 [#3830]: https://github.com/PersonalClaw/PersonalClaw/issues/3830
+[#3887]: https://github.com/PersonalClaw/PersonalClaw/issues/3887
 [#3894]: https://github.com/PersonalClaw/PersonalClaw/issues/3894
 [#3895]: https://github.com/PersonalClaw/PersonalClaw/issues/3895
+[#3896]: https://github.com/PersonalClaw/PersonalClaw/issues/3896
 [#4570]: https://github.com/PersonalClaw/PersonalClaw/issues/4570

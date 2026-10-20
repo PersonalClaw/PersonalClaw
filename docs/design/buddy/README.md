@@ -55,9 +55,10 @@ each task's approved update and settled answers change it.
    on the owner ([#3888]) and one list of what is running now ([#3889]).
 2. The character (**gate one**, [#3830]) and the rig ([#3887]), side by side. Gate one's choice
    was made on 2026-10-18: none of the three character directions, but an orb of dots in the agent
-   orb's visual language ([the choice](character.md#the-choice)). Its poses are drawn next, for the
-   maintainer's review at real sizes. The rig, chosen by a measured spike, decides how the buddy
-   extends the agent orb's drawing ([the starting position](rig.md#starting-position)).
+   orb's visual language ([the choice](character.md#the-choice)). Its v0.3.0 poses are drawn
+   ([the drawn poses](character.md#the-drawn-poses)), with contact sheets the maintainer can look at
+   any time. The rig, chosen by a measured spike, decides how the buddy extends the agent orb's
+   drawing ([the starting position](rig.md#starting-position)).
 3. The state machine ([#3890]) and the renderer ([#3891]), then the playground ([#3892]), which the
    maintainer plays before any surface ships (**gate two**).
 4. The window ([#3831]), presence and alerts ([#3832]) and the expanded card ([#3893]).
@@ -119,8 +120,9 @@ later work below.
 - [`character.md`](character.md): the orb of dots, with its [constraints](character.md#constraints),
   [the choice](character.md#the-choice), made on 2026-10-18, with
   [the three directions it rejected](character.md#three-directions-to-explore),
-  [the poses](character.md#the-poses) and
-  [the gesture vocabulary](character.md#the-gesture-vocabulary).
+  [the poses](character.md#the-poses),
+  [the gesture vocabulary](character.md#the-gesture-vocabulary) and
+  [the drawn poses](character.md#the-drawn-poses), with their contact sheets.
 - [`rig.md`](rig.md): [candidates](rig.md#candidates), [what is measured](rig.md#what-is-measured)
   and [the starting position](rig.md#starting-position).
 - [`test-plan.md`](test-plan.md): [logic](test-plan.md#logic), [consent](test-plan.md#consent),
