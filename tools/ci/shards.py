@@ -61,6 +61,18 @@ RAILS = "tests/rails"
 JOB_OWNED: Mapping[str, str] = {
     "tests/test_website_installer.py": "ci.yml lint",
     "tests/test_npm_advisory_floors.py": "ci.yml rails-checks",
+    "tests/security/test_app_data_reads_never_follow_links.py": "ci.yml security",
+    "tests/security/test_app_installs_what_was_scanned.py": "ci.yml security",
+    "tests/security/test_app_signature.py": "ci.yml security",
+    "tests/security/test_app_staging_links.py": "ci.yml security",
+    "tests/security/test_mode_independence.py": "ci.yml security",
+    "tests/security/test_scanner_adversarial.py": "ci.yml security",
+    "tests/security/test_scanner_judges_what_the_app_runs.py": "ci.yml security",
+    "tests/security/test_scanner_reachability.py": "ci.yml security",
+    "tests/security/test_scanner_recall.py": "ci.yml security",
+    "tests/security/test_scanner_runtime_use.py": "ci.yml security",
+    "tests/test_supply_chain_gates.py": "ci.yml security",
+    "tests/test_supply_chain_scanner.py": "ci.yml security",
 }
 
 
@@ -85,8 +97,8 @@ def universe(root: Path, owned: Mapping[str, str] | None = None) -> list[str]:
     - the files in ``owned`` (:data:`JOB_OWNED` unless given), each of which a workflow job
       runs by name.
 
-    The security paths stay in the shards until a merge-tier security job runs them, or they
-    would run nowhere.
+    The security corpus is among them: ``ci.yml``'s ``security`` job runs it on every run, and
+    the merge tier requires that job (``catalogue.MERGE_SECURITY_JOBS``).
     """
     skipped = JOB_OWNED if owned is None else owned
     options = _pytest_options(root)

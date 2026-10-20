@@ -168,7 +168,7 @@ TOLERATED: tuple[Tolerated, ...] = (
     ),
     Tolerated(
         _BREADTH,
-        (*_SUITE_LEGS, *_TREE_KEYED_LEGS, "security-corpus", "canary"),
+        (*_SUITE_LEGS, *_TREE_KEYED_LEGS, "security", "security-macos", "canary"),
         "pytest",
         "Its outcome is the shard's result: `ran` records it, and the last step fails the job "
         "on a red entry, after the evidence is written and uploaded.",

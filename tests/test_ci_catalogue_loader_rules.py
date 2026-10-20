@@ -9,7 +9,7 @@ from tools.ci import catalogue
 
 _BASE = """
 [tier.merge]
-jobs = ["rails", "python-suite", "python-suite-macos"]
+jobs = ["rails", "python-suite", "python-suite-macos", "security"]
 
 [[job]]
 id = "rails"
@@ -46,10 +46,21 @@ security = "security"
 platform = "macos-26"
 timeout_min = 50
 command = [{ argv = ["uv", "run", "pytest", "tests"] }]
+
+[[job]]
+id = "security"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "security"
+timeout_min = 25
+command = [{ argv = ["uv", "run", "pytest", "tests/security"] }]
 """
 
 
-_MERGE_LIST = '[tier.merge]\njobs = ["rails", "python-suite", "python-suite-macos"]\n'
+_MERGE_LIST = '[tier.merge]\njobs = ["rails", "python-suite", "python-suite-macos", "security"]\n'
 
 
 def _edit(old: str, new: str) -> str:
@@ -65,7 +76,7 @@ def _problems(text: str) -> list[str]:
 
 def test_the_base_loads_with_its_merge_list() -> None:
     cat = catalogue.load(_BASE)
-    assert cat.merge_jobs == ("rails", "python-suite", "python-suite-macos")
+    assert cat.merge_jobs == ("rails", "python-suite", "python-suite-macos", "security")
 
 
 def test_every_external_input_has_a_kind() -> None:
@@ -109,7 +120,9 @@ def test_tree_reuse_of_a_job_reading_a_pinned_or_plan_only_input_loads(kept: str
 
 
 def test_a_catalogue_without_a_merge_list_is_refused() -> None:
-    text = _edit('[tier.merge]\njobs = ["rails", "python-suite", "python-suite-macos"]\n', "")
+    text = _edit(
+        '[tier.merge]\njobs = ["rails", "python-suite", "python-suite-macos", "security"]\n', ""
+    )
     assert "the catalogue has no [tier.merge] jobs list" in " ".join(_problems(text))
 
 

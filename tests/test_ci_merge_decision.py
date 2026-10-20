@@ -753,7 +753,7 @@ def test_with_no_definition_changed_the_candidates_own_run_decides() -> None:
 
 _CATALOGUE = """
 [tier.merge]
-jobs = ["rails", "python-suite", "python-suite-macos", "docs-check"]
+jobs = ["rails", "python-suite", "python-suite-macos", "security", "docs-check"]
 
 [[job]]
 id = "rails"
@@ -792,6 +792,17 @@ timeout_min = 50
 command = [{ argv = ["uv", "run", "pytest", "tests"] }]
 
 [[job]]
+id = "security"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "security"
+timeout_min = 25
+command = [{ argv = ["uv", "run", "pytest", "tests/security"] }]
+
+[[job]]
 id = "docs-check"
 tiers = ["change", "merge"]
 inputs = ["docs/"]
@@ -814,7 +825,7 @@ timeout_min = 5
 command = [{ argv = ["uv", "run", "flake8"] }]
 """
 
-MERGE_TIER = ("rails", "python-suite", "python-suite-macos", "docs-check")
+MERGE_TIER = ("rails", "python-suite", "python-suite-macos", "security", "docs-check")
 #: The catalogue with docs-check dropped from the merge tier: both edits a candidate needs, its
 #: tiers and the list. The loader accepts it, so only where it is read keeps it out of a plan.
 _SHRUNK_CATALOGUE = _CATALOGUE.replace(
@@ -897,7 +908,7 @@ def test_the_candidates_own_catalogue_never_sets_the_plan(
     plan = md.planned_jobs(repo, base, main="main")
     assert plan == MERGE_TIER
     # The candidate's workflow runs neither docs-check, the job its catalogue dropped, nor
-    # python-suite: both are planned, so the verdict reads both as missing.
+    # python-suite nor security: all three are planned, so the verdict reads each as missing.
     decision = md.decide(
         plan,
         _run(_needs(rails="success", python_suite_macos="success"), head_sha=HEAD),
@@ -910,7 +921,7 @@ def test_the_candidates_own_catalogue_never_sets_the_plan(
     )
     assert decision.state == md.RED
     missing = {r.key for r in decision.reasons if r.kind == "missing"}
-    assert missing == {"docs-check", "python-suite"}, decision.reasons
+    assert missing == {"docs-check", "python-suite", "security"}, decision.reasons
 
 
 def test_a_default_branch_without_a_readable_catalogue_plans_nothing(

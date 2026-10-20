@@ -21,8 +21,8 @@ from tools.ci import plan as planner
 _TEXT = """
 [tier.merge]
 jobs = [
-  "rails", "python-suite", "python-suite-macos", "docs-check", "web", "build", "sdk", "lint",
-  "audit",
+  "rails", "python-suite", "python-suite-macos", "security", "docs-check", "web", "build", "sdk",
+  "lint", "audit",
 ]
 
 [[job]]
@@ -58,6 +58,17 @@ security = "security"
 platform = "macos-26"
 timeout_min = 50
 command = [{ argv = ["uv", "run", "pytest", "tests"] }]
+
+[[job]]
+id = "security"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "security"
+timeout_min = 25
+command = [{ argv = ["uv", "run", "pytest", "tests/security"] }]
 
 [[job]]
 id = "docs-check"
@@ -144,12 +155,13 @@ whole_tier = true
 reason = "the file that defines the jobs: editing it re-runs all of them"
 """
 
-#: The jobs a merge plan always holds: the rails, both security suites, and the live audit.
-_FLOOR = {"rails", "python-suite", "python-suite-macos", "audit"}
+#: The jobs a merge plan always holds: the rails, the three security jobs, and the live audit.
+_FLOOR = {"rails", "python-suite", "python-suite-macos", "security", "audit"}
 _MERGE = {
     "rails",
     "python-suite",
     "python-suite-macos",
+    "security",
     "docs-check",
     "web",
     "build",

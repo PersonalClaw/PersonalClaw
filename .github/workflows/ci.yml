@@ -6,7 +6,7 @@
 # A PUSH TO MAIN REPEATS NO WORK ITS PULL REQUEST DID ON THE SAME TREE. `tree-check` asks
 # whether a green pull-request run already tested the tree the push lands
 # (tools/ci/tree_tested.py, the previous main commit's copy). Yes: every job that run did is
-# skipped, and only the always-run set runs — `tree-check`, `changes`, `security-corpus`,
+# skipped, and only the always-run set runs — `tree-check`, `changes`, `security`,
 # `browse-live`, and `apps-contract` when the plan names it. No, or no answer: every job runs on
 # the pushed tree, `test-macos` included. The suite's shards are the one exception: during a
 # burst of merges a newer push's waiting shard can replace this one's (see the concurrency
@@ -512,7 +512,7 @@ jobs:
       # runs on a stranger's machine, and its header advertised "shellcheck-clean" plus a weekly
       # container smoke. MEASURED 2026-09-06: no workflow mentioned the file at all — grepping
       # .github/workflows/ for `website/install`, `install.sh` or `personalclaw.dev/install`
-      # returned nothing, and the main-push workflow's four jobs (matrix/audit/security-corpus/coverage)
+      # returned nothing, and the main-push workflow's four jobs (matrix/audit/security-corpus, now `security`/coverage)
       # touched none of it. The advertised coverage was the only artifact of itself.
       #
       # `!cancelled()` rather than the default success(): the lint step above ends in
@@ -1322,16 +1322,19 @@ jobs:
           "$RUNNER_TEMP/audit-venv/bin/python" -m tools.ci audit run
           --pip-audit "$RUNNER_TEMP/audit-venv/bin/python" --work "$RUNNER_TEMP/audit"
 
-  security-corpus:
+  security:
     # The adversarial scanner corpus (five attack classes, the scanned-bytes==installed-bytes
-    # race invariant, and the red-on-weakness meta-test), on every push to main whatever
-    # tree-check says: security evidence is never reused from a pull request's run. A pull
-    # request already runs these modules inside `test-shard`. breadth.yml runs it nightly too.
-    # One process, pytest's default, keeps the integrity-race output readable. Published methodology:
+    # race invariant, and the red-on-weakness meta-test) and the supply-chain scanner's tests, on
+    # every pull request and every push to main, whatever tree-check says: security evidence is
+    # never reused. No suite shard collects these files (tools/ci/shards.py JOB_OWNED), so this
+    # is their one run per CI run, and the merge tier requires it (tools/ci/catalogue.py
+    # MERGE_SECURITY_JOBS). breadth.yml runs them nightly on Linux and macOS. One process,
+    # pytest's default, keeps the integrity-race output readable. Published methodology:
     # docs/security/scanner-testing.md.
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    permissions:
+      contents: read
     # No PERSONALCLAW_HOME — see `test-shard`. The corpus writes only to tmp_path.
     env:
       PERSONALCLAW_SKIP_APP_BACKENDS: "1"

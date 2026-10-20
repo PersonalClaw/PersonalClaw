@@ -204,6 +204,7 @@ _INPUT_ROWS = {
     "package": ("setup.cfg", None),
     "e2e": ("web/src/App.tsx", "docs/vision.md"),
     "browse-live": ("src/personalclaw/browse/x.py", None),
+    "security": ("tests/security/test_x.py", None),
     "apps-contract": ("src/personalclaw/sdk/channel.py", "docs/vision.md"),
     "audit": ("uv.lock", None),
 }

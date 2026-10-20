@@ -75,9 +75,10 @@ def test_a_shard_plan_listing_a_file_a_job_owns_fails_its_check(tmp_path: Path) 
     assert problems == ["tests/test_owned.py is listed but not collected"]
 
 
-def test_shards_check_fails_on_a_plan_that_lists_the_installer(tmp_path: Path) -> None:
+def test_shards_check_fails_on_a_plan_that_lists_a_job_owned_file(tmp_path: Path) -> None:
     """``shards check``, as CI runs it, over the real exclusion list: a planted plan that still
-    hands the installer sweep to a shard fails."""
+    hands the installer sweep, the npm floors or a file of the security corpus to a shard fails,
+    naming each."""
     root = _tree(tmp_path, "tests/test_a.py", *shards.JOB_OWNED)
     plan = {
         "version": shards.VERSION,
@@ -103,7 +104,8 @@ def test_shards_check_fails_on_a_plan_that_lists_the_installer(tmp_path: Path) -
         cwd=Path(__file__).resolve().parents[1],
     )
     assert done.returncode == 1, done.stdout + done.stderr
-    assert "tests/test_website_installer.py is listed but not collected" in done.stdout
+    for rel in shards.JOB_OWNED:
+        assert f"{rel} is listed but not collected" in done.stdout, rel
     plan["legs"]["test-shard"]["buckets"] = [["tests/test_a.py"]]
     path.write_text(json.dumps(plan), encoding="utf-8")
     again = subprocess.run(
@@ -141,16 +143,15 @@ def test_the_universe_reads_testpaths_and_python_files(tmp_path: Path) -> None:
     assert shards.universe(root) == ["suite/check_a.py"]
 
 
-def test_security_paths_stay_in_the_shards_until_a_merge_tier_job_runs_them(
-    tmp_path: Path,
-) -> None:
-    """No pull-request run has a security job yet, so selecting them out would drop them."""
-    root = _tree(tmp_path, "tests/security/test_z.py", "tests/test_supply_chain_gates.py")
+def test_the_security_corpus_is_in_no_shard_and_its_job_runs_it(tmp_path: Path) -> None:
+    """``ci.yml``'s ``security`` job runs the corpus on every run, so no shard collects it."""
+    owned = {p: j for p, j in shards.JOB_OWNED.items() if j == "ci.yml security"}
+    assert len(owned) == 12, sorted(owned)
+    assert "tests/test_supply_chain_gates.py" in owned
+    assert all(p.startswith("tests/security/") or "supply_chain" in p for p in owned)
+    root = _tree(tmp_path, "tests/test_a.py", *owned)
     buckets = shards.plan(shards.universe(root), {}, 2)
-    assert sorted(f for b in buckets for f in b) == [
-        "tests/security/test_z.py",
-        "tests/test_supply_chain_gates.py",
-    ]
+    assert sorted(f for b in buckets for f in b) == ["tests/test_a.py"]
 
 
 # ── the plan ──────────────────────────────────────────────────────────────────────────────────

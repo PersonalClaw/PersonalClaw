@@ -148,9 +148,7 @@ def test_a_record_that_lacks_a_shard_does_not_satisfy_a_release_alone() -> None:
     whole = _every_shard()
     del whole["legs"]["macos-26-3.12/3"]
     assert not be.satisfies_release_alone(whole)
-    only_three = _record(
-        **{"security-corpus/1": _leg(), "audit/1": _leg(), "install-smoke/1": _leg()}
-    )
+    only_three = _record(**{"security/1": _leg(), "audit/1": _leg(), "install-smoke/1": _leg()})
     assert not be.satisfies_release_alone(only_three)
 
 

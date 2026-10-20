@@ -16,8 +16,9 @@ the environment behind the catalogue's back. No env names a variable the runner 
 Reuse is one of ``never``, ``tree`` (the result stands for any run of the same tree and
 external inputs) and ``ttl:<hours>``. :func:`parse_reuse` is the one parser of it. A security
 or live job is never reused, by TTL or by tree, and a job that reads one of
-:data:`LIVE_INPUTS` is live. The merge tier's security evidence is the suite's own run of its
-security-marked modules on each platform, :data:`MERGE_SECURITY_JOBS`.
+:data:`LIVE_INPUTS` is live. The merge tier's security evidence, :data:`MERGE_SECURITY_JOBS`, is
+the suite's own run of its security-marked modules on each platform and ``security``, the one run
+of the security corpus.
 
 This module is imported by ``python -m tools.ci``, which ci.yml's shard planner runs on the
 runner image's own ``python3`` before anything is installed, so it imports the standard library
@@ -59,11 +60,11 @@ TIER_TEXT: dict[str, tuple[str, str]] = {
     ),
     "merge": (
         "what a pull request into main must pass: the tree lints, every rail holds, the suite "
-        "(its security-marked modules included) passes on Linux and macOS, the dashboard "
-        "builds and its tests pass, the wheel installs and serves, the browser specs pass when "
-        "the frontend changed, and the dependency audit is clean",
-        "the nightly breadth (other platforms, Pythons and coverage), the adversarial security "
-        "corpus, and anything an outside feed publishes after the run",
+        "(its security-marked modules included) passes on Linux and macOS, the security corpus "
+        "passes on Linux, the dashboard builds and its tests pass, the wheel installs and serves, "
+        "the browser specs pass when the frontend changed, and the dependency audit is clean",
+        "the nightly breadth (other platforms, Pythons and coverage, and the security corpus on "
+        "macOS), and anything an outside feed publishes after the run",
     ),
     "breadth": (
         "the checks too slow or too wide for every pull request, run on main",
@@ -204,10 +205,15 @@ MERGE_NEEDS_JOB = "rails"
 RAILS_CHECKS_JOB = "rails-checks"
 
 #: The merge tier's security evidence: the suite's own run of its security-marked modules, on
-#: each platform, each job with the runner family it runs on. A merge tier without either, with
-#: either not security posture, or with either on the other platform, is refused, so neither run
-#: is reused or lost and no other security job stands in for it.
-MERGE_SECURITY_JOBS: dict[str, str] = {"python-suite": "ubuntu-", "python-suite-macos": "macos-"}
+#: each platform, and ``security``, the one run of the security corpus (``tests/security`` and the
+#: supply-chain scanner's tests), which no suite shard collects. Each job with the runner family it
+#: runs on. A merge tier without one, with one not security posture, or with one on another
+#: platform, is refused, so no run is reused or lost and no other security job stands in for it.
+MERGE_SECURITY_JOBS: dict[str, str] = {
+    "python-suite": "ubuntu-",
+    "python-suite-macos": "macos-",
+    "security": "ubuntu-",
+}
 
 
 class CatalogueError(Exception):
@@ -922,21 +928,21 @@ def validate(catalogue: Catalogue, complete: bool = True) -> list[str]:
                 f" {RAILS_CHECKS_JOB}, so a rail can be in neither half unseen"
             )
         for job_id, family in MERGE_SECURITY_JOBS.items():
-            suite = merge.get(job_id)
-            if suite is None:
+            evidence = merge.get(job_id)
+            if evidence is None:
                 problems.append(
                     f"the merge tier lacks {job_id}, so its security evidence can be skipped"
                 )
                 continue
-            if suite.security != "security":
+            if evidence.security != "security":
                 problems.append(
-                    f"{job_id}: security is {suite.security}, but its run of the security-marked"
-                    " modules is the merge tier's security evidence"
+                    f"{job_id}: security is {evidence.security}, but its run is the merge tier's"
+                    " security evidence"
                 )
-            if not suite.platform.startswith(family):
+            if not evidence.platform.startswith(family):
                 problems.append(
-                    f"{job_id}: platform is {suite.platform}, but the merge tier's security"
-                    f" evidence is this suite's run on a {family}* runner"
+                    f"{job_id}: platform is {evidence.platform}, but the merge tier's security"
+                    f" evidence is its run on a {family}* runner"
                 )
     return problems
 

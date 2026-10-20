@@ -32,11 +32,20 @@ readable. To run one class:
 python -m pytest tests/security/ -k invisible-char
 ```
 
-The corpus also runs unattended: `.github/workflows/breadth.yml` carries a
-`security-corpus` job that executes `tests/security/` plus the scanner unit tests on
-every nightly `schedule:` run (09:37 UTC) and on `workflow_dispatch`, and
-`.github/workflows/ci.yml` runs the same job on every push to `main`. It is a separate job so a corpus regression is legible on its
-own rather than buried in the full-suite matrix.
+The corpus also runs unattended, in a job of its own named `security`, which executes
+`tests/security/` plus the supply-chain scanner's tests:
+
+- `.github/workflows/ci.yml` runs it on every pull request and every push to `main`, whatever
+  else the run skips, on Linux and Python 3.12. The merge tier requires it
+  (`MERGE_SECURITY_JOBS` in `tools/ci/catalogue.py`), so a merge verdict where it is missing,
+  skipped or cancelled is red.
+- `.github/workflows/breadth.yml` runs it on every nightly `schedule:` run (09:37 UTC) and on
+  `workflow_dispatch`, on Linux and 3.12 (`security`) and on macOS and 3.13 (`security-macos`),
+  so each Python `requires-python` allows runs it.
+
+No suite shard collects these files (`JOB_OWNED` in `tools/ci/shards.py`), so these jobs are
+where the corpus runs. It is a separate job so a corpus regression is legible on its own rather
+than buried in the full-suite matrix.
 
 ## What the corpus is made of
 

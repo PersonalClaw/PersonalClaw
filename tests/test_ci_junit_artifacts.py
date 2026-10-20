@@ -49,7 +49,7 @@ from ci_junit_artifacts_shared import (
 def test_the_command_parser_normalizes_all_three_run_forms() -> None:
     """``run: cmd`` · ``run: |`` · ``run: >`` — and the folded form must join, not split.
 
-    The load-bearing case is the folded one: ``security-corpus`` puts its ``--junitxml`` on a
+    The load-bearing case is the folded one: ``security`` puts its ``--junitxml`` on a
     different SOURCE line from its ``pytest``, and a parser that kept them apart would call
     that job unflagged (a false red) while a parser that joined every form would call a
     genuinely-unflagged literal block flagged (a false green). Both directions, once.
