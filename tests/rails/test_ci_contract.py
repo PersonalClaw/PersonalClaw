@@ -8183,6 +8183,233 @@ NO_NEW_GETSOURCE_OUTSIDE_THE_RAILS = Row(
 ROWS = (*ROWS, NO_NEW_GETSOURCE_OUTSIDE_THE_RAILS)
 
 
+# ── No workflow job outside the catalogue runs a test (#3909) ────────────────────────────────
+# A test command belongs to a catalogue entry, whose command the row "every catalogue command is
+# the workflow's" holds to its workflow job, token for token. That row reads only the jobs mapped
+# to an entry, so a test run added to any other job, in any workflow file, would run with no
+# entry, no junit and no tier. This row refuses one by its command word: each test runner below,
+# behind the wrappers a step uses (``NAME=value``, ``env``, ``cd`` before ``&&``, ``uv run``,
+# ``npx`` and ``npm exec``), in every workflow file and the local actions its jobs call.
+
+#: The test runners, by their command word or its path's last part.
+_TEST_RUNNERS = frozenset({"pytest", "vitest", "playwright", "jest", "mocha", "tox", "nox"})
+#: The runners a Python runs as ``-m``.
+_PYTHON_M_RUNNERS = frozenset({"pytest", "unittest", "tox", "nox"})
+#: The make targets that run tests, and the npm scripts.
+_MAKE_TEST_TARGET = re.compile(r"test|check|gate|e2e\S*|test-\S+")
+_NPM_TEST_SCRIPT = re.compile(r"test\S*")
+#: The options of each wrapper whose next word is their value.
+_UV_RUN_VALUED = frozenset(
+    {
+        "--with",
+        "--with-requirements",
+        "--python",
+        "-p",
+        "--project",
+        "--directory",
+        "--extra",
+        "--group",
+        "--only-group",
+        "--package",
+        "--env-file",
+    }
+)
+_NPX_VALUED = frozenset({"-p", "--package", "-c", "--call"})
+_NPM_VALUED = frozenset({"--prefix", "-w", "--workspace"})
+_ENV_VALUED = frozenset({"-u", "--unset", "-C", "--chdir"})
+_MAKE_VALUED = frozenset({"-C", "--directory", "-f", "--file", "--makefile", "-I"})
+
+
+def _skip_options(words: list[str], valued: frozenset[str]) -> list[str]:
+    """``words`` after its leading options, each valued one with its value; ``--`` ends them."""
+    while words and words[0].startswith("-"):
+        if words[0] == "--":
+            return words[1:]
+        words = words[1 + (words[0] in valued) :]
+    return words
+
+
+def _test_runner(words: list[str]) -> str | None:
+    """The test runner one command runs, read by its command word once the wrappers are peeled;
+    None for any other command, so ``echo pytest`` or ``pip install pytest`` runs none."""
+    words = [w.strip("()") for w in words if w.strip("()")]
+    while True:
+        while words and re.fullmatch(r"[A-Za-z_]\w*=\S*", words[0]):
+            words = words[1:]
+        if not words:
+            return None
+        head = words[0].rsplit("/", 1)[-1]
+        if head == "env":
+            words = _skip_options(words[1:], _ENV_VALUED)
+        elif head == "npx":
+            words = _skip_options(words[1:], _NPX_VALUED)
+        elif head == "npm" and _skip_options(words[1:], _NPM_VALUED)[:1] in (["exec"], ["x"]):
+            words = _skip_options(_skip_options(words[1:], _NPM_VALUED)[1:], _NPX_VALUED)
+        elif head == "uv" and words[1:2] == ["run"]:
+            words = _skip_options(words[2:], _UV_RUN_VALUED)
+        else:
+            break
+    head, args = words[0].rsplit("/", 1)[-1], words[1:]
+    if head in _TEST_RUNNERS:
+        return head
+    if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", head):
+        for i, arg in enumerate(args):
+            if arg == "-m":
+                module = args[i + 1] if i + 1 < len(args) else ""
+                return f"python -m {module}" if module in _PYTHON_M_RUNNERS else None
+            if not arg.startswith("-"):
+                return None
+        return None
+    if head == "npm":
+        args = _skip_options(args, _NPM_VALUED)
+        if args[:1] in (["test"], ["t"], ["tst"]):
+            return "npm test"
+        if args[:1] in (["run"], ["run-script"]):
+            script = _skip_options(args[1:], _NPM_VALUED)
+            if script and _NPM_TEST_SCRIPT.fullmatch(script[0]):
+                return f"npm run {script[0]}"
+        return None
+    if head == "make":
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            if arg in _MAKE_VALUED:
+                i += 2
+                continue
+            if not arg.startswith("-") and "=" not in arg and _MAKE_TEST_TARGET.fullmatch(arg):
+                return f"make {arg}"
+            i += 1
+    return None
+
+
+def raw_test_command_violations(tree: Tree) -> list[str]:
+    """No job of any workflow file runs a test runner unless the job is a catalogue entry's."""
+    mapped = {c for entry in _CATALOGUE_JOBS.values() for c in entry.ci_jobs}
+    bad: list[str] = []
+    for name, job_id, job in _jobs(tree):
+        if (str(job_id) if name == "ci.yml" else f"{name}:{job_id}") in mapped:
+            continue
+        for n, step in enumerate(_job_steps(tree, job), 1):
+            for words in _commands(str(step.get("run", ""))):
+                runner = _test_runner(words)
+                if runner:
+                    bad.append(
+                        f"{name} job {job_id} runs {' '.join(words)} ({runner}, in"
+                        f" {step.get('name') or f'step {n}'!r}), and no catalogue entry holds"
+                        " the job: a test runs as an entry's command"
+                    )
+    return bad
+
+
+def _raw_test(name: str, rel: str, job: str, run: str, expect: str = "") -> Control:
+    """A step running ``run`` added first in ``job`` of ``rel``; ``run`` is the step's text
+    after ``run:``, a multi-line block included. Red unless ``expect`` is empty and the
+    plant is a pass."""
+
+    def plant(root: Path) -> None:
+        text = (root / rel).read_text(encoding="utf-8")
+        start = text.index(f"\n  {job}:\n")
+        at = text.index("    steps:\n", start) + len("    steps:\n")
+        _write(root, rel, text[:at] + f"      - name: planted\n        run: {run}\n" + text[at:])
+
+    return Control(name, plant, fails=bool(expect), expect=expect)
+
+
+_IN_CI_ORCHESTRATION = (".github/workflows/ci.yml", "changes")
+_IN_BREADTH_ORCHESTRATION = (".github/workflows/breadth.yml", "freshness")
+_IN_RELEASE = (".github/workflows/release.yml", "build")
+_IN_SMOKE = (".github/workflows/headless-run-smoke.yml", "smoke")
+
+
+def _refused(name: str, where: tuple[str, str], run: str, command: str = "") -> Control:
+    rel, job = where
+    expect = f"{rel.rsplit('/', 1)[1]} job {job} runs {command or run}"
+    return _raw_test(name, rel, job, run, expect=expect)
+
+
+def _passes(name: str, where: tuple[str, str], run: str) -> Control:
+    return _raw_test(name, *where, run)
+
+
+NO_WORKFLOW_JOB_OUTSIDE_THE_CATALOGUE_RUNS_A_TEST = _toolchain_row(
+    "no-workflow-job-outside-the-catalogue-runs-a-test",
+    raw_test_command_violations,
+    (
+        _refused("pytest", _IN_CI_ORCHESTRATION, "pytest tests/test_more.py"),
+        _refused("pytest by its path", _IN_CI_ORCHESTRATION, ".venv/bin/pytest tests"),
+        _refused("python -m pytest", _IN_CI_ORCHESTRATION, "python -m pytest tests"),
+        _refused("python3.13 -I -m pytest", _IN_RELEASE, "python3.13 -I -m pytest tests"),
+        _refused("uv run pytest", _IN_BREADTH_ORCHESTRATION, "uv run pytest tests"),
+        _refused(
+            "uv run with options, python -m pytest",
+            _IN_BREADTH_ORCHESTRATION,
+            "uv run --frozen --extra dev python -m pytest tests",
+        ),
+        _refused("uv run -m pytest", _IN_SMOKE, "uv run -m pytest tests"),
+        _refused("vitest", _IN_CI_ORCHESTRATION, "vitest run"),
+        _refused("npx vitest", _IN_CI_ORCHESTRATION, "npx vitest run"),
+        _refused("npx --yes vitest", _IN_RELEASE, "npx --yes vitest run"),
+        _refused("npm exec vitest", _IN_RELEASE, "npm exec -- vitest run"),
+        _refused("npm test", _IN_CI_ORCHESTRATION, "npm test"),
+        _refused("npm test in a workspace", _IN_SMOKE, "npm --prefix web test"),
+        _refused("npm run test", _IN_CI_ORCHESTRATION, "npm run test"),
+        _refused("npm run test:web", _IN_RELEASE, "npm run test:web"),
+        _refused("npm run test:e2e -w web", _IN_SMOKE, "npm run -w web test:e2e"),
+        _refused("playwright", _IN_CI_ORCHESTRATION, "playwright test"),
+        _refused("npx playwright", _IN_SMOKE, "npx playwright test"),
+        _refused("jest", _IN_RELEASE, "jest"),
+        _refused("mocha", _IN_RELEASE, "mocha test/"),
+        _refused("tox", _IN_BREADTH_ORCHESTRATION, "tox -e py313"),
+        _refused("nox", _IN_BREADTH_ORCHESTRATION, "nox -s tests"),
+        _refused("python -m unittest", _IN_SMOKE, "python -m unittest discover"),
+        _refused("make test", _IN_CI_ORCHESTRATION, "make test"),
+        _refused("make check", _IN_CI_ORCHESTRATION, "make check"),
+        _refused("make gate", _IN_RELEASE, "make gate"),
+        _refused("make e2e", _IN_SMOKE, "make e2e"),
+        _refused("make e2e-live", _IN_SMOKE, "make e2e-live"),
+        _refused("make test-web", _IN_BREADTH_ORCHESTRATION, "make test-web"),
+        _refused("make -C web test", _IN_RELEASE, "make -C web test"),
+        _refused("make with a variable, then check", _IN_RELEASE, "make PYTHON=python3 check"),
+        _refused(
+            "after cd",
+            _IN_CI_ORCHESTRATION,
+            "cd web && npx vitest run",
+            command="npx vitest run",
+        ),
+        _refused(
+            "in a subshell after cd", _IN_RELEASE, "(cd web && npm test)", command="npm test)"
+        ),
+        _refused(
+            "behind env", _IN_SMOKE, "env CI=true pytest tests", command="env CI=true pytest tests"
+        ),
+        _refused("behind env -u", _IN_SMOKE, "env -u HOME uv run pytest tests"),
+        _refused("behind an assignment", _IN_RELEASE, "PYTHONPATH=tests pytest tests"),
+        _refused("after a ;", _IN_RELEASE, "true; pytest tests", command="pytest tests"),
+        _refused(
+            "inside a multi-line run: |",
+            _IN_BREADTH_ORCHESTRATION,
+            "|\n          set -eu\n          echo starting\n          uv run pytest tests\n",
+            command="uv run pytest tests",
+        ),
+        _passes("an echo that names pytest passes", _IN_CI_ORCHESTRATION, "echo pytest --co"),
+        _passes("installing pytest passes", _IN_RELEASE, "uv pip install pytest"),
+        _passes("python -c that imports pytest passes", _IN_RELEASE, "python -c 'import pytest'"),
+        _passes("a build script passes", _IN_RELEASE, "npm run build"),
+        _passes("make lint passes", _IN_RELEASE, "make lint"),
+        _passes("make testdata passes: no such target name", _IN_RELEASE, "make testdata"),
+        _passes("grep for pytest passes", _IN_SMOKE, "grep -rn pytest docs"),
+        _passes("a comment naming pytest passes", _IN_SMOKE, "true  # pytest runs elsewhere"),
+        _passes(
+            "a test runner in an entry's own job passes",
+            (".github/workflows/ci.yml", "rails"),
+            "uv run pytest tests/test_more.py",
+        ),
+    ),
+)
+
+ROWS = (*ROWS, NO_WORKFLOW_JOB_OUTSIDE_THE_CATALOGUE_RUNS_A_TEST)
+
+
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
 def test_the_ci_contract_holds_and_each_check_can_fail(
     row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest
