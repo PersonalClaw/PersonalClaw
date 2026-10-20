@@ -1873,22 +1873,52 @@ def breadth_order_violations(tree: Tree) -> list[str]:
     bad: list[str] = []
     if _needs(jobs["freshness"]):
         bad.append("breadth.yml:freshness waits on another job")
-
-    def reaches(job_id: str, seen: frozenset[str] = frozenset()) -> bool:
-        needs = _needs(jobs.get(job_id) or {})
-        return "freshness" in needs or any(
-            reaches(n, seen | {job_id}) for n in needs if n not in seen
-        )
-
     for job_id in jobs:
-        if job_id != "freshness" and not reaches(job_id):
+        if job_id != "freshness" and not _waits_on(jobs, job_id, "freshness"):
             bad.append(f"breadth.yml:{job_id} does not wait on freshness")
     missing = set(jobs) - {"report"} - set(_needs(jobs["report"]))
     if missing:
         bad.append(f"breadth.yml:report does not wait on {sorted(missing)}")
-    condition = str(jobs["report"].get("if", ""))
-    if "!cancelled()" not in condition or "success()" in condition:
+    if not _runs_whatever_its_needs_concluded(jobs["report"]):
         bad.append("breadth.yml:report does not run whatever the legs concluded")
+    return bad
+
+
+def _waits_on(
+    jobs: dict[str, Any], job_id: str, target: str, seen: frozenset[str] = frozenset()
+) -> bool:
+    """Whether *job_id* waits on *target*, itself or through a job it waits on."""
+    needs = _needs(jobs.get(job_id) or {})
+    return target in needs or any(
+        _waits_on(jobs, n, target, seen | {job_id}) for n in needs if n not in seen
+    )
+
+
+def _runs_whatever_its_needs_concluded(job: dict[str, Any]) -> bool:
+    condition = str(job.get("if", ""))
+    return "!cancelled()" in condition and "success()" not in condition
+
+
+#: The macOS legs that wait for the macOS suite instead of running beside its shards, which hold
+#: two macOS runners at a time (``max-parallel: 2``).
+_AFTER_THE_MACOS_SUITE = ("security-macos",)
+
+
+def macos_suite_first_violations(tree: Tree) -> list[str]:
+    """Each leg in ``_AFTER_THE_MACOS_SUITE`` waits on ``macos``, and still runs whatever the
+    suite concluded, so a red suite shard never skips it."""
+    jobs = _breadth_jobs(tree)
+    if "macos" not in jobs:
+        return ["breadth.yml has no macos job"]
+    bad: list[str] = []
+    for job_id in _AFTER_THE_MACOS_SUITE:
+        if job_id not in jobs:
+            bad.append(f"breadth.yml has no {job_id} job")
+            continue
+        if not _waits_on(jobs, job_id, "macos"):
+            bad.append(f"breadth.yml:{job_id} does not wait on macos, so it runs beside its shards")
+        if not _runs_whatever_its_needs_concluded(jobs[job_id]):
+            bad.append(f"breadth.yml:{job_id} does not run whatever macos concluded")
     return bad
 
 
@@ -3809,6 +3839,52 @@ ROWS: tuple[Row, ...] = (
             ),
             Control(
                 "coverage, which reaches freshness through coverage-shard, passes",
+                _nothing,
+                fails=False,
+            ),
+        ),
+    ),
+    _toolchain_row(
+        "breadth-security-macos-waits-for-the-macos-suite",
+        macos_suite_first_violations,
+        (
+            _plant(
+                "security-macos waiting on freshness alone",
+                _BREADTH,
+                "    needs: [freshness, macos]\n",
+                "    needs: [freshness]\n",
+                expect="breadth.yml:security-macos does not wait on macos",
+            ),
+            _plant(
+                "security-macos gated on success()",
+                _BREADTH,
+                "    needs: [freshness, macos]\n    if: ${{ !cancelled() }}\n",
+                "    needs: [freshness, macos]\n    if: ${{ success() }}\n",
+                expect="breadth.yml:security-macos does not run whatever macos concluded",
+            ),
+            _plant(
+                "security-macos with no if:, which GitHub reads as success()",
+                _BREADTH,
+                "    needs: [freshness, macos]\n    if: ${{ !cancelled() }}\n",
+                "    needs: [freshness, macos]\n",
+                expect="breadth.yml:security-macos does not run whatever macos concluded",
+            ),
+            _plant(
+                "no security-macos job",
+                _BREADTH,
+                "  security-macos:\n",
+                "  security-macos-renamed:\n",
+                expect="breadth.yml has no security-macos job",
+            ),
+            _plant(
+                "no macos job",
+                _BREADTH,
+                "  macos:\n",
+                "  macos-renamed:\n",
+                expect="breadth.yml has no macos job",
+            ),
+            Control(
+                "rails-macos and the suite's shards, which wait on freshness alone, pass",
                 _nothing,
                 fails=False,
             ),
