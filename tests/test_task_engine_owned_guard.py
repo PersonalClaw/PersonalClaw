@@ -261,81 +261,110 @@ async def test_an_UNKNOWN_task_id_is_not_treated_as_a_violation(tmp_path):
         assert r.status == 404
 
 
-def test_every_NON_ENGINE_write_door_consults_the_guard():
+@pytest.mark.asyncio
+async def test_every_NON_ENGINE_write_door_consults_the_guard(tmp_path, monkeypatch):
     """🪤 The rail that outlives this fix, and the reason #390 existed at all.
 
     The defect was not a wrong branch — it was a guard with NO call site, which no test of the
     guard's own logic could ever catch (the unit tests all passed while the invariant was
-    unenforced). So this reads the source of each door that can reach `registry.update_task` with
-    caller-supplied fields and requires the refusal in it. A new door reds HERE.
+    unenforced). So each door that reaches `registry.update_task` with caller-supplied fields is
+    driven with a managed task's status write, and each must ask the ONE resolver,
+    `registry.engine_owned_refusal`: a door that refused by a copy of its own would agree with it
+    today and drift tomorrow. A new door is caught by the call-site census rail
+    (`test_every_update_task_call_site_is_classified`).
 
-    `hierarchy_handlers`' task-list reset is deliberately absent from this particular rail: it
-    writes a fixed `task_reset_payload`, not caller-supplied fields, so a 409 is the wrong shape
-    for it — it needs a payload FILTER instead (see `test_reset_door_filters_engine_owned_fields`
-    below and `test_every_update_task_call_site_is_classified`, which is what catches reset going
-    unguarded in EITHER sense — refusal or filter).
-    """
-    import inspect
+    The task-list reset is not one of these doors: it writes a fixed payload, so it filters the
+    engine-owned fields instead of refusing, and still applies the rest
+    (`test_reset_defers_engine_owned_fields_on_a_managed_task` in the reset-state tests)."""
+    asked: list[str] = []
+    real = registry.engine_owned_refusal
 
-    from personalclaw.agents.native import builtin_tools as tool_mod
-    from personalclaw.tasks import handlers as task_handlers
+    async def spy(task_id, fields, *args, **kwargs):
+        asked.append(task_id)
+        return await real(task_id, fields, *args, **kwargs)
 
-    doors = {
-        "api_tasks_update": inspect.getsource(task_handlers.api_tasks_update),
-        "api_tasks_bulk": inspect.getsource(task_handlers.api_tasks_bulk),
-        "task_update tool": inspect.getsource(tool_mod.NativeBuiltinToolProvider._t_task_update),
-    }
-    unguarded = [name for name, src in doors.items() if "engine_owned_refusal" not in src]
-    assert not unguarded, (
-        f"{unguarded} reach the task write path with caller-supplied fields and never consult "
-        "`registry.engine_owned_refusal`. A managed task's engine-owned fields are writable "
-        "through them (#390)."
-    )
+    monkeypatch.setattr(registry, "engine_owned_refusal", spy)
 
-
-def test_reset_door_filters_engine_owned_fields_instead_of_refusing():
-    """The task-list reset door (issue #3203) is a FOURTH non-engine write path onto
-    `registry.update_task`, and it is caller-independent — every terminal task in the list gets
-    the same `task_reset_payload`, managed or not. So it cannot use `engine_owned_refusal` (that
-    resolver answers a 409; reset must still apply the user-owned half of the same payload) —
-    it must filter `ENGINE_OWNED_FIELDS` out of the payload itself, guarded by `managed(t)`."""
-    import inspect
-
-    from personalclaw.tasks import hierarchy_handlers
-
-    src = inspect.getsource(hierarchy_handlers.api_task_lists_reset)
-    assert "managed(" in src and "ENGINE_OWNED_FIELDS" in src, (
-        "the reset door does not consult managed()/ENGINE_OWNED_FIELDS — a managed task's "
-        "status/evidence/attempts/preview/blocked_kind would be overwritten by a plain reset"
-    )
-    assert "engine_owned_refusal" not in src, (
-        "reset must not reach for the refusal resolver — it needs a field filter that still "
-        "applies the user-owned half of the reset, not a 409 that blocks the whole call"
-    )
+    async with _client(tmp_path) as client:
+        put_task = await _managed_task(client, node_id="put")
+        bulk_task = await _managed_task(client, node_id="bulk")
+        r = await client.put(f"/api/tasks/{put_task['id']}", json={"status": "done"})
+        assert r.status == 409
+        assert asked == [put_task["id"]], "PUT /api/tasks/{id} did not ask the resolver"
+        r = await client.post(
+            "/api/tasks/bulk",
+            json={"op": "update", "items": [{"id": bulk_task["id"], "status": "done"}]},
+        )
+        assert r.status == 400
+        assert asked[1:] == [bulk_task["id"]], "POST /api/tasks/bulk did not ask the resolver"
+        tool_task = await _managed_task(client, node_id="tool")
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        refused = await NativeBuiltinToolProvider(ws).invoke(
+            "task_update", {"id": tool_task["id"], "status": "done"}
+        )
+        assert refused.success is False
+        assert asked[2:] == [tool_task["id"]], "the task_update tool did not ask the resolver"
+        for task in (put_task, bulk_task, tool_task):
+            assert _stored(tmp_path, task["id"])["status"] == "open"
 
 
-# ── the full call-site census: every registry.update_task caller, classified ────────────────
+#: Where the dependency walk starts each dependent, with its prerequisite open or finished, and
+#: what the walk leaves it at. The walk writes a task's status itself, past the `update_task`
+#: façade, so these are every write it may make: an auto block, its release, and nothing else.
+_WALK = [
+    ("an open task behind an open prerequisite is auto-blocked", "open", "", "open", "blocked"),
+    ("a started task behind an open one is auto-blocked", "in_progress", "", "open", "blocked"),
+    ("an auto block whose prerequisite finished is released", "blocked", "auto", "done", "open"),
+    ("a manual block is never released", "blocked", "manual", "done", "blocked"),
+    ("a manual block is never re-marked", "blocked", "manual", "open", "blocked"),
+    ("an auto block still waiting stays", "blocked", "auto", "open", "blocked"),
+    ("a finished task is left done", "done", "", "open", "done"),
+    ("a cancelled task is left cancelled", "cancelled", "", "open", "cancelled"),
+    ("an open task with nothing waiting stays open", "open", "", "done", "open"),
+    ("a block with no reason kind is not the walk's to release", "blocked", "", "done", "blocked"),
+]
 
 
-def test_reconcile_direct_status_writes_are_declared():
+def test_reconcile_direct_status_writes_are_declared(subtests):
     """`tasks/reconcile.py` bypasses the `registry.update_task` façade entirely — it mutates a
     `Task` object's `.status` in place as part of the dependency-cascade walk, and its caller
-    persists the result. That is not a fifth unguarded door: it is an engine-derived write (the
-    walk never touches a `blocked_reason_kind == "manual"` task), but it writes the one
-    engine-owned field (`status`) the census above cannot see because it never calls
-    `update_task`. Declaring it here keeps it out of a future census's blind spot."""
-    import inspect
-    import re
+    persists the result. That is not a fifth unguarded door: it is an engine-derived write, but it
+    writes the one engine-owned field (`status`) the call-site census cannot see. So what it may
+    write is driven here, every case: it auto-blocks, it releases its own auto block, it never
+    touches a manual block, and it reports exactly the tasks it changed."""
+    from table_rows import row
 
     from personalclaw.tasks import reconcile
+    from personalclaw.tasks.models import Task
 
-    src = inspect.getsource(reconcile.reconcile_blocked_status)
-    direct_status_writes = re.findall(r"\bt\.status\s*=\s*TaskStatus\.", src)
-    assert len(direct_status_writes) == 2, (
-        f"expected exactly 2 direct `.status =` assignments in reconcile_blocked_status "
-        f"(auto-block and auto-unblock), found {len(direct_status_writes)} — reclassify"
-    )
-    assert "blocked_reason_kind ==" in src, (
-        "the manual-block exemption (never auto-touch a manually blocked task) must still guard "
-        "these direct writes"
-    )
+    assert len(_WALK) == 10, "a case was dropped from the table"
+    for name, status, kind, prereq, expect in _WALK:
+        with row(subtests, case=name):
+            tasks = {
+                "p": Task.from_dict({"id": "p", "title": "p", "status": prereq}),
+                "d": Task.from_dict(
+                    {
+                        "id": "d",
+                        "title": "d",
+                        "status": status,
+                        "blocked_reason_kind": kind,
+                        "depends_on": ["p"],
+                    }
+                ),
+            }
+            changed = reconcile.reconcile_blocked_status(tasks, "p")
+            assert tasks["d"].status.value == expect, (name, tasks["d"].status)
+            assert [t.id for t in changed] == (["d"] if expect != status else []), name
+            # The reason kind the walk leaves: a task it does not change keeps its own, a block it
+            # makes is marked as its own (so it may release it later), and a release clears it.
+            if expect == status:
+                want_kind = kind
+            elif expect == "blocked":
+                want_kind = "auto"
+            else:
+                want_kind = ""
+            assert tasks["d"].blocked_reason_kind == want_kind, (
+                name,
+                tasks["d"].blocked_reason_kind,
+            )
