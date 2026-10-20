@@ -92,6 +92,8 @@ _PINNED_NODE_BASE = (
     + _NODE_ARM64
     + f"FROM mirror.gcr.io/library/{_NODE_BASE}\n"
 )
+#: The web image's SPA stage as it starts today: on the build platform, pinned by digest.
+_SPA_FROM = f"FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/{_NODE_BASE}"
 
 
 def _locked(name: str) -> str:
@@ -325,6 +327,34 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
                 "deploy/docker/Dockerfile.web",
                 _NGINX,
                 "nginx:1.27-alpine",
+            ),
+            # The SPA stage builds on the build platform; the flag changes nothing the pin rule
+            # reads, so each base below is judged by the image after it.
+            _plant(
+                "a build-platform base by the moving tag latest",
+                _WEB,
+                _SPA_FROM,
+                "FROM --platform=$BUILDPLATFORM node:latest",
+                expect="node:latest is not a tag pinned by digest",
+            ),
+            _plant(
+                "a build-platform base by tag alone",
+                _WEB,
+                _SPA_FROM,
+                "FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/" + _NODE_TAG,
+                expect=f"{_NODE_TAG} is not a tag pinned by digest",
+            ),
+            _append(
+                "a build-platform base pinned by digest with no comment above it",
+                "tools/sandbox/Dockerfile",
+                _SPA_FROM + "\n",
+                expect="has no comment above it",
+            ),
+            _append(
+                "a build-platform base pinned by digest under its comment passes",
+                "tools/sandbox/Dockerfile",
+                _PINNED_NODE_BASE.replace("FROM ", "FROM --platform=$BUILDPLATFORM "),
+                fails=False,
             ),
             _plant(
                 "a two-platform base without its arm64 manifest",
@@ -1344,6 +1374,14 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
                 + _PYTHON
                 + "\nFROM ${PYTHON_IMAGE} AS base",
                 expect="names its base through an ARG",
+            ),
+            _plant(
+                "a build-platform base named through an ARG, which Dependabot cannot move",
+                _WEB,
+                _SPA_FROM,
+                f"ARG NODE_IMAGE=mirror.gcr.io/library/{_NODE_BASE}\n"
+                "FROM --platform=$BUILDPLATFORM ${NODE_IMAGE}",
+                expect="FROM ${NODE_IMAGE} names its base through an ARG",
             ),
             _plant(
                 "a directories: list that leaves the folder out",

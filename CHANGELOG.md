@@ -16,6 +16,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **CI: `make gate` reuses a job's earlier clean pass on the same tree, inputs and machine, for the jobs whose class allows it, and says which job it reused and from which commit; `--no-reuse` runs every job.**
 
+### Fixed
+
+- **The gateway and web images build their dashboard once, on the build machine, instead of under emulation for arm64.**
+
 ## [0.2.3] — 2026-10-19
 
 A patch release on 0.2.2. ⌘Enter approves only the approval that has keyboard focus, and a delete,

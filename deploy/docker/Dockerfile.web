@@ -2,10 +2,17 @@
 #   docker build -f deploy/docker/Dockerfile.web .
 
 # ── Stage 1: build SPA ───────────────────────────────────────────────────────
+# The SPA is static files, the same on every architecture, so this stage runs once, on the
+# machine doing the build (`--platform=$BUILDPLATFORM`), and the runtime stage below copies the
+# files in for each target. Built for arm64 under emulation, the gateway image's identical stage
+# stalled in vite's chunk rendering until the release's image time limit. Only this stage builds
+# on the build platform, and only its built files (/app/web/dist) leave it: every stage whose
+# output runs in the image builds for the target. tests/test_docker_single_container.py holds
+# each of these.
 # node:24.22.0-alpine, the Node `.nvmrc` names, as its multi-arch index. Platform manifests:
 #   linux/amd64 sha256:429bdfbc204b4eabc6438e6d34e4e9d8dd2ca1df8289bcd78cdd3c5db387b7a5
 #   linux/arm64 sha256:5b12456322560dcf9342f7339662bccf8c5665cf0732a8ec8363687aa93c5277
-FROM mirror.gcr.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS builder
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS builder
 
 WORKDIR /app
 
