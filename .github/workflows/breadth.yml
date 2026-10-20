@@ -375,6 +375,8 @@ jobs:
     # The rails (tests/rails, #3928) run once per CI run, on Linux, in ci.yml's `rails` job, and in
     # no suite shard. A rail that depends on the OS (path separators, a case-insensitive file
     # system) would lose macOS coverage with that, so this leg runs the same set on macOS nightly.
+    # It also runs breadth's one whole-tree harness scan (ci.yml runs it in `harness`): breadth
+    # runs no static job, and the scan reads only the tree, which this leg's entry is keyed on.
     needs: [freshness]
     if: ${{ !cancelled() }}
     runs-on: macos-26
@@ -435,6 +437,12 @@ jobs:
         if: ${{ steps.decide.outputs.run != 'false' }}
         continue-on-error: true
         run: uv run pytest -n 2 --dist worksteal -q tests/rails --junitxml=reports/junit-rails-macos.xml
+      # Fails the job itself, and its outcome is the entry's with the rails', so a carried
+      # entry carries the scan's red too.
+      - name: harness scan (static boundary scanner over the whole tree)
+        id: scan
+        if: ${{ steps.decide.outputs.run != 'false' }}
+        run: uv run python -m harness scan
       - name: Upload JUnit results (rails on macos-26-3.12)
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -446,7 +454,7 @@ jobs:
       - name: record what this shard ran
         if: ${{ always() && steps.decide.outputs.run != 'false' }}
         env:
-          OUTCOME: ${{ steps.pytest.outcome }}
+          OUTCOME: ${{ steps.scan.outcome == 'success' && steps.pytest.outcome || 'failure' }}
         run: |
           "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/rails-macos-26-3.12__1.json"
       - name: Upload this shard's entry

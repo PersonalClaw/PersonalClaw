@@ -11,7 +11,9 @@ The agent-facing surface of the self-development harness:
   profiles from the touched areas (the diff can add requirements, never remove them) and
   warns when a fix-shaped change touches no spec (the same-PR rule).
 - ``scan [--diff [--base <ref>]]`` — run the static boundary scanner over the whole tree or
-  the diff (against ``<ref>`` when named, else the merge-base with ``origin/main``).
+  the diff (against ``<ref>`` when named, else the merge-base with ``origin/main``). CI runs
+  the whole tree, every file git tracks, which fails where that listing is not this tree's:
+  git fails or lists nothing, or the scanner's own module is not listed in the checkout.
 - ``replay`` — gate recorded event-trace scenarios against checked-in baselines.
 - ``resume-audit <loop_id>`` — check a loop resumes from persisted state alone.
 - ``workflow-resume-audit <run_id>`` — check a workflow run resumes byte-equal from disk
@@ -26,7 +28,8 @@ The agent-facing surface of the self-development harness:
   the improvement is real on the benchmark rather than assumed. Same exit convention.
 
 Exit codes: 0 == clean/pass, 1 == validation errors or a failed command, 2 == usage error
-(unknown task id, no spec set). Warnings print but do not change the exit code, except under
+(unknown task id, no spec set, a whole-tree scan, by ``scan`` or ``run``'s scan profile, of a
+listing that is not this tree's). Warnings print but do not change the exit code, except under
 ``validate --strict``, where any warning exits 1.
 """
 
@@ -297,7 +300,8 @@ def _run_diff(args: argparse.Namespace) -> int:
 
 def _run_scan_if_selected(profiles: list[str], diff: object = None) -> int:
     """If the ``scan`` profile is selected, run the static scanner and print findings.
-    Returns 1 if any ERROR-level finding is present, else 0. WARNINGs never fail."""
+    Returns 1 if any ERROR-level finding is present, 2 for a whole-tree scan of a listing that
+    is not this tree's, else 0. WARNINGs never fail."""
     if "scan" not in profiles:
         return 0
     root = _repo_root()
@@ -306,7 +310,10 @@ def _run_scan_if_selected(profiles: list[str], diff: object = None) -> int:
         changed_lines = diff.abs_changed_lines(root)  # type: ignore[attr-defined]
     else:
         # Bare scan over tracked files (no diff): scan the whole tree.
-        files = _tracked_files(root)
+        tree = _whole_tree(root)
+        if tree is None:
+            return 2
+        files = tree
         changed_lines = None
     findings = scanner.scan(files, root, changed_lines=changed_lines)
     return _print_findings(findings, root)
@@ -327,28 +334,56 @@ def _print_findings(findings: list[scanner.Finding], root: Path) -> int:
     return 0
 
 
-def _tracked_files(root: Path) -> list[Path]:
+#: The scanner's own module, under the repository root: a whole-tree listing that does not
+#: hold it in the checkout is not this tree's.
+_SCANNER_SOURCE = "harness/scanner.py"
+
+
+def _whole_tree(root: Path) -> list[Path] | None:
+    """Every file git tracks under *root*: what a whole-tree scan reads. None, with why on
+    stderr, where that listing is not this tree's: ``git ls-files`` fails (a partial listing is
+    no listing) or lists nothing, or the scanner's own module is not listed or not on disk."""
+    why = ""
+    files: list[Path] = []
     try:
-        out = subprocess.run(
+        listed = subprocess.run(
             ["git", "ls-files"],
             cwd=root,
             capture_output=True,
             text=True,
             errors="replace",
             check=False,
-        ).stdout
-    except OSError:
-        return []
-    return [root / ln.strip() for ln in out.splitlines() if ln.strip()]
+        )
+    except OSError as exc:
+        why = f"git ls-files does not run under {root} ({exc})"
+    else:
+        files = [root / ln.strip() for ln in listed.stdout.splitlines() if ln.strip()]
+        own = root / _SCANNER_SOURCE
+        if listed.returncode != 0:
+            said = (listed.stderr.strip().splitlines() or ["no reason given"])[0]
+            why = f"git ls-files exits {listed.returncode} under {root} ({said})"
+        elif not files:
+            why = f"git lists no tracked file under {root}"
+        elif own not in files:
+            why = f"git lists no {_SCANNER_SOURCE} under {root}"
+        elif not own.is_file():
+            why = f"git lists {_SCANNER_SOURCE} under {root}, and the checkout holds no such file"
+    if why:
+        print(f"{_FAIL} {why}: a scan of that listing would not judge this tree", file=sys.stderr)
+        return None
+    return files
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
     """Run the static boundary scanner. Over the diff (``--diff``) or the whole tree.
 
-    ``--base <ref>`` names what the diff is against. CI passes the commit the change lands on:
-    the default, the merge-base with ``origin/main``, is the pushed commit itself on a push to
-    ``main``, which scans nothing. A named base that does not resolve fails rather than
-    falling back to another one.
+    ``--base <ref>`` names what the diff is against: the default, the merge-base with
+    ``origin/main``, is the pushed commit itself on a push to ``main``, which scans nothing. A
+    named base that does not resolve fails rather than falling back to another one.
+
+    The whole tree is every file git tracks, and it is what CI runs. Where that listing is not
+    this tree's (git fails or lists nothing, or the scanner's own module is not listed or not on
+    disk) the scan fails rather than printing clean.
     """
     root = _repo_root()
     if args.base is not None and not args.diff:
@@ -370,7 +405,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
             diff.abs_files(root), root, changed_lines=diff.abs_changed_lines(root)
         )
     else:
-        findings = scanner.scan(_tracked_files(root), root)
+        files = _whole_tree(root)
+        if files is None:
+            return 2
+        findings = scanner.scan(files, root)
     return _print_findings(findings, root)
 
 
@@ -597,7 +635,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--dry-run", action="store_true", help="Print commands without running.")
     p_run.set_defaults(func=cmd_run)
 
-    p_scan = sub.add_parser("scan", help="Static boundary scanner (whole tree or --diff).")
+    # Each flag spelled whole: argparse would read `--dif` as `--diff`, a diff's scan under a
+    # spelling that reads as the whole tree's.
+    p_scan = sub.add_parser(
+        "scan", help="Static boundary scanner (whole tree or --diff).", allow_abbrev=False
+    )
     p_scan.add_argument("--diff", action="store_true", help="Scan only files changed vs base.")
     p_scan.add_argument(
         "--base",

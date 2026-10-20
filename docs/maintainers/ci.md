@@ -199,13 +199,13 @@ entry to the `ci.yml` and `breadth.yml` jobs it maps to, in both directions:
   and with the same step `env`. An entry's steps come in `ci.yml`'s order, and none comes twice.
 - Every `run:` line of a mapped job is one entry's step. The only lines left out are a closed
   list in the row, each named for what it does: the runner's identity, the installs the
-  toolchain names, the shell around a step (its options, and the branch on which base there is,
-  with the scan's arm that has none), the fetch of that base, a value set through `GITHUB_ENV`,
-  the lint job's wrapper and feedback relay, and breadth's evidence lines (a leg's inputs, the
-  one leg's decision to carry, what it ran, its result read back) with the scratch interpreter
-  they run on and the coverage shards' gate. A listed line that no mapped job runs any more
-  fails the row too, so the list holds only lines that exist. No line is a step of two entries.
-  An entry mapped to a job in each workflow (`security`) holds each workflow's lines on its own.
+  toolchain names, the shell around a step (its options, and the branch on which base there
+  is), the fetch of that base, a value set through `GITHUB_ENV`, the lint job's wrapper and
+  feedback relay, and breadth's evidence lines (a leg's inputs, the one leg's decision to
+  carry, what it ran, its result read back) with the scratch interpreter they run on and the
+  coverage shards' gate. A listed line that no mapped job runs any more fails the row too, so
+  the list holds only lines that exist. No line is a step of two entries. An entry mapped to a
+  job in each workflow (`security`) holds each workflow's lines on its own.
 - An install is toolchain, never a step: `uv sync`, `npm ci` and the Playwright browser install
   are refused as steps, and each install an entry's toolchain names (`uv-sync`, `npm-ci`,
   `chromium`) is one its `ci.yml` jobs run. Each entry names every install it needs, so no entry
@@ -308,11 +308,10 @@ Every entry declares:
 - `timeout_min`, 2 or more, since a local run stops a job a minute before its cap.
 
 An entry may also set `platform`, `python`, `live`, `reuse`, `env`, `workers`, `workers_env`,
-`mem_gb`, `junit`, `shards`, `needs_node`, `needs_browser`, `full_history`, `after` (the jobs
-whose output it uses), `install_exemptions`, each exemption with its reason, and `retiring`, the
-issue that retires the job, as `"#<number>"` (see "Main's copy reads a pull request's
-catalogue"). A key the reader does not know is refused, so a misspelt field fails rather than
-being ignored.
+`mem_gb`, `junit`, `shards`, `needs_node`, `needs_browser`, `after` (the jobs whose output it
+uses), `install_exemptions`, each exemption with its reason, and `retiring`, the issue that
+retires the job, as `"#<number>"` (see "Main's copy reads a pull request's catalogue"). A key the
+reader does not know is refused, so a misspelt field fails rather than being ignored.
 
 `workers` is the job's worker count, a whole number or `auto`. Every pytest step's `-n` must equal
 it, and a step that passes `-n` needs it. `workers_env` names the variable through which another
@@ -905,7 +904,8 @@ The rest of the platform breadth runs nightly (09:37 UTC) and on dispatch:
   is left out, and its shard runs. When there are no earlier results, every shard runs. It
   also publishes the run's night: the date of the 09:37 UTC slot at or before the run's
   `created_at`, which every attempt of a run keeps.
-- **The legs that may carry:** the rails on macOS 26 on 3.12, and `collection-parses`: one
+- **The legs that may carry:** the rails on macOS 26 on 3.12, with breadth's one whole-tree
+  `harness scan` (its outcome is the leg's with the rails'), and `collection-parses`: one
   whole-suite collection in one process with `tests/collection_parse_guard.py` loaded, red on any
   parse named as a file under the source index's roots, or of a whole `.py` file under them,
   while pytest collects, except by pytest's assertion rewrite and Hypothesis's own constants

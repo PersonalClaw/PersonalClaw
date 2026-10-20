@@ -52,7 +52,6 @@ cache = ["uv"]
 security = "ordinary"
 python = "3.12.15"
 timeout_min = 10
-full_history = true
 junit = ["reports/junit-lint-installer.xml"]
 command = [
   { argv = ["uv", "run", "black", "--check", "src/personalclaw", "tests", "harness", "scripts", "tools/ci"] },
@@ -65,7 +64,7 @@ command = [
   { argv = ["shellcheck", "-s", "sh", "deploy/website/install.sh"], env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },
   { argv = ["uv", "run", "pytest", "tests/test_website_installer.py", "--junitxml=reports/junit-lint-installer.xml"], env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },
   { argv = ["uv", "run", "python", "-m", "harness", "validate", "--strict"] },
-  { argv = ["uv", "run", "python", "-m", "harness", "scan", "--diff", "--base", "{base}"] },
+  { argv = ["uv", "run", "python", "-m", "harness", "scan"] },
 ]
 
 [[job]]
@@ -395,8 +394,8 @@ command = [
   { argv = ["sh", "tools/ci/coverage_combine.sh"] },
 ]
 
-# The rails on macOS. No rail is security-marked, so this leg alone may carry an earlier result
-# on identical inputs.
+# The rails on macOS, and breadth's one whole-tree harness scan: breadth runs no static. No rail
+# is security-marked, so this leg alone may carry an earlier result on identical inputs.
 [[job]]
 id = "rails-macos"
 tiers = ["breadth"]
@@ -414,6 +413,7 @@ env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIM
 junit = ["reports/junit-rails-macos.xml"]
 command = [
   { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q", "tests/rails", "--junitxml=reports/junit-rails-macos.xml"] },
+  { argv = ["uv", "run", "python", "-m", "harness", "scan"] },
 ]
 
 # One whole-suite collection in one process with the parse guard loaded (#3927): red on a parse

@@ -126,7 +126,7 @@ CHECKS: Mapping[str, Check] = {
         sources=(_group(_ASSETS, "REPO_ROOT"),),
     ),
     # The whole-repository readers that no job but the suite's shards ran. The licence sweep's
-    # and the scanner's whole-tree scan's one place is now the rails job.
+    # one place is now the rails job, and the scanner's whole-tree scan's is the harness step.
     "licence-sweep": Check(
         owner="ci.yml rails: tests/rails/test_licence_governance_tree.py",
         entries={
@@ -149,7 +149,7 @@ CHECKS: Mapping[str, Check] = {
         sources=(_group(_LICENCE, "_ROOT"),),
     ),
     "harness-scanner": Check(
-        owner="ci.yml rails: tests/rails/test_harness_scanner_tree.py (harness runs scan --diff)",
+        owner="ci.yml harness: python -m harness scan, over the whole tree",
         entries={("harness.scanner", "scan"): ROOT},
         sources=(),
     ),

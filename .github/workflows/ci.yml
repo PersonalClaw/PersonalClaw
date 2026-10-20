@@ -1729,13 +1729,15 @@ jobs:
 
   harness:
     # Self-verification gate: the repo-inner harness/ package
-    # validates its own spec set and runs the static boundary scanner over this change.
+    # validates its own spec set and runs the static boundary scanner over the whole tree.
     # `validate` shape-checks every spec + resolves references (dangling test node-ids,
     # unknown profiles/scanner-checks) — a spec regression reds here, and with `--strict` so
-    # does a warning: no other run checks that the shipped specs carry none. `scan --diff` runs
-    # the boundary scanner over the PR's changed lines and fails on any ERROR finding
-    # (WARNINGs stay advisory). The harness/ unit tests themselves ride the `test` job
-    # (they live under tests/, which is on pytest's testpaths).
+    # does a warning: no other run checks that the shipped specs carry none. `scan` runs the
+    # boundary scanner over every tracked file and fails on any ERROR finding (WARNINGs stay
+    # advisory), or when git's listing is not this tree's (git fails or lists nothing, or the
+    # scanner's own module is not in the checkout). It is this tier's one whole-tree scan, with
+    # no `if:` of its own; breadth's is a step of rails-macos. The harness/ unit tests
+    # themselves ride the `test` job (they live under tests/, which is on pytest's testpaths).
     needs: [tree-check]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
@@ -1747,9 +1749,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # scan --diff diffs against the base named below, or the commit a push to main
-          # replaced; full history so either resolves.
-          fetch-depth: 0
       - name: Set up the toolchain
         uses: ./.github/actions/setup
         with:
@@ -1758,25 +1757,8 @@ jobs:
         run: uv sync --locked --extra dev
       - name: harness validate (spec shape + reference resolution)
         run: uv run python -m harness validate --strict
-      # A pull request names its base, so the scan diffs against that commit. `--base` fails when
-      # the named commit does not resolve, where the default falls back to `main` and then
-      # `HEAD~1`, either of which can scan a different change from this one. A push to main
-      # diffs against the commit it replaced, and keeps the default only when `before` is
-      # missing or all zeros. Through `env:`, never `${{ }}` inside `run:`.
-      - name: harness scan (static boundary scanner over the diff)
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          BEFORE: ${{ github.event.before }}
-        run: |
-          if [ -n "${BASE_SHA:-}" ]; then
-            uv run python -m harness scan --diff --base "$BASE_SHA"
-          elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${BEFORE:-}" ] \
-               && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
-            echo "base: the previous main commit $BEFORE"
-            uv run python -m harness scan --diff --base "$BEFORE"
-          else
-            uv run python -m harness scan --diff
-          fi
+      - name: harness scan (static boundary scanner over the whole tree)
+        run: uv run python -m harness scan
 
   client:
     # personalclaw-client (packages/personalclaw-client-py) is a package of its own,

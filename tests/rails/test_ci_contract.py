@@ -18,6 +18,7 @@ from __future__ import annotations
 import ast
 import fnmatch
 import functools
+import itertools
 import json
 import re
 import shlex
@@ -1286,14 +1287,13 @@ def _job_level_preference(root: Path, only_first: bool = False) -> None:
     _write(root, rel, yaml.safe_dump(workflow, sort_keys=False))
 
 
-# ── The pull request builds the wheel, and scans its diff against its own base ───────────────
+# ── The pull request builds the wheel after the SPA, and verifies that wheel ────────────────
 
 
-def wheel_and_scan_base_violations(tree: Tree) -> list[str]:
+def wheel_violations(tree: Tree) -> list[str]:
     """``ci.yml``'s ``web`` job builds the wheel after the SPA build and runs the wheel contract
-    on it, and the ``harness`` job's scan names the pull request's base. The wheel must carry
-    the SPA, so a wheel built before ``npm run build`` would verify a dashboard-less build; a
-    scan with no base falls back to ``main`` and ``HEAD~1``, which can be a different change."""
+    on it. The wheel must carry the SPA, so a wheel built before ``npm run build`` would verify
+    a dashboard-less build."""
     bad: list[str] = []
     workflow = dict(_workflows(tree)).get("ci.yml")
     if workflow is None:
@@ -1313,21 +1313,6 @@ def wheel_and_scan_base_violations(tree: Tree) -> list[str]:
         bad.append("ci.yml:web runs no wheel contract (`verify_wheel.py --wheel`)")
     if None not in (spa, build, verify) and not (spa < build < verify):  # type: ignore[operator]
         bad.append("ci.yml:web must build the SPA, then the wheel, then verify that wheel")
-    scans = [
-        s
-        for s in (jobs.get("harness") or {}).get("steps") or []
-        if "harness scan" in str(s.get("run", ""))
-    ]
-    if not scans:
-        bad.append("ci.yml:harness runs no `harness scan`")
-    for step in scans:
-        run = str(step.get("run", ""))
-        env = {str(k): str(v) for k, v in (step.get("env") or {}).items()}
-        named = [k for k, v in env.items() if "pull_request.base.sha" in v]
-        if not any(f'--base "${k}"' in run for k in named):
-            bad.append("ci.yml:harness scans without `--base` set to the pull request's base")
-        if "${{" in run:
-            bad.append("ci.yml:harness pastes an expression into its scan's `run:`")
     return bad
 
 
@@ -3451,8 +3436,8 @@ ROWS: tuple[Row, ...] = (
         ),
     ),
     _toolchain_row(
-        "wheel-and-scan-base",
-        wheel_and_scan_base_violations,
+        "wheel-built-after-the-spa-and-verified",
+        wheel_violations,
         (
             _plant(
                 "web without the wheel contract",
@@ -3482,18 +3467,6 @@ ROWS: tuple[Row, ...] = (
                         "        run: npm run build\n",
                     ),
                 ),
-            ),
-            _plant(
-                "a scan with no base",
-                ".github/workflows/ci.yml",
-                'uv run python -m harness scan --diff --base "$BASE_SHA"',
-                "uv run python -m harness scan --diff",
-            ),
-            _plant(
-                "a base pasted into run: as an expression",
-                ".github/workflows/ci.yml",
-                '--base "$BASE_SHA"',
-                '--base "${{ github.event.pull_request.base.sha }}"',
             ),
         ),
     ),
@@ -5158,6 +5131,7 @@ _CLOSE_HEAD = "bugfix-some-branch"
 _MERGE_SHA = "merge0000"
 _EXPRESSION = re.compile(r"\$\{\{(.+?)\}\}", re.S)
 _OPERAND = re.compile(r"\s*(!)?\s*([A-Za-z_][\w.-]*)\s*(?:(==|!=)\s*'([^']*)')?\s*")
+_LITERAL = re.compile(r"\s*'([^']*)'\s*")
 
 
 def _pr_context(*, head_repo: str, action: str, merged: bool = False) -> dict[str, Any]:
@@ -5211,8 +5185,12 @@ def _context_value(context: dict[str, Any], dotted: str) -> Any:
 
 
 def _operand(context: dict[str, Any], text: str) -> Any:
-    """One term: a property, ``true``/``false``, or a property compared with a quoted literal.
-    Anything else raises, so the row reports an expression it cannot read instead of guessing."""
+    """One term: a quoted literal, a property, ``true``/``false``, or a property compared with a
+    quoted literal. Anything else raises, so the row reports an expression it cannot read
+    instead of guessing."""
+    literal = _LITERAL.fullmatch(text)
+    if literal is not None:
+        return literal.group(1)
     match = _OPERAND.fullmatch(text)
     if match is None:
         raise ValueError(f"an expression this row cannot evaluate: {text.strip()!r}")
@@ -5238,15 +5216,20 @@ def _expression(context: dict[str, Any], text: str) -> Any:
     return value
 
 
-def _evaluate(template: str, context: dict[str, Any]) -> str:
-    """A group name with every ``${{ }}`` evaluated, lower-cased: GitHub compares group names
-    without case."""
+def _rendered(template: str, context: dict[str, Any]) -> str:
+    """*template* with every ``${{ }}`` evaluated, as GitHub renders a value it sets."""
 
     def one(match: re.Match[str]) -> str:
         value = _expression(context, match.group(1))
         return ("true" if value else "false") if isinstance(value, bool) else str(value)
 
-    return _EXPRESSION.sub(one, template).lower()
+    return _EXPRESSION.sub(one, template)
+
+
+def _evaluate(template: str, context: dict[str, Any]) -> str:
+    """A group name with every ``${{ }}`` evaluated, lower-cased: GitHub compares group names
+    without case."""
+    return _rendered(template, context).lower()
 
 
 def _cancels(value: object, context: dict[str, Any]) -> bool:
@@ -6745,9 +6728,6 @@ _NOT_COMMANDS: dict[str, str] = {
         else
         fi
         echo "base: the previous main commit $BEFORE"
-    """,
-    "the scan's arm with no base to diff against (the entry holds the scan with its base)": r"""
-        uv run python -m harness scan --diff
     """,
     "the fetch of the base, handed to the next step through GITHUB_OUTPUT": r"""
         git fetch --no-tags --depth=1 origin "$BASE_SHA"
@@ -10128,15 +10108,22 @@ ROWS = (*ROWS, THE_HARNESS_GATES_RUN_IN_THE_MERGE_TIER)
 #
 # A whole-tree check runs in the job that owns it (#3929): the rails in rails (and in breadth's
 # rails-macos), the rails census and the gate aggregate in rails-checks, harness validate and
-# harness scan in static, the security corpus in security (and in breadth's security-macos). This
+# the whole-tree harness scan in static, the security corpus in security (and in breadth's
+# security-macos). Breadth runs no static, so its whole-tree scan is a step of rails-macos. This
 # row holds the catalogue to it: each check runs in a job of every tier listed for it, and a check
 # marked once runs in exactly one job of each such tier, so it is neither skipped nor run twice.
 # Static's validate runs with --strict, so a warning fails it as an error does: no other run checks
-# that the shipped specs carry none. It holds the workflows to the other half: a step that runs
-# harness validate, harness scan, the gate aggregate or the rails census fails its job, with no
-# continue-on-error on the step or its job and no `|| true` after the command. The breadth legs that
-# run the rails and the security corpus record the step's outcome and fail the job on it in their
-# last step, so they are held by the tiers half.
+# that the shipped specs carry none. The scan is the whole tree's: `scan --diff` judges only a
+# change's lines, so it is not the check. It holds the workflows to the other half: a step that
+# runs harness validate, harness scan, the gate aggregate or the rails census fails its job, with
+# no continue-on-error on the step or its job, no `|| true` after the command, and no `if:` that
+# can skip it while the job goes on green. A breadth leg that records an entry may gate the step
+# on its carry decision alone, since a step that decision skips is the earlier entry carried. The
+# outcome that leg records is evaluated as GitHub would, with the step's outcome set to each one
+# but success and every other step's to success or failure: none of them may record success, so
+# a later night that carries the entry carries the step's red. The breadth legs that run the rails
+# and the security corpus record the step's outcome and fail the job on it in their last step, so
+# they are held by the tiers half.
 
 #: ``(what, the words its argv holds, the tiers that need it, whether exactly one job runs it,
 #: the text a workflow step that runs it carries)``.
@@ -10156,9 +10143,9 @@ OWNED_CHECKS: tuple[tuple[str, frozenset[str], tuple[str, ...], bool, str], ...]
         "python -m harness validate --strict",
     ),
     (
-        "harness scan",
+        "the whole-tree harness scan",
         frozenset({"-m", "harness", "scan"}),
-        ("change", "merge"),
+        ("change", "merge", "breadth"),
         True,
         "python -m harness scan",
     ),
@@ -10192,17 +10179,88 @@ OWNED_CHECKS: tuple[tuple[str, frozenset[str], tuple[str, ...], bool, str], ...]
     ),
 )
 
+#: The words that make a step some other run than the check's: a scan of the diff judges only
+#: the lines a change touched, not the tree.
+_NOT_THE_CHECK: dict[str, frozenset[str]] = {"the whole-tree harness scan": frozenset({"--diff"})}
+
 _OWNED_WORKFLOWS = (".github/workflows/ci.yml", ".github/workflows/breadth.yml")
 #: The checks whose step must itself fail its job.
 _FAILS_ITS_JOB = frozenset(
-    {"harness validate", "harness scan", "the gate aggregate", "the rails census"}
+    {"harness validate", "the whole-tree harness scan", "the gate aggregate", "the rails census"}
 )
 _SWALLOWED = re.compile(r"\|\|\s*(?:true|:)(?:\s|$|;)")
 
 
+#: The one `if:` a step that runs an owned check may carry, in a breadth leg that records an
+#: entry: its carry decision's. Anywhere else an `if:` can skip the check and leave its job green.
+_CARRY_GATE = "steps.decide.outputs.run != 'false'"
+#: The outcomes of a step that did not pass: ``""`` is one the context does not name.
+_NOT_PASSED = ("failure", "cancelled", "skipped", "")
+
+
+def _entry_outcome(job: dict[str, Any]) -> str | None:
+    """The outcome a breadth leg records in its entry (``breadth_evidence.py ran``), which a
+    later night on the same inputs may carry, or None for a job that records none."""
+    for step in job.get("steps") or []:
+        if isinstance(step, dict) and "breadth_evidence.py ran" in str(step.get("run", "")):
+            return str((step.get("env") or {}).get("OUTCOME", ""))
+    return None
+
+
+def _condition(value: object) -> str:
+    """An `if:` as GitHub reads it, with or without its ``${{ }}``, its spaces collapsed."""
+    text = str(value).strip()
+    match = _EXPRESSION.fullmatch(text)
+    return " ".join((match.group(1) if match else text).split())
+
+
+def _recorded(outcome: str, job: dict[str, Any], outcomes: dict[str, str]) -> str:
+    """*outcome* as the record step renders it when each of the job's steps ended as
+    *outcomes* says (success where it names none). A continue-on-error step concludes success
+    whatever its outcome."""
+    steps: dict[str, dict[str, str]] = {}
+    for step in job.get("steps") or []:
+        if isinstance(step, dict) and step.get("id"):
+            sid = str(step["id"])
+            ended = outcomes.get(sid, "success")
+            concluded = "success" if step.get("continue-on-error") else ended
+            steps[sid] = {"outcome": ended, "conclusion": concluded}
+    return _rendered(outcome, {"steps": steps})
+
+
+def _carried_red_violations(
+    where: str, step: dict[str, Any], job: dict[str, Any], outcome: str
+) -> list[str]:
+    """The outcome a leg records is success whenever every step passed, and never when *step*
+    did not pass, whatever its other steps did."""
+    sid = str(step.get("id") or "")
+    if not sid:
+        return [f"{where} has no id, so the outcome its leg's entry records cannot read it"]
+    others = [
+        str(s["id"])
+        for s in job.get("steps") or []
+        if isinstance(s, dict) and s.get("id") and str(s["id"]) != sid
+    ]
+    try:
+        green = _recorded(outcome, job, {})
+        if green != "success":
+            return [f"{where}: its leg's entry records {green!r} when every step passes"]
+        for ended in _NOT_PASSED:
+            for rest in itertools.product(("success", "failure"), repeat=len(others)):
+                if _recorded(outcome, job, {**dict(zip(others, rest)), sid: ended}) == "success":
+                    return [
+                        f"{where} is {ended!r}, and its leg's entry records 'success', so a later"
+                        " night that carries the entry carries the red as green"
+                    ]
+    except ValueError as exc:
+        return [f"{where}: the outcome its leg's entry records is {exc}"]
+    return []
+
+
 def owning_job_violations(root: Path) -> list[str]:
     """Each owned check is in a job of every tier that needs it (exactly one where marked),
-    and every workflow step that runs one fails its job."""
+    and every workflow step that runs one fails its job, every time the job runs, and its red
+    in any entry its leg records."""
     try:
         cat = catalogue.read(root)
     except FileNotFoundError:
@@ -10211,11 +10269,14 @@ def owning_job_violations(root: Path) -> list[str]:
         return exc.problems
     bad: list[str] = []
     for what, words, tiers, once, _text in OWNED_CHECKS:
+        other = _NOT_THE_CHECK.get(what, frozenset())
         for tier in tiers:
             runs = sorted(
                 job.id
                 for job in cat.tier(tier)
-                if any(words <= set(step.argv) for step in job.command)
+                if any(
+                    words <= set(step.argv) and not other & set(step.argv) for step in job.command
+                )
             )
             if not runs:
                 bad.append(f"{what} runs in no job of the {tier} tier")
@@ -10225,6 +10286,7 @@ def owning_job_violations(root: Path) -> list[str]:
     for rel in _OWNED_WORKFLOWS:
         workflow = yaml.safe_load((root / rel).read_text(encoding="utf-8")) or {}
         for job_id, job in (workflow.get("jobs") or {}).items():
+            outcome = _entry_outcome(job)
             for step in job.get("steps") or []:
                 run = step.get("run") if isinstance(step, dict) else None
                 if not isinstance(run, str):
@@ -10241,6 +10303,14 @@ def owning_job_violations(root: Path) -> list[str]:
                     for line in run.splitlines():
                         if text in line and _SWALLOWED.search(line):
                             bad.append(f"{where} ends in `|| true`, so its red is swallowed")
+                    gate = step.get("if")
+                    if gate is not None and (outcome is None or _condition(gate) != _CARRY_GATE):
+                        bad.append(
+                            f"{where} runs under `if: {gate}`, so a run that skips it passes its"
+                            " job unchecked"
+                        )
+                    if outcome is not None:
+                        bad.extend(_carried_red_violations(where, step, job, outcome))
     for what, *_rest in OWNED_CHECKS:
         if what not in seen:
             bad.append(f"no workflow step runs {what}")
@@ -10250,6 +10320,11 @@ def owning_job_violations(root: Path) -> list[str]:
 _STATIC = 'id = "static"\ntiers = ["change", "merge"]'
 _RAILS_CHECKS = 'id = "rails-checks"\ntiers = ["change", "merge"]'
 _VALIDATE_STEP = '  { argv = ["uv", "run", "python", "-m", "harness", "validate", "--strict"] },\n'
+_SCAN_STEP = '  { argv = ["uv", "run", "python", "-m", "harness", "scan"] },\n'
+_RAILS_MACOS_PYTEST = (
+    '  { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q", "tests/rails",'
+    ' "--junitxml=reports/junit-rails-macos.xml"] },\n'
+)
 _GATES_STEP = '  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },\n'
 _CI_VALIDATE = (
     "      - name: harness validate (spec shape + reference resolution)\n"
@@ -10258,6 +10333,36 @@ _CI_VALIDATE = (
 #: The start of a breadth-only job's command (security-macos's), where a planted step is in no
 #: other tier.
 _BREADTH_ONLY_COMMAND = 'junit = ["reports/junit-security-corpus-macos.xml"]\ncommand = [\n'
+_CI_SCAN = (
+    "      - name: harness scan (static boundary scanner over the whole tree)\n"
+    "        run: uv run python -m harness scan\n"
+)
+_BREADTH_SCAN_GATE = "        id: scan\n        if: ${{ steps.decide.outputs.run != 'false' }}\n"
+
+
+def _entry_records(name: str, expression: str, fails: bool = True, expect: str = "") -> Control:
+    """rails-macos's record step records *expression*, whatever it recorded before: the plant
+    finds the step the row reads, so a rewritten OUTCOME cannot leave it without its text."""
+
+    def plant(root: Path) -> None:
+        path = root / _OWNED_WORKFLOWS[1]
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        records = [
+            step
+            for step in workflow["jobs"]["rails-macos"]["steps"]
+            if "breadth_evidence.py ran" in str(step.get("run", ""))
+        ]
+        assert len(records) == 1, f"the plant {name!r} found {len(records)} record steps"
+        records[0].setdefault("env", {})["OUTCOME"] = expression
+        _write(root, _OWNED_WORKFLOWS[1], yaml.safe_dump(workflow, sort_keys=False))
+
+    return Control(name, plant, fails, expect)
+
+
+_SCAN_RED_CARRIED = (
+    "breadth.yml rails-macos: the step that runs the whole-tree harness scan is {!r}, and its"
+    " leg's entry records 'success'"
+)
 
 EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
     name="each-whole-tree-check-runs-in-every-tier-that-needs-it-as-a-step-that-fails-its-job",
@@ -10290,7 +10395,104 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             catalogue.CATALOGUE,
             _STATIC,
             'id = "static"\ntiers = ["merge"]',
-            expect="harness scan runs in no job of the change tier",
+            expect="the whole-tree harness scan runs in no job of the change tier",
+        ),
+        _plant(
+            "static's scan back to the diff, which judges only a change's lines",
+            catalogue.CATALOGUE,
+            _VALIDATE_STEP + _SCAN_STEP,
+            _VALIDATE_STEP + _SCAN_STEP.replace('"scan"', '"scan", "--diff", "--base", "{base}"'),
+            expect="the whole-tree harness scan runs in no job of the change tier",
+        ),
+        _plant(
+            "the scan dropped from rails-macos, so breadth scans no tree",
+            catalogue.CATALOGUE,
+            _RAILS_MACOS_PYTEST + _SCAN_STEP,
+            _RAILS_MACOS_PYTEST,
+            expect="the whole-tree harness scan runs in no job of the breadth tier",
+        ),
+        _plant(
+            "a second whole-tree scan in breadth, in security-macos",
+            catalogue.CATALOGUE,
+            _BREADTH_ONLY_COMMAND,
+            _BREADTH_ONLY_COMMAND + _SCAN_STEP,
+            expect="the whole-tree harness scan runs in 2 jobs of the breadth tier",
+        ),
+        _entry_records(
+            "rails-macos's entry recording the rails' outcome alone",
+            "${{ steps.pytest.outcome }}",
+            expect=_SCAN_RED_CARRIED.format("failure"),
+        ),
+        _entry_records(
+            "rails-macos's entry naming the scan only as the rails' fallback",
+            "${{ steps.pytest.outcome || steps.scan.outcome }}",
+            expect=_SCAN_RED_CARRIED.format("failure"),
+        ),
+        _entry_records(
+            "rails-macos's entry red on a failed scan, and green on a cancelled one",
+            "${{ steps.scan.outcome != 'failure' && steps.pytest.outcome || 'failure' }}",
+            expect=_SCAN_RED_CARRIED.format("cancelled"),
+        ),
+        _entry_records(
+            "rails-macos's entry recording 'failure' whatever ran, so no outcome is read",
+            "${{ 'failure' }}",
+            expect="its leg's entry records 'failure' when every step passes",
+        ),
+        _entry_records(
+            "rails-macos's entry read through a function the row cannot evaluate",
+            "${{ format('{0}', steps.scan.outcome) }}",
+            expect="cannot evaluate",
+        ),
+        _entry_records(
+            "rails-macos's entry green only when the rails and the scan both are, written"
+            " another way, passes",
+            "${{ steps.pytest.outcome == 'success' && steps.scan.outcome == 'success'"
+            " && 'success' || 'failure' }}",
+            fails=False,
+        ),
+        _plant(
+            "breadth's scan step with no id, so its leg's entry cannot read it",
+            _OWNED_WORKFLOWS[1],
+            "        id: scan\n",
+            "",
+            expect="breadth.yml rails-macos: the step that runs the whole-tree harness scan has"
+            " no id",
+        ),
+        _plant(
+            "continue-on-error on breadth's scan step",
+            _OWNED_WORKFLOWS[1],
+            "        id: scan\n",
+            "        id: scan\n        continue-on-error: true\n",
+            expect="breadth.yml rails-macos: the step that runs the whole-tree harness scan has"
+            " continue-on-error",
+        ),
+        _plant(
+            "ci.yml's scan step run on a pull request only, so merge scans no tree",
+            _OWNED_WORKFLOWS[0],
+            _CI_SCAN,
+            _CI_SCAN.replace(
+                "        run:",
+                "        if: ${{ github.event_name == 'pull_request' }}\n        run:",
+            ),
+            expect="ci.yml harness: the step that runs the whole-tree harness scan runs under"
+            " `if:",
+        ),
+        _plant(
+            "breadth's scan step gated on more than the carry decision",
+            _OWNED_WORKFLOWS[1],
+            _BREADTH_SCAN_GATE,
+            _BREADTH_SCAN_GATE.replace(
+                "!= 'false' }}", "!= 'false' && github.event_name == 'schedule' }}"
+            ),
+            expect="breadth.yml rails-macos: the step that runs the whole-tree harness scan runs"
+            " under `if:",
+        ),
+        _plant(
+            "breadth's scan step under the carry decision written without ${{ }}, passes",
+            _OWNED_WORKFLOWS[1],
+            _BREADTH_SCAN_GATE,
+            "        id: scan\n        if: steps.decide.outputs.run != 'false'\n",
+            fails=False,
         ),
         _plant(
             "rails-checks held to the merge tier only",
