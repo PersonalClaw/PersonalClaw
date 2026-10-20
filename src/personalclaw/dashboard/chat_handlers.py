@@ -2197,10 +2197,10 @@ async def api_chat_session_reasoning_effort(request: web.Request) -> web.Respons
         )
     # The same declared-set bar the bind path applies. Checked against the session's
     # CURRENTLY bound runtime, because that is the backend that would have to honor it —
-    # this endpoint does not change the binding. A no-op set (already this value) short-
-    # circuits below without re-judging, so an effort pinned while a permissive runtime was
-    # bound cannot be re-refused by a later identical call. A native chat is held to the levels
-    # its model declares, the rule its turns send by (`providers.model_efforts`).
+    # this endpoint does not change the binding. A native chat is held to the levels its model
+    # declares, the rule its turns send by (`providers.model_efforts`). The bar is checked before
+    # the no-op answer below, so a chat already holding a level its runtime or model no longer
+    # declares is refused that level again rather than told it has it: no turn would send it.
     _acp_runtime = str(getattr(session, "acp_provider", "") or "")
     if not _acp_runtime and _runs_natively(session):
         from personalclaw.providers.model_efforts import undeclared_effort
