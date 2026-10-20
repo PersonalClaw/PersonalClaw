@@ -21,6 +21,7 @@ import unittest.mock
 from pathlib import Path
 
 import pytest
+from table_rows import row
 
 from personalclaw.config.editable import _EDITABLE_CONFIG
 from personalclaw.config.loader import AppConfig, WorkflowsConfig
@@ -268,31 +269,139 @@ def test_the_resolvers_are_NOT_cached(_home):
 
 
 # ── the call sites go through the resolver, not the constant ──
+#
+# A call site that reads its module constant, or reads the stored field itself, or reads the config
+# once and keeps it, is the drift `settings` exists to prevent. Each table below calls one site
+# over the inputs that tell those apart: a value the owner sets and then a second one (a constant,
+# or a value read once, misses one of them), a value only the resolver turns into another (a call
+# site that read the stored field itself keeps it raw), no value set, a config that does not
+# parse, and a value the caller names, which still wins over the config.
 
 
-def test_materialization_resolves_the_cap_from_SETTINGS():
-    """Structural: a call site that reads `FANOUT_TASK_CAP` directly is the drift `settings` exists
-    to prevent, and a behavioural test alone would pass again the next time someone "simplified" it
-    back to the constant."""
-    import inspect
+def _set_config(home: Path, workflows: dict | str) -> None:
+    """The test home's config: the `workflows` section *workflows*, or *workflows* as the whole
+    file's text when it is a string."""
+    if isinstance(workflows, str):
+        (home / "config.json").write_text(workflows, encoding="utf-8")
+    else:
+        _write_config(home, workflows)
 
+
+def test_materialization_resolves_the_cap_from_SETTINGS(_home, subtests):
+    """`plan_materialization`, given no cap, takes the one `settings.fanout_task_cap` answers at
+    that call. Thirty nodes, so the shipped cap of 20 shows as well as a smaller one, and the cap
+    note names the cap that applied. A cap of 0 is the resolver's to refuse: a call site that read
+    the stored field itself would make one task there, not twenty."""
     from personalclaw.workflows import materialize
 
-    source = inspect.getsource(materialize.plan_materialization)
-    assert "fanout_task_cap" in source
+    assert materialize.FANOUT_TASK_CAP == 20
+    nodes = [
+        {"id": f"n{i}", "kind": "action", "config": {}, "path": f"root.body[{i}]"}
+        for i in range(30)
+    ]
+    # case, the config's `workflows` section (or the file's text), the cap the caller names,
+    # the cap that applies
+    table = [
+        ("a cap you set", {"max_materialized_per_foreach": 4}, None, 4),
+        ("the next cap you set", {"max_materialized_per_foreach": 9}, None, 9),
+        ("a cap of 0", {"max_materialized_per_foreach": 0}, None, 20),
+        ("no cap set", {}, None, 20),
+        ("a config that does not parse", "{not json", None, 20),
+        ("a cap the caller names", {"max_materialized_per_foreach": 4}, 2, 2),
+    ]
+    assert len(table) == 6
+    for case, workflows, named, cap in table:
+        with row(subtests, case=case):
+            _set_config(_home, workflows)
+            plan = (
+                materialize.plan_materialization("r-1", nodes)
+                if named is None
+                else materialize.plan_materialization("r-1", nodes, cap=named)
+            )
+            made = [spec.binding.node_id for spec in plan.create]
+            assert made == [f"n{i}" for i in range(cap)], f"{case}: made tasks for {made}"
+            assert plan.capped == 30 - cap, f"{case}: {plan.capped} capped"
+            assert plan.cap_note.startswith(
+                f"{cap} of 30 items materialized (cap {cap});"
+            ), f"{case}: the cap note reads {plan.cap_note!r}"
 
 
-def test_build_request_resolves_the_ttl_from_SETTINGS():
-    import inspect
+def test_build_request_resolves_the_ttl_from_SETTINGS(_home, subtests):
+    """`build_request`, given no lifetime, takes the one `settings.confirmation_ttl_secs` answers at
+    that call, and the request lapses by it. 0 is "wait for me": a request that never lapses, from
+    the config or named by the caller, and not a reason to fall back to a week. A negative
+    lifetime is the resolver's to turn into 0: a call site that read the stored field itself
+    would carry -5."""
+    from personalclaw.workflows.confirmation import DEFAULT_TTL_SECS, build_request
 
-    from personalclaw.workflows import confirmation
+    week = 7 * 24 * 3600
+    assert DEFAULT_TTL_SECS == week
+    # case, the config's `workflows` section (or the file's text), the lifetime the caller names,
+    # the lifetime the request carries
+    table = [
+        ("a lifetime you set", {"confirmation_ttl_secs": 90}, None, 90),
+        ("the next lifetime you set", {"confirmation_ttl_secs": 300}, None, 300),
+        ("wait for me", {"confirmation_ttl_secs": 0}, None, 0),
+        ("a negative lifetime", {"confirmation_ttl_secs": -5}, None, 0),
+        ("no lifetime set", {}, None, week),
+        ("a config that does not parse", "{not json", None, week),
+        ("a lifetime the caller names", {"confirmation_ttl_secs": 90}, 600, 600),
+        ("wait for me, named by the caller", {"confirmation_ttl_secs": 90}, 0, 0),
+    ]
+    assert len(table) == 8
+    for case, workflows, named, ttl in table:
+        with row(subtests, case=case):
+            _set_config(_home, workflows)
+            if named is None:
+                request = build_request(run_id="r", gate_id="g", now=1000.0)
+            else:
+                request = build_request(run_id="r", gate_id="g", now=1000.0, ttl_seconds=named)
+            assert request.ttl_seconds == ttl, f"{case}: the request lives {request.ttl_seconds}s"
+            if ttl:
+                assert request.expires_at() == 1000.0 + ttl, f"{case}: {request.expires_at()}"
+                assert not request.expired(1000.0 + ttl - 1), f"{case}: lapsed early"
+                assert request.expired(1000.0 + ttl), f"{case}: did not lapse"
+            else:
+                assert request.expires_at() == 0.0, f"{case}: lapses at {request.expires_at()}"
+                assert not request.expired(1000.0 + 10 * week), f"{case}: lapsed"
 
-    assert "confirmation_ttl_secs" in inspect.getsource(confirmation.build_request)
 
-
-def test_claim_task_resolves_the_ttl_from_SETTINGS():
-    import inspect
-
+def test_claim_task_resolves_the_ttl_from_SETTINGS(_home, subtests):
+    """`claim_task`, given no lifetime, takes the one `settings.lease_ttl_secs` answers at that
+    call. The lease it writes holds the task for exactly that long: another holder is refused one
+    second before and takes it at the end. Past the ceiling and at 0 are the resolver's to clamp
+    (to an hour) and refuse (to the shipped 15 minutes): a call site that read the stored field
+    itself would carry 999999 while the lease ends at an hour, or end the lease after a second."""
     from personalclaw.workflows import pool
 
-    assert "lease_ttl_secs" in inspect.getsource(pool.claim_task)
+    assert (pool.DEFAULT_LEASE_SECS, pool.MAX_LEASE_SECS) == (900, 3600)
+    # case, the config's `workflows` section (or the file's text), the lifetime the caller names,
+    # the lifetime the lease carries
+    table = [
+        ("a lease you set", {"lease_ttl_secs": 300}, None, 300),
+        ("the next lease you set", {"lease_ttl_secs": 600}, None, 600),
+        ("a lease past the ceiling", {"lease_ttl_secs": 999_999}, None, 3600),
+        ("a lease of 0", {"lease_ttl_secs": 0}, None, 900),
+        ("no lease set", {}, None, 900),
+        ("a config that does not parse", "{not json", None, 900),
+        ("a lease the caller names", {"lease_ttl_secs": 300}, 120, 120),
+    ]
+    assert len(table) == 7
+    for n, (case, workflows, named, ttl) in enumerate(table):
+        with row(subtests, case=case):
+            _set_config(_home, workflows)
+            task = f"t-{n}"
+            if named is None:
+                lease, error = pool.claim_task(task, holder="a", now=1000.0)
+            else:
+                lease, error = pool.claim_task(task, holder="a", now=1000.0, ttl_seconds=named)
+            assert error == "", f"{case}: {error}"
+            assert lease is not None
+            assert (lease.ttl_seconds, lease.expires_at()) == (ttl, 1000.0 + ttl), case
+            stored = pool.read_lease(task)
+            assert stored is not None, f"{case}: no lease on disk"
+            assert (stored.holder, stored.ttl_seconds) == ("a", ttl), f"{case}: stored {stored}"
+            refused, why = pool.claim_task(task, holder="b", now=1000.0 + ttl - 1)
+            assert (refused, why) == (None, "held_by_other"), f"{case}: taken early"
+            taken, why = pool.claim_task(task, holder="b", now=1000.0 + ttl)
+            assert taken is not None and taken.holder == "b", f"{case}: not taken at the end: {why}"
