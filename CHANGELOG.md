@@ -26,6 +26,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Navigation and sending are instant; motion is kept for panels and moves.**
 - **A code project's cockpit opens a diff in a pane beside the editor instead of over it: drag its edge or use the arrow keys to resize it, it opens at the same width next time, and closing it puts the keyboard focus back on the change you opened it from.**
 - **A chat's turns read in one centred column 768 px wide, whatever content width you picked; the content width still sets the other pages and the composer.**
+- **The terminal drawer's Open full opens the session the drawer shows on the Terminal page, rather than the page's first session.**
 
 ### Fixed
 

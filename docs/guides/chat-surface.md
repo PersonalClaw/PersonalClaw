@@ -6,8 +6,8 @@ beyond typing a message: taking a wrong turn back, spinning the same conversatio
 directions, having a plan approved before anything runs, letting a queued message cut in,
 finding something you said hours ago, quoting it, following a suggestion, controlling how
 text appears, and putting a piece of your screen into the conversation. It ends with how
-replies are written, giving the window to what you are reading, the chat's working folder, which
-model answers a turn, and what gets recorded.
+replies are written, giving the window to what you are reading, the chat's working folder, the
+terminal, which model answers a turn, and what gets recorded.
 
 Everything here works in a browser tab. Where a mechanic needs a platform capability that
 your browser does not have, the control is **hidden** rather than shown and made to fail —
@@ -569,6 +569,22 @@ browse, and a folder it may not is refused here with the same reason. Nothing in
 deletes or uploads. It lists the folder again when you open it and when a turn ends, since the
 agent may have written there. A chat with no working folder says so; the chat header's **Working
 directory** sets one.
+
+---
+
+## The terminal
+
+**Where:** `⌘J` or `` ⌘` `` (`Ctrl+J` or `` Ctrl+` `` on Windows/Linux), the terminal button at the
+top right of the window, or the command palette (`⌘K`), where it is **Show or hide the terminal
+drawer**.
+
+The terminal is a drawer at the bottom of the window, on every page, so you open it without
+leaving the chat. **Run** on a shell code block in an answer opens it and runs that command once;
+with no session open yet, it opens one first. The drawer keeps its sessions while you move between
+chats, and a new one starts in the gateway's terminal folder: `dashboard.terminal.cwd` when the
+config sets one, else the agent's workspace, else your home folder. Drag its top edge to make it
+taller; it remembers the height. **Open full** opens the session the drawer shows on the Terminal
+page, at full height, with the other open sessions beside it.
 
 ---
 

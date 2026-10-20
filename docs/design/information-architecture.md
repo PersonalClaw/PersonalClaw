@@ -52,7 +52,7 @@ supported width, 320 to 1440 px (#3812):
 ## Where the rest goes
 
 - **Terminal** is the bottom drawer (⌘J or ⌘\`) on every page. "Open full" keeps a full-height
-  terminal one click away (#3826).
+  terminal one click away: the Terminal page, on the session the drawer shows (#3826).
 - **The workspace file tree** is a toggle inside a thread (⌘⇧E), rooted at the thread's working
   folder. Stored files are Library's Files tab (#3826, #3815).
 - **Tasks** are a board or list view inside each project, with "All tasks" in the palette (#3818).
