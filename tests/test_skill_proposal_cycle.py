@@ -217,25 +217,47 @@ class TestGeneratorLabelsARefine:
     def test_a_proposal_for_an_existing_slug_is_filed_as_a_refine(self, home):
         """`find_similar` compares DESCRIPTIONS, so it cannot answer "does this slug exist" — which
         is why a differently-worded synthesis for an installed skill got through as `kind="new"`.
+        Driven through the synthesizer: a slug that is installed files a refine of it, and one
+        that is not files a new skill."""
+        from personalclaw.history import HistoryConsolidator
 
-        Asserted at the expression rather than by driving a whole history compaction: the finding is
-        that the generator never asked the question at all.
-        """
-        import inspect
-
-        from personalclaw import history
-
-        src = inspect.getsource(history)
-        assert 'kind="refine" if _is_refine else "new"' in src
-        assert "load_skill(_existing)" in src
+        _install("loop-worker")
+        mgr = HistoryConsolidator.__new__(HistoryConsolidator)
+        mgr._skills_loader = _loader()
+        mgr._auto_similarity_threshold = 0.99
+        mgr._auto_refine_enabled = False
+        for slug in ("loop-worker", "fresh-one"):
+            synthesized = {
+                "slug": slug,
+                "description": f"a differently worded description of {slug}",
+                "triggers": "t",
+                "procedure_md": "do it",
+            }
+            mgr._process_auto_skills({"new_skill": synthesized}, "s1", skills_read={})
+        filed = {p.slug: (p.kind, p.refine_target) for p in P.list_pending(_surface=False)}
+        assert filed == {
+            "loop-worker": ("refine", f"{AUTO_SKILL_NAMESPACE}/loop-worker"),
+            "fresh-one": ("new", ""),
+        }
 
     def test_the_inbox_label_follows_the_kind(self, home):
         """A row that says "New skill proposed" for a refinement is the same lie in the UI. The
         label is derived from `kind`, so labelling the kind correctly fixes both."""
-        import inspect
+        from personalclaw.inbox import InboxStore
 
-        src = inspect.getsource(P._surface_in_inbox)
-        assert "Refine a skill" in src and 'prop.kind == "refine"' in src
+        _install("loop-worker")
+        refine = _seed("loop-worker", kind="refine", refine_target="auto/loop-worker", n=1)
+        new = _seed("editorial-document", kind="new", n=2)
+        with patch(
+            "personalclaw.inbox_providers.native_source.get_dashboard_state", return_value=None
+        ):
+            P._surface_in_inbox(refine)
+            P._surface_in_inbox(new)
+        store = InboxStore()
+        store.load()
+        said = {i.refs.get("skill_proposal"): i.message for i in store.items.values()}
+        assert said[refine.id].startswith("Refine a skill")
+        assert said[new.id].startswith("New skill proposed")
 
 
 # ── #302: the accepted skill must be visible ──────────────────────────────────
@@ -258,28 +280,22 @@ class TestNamespacedSkillsAreListed:
         }
         assert found == {"auto/loop-worker", "top-level"}
 
-    def test_every_listing_surface_shares_the_loader_s_enumeration(self):
-        """Pins the AGREEMENT, not the mechanism — and structurally, by CALL rather than by a
-        matching regex. The loader and the listings were separate answers to "what is a skill",
-        and only one of them decided what the user could see. Sharing one function is what makes
-        them agree; four copies of a recursive walk would just be a slower divergence.
-        """
-        import inspect
-
+    def test_every_listing_surface_shares_the_loader_s_enumeration(self, home, monkeypatch):
+        """The loader and the listings were separate answers to "what is a skill", and only one of
+        them decided what the user could see. The Skills page and the marketplace listing each
+        list what the loader loads: an `auto/` skill and a top-level one alike."""
         from personalclaw.dashboard.handlers import skills as H
-        from personalclaw.skills import loader as L
         from personalclaw.skills import marketplace as M
 
-        assert 'rglob("SKILL.md")' in inspect.getsource(L.iter_skill_files)
-        # The loader's own listing walks those files, and the Skills page lists what it lists.
-        assert "iter_skill_files(" in inspect.getsource(L.SkillsLoader._iter)
-        assert "self._iter()" in inspect.getsource(L.SkillsLoader.list_skills)
-        rows = inspect.getsource(H._skill_rows)
-        assert ".list_skills(" in rows, "the Skills page re-derives the walk"
-        assert ".iterdir()" not in rows, "the Skills page still walks ONE level"
-        src = inspect.getsource(M.list_local_skills)
-        assert "iter_skill_files(" in src, "list_local_skills re-derives the walk"
-        assert ".iterdir()" not in src, "list_local_skills still walks ONE level"
+        monkeypatch.setattr(M, "skill_discovery_paths", lambda: [home / "skills"])
+        _install("loop-worker")
+        flat = home / "skills" / "hand-written"
+        flat.mkdir(parents=True)
+        (flat / "SKILL.md").write_text("---\nname: hand-written\ndescription: d\n---\nb\n")
+        loaded = {s["key"] for s in _loader().list_skills()}
+        assert loaded == {f"{AUTO_SKILL_NAMESPACE}/loop-worker", "hand-written"}
+        assert {r["key"] for r in H._skill_rows()} == loaded, "the Skills page lists another set"
+        assert {s["name"] for s in M.list_local_skills()} == loaded
 
     def test_the_CLI_and_the_loop_classifier_see_the_auto_namespace(self, home, monkeypatch):
         """🔴 `list_local_skills` was the LAST one-level walk, and it has two consumers that both
@@ -328,26 +344,44 @@ class TestNamespacedSkillsAreListed:
 
 
 class TestInboxRowsResolveAgainstTheLiveStore:
-    def test_the_resolve_path_uses_the_same_accessor_as_the_write_path(self):
-        """The one-sided shape: `_surface_in_inbox` (WRITE) already went through the running
-        service's store, and `_resolve_inbox_item` (RESOLVE) constructed its own — so a resolve
-        wrote to a copy the service then overwrote, leaving the row open forever."""
-        import inspect
+    @pytest.mark.parametrize("answer", ["accept", "reject"])
+    def test_the_resolve_path_uses_the_same_accessor_as_the_write_path(
+        self, home, monkeypatch, answer
+    ):
+        """The one-sided shape: the write went through the running service's store, and the
+        resolve constructed its own — so a resolve wrote to a copy the service then overwrote,
+        leaving the row open forever. With a gateway running, answering a proposal closes the
+        row in the store the gateway serves."""
+        _state, store = TestDismissingTheRowAnswersTheProposal._live(None, home, monkeypatch)
+        _install("loop-worker")
+        prop = _propose("loop-worker", n=1)
+        P._surface_in_inbox(prop)
+        (row,) = [i for i in store.items.values() if i.refs.get("skill_proposal") == prop.id]
+        getattr(P, answer)(prop.id)
+        assert store.items[row.id].status == ("handled" if answer == "accept" else "dismissed")
 
-        resolve = inspect.getsource(P._resolve_inbox_item)
-        assert "_inbox_store_for_write()" in resolve
-        assert "InboxStore()" not in resolve
-
-        helper = inspect.getsource(P._inbox_store_for_write)
-        assert "live_store" in helper
-        assert "get_dashboard_state" in helper
-
-    def test_the_backfill_reads_the_same_store_it_would_write(self):
+    def test_the_backfill_reads_the_same_store_it_would_write(self, home, monkeypatch):
         """It reads to decide which proposals still need a row. Reading a detached copy would miss
         every row the running service holds in memory and re-surface duplicates."""
-        import inspect
+        from personalclaw.inbox import InboxItem
 
-        assert "_inbox_store_for_write()" in inspect.getsource(P.backfill_inbox_items)
+        _state, store = TestDismissingTheRowAnswersTheProposal._live(None, home, monkeypatch)
+        prop = _seed("loop-worker", n=1)
+        held = InboxItem(
+            id="held-in-memory",
+            channel="skills",
+            channel_name="skills",
+            thread_ts=None,
+            message="New skill proposed",
+            sender_id="skills",
+            sender_name="skills",
+        )
+        held.refs = {"skill_proposal": prop.id}
+        store.items[held.id] = held  # in the service's memory only, not yet on disk
+        assert P.backfill_inbox_items([prop]) == 0, "the backfill read a copy, not the live store"
+        assert [i.id for i in store.items.values() if i.refs.get("skill_proposal") == prop.id] == [
+            held.id
+        ]
 
     def test_headless_still_gets_a_usable_store(self, home):
         """Vacuity floor: with no gateway up there is no live store, and the file IS the truth. A
@@ -426,14 +460,22 @@ class TestDismissAllMeansAll:
         store = self._store(tmp_path, monkeypatch)
         assert {i.id for i in store.pending()} == {"i0"}
 
-    def test_the_handler_uses_the_open_set(self):
-        import inspect
+    def test_the_handler_dismisses_a_row_you_have_opened(self, home, monkeypatch):
+        """The bulk control reaches every open row, a row you have opened (SEEN) included."""
+        import asyncio
 
         from personalclaw.dashboard import handlers_inbox as H
 
-        src = inspect.getsource(H.api_inbox_dismiss_all)
-        assert "inbox.open_items()" in src
-        assert "inbox.pending()" not in src
+        live = TestDismissingTheRowAnswersTheProposal
+        state, store = live._live(None, home, monkeypatch)
+        for n in (1, 2):
+            P._surface_in_inbox(_seed(f"skill-{n}", n=n))
+        opened = next(iter(store.items.values()))
+        opened.status = "seen"
+        resp = asyncio.run(H.api_inbox_dismiss_all(live._Req(state)))
+        assert resp.status == 200
+        assert store.open_items() == [], "a row you had opened survived dismiss-all"
+        assert store.items[opened.id].status == "dismissed"
 
 
 # ── the queue must not REFILL: one review per subject, owned by the sink ───────
@@ -477,21 +519,51 @@ class TestTheQueueCannotBeFloodedByOneSubject:
         assert sum(1 for m in made if m is not None) == 1, "the flood was admitted"
         assert len(P.list_pending(_surface=False)) == 1
 
-    def test_the_rail_is_at_the_SINK_so_every_producer_inherits_it(self):
-        """The finding is structural: not "the ladder forgot to check" but "only one of three
-        producers ever could". `enqueue` is the one funnel all three go through, so a fourth
-        producer is covered by construction rather than by remembering."""
-        import inspect
+    def test_the_rail_is_at_the_SINK_so_every_producer_inherits_it(self, home):
+        """Not "the ladder forgot to check" but "only one of three producers ever could". With a
+        review already pending for a skill, the after-turn ladder and the synthesizer each file
+        nothing more about it, because `enqueue` is the one funnel all of them go through."""
+        import asyncio
 
-        from personalclaw import after_turn_review, history
+        from personalclaw import after_turn_review
+        from personalclaw.history import HistoryConsolidator
         from personalclaw.skills import refine as R
 
-        assert "coalesce_reason(prop)" in inspect.getsource(P.enqueue)
+        target = _install("loop-worker")
+        self._enqueue("loop-worker", n=1, target=target)
+        assert len(P.list_pending(_surface=False)) == 1
+
+        async def completion(_prompt: str) -> str:
+            return (
+                '{"action": "refine", "slug": "loop-worker", "target": "auto/loop-worker", '
+                '"description": "better", "procedure_md": "step one then two", "triggers": "t"}'
+            )
+
+        verdict, _detail, _summary = asyncio.run(
+            after_turn_review._ladder_pass(
+                session_key="dashboard:chat-1",
+                user_message="How do I rotate the feed cache?",
+                assistant_text="Run the rotate command.",
+                loaded_skills=[target],
+                completion=completion,
+            )
+        )
+        assert verdict == "enqueue_skipped", verdict
+
+        mgr = HistoryConsolidator.__new__(HistoryConsolidator)
+        mgr._skills_loader = _loader()
+        mgr._auto_similarity_threshold = 0.99
+        mgr._auto_refine_enabled = False
+        synthesized = {
+            "slug": "loop-worker",
+            "description": "yet another wording of the loop worker",
+            "triggers": "t",
+            "procedure_md": "do it",
+        }
+        mgr._process_auto_skills({"new_skill": synthesized}, "s2", skills_read={})
+        assert len(P.list_pending(_surface=False)) == 1, "a producer got past the sink"
         # And the duplicate is GONE from the arm that used to own it — one rule, one place.
         assert not hasattr(R, "cap_reason")
-        for producer in (after_turn_review, history):
-            src = inspect.getsource(producer)
-            assert "enqueue(" in src, "this producer no longer files proposals — retarget the rail"
 
     def test_a_kind_new_duplicate_is_coalesced_TOO(self, home):
         """The generator's default is `kind="new"`; #409's queue was 20 rows for one slug filed
@@ -707,27 +779,39 @@ class TestDismissingTheRowAnswersTheProposal:
         assert store.items[row.id].status in ("dismissed", "DISMISSED", "ItemStatus.DISMISSED")
         assert row.refs.get("workflow") == "run-1", "the gate ref must survive untouched"
 
-    def test_ONE_dismissal_owner(self):
-        """Both terminal-transition sites go through `_dismiss`, and neither keeps its own copy of
-        the bookkeeping — that is what stops the next handler re-opening the gap.
-
-        The ref key is asserted literally: `_dismiss` must select rows by
-        `refs["skill_proposal"]` and nothing else. Selecting by `item_kind` (or by any other ref)
-        is how a workflow gate would start getting answered by a dismissal.
-        """
-        import inspect
+    @pytest.mark.parametrize("door", ["one row", "dismiss all"])
+    def test_ONE_dismissal_owner(self, home, monkeypatch, door):
+        """Both doors that dismiss a row do the same bookkeeping: the row is remembered as
+        dismissed, and the proposal it names by `refs["skill_proposal"]` is answered. A row of the
+        proposal kind that names no proposal answers nothing — keyed on the ref, not the kind."""
+        import asyncio
 
         from personalclaw.dashboard import handlers_inbox as H
+        from personalclaw.inbox import ItemKind, emit_attention_item
 
-        owner = inspect.getsource(H._dismiss)
-        assert "dismissed.add" in owner
-        assert '.get("skill_proposal")' in owner, "the owner no longer keys on the proposal ref"
-        assert '.get("workflow' not in owner, "the owner reaches a row it must not answer"
-        assert "item_kind" not in owner, "keyed on kind, not on the ref that names the record"
-        for fn in (H.api_inbox_update, H.api_inbox_dismiss_all):
-            src = inspect.getsource(fn)
-            assert "_dismiss(" in src, f"{fn.__qualname__} does not use the owner"
-            assert "dismissed.add" not in src, f"{fn.__qualname__} keeps its own copy"
+        state, store = self._live(home, monkeypatch)
+        prop = _seed("loop-worker", n=1)
+        P._surface_in_inbox(prop)
+        (row,) = [i for i in store.items.values() if i.refs.get("skill_proposal") == prop.id]
+        bystander = _seed("editorial-document", n=2)
+        emit_attention_item(
+            state,
+            source="skills",
+            kind="proposal",
+            item_kind=ItemKind.PROPOSAL.value,
+            title="A proposal row naming no proposal",
+            body="x",
+            refs={"session": "s1"},
+            dedup_key="no-ref",
+        )
+        if door == "one row":
+            req = self._Req(state, row.id, {"status": "dismissed"})
+            assert asyncio.run(H.api_inbox_update(req)).status == 200
+        else:
+            assert asyncio.run(H.api_inbox_dismiss_all(self._Req(state))).status == 200
+        assert row.id in state._inbox_svc.state.dismissed
+        assert P.get(prop.id) is None, "the row was dismissed and its proposal was not answered"
+        assert P.get(bystander.id) is not None, "a proposal no dismissed row names was answered"
 
 
 # ── the cycle, end to end ─────────────────────────────────────────────────────
