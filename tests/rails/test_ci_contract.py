@@ -9649,6 +9649,139 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
 ROWS = (*ROWS, EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT)
 
 
+# ── A make target that runs a static step runs it as static does ─────────────────────────────
+#
+# Static's validate runs with --strict (#3929), so a warning fails CI. A make target that ran a
+# laxer argv would pass here what CI fails. This row holds each such target to its step's argv,
+# word for word after the interpreter: the recipe runs `$(PYTHON)`, the step `uv run python`.
+
+#: ``(the make target, the catalogue job, the words that find the target's step in the job)``.
+_MAKE_MIRRORS: tuple[tuple[str, str, frozenset[str]], ...] = (
+    ("harness-validate", "static", frozenset({"-m", "harness", "validate"})),
+)
+_STEP_PYTHON = ["uv", "run", "python"]
+
+
+def _recipe(makefile: str, target: str) -> list[str] | None:
+    """The target's recipe lines, without their tab, or None when the Makefile has no such
+    target."""
+    lines = makefile.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith(f"{target}:"):
+            recipe: list[str] = []
+            for following in lines[index + 1 :]:
+                if not following.startswith("\t"):
+                    break
+                recipe.append(following[1:])
+            return recipe
+    return None
+
+
+def make_mirror_violations(root: Path) -> list[str]:
+    """Each mirrored make target runs one command, its job's step's argv after the
+    interpreter."""
+    bad: list[str] = []
+    makefile = (root / "Makefile").read_text(encoding="utf-8")
+    cat = tomllib.loads((root / catalogue.CATALOGUE).read_text(encoding="utf-8"))
+    entries = {str(j.get("id")): j for j in cat.get("job") or []}
+    for target, job_id, words in _MAKE_MIRRORS:
+        recipe = _recipe(makefile, target)
+        argvs = [
+            list(step.get("argv") or [])
+            for step in (entries.get(job_id) or {}).get("command") or []
+            if words <= set(step.get("argv") or [])
+        ]
+        if recipe is None:
+            bad.append(f"the Makefile has no {target} target")
+        elif len(argvs) != 1:
+            bad.append(f"{job_id} has {len(argvs)} steps that run {sorted(words)}, not one")
+        elif len(recipe) != 1:
+            bad.append(f"make {target} runs {len(recipe)} commands, not {job_id}'s one step")
+        elif argvs[0][:3] != _STEP_PYTHON:
+            bad.append(f"{job_id}'s step {argvs[0]} does not start with {_STEP_PYTHON}")
+        elif shlex.split(recipe[0]) != ["$(PYTHON)", *argvs[0][3:]]:
+            bad.append(
+                f"make {target} runs {recipe[0]!r} where {job_id} runs"
+                f" {shlex.join(argvs[0])!r}, so a run here is not the run CI makes"
+            )
+    return bad
+
+
+def _make_mirror_scaffold(root: Path) -> None:
+    """The tree's Makefile and catalogue, which agree."""
+    for rel in ("Makefile", catalogue.CATALOGUE):
+        _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
+
+
+_MAKE_VALIDATE = "harness-validate:\n\t$(PYTHON) -m harness validate --strict\n"
+
+MAKE_TARGETS_RUN_THEIR_STATIC_STEP = Row(
+    name="a-make-target-that-runs-a-static-step-runs-its-argv",
+    check=make_mirror_violations,
+    scaffold=_make_mirror_scaffold,
+    controls=(
+        _plant(
+            "make harness-validate without --strict, which passes a warning static fails",
+            "Makefile",
+            _MAKE_VALIDATE,
+            _MAKE_VALIDATE.replace(" --strict", ""),
+            expect="make harness-validate runs '$(PYTHON) -m harness validate' where static runs",
+        ),
+        _plant(
+            "static's validate with a flag the make target does not pass",
+            catalogue.CATALOGUE,
+            _VALIDATE_STEP,
+            _VALIDATE_STEP.replace('"--strict"', '"--strict", "--fast"'),
+            expect="so a run here is not the run CI makes",
+        ),
+        _plant(
+            "the recipe's failure ignored by a leading `-`",
+            "Makefile",
+            _MAKE_VALIDATE,
+            _MAKE_VALIDATE.replace("\t$(PYTHON)", "\t-$(PYTHON)"),
+            expect="make harness-validate runs '-$(PYTHON)",
+        ),
+        _plant(
+            "a second command in the recipe",
+            "Makefile",
+            _MAKE_VALIDATE,
+            _MAKE_VALIDATE + "\t$(PYTHON) -m harness scan\n",
+            expect="make harness-validate runs 2 commands",
+        ),
+        _plant(
+            "the harness-validate target gone",
+            "Makefile",
+            _MAKE_VALIDATE,
+            "",
+            expect="the Makefile has no harness-validate target",
+        ),
+        _plant(
+            "static without its validate step",
+            catalogue.CATALOGUE,
+            _VALIDATE_STEP,
+            "",
+            expect="static has 0 steps that run",
+        ),
+        _plant(
+            "static's validate run by a bare python, whose words the row does not read",
+            catalogue.CATALOGUE,
+            _VALIDATE_STEP,
+            _VALIDATE_STEP.replace('"uv", "run", "python"', '"python"'),
+            expect="does not start with ['uv', 'run', 'python']",
+        ),
+        _plant(
+            "a target named harness-validate-fast above it, which runs --fast, passes",
+            "Makefile",
+            _MAKE_VALIDATE,
+            "harness-validate-fast:\n\t$(PYTHON) -m harness validate --fast\n\n" + _MAKE_VALIDATE,
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, MAKE_TARGETS_RUN_THEIR_STATIC_STEP)
+
+
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
 def test_the_ci_contract_holds_and_each_check_can_fail(
     row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest
