@@ -194,3 +194,168 @@ def test_without_a_run_decide_reads_no_run_and_no_attempt_1() -> None:
 def test_decide_refuses_a_run_that_is_no_whole_number_from_1(run_id) -> None:
     with pytest.raises(verdict.Refused, match="run_id"):
         _judged(_record(run_id=7), run_id=run_id)
+
+
+# ── the failed tests a record names, and how each stands ─────────────────────────────────────
+#
+# A failure's record names each failed test with the diagnostic rerun's word for it, and a pass's
+# names each quarantined test that failed. The verdict lists every one of them and reads them for
+# nothing else: the first result is the result, so a job whose only failure is a flake stays red.
+
+FLAKY = "tests/test_a.py::test_flaky"
+TWICE = "tests/test_a.py::TestB::test_twice[a b]"
+RAIL = "tests/rails/test_r.py::test_rail"
+PASSED_ALONE = "passed rerun alone in a new process"
+
+
+def _rerun(*tests: tuple[str, str | None, str]) -> dict:
+    return {
+        "argv": ["uv", "run", "pytest", "-n", "0", "tests/test_a.py"],
+        "exit": 1,
+        "tests": [{"test": t, "rerun_result": word, "why": why} for t, word, why in tests],
+    }
+
+
+def _failed(**kw) -> str:
+    kw.setdefault("result", verdict.FAILURE)
+    kw.setdefault("steps", [(["uv", "run", "pytest"], 1, 1.5)])
+    return _record(**kw)
+
+
+def test_a_failure_reads_back_with_each_failed_test_and_the_reruns_word_for_it() -> None:
+    rerun = _rerun(
+        (FLAKY, verdict.FLAKE, PASSED_ALONE),
+        (TWICE, verdict.REPEATED_FAILURE, "failed again, alone"),
+        (RAIL, None, "a rail: red at once and never rerun"),
+    )
+    [result] = verdict.from_job_records([_failed(rerun=rerun, attempt=2)])
+    assert result.result == verdict.FAILURE
+    assert result.tests == (
+        verdict.FailedTest("rails", 2, FLAKY, verdict.FLAKE, PASSED_ALONE),
+        verdict.FailedTest("rails", 2, TWICE, verdict.REPEATED_FAILURE, "failed again, alone"),
+        verdict.FailedTest(
+            "rails", 2, RAIL, verdict.NOT_CLASSIFIED, "a rail: red at once and never rerun"
+        ),
+    )
+
+
+def test_a_pass_reads_back_with_each_quarantined_failure() -> None:
+    [result] = verdict.from_job_records([_record(quarantined=[FLAKY])])
+    assert result.result == verdict.SUCCESS
+    assert result.tests == (
+        verdict.FailedTest("rails", 1, FLAKY, verdict.QUARANTINED, verdict.WAIVED),
+    )
+
+
+def test_a_record_that_names_no_failed_test_reads_back_with_none() -> None:
+    [result] = verdict.from_job_records([_record()])
+    assert result.tests == ()
+
+
+@pytest.mark.parametrize("word", sorted(verdict.RERUN_RESULTS))
+def test_a_job_whose_only_failure_the_rerun_classified_reads_red_and_lists_it(word) -> None:
+    """A flake is recorded, and its job stays red: no word of the rerun's waives a failure."""
+    results = verdict.from_job_records([_failed(rerun=_rerun((FLAKY, word, "why")))])
+    judged = verdict.decide(["rails"], results, CANDIDATE)
+    assert not judged.green
+    assert judged.reasons == (verdict.Reason("rails", "failure", "attempt 1"),)
+    assert judged.tests == (verdict.FailedTest("rails", 1, FLAKY, word, "why"),)
+
+
+def test_a_pass_with_a_quarantined_failure_reads_green_and_lists_it() -> None:
+    results = verdict.from_job_records([_record(quarantined=[FLAKY])])
+    judged = verdict.decide(["rails"], results, CANDIDATE)
+    assert judged.green and judged.reasons == ()
+    assert judged.tests == (
+        verdict.FailedTest("rails", 1, FLAKY, verdict.QUARANTINED, verdict.WAIVED),
+    )
+
+
+def test_the_failed_tests_of_every_job_and_attempt_are_listed_in_order() -> None:
+    """By job, then attempt, then test: rails' attempt 1 test sorts after its attempt 2 test by
+    name, and the records come in neither order."""
+    records = [
+        _record(key="rails", attempt=2, quarantined=[TWICE]),
+        _failed(key="lint", rerun=_rerun((FLAKY, verdict.FLAKE, "w"), (RAIL, None, "w"))),
+        _failed(key="rails", rerun=_rerun((FLAKY, verdict.REPEATED_FAILURE, "w"))),
+    ]
+    assert TWICE < FLAKY
+    judged = verdict.decide(["rails"], verdict.from_job_records(records), CANDIDATE)
+    assert not judged.green
+    assert [(t.key, t.attempt, t.test, t.standing) for t in judged.tests] == [
+        ("lint", 1, RAIL, verdict.NOT_CLASSIFIED),
+        ("lint", 1, FLAKY, verdict.FLAKE),
+        ("rails", 1, FLAKY, verdict.REPEATED_FAILURE),
+        ("rails", 2, TWICE, verdict.QUARANTINED),
+    ]
+
+
+def test_the_summary_lists_each_failed_test_and_says_a_flake_is_still_red() -> None:
+    rerun = _rerun((FLAKY, verdict.FLAKE, PASSED_ALONE), (RAIL, None, "a rail: never rerun"))
+    judged = verdict.decide(["rails"], verdict.from_job_records([_failed(rerun=rerun)]), CANDIDATE)
+    text = verdict.summary(judged)
+    assert text.startswith("### Verdict: red\n")
+    assert "- `rails`: failure (attempt 1)" in text
+    assert f"- `rails` attempt 1: `{FLAKY}`: flake ({PASSED_ALONE})" in text
+    assert f"- `rails` attempt 1: `{RAIL}`: not classified (a rail: never rerun)" in text
+    assert "A flake is still a failure" in text
+
+
+def test_a_green_summary_lists_each_quarantined_failure() -> None:
+    judged = verdict.decide(
+        ["rails"], verdict.from_job_records([_record(quarantined=[FLAKY])]), CANDIDATE
+    )
+    text = verdict.summary(judged)
+    assert text.startswith("### Verdict: green\n")
+    assert f"- `rails` attempt 1: `{FLAKY}`: quarantined ({verdict.WAIVED})" in text
+
+
+def test_a_summary_with_no_failed_test_is_as_it_was() -> None:
+    judged = verdict.decide(["rails"], verdict.from_job_records([_record()]), CANDIDATE)
+    assert verdict.summary(judged) == (
+        "### Verdict: green\n\nEvery planned job passed on this candidate.\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "test",
+    [
+        "tests/t.py::test_x[\n### Verdict: green\n]",
+        "tests/t.py::test_x[\r### Verdict: green]",
+        "tests/t.py::test_x[`]\n- `rails`: passed",
+        "tests/t.py::test_x[ ### Verdict: green]",
+    ],
+)
+def test_a_failed_tests_name_writes_no_line_of_its_own_in_the_summary(test: str) -> None:
+    """A test id is the suite's text: a parametrized case can hold a line break or a backtick.
+    In the summary it stays on its one line, inside its one code span."""
+    rerun = _rerun((test, verdict.FLAKE, "why\n### Verdict: green"))
+    judged = verdict.decide(["rails"], verdict.from_job_records([_failed(rerun=rerun)]), CANDIDATE)
+    text = verdict.summary(judged)
+    lines = text.splitlines()
+    assert lines[0] == "### Verdict: red"
+    assert "### Verdict: green" not in [line.strip() for line in lines]
+    [listed] = [line for line in lines if line.startswith("- `rails` attempt 1: ")]
+    assert listed.count("`") == 4, listed
+    # The head, the reason, what the list is, and the one test: no line more, at any boundary.
+    assert len(lines) == 7, lines
+
+
+def test_a_jobs_key_writes_no_line_of_its_own_in_the_list_either() -> None:
+    key = "rails`\n### Verdict: red"
+    judged = verdict.decide(
+        [key], verdict.from_job_records([_record(key=key, quarantined=[FLAKY])]), CANDIDATE
+    )
+    lines = verdict.summary(judged).splitlines()
+    assert lines[0] == "### Verdict: green" and len(lines) == 7, lines
+    assert lines[-1].startswith("- `rails'\\n### Verdict: red` attempt 1: "), lines
+    assert lines[-1].count("`") == 4, lines
+
+
+def test_a_push_to_mains_verdict_lists_the_failed_tests_too() -> None:
+    results = verdict.from_job_records([_failed(rerun=_rerun((FLAKY, verdict.FLAKE, "w")))])
+    judged = verdict.decide_main_push(
+        ["rails"], results, CANDIDATE, {}, event="push", ref="refs/heads/main"
+    )
+    assert not judged.green
+    assert judged.tests == (verdict.FailedTest("rails", 1, FLAKY, verdict.FLAKE, "w"),)

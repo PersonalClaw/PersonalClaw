@@ -32,6 +32,12 @@ not runs of the test.
 **Flake rate.** First failures that a rerun then passed, over the test's runs, rated only over
 ``MIN_RUNS`` runs or more.
 
+**What the reruns found.** From each job's record line (``record``, version 4 on), of each run's
+lowest attempt as for first results: every test the diagnostic rerun classified, with how many job
+records found it a flake and how many a repeated failure, and the jobs that did. Every runner's
+classification is there, Playwright's included, which no test line carries. A history of an older
+version carries none, and a record line in one, or one not in its shape, fails the report.
+
 **Durations.** Each test's p50 and p99 seconds over the window, the 20 slowest by p50, and the
 trend: the p50 of the last 7 days over the p50 of the 7 days before, less one.
 
@@ -81,7 +87,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any
 
-from . import telemetry
+from . import telemetry, verdict
 
 WINDOW_DAYS = 90
 MIN_RUNS = 10
@@ -90,10 +96,9 @@ TREND_DAYS = 7
 #: The results that are a run of the test; a skip or an expected failure is not.
 RAN = frozenset({"passed", "failed", "error"})
 FAILED = frozenset({"failed", "error"})
-#: One history line longer than this is refused: a test line is a few hundred bytes, and a run
-#: line with its jobs a few tens of kilobytes. The shard planner reads histories within the same
-#: limits.
-MAX_LINE_BYTES = 1024 * 1024
+#: One history line longer than this is refused, its line break included: the collector's one
+#: bound, which it writes no line past. The shard planner reads histories within the same limits.
+MAX_LINE_BYTES = telemetry.MAX_LINE_BYTES
 #: A history file larger than this is refused: one main run's is about 49 MB.
 MAX_FILE_BYTES = 256 * 1024 * 1024
 #: The quarantine, whose status the report shows, and its fields (``tests/quarantine.py``'s).
@@ -128,6 +133,11 @@ GH_TIMEOUT_SECONDS = 120
 FETCH_COUNTS = ("carried", "dropped", "fetched", "refused", "left", "reserve")
 #: The refusals the issue lists at most; the fetch's log holds every one.
 REFUSALS_SHOWN = 20
+#: The tests the issue lists of what the reruns found, at most; report.json holds every one.
+DIAGNOSED_SHOWN = 20
+#: A job record line's fields, as the collector writes them.
+RECORD_FIELDS = telemetry.RECORD_FIELDS
+_RERUN_FIELDS = frozenset({"test", "rerun_result"})
 
 
 class SchemaError(Exception):
@@ -202,15 +212,27 @@ class Figures:
     last_week: Counted | None = None
 
 
+@dataclass(slots=True)
+class Diagnosed:
+    """One test over the window, as the job records' reruns classified it."""
+
+    flakes: int = 0
+    repeated_failures: int = 0
+    jobs: set[str] = field(default_factory=set)
+
+
 @dataclass
 class History:
     """What the report reads from the history: the window, each test's figures over it, and how
-    many tests the newest run recorded."""
+    many tests the newest run recorded; what the reruns found, from the job records, and how many
+    of the window's runs carried any."""
 
     window: dict[str, Any]
     tests: dict[str, Figures]
     suite_size: int
     browse_live: list[dict[str, Any]] = field(default_factory=list)
+    diagnosed: dict[str, Diagnosed] = field(default_factory=dict)
+    runs_with_records: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,6 +331,8 @@ class _File:
     conclusion: str | None
     #: When the attempt was last updated (its created time when it has none): retries' order.
     updated: datetime.datetime
+    #: The schema version its run line names: a record line is version 4's.
+    version: int
 
 
 def _at(value: object) -> datetime.datetime:
@@ -360,18 +384,64 @@ def _head(path: Source, kind: str) -> dict[str, Any]:
     return head
 
 
-def _outcomes(files: Sequence[_File]) -> tuple[dict[str, _Outcome], dict[int, bool | None]]:
-    """Each test's outcome in one run, from that run's files, lowest attempt first; and for each
+def _rerun_word(word: object) -> bool:
+    return word is None or (isinstance(word, str) and word in telemetry.RERUN_RESULTS)
+
+
+def job_records(lines: Sequence[dict[str, Any]], where: str) -> list[dict[str, Any]]:
+    """One attempt's job record lines, each as the collector writes it. One in another shape
+    fails the report: a figure read from it would be a guess."""
+    keys: set[str] = set()
+    for entry in lines:
+        if set(entry) != set(RECORD_FIELDS):
+            raise SchemaError(f"{where}: a job record line does not hold {RECORD_FIELDS}")
+        key, rerun, quarantined = entry["key"], entry["rerun"], entry["quarantined"]
+        if not isinstance(key, str) or not key or key in keys:
+            raise SchemaError(f"{where}: a job record names no key, or a key twice")
+        keys.add(key)
+        result = entry["result"]
+        if not isinstance(result, str) or result not in verdict.WORDS:
+            raise SchemaError(f"{where}: {key}'s result {result!r} is no job's")
+        if not isinstance(rerun, list) or not all(
+            isinstance(t, dict)
+            and set(t) == _RERUN_FIELDS
+            and isinstance(t["test"], str)
+            and t["test"]
+            and _rerun_word(t["rerun_result"])
+            for t in rerun
+        ):
+            raise SchemaError(f"{where}: {key}'s failed tests are not in their shape")
+        # As a record does (``verdict``): one rerun names each test once.
+        twice = sorted(test for test, n in Counter(t["test"] for t in rerun).items() if n > 1)
+        if twice:
+            raise SchemaError(f"{where}: {key}'s rerun names {twice[0]} twice")
+        if not isinstance(quarantined, list) or not all(
+            isinstance(t, str) and t for t in quarantined
+        ):
+            raise SchemaError(f"{where}: {key}'s quarantined failures are not test ids")
+    return list(lines)
+
+
+def _outcomes(
+    files: Sequence[_File],
+) -> tuple[dict[str, _Outcome], dict[int, bool | None], list[dict[str, Any]]]:
+    """Each test's outcome in one run, from that run's files, lowest attempt first; for each
     attempt with browse-live lines, whether one carried the environment marker (None when a line
-    cannot say: a version-1 line has no such field)."""
+    cannot say: a version-1 line has no such field); and the job record lines of the run's lowest
+    attempt, as for first results (its first file's, in path order). Every file's are checked."""
     outcomes: dict[str, _Outcome] = {}
     browse: dict[int, bool | None] = {}
+    first: list[dict[str, Any]] | None = None
     # Lowest attempt first, so each test's first result is that attempt's, whatever the file
     # order; files of one attempt in path order.
     for file in sorted(files, key=lambda f: f.attempt):
         records = _records(file.path)
         next(records)  # the run line, read and checked in the first pass
+        jobs: list[dict[str, Any]] = []
         for record in records:
+            if record.get("kind") == "record" and file.version >= 4:
+                jobs.append(record)
+                continue
             if record.get("kind") != "test":
                 raise SchemaError(f"{file.path.name}: a line after the first is not a test line")
             test, result = str(record["test"]), str(record["first_result"])
@@ -394,7 +464,10 @@ def _outcomes(files: Sequence[_File]) -> tuple[dict[str, _Outcome], dict[int, bo
                 continue
             if found.first in FAILED and record.get("rerun_result") == telemetry.FLAKE:
                 found.passed_on_rerun = True
-    return outcomes, browse
+        checked = job_records(jobs, file.path.name)
+        if first is None:
+            first = checked
+    return outcomes, browse, first or []
 
 
 def _browse_live(
@@ -450,6 +523,7 @@ def read(folder: Path) -> History:
                 str(head.get("sha") or ""),
                 head.get("conclusion"),
                 _at(head["updated_at"]) if head.get("updated_at") else made,
+                int(head["version"]),
             )
         )
     if not files:
@@ -479,8 +553,19 @@ def read(folder: Path) -> History:
     tests: dict[str, Figures] = {}
     suite_size = 0
     measured: dict[tuple[int, int], bool | None] = {}
+    diagnosed: dict[str, Diagnosed] = {}
+    with_records = 0
     for run_id, at in sorted(kept.items()):
-        outcomes, browse = _outcomes(by_run[run_id])
+        outcomes, browse, lowest = _outcomes(by_run[run_id])
+        with_records += bool(lowest)
+        for entry in lowest:
+            for t in entry["rerun"]:
+                if t["rerun_result"] is None:
+                    continue
+                seen = diagnosed.setdefault(t["test"], Diagnosed())
+                seen.flakes += t["rerun_result"] == telemetry.FLAKE
+                seen.repeated_failures += t["rerun_result"] != telemetry.FLAKE
+                seen.jobs.add(entry["key"])
         measured.update({(run_id, attempt): marked for attempt, marked in browse.items()})
         if run_id == latest:
             suite_size = len(outcomes)
@@ -503,7 +588,14 @@ def read(folder: Path) -> History:
                 figures.last_week = figures.last_week or Counted()
                 figures.last_week.add(outcome.seconds)
     in_window = [file for run_id in kept for file in by_run[run_id]]
-    return History(window, tests, suite_size, _browse_live(in_window, measured))
+    return History(
+        window,
+        tests,
+        suite_size,
+        _browse_live(in_window, measured),
+        diagnosed,
+        with_records,
+    )
 
 
 def read_slots(folder: Path) -> list[dict[str, Any]]:
@@ -573,13 +665,25 @@ def figures(
         "days": history.window["days"],
         "of": WINDOW_DAYS,
         "runs": history.window["runs"],
+        "runs_with_records": history.runs_with_records,
         "left": fetched["left"] if fetched else 0,
         "fetch": dict(fetched) if fetched else None,
     }
+    diagnosed: list[dict[str, Any]] = [
+        {
+            "test": test,
+            "flakes": d.flakes,
+            "repeated_failures": d.repeated_failures,
+            "jobs": sorted(d.jobs),
+        }
+        for test, d in history.diagnosed.items()
+    ]
+    diagnosed.sort(key=lambda r: (-r["flakes"], -r["repeated_failures"], r["test"]))
     return {
         "window": history.window,
         "record": record,
         "tests": rows,
+        "diagnosed": diagnosed,
         "slowest": slowest,
         "suite_size": history.suite_size,
         "quarantine": quarantine_status(quarantine, on or today(), reruns),
@@ -876,6 +980,26 @@ def markdown(data: Mapping[str, Any]) -> str:
             f"\n{len(unrated)} test(s) have fewer than {MIN_RUNS} runs in the window and are "
             "not rated."
         )
+    lines += ["", "### What the reruns found", ""]
+    record = data["record"]
+    if record["runs"]:
+        lines += [
+            "From each job's record, of each run's first attempt: every test the diagnostic "
+            "rerun classified, and how many job records found it a flake or a repeated failure. "
+            f"{record['runs_with_records']} of the window's {record['runs']} runs carried its "
+            "jobs' records.",
+            "",
+        ]
+    found = data["diagnosed"]
+    if found:
+        lines += ["| Test | Flakes | Repeated failures | Jobs |", "|---|---|---|---|"]
+        for r in found[:DIAGNOSED_SHOWN]:
+            jobs = ", ".join(f"`{job}`" for job in r["jobs"])
+            lines.append(f"| `{r['test']}` | {r['flakes']} | {r['repeated_failures']} | {jobs} |")
+        if len(found) > DIAGNOSED_SHOWN:
+            lines.append(f"\n{len(found) - DIAGNOSED_SHOWN} more in report.json.")
+    else:
+        lines.append("No job record in the window classified a failed test.")
     lines += ["", "### Slowest tests", ""]
     if data["slowest"]:
         lines += ["| Test | p50 s | p99 s | Week over week |", "|---|---|---|---|"]

@@ -628,6 +628,21 @@ for (a runner that died, a cancelled entry) stays red, as a red on attempt 1 doe
 carries only what attempt 1 recorded. Also refused: a link anywhere in the folder, a file beside
 the artifact folders, a file over 1 MB, and any record the reader would refuse.
 
+**The failed tests the records name.** A record read with `from_job_records` carries its failed
+tests: on a failure, each test `run-job`'s diagnostic rerun classified `flake` or `repeated
+failure`, or left `not classified` (a rail, a security-marked test, a rerun that said nothing of
+it), with the record's reason; on a pass, each `quarantined` failure an entry of
+`tests/quarantine.toml` waived. The verdict lists every one, by job, attempt and test, after its
+reasons, and reads them for nothing else: the first result is the result. So a job whose only
+failure is a flake reads red as a `failure`, with the flake listed, and the same failure under a
+valid quarantine entry is a pass that reads green, with the quarantined failure listed. A test's
+id is the suite's text, so each one is written on its own line inside one code span: a backtick
+reads as a quote, and a line break or any other character that is not printable as its escape.
+GitHub refuses a step summary over 1 MiB whole, the reasons with it, so the step summary lists
+the failed tests within 512 KiB and says how many more there are; the log lists every one.
+`run <tier>` lists them with its verdict too. The merge controller's `merge-verdict` check run
+reads `needs`, not a run's records, until #3910's controller reads them, so it lists none yet.
+
 On a push to `main` only, `decide_main_push` takes one more input: the planned jobs
 `tools/ci/superseded.py` proved were replaced by a newer push (see "A burst of merges" below).
 Such a cancelled job reads `superseded` instead of `cancelled`, and is still red. `decide`, the
@@ -1077,7 +1092,8 @@ the shard planner and the weekly report read it.
   never read. It writes `history-<run>-<attempt>.jsonl`: a first line naming the schema and its
   version, with the facts only the Actions API knows (queue delay, setup, time to the first
   failed job, verdict time, runner-minutes, cancelled work, artifact volume, schedule lag, one
-  entry per job), then one line per test case of that attempt's junit reports.
+  entry per job), then one line per job record the attempt uploaded, then one line per test case
+  of that attempt's junit reports.
 - **A first result is never replaced.** Each attempt is collected on its own: from that
   attempt's own start, end and conclusion, its own jobs, and only the reports uploaded between
   its start and its end. So attempt 1's file keeps the first result even when it is collected
@@ -1089,13 +1105,18 @@ the shard planner and the weekly report read it.
   apart, so a leg that moves to another `-n` plans from the first run that recorded it. On Linux
   it also records the host's CPU model, and the run line's `cpus` maps each report to it (null
   where none was recorded), which the planner weighs seconds by.
-- **Versions.** Version 3 added the run line's `cpus` and nothing else. The planner, the report
-  and the parity check read versions 1, 2 and 3, so a history kept from before reads as one whose
-  reports recorded no CPU model, and they refuse anything newer.
+- **Versions.** Version 3 added the run line's `cpus` and nothing else, and version 4 the job
+  record lines and nothing else. The planner, the report and the parity check read versions 1 to
+  4, so a history kept from before reads as one whose reports recorded no CPU model and whose run
+  carried no job records, and they refuse anything newer.
 - **Artifacts are data.** An archive over 8 MiB is never downloaded, a report is read in memory
   up to 8 MiB, a report that is not UTF-8 or declares a DOCTYPE anywhere is refused, and nothing
   is extracted or run. A report that cannot be read fails the collection and writes nothing. The
   planner reads a history line by line, each line within 1 MiB and the whole within 256 MiB.
+- **One line bound.** Every reader (the weekly report and its fetch, the planner, the parity
+  check) refuses a whole history with a line over 1 MiB, its line break included
+  (`telemetry.MAX_LINE_BYTES`, which each of them reads), so the collector writes none: a line
+  that would pass it fails the collection and writes nothing.
 - **`slots`** runs daily on its own schedule, because a scheduled run that never starts fires no
   completion event. It writes one line per slot each scheduled workflow was due in the last
   eight days: `ran` (with its lag), `pending` (no run yet, and the next slot has not come), or
@@ -1111,14 +1132,31 @@ the shard planner and the weekly report read it.
 - **The diagnostic rerun:** `rerun_result` is read from the `rerun_result` property `run-job`
   writes on each failed case it reran: `flake` or `repeated failure`, null for a case it did not
   rerun. Any other value, or one on a case that did not fail first, fails the collection.
+- **Each job's record** (schema version 4): each test-stage entry uploads its job's record, the
+  one `run-job` writes, as `ci-record-<key slug>-<run>-<attempt>`, and each record the attempt
+  uploaded is one `record` line after the run line, by key: the job's `result`, its `rerun` (each
+  failed test with the diagnostic rerun's word for it, null when it was not classified) and its
+  `quarantined` failures. It is the one place every runner's classification lands: Playwright
+  classifies from its own report, and no junit report carries its word. A line of its own holds
+  each record within the line bound however many jobs failed, where one line holding them all
+  would pass it in a run with several thousand failed tests and lose the whole run to every
+  reader. A record archive over 2 MiB is never downloaded; it must hold one `.json` file within a
+  record's 1 MB, which `verdict.from_job_records` reads, in memory, and the record must be this
+  run's and this attempt's, in the artifact its own key names. Anything else fails the collection
+  and writes nothing, as an unreadable report does, since a history with fewer records would read
+  as reruns that found less. So a job whose record passes 1 MB (several thousand failed tests:
+  `run-job` does not yet hold its record within it, and `verdict --records` refuses the same
+  record) leaves its run with no history. A run that uploaded no record (a `ci.yml` run today)
+  has no record line.
 - **The environment marker** (schema version 2): `environment_failure` is true when the case
   failed or errored with the exact words `ENVIRONMENT, NOT POLICY` in its failure's message or
   text, the suite's way of naming a red the environment caused rather than the code under test
   (the browse proof's page that stayed detached), and false for every other case. Version 2
   adds that field and changes nothing else: the report and the parity check read version 1 too,
   as histories without it, and so does the shard planner.
-- **Not yet recorded:** `quarantined` is #3947's, `cache_hits` is #3909's, and `worker` and
-  `position` are #3949's. No API reports them, so they are null, never guessed.
+- **Not yet recorded:** a test line's `quarantined` is #3947's (a job's quarantined failures are
+  on its record line), `cache_hits` is #3909's, and `worker` and `position` are #3949's. No API
+  reports them, so they are null, never guessed.
 
 `tools/ci/report.py` (`python -m tools.ci report --history <folder>`) reads only that schema
 and fails (exit 2) on a file in another schema or a version it does not read, and on a folder
@@ -1143,6 +1181,13 @@ The figures:
   attempt that passed, or a `rerun_result` of `flake`; a `repeated failure` is not one), over
   the test's runs, rated only from 10 runs up. Two records of one test in one attempt count once.
   A skip or an expected failure is not a run;
+- **what the reruns found**, from each history's job record lines, of each run's lowest attempt
+  as for first results: every test the diagnostic rerun classified, with how many job records
+  found it a flake and how many a repeated failure, and the jobs that did, most flakes first,
+  then most repeated failures, the first 20 in the issue and all of them in `report.json`. It
+  counts every runner's word, Playwright's included, and says how many of the window's runs
+  carried any records. A history of an older version carries none, and a record line in one, or
+  one not in its shape, fails the report;
 - **durations:** each test's p50 and p99, the 20 slowest, and the week-over-week trend;
 - **the quarantine:** every entry of `tests/quarantine.toml` (`--quarantine` reads another list),
   with its issue, its assignee, its expiry and the days left, soonest first, and its reruns
@@ -1724,7 +1769,9 @@ known failure.
 - **Recorded three ways:** each failed test as `flake` (it passed alone) or `repeated failure`
   (it failed again), or null with the reason it was not rerun, in the job record's `rerun` field;
   as a `rerun_result` property on its case in the job's report, which the telemetry collector
-  reads into the test line's `rerun_result`; and as a `::warning` line.
+  reads into the test line's `rerun_result`; and as a `::warning` line. The verdict lists each
+  one from the record, and a flake's job still reads red (see "The verdict"); the collector
+  carries the record's words into the history's record lines, which the weekly report counts.
 - **The step's own outputs:** the files the step left beside its JUnit report (the real-home
   guard's `reports/real-home-guard.txt` among them) are put back after the rerun, and what the
   rerun wrote there moves to the job's scratch folder, so the job's reports describe the job.
@@ -1740,7 +1787,12 @@ pytest root, whose failure is rerun as its own test and never as its namesake at
 stopped for its time, a signal or the tripwire, and a report it cannot trust, each with no rerun;
 a rerun stopped at the end of the job's time, one the runner is interrupted in, and one whose
 report cannot be read; and a session report beside the JUnit that the rerun leaves as the step
-wrote it. The weekly report counts the `flake` and not the `repeated failure`.
+wrote it. The weekly report's flake rate counts the `flake` and not the `repeated failure` from
+the report's property, and its "what the reruns found" counts each word from the job record. The
+same file runs the results stage's verdict (`verdict --records`) over such a job's record,
+uploaded as a GitHub runner's: an unquarantined flaky failure reads red with the flake listed,
+and the same failure under a valid entry of the suite's own quarantine reads green with it listed
+as quarantined.
 
 **The web runners follow the same contract:** one retry, in a fresh process, with the same time
 budget, and red on a first failure the retry passes.

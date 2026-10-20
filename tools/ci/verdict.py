@@ -16,6 +16,13 @@ Anything else is red, with one :class:`Reason` per key that fell short: ``missin
 outside the plan that was skipped or passed changes nothing; one that failed, was cancelled or
 reported a word this module does not know, on any attempt, reads red, so the verdict fails closed.
 
+A result read from a record carries the record's failed tests (:class:`FailedTest`): each one the
+diagnostic rerun classified :data:`FLAKE` or :data:`REPEATED_FAILURE`, or left
+:data:`NOT_CLASSIFIED`, and each quarantined failure (:data:`QUARANTINED`). :func:`decide` lists
+every one of them in the verdict, and reads them for nothing else: the first result is the result,
+so a job whose only failure is a flake reads red as a failure, and a pass that a quarantine entry
+waived a failure in reads green. Only that entry waives a known failure.
+
 Given the run's id (``run_id``, when the results are one run's own records, :func:`read_records`),
 :func:`decide` reads two more reds: a result of another run (``another run``) or of none (``no
 run``: a local record), and a planned key with no result on attempt 1 (``missing on attempt 1``),
@@ -100,15 +107,31 @@ class Identity:
 
 
 @dataclass(frozen=True)
+class FailedTest:
+    """One failed test a job's record names, and how it stands: :data:`FLAKE` or
+    :data:`REPEATED_FAILURE` (the diagnostic rerun's word), :data:`NOT_CLASSIFIED` (it was not
+    rerun, or the rerun said nothing of it), or :data:`QUARANTINED` (it failed under a quarantine
+    entry). ``why`` is the record's reason. None of them changes its job's result."""
+
+    key: str
+    attempt: int
+    test: str
+    standing: str
+    why: str = ""
+
+
+@dataclass(frozen=True)
 class JobResult:
     """One job's result on one attempt. ``identity`` is None when the result named none, and
-    ``run_id`` when it named no run (a local record, or a ``needs`` result)."""
+    ``run_id`` when it named no run (a local record, or a ``needs`` result). ``tests`` are the
+    failed tests its record names, in the record's order; a ``needs`` result names none."""
 
     key: str
     result: str
     identity: Identity | None
     attempt: int = 1
     run_id: int | None = None
+    tests: tuple[FailedTest, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -127,6 +150,9 @@ class Verdict:
     #: On a push to main only (:func:`decide_main_push`): the newer commit whose run replaced
     #: this one, when that is the whole of why it is red. Empty everywhere else. Never green.
     superseded_by: str = ""
+    #: Every failed test the results' records name, by key, attempt and test: listed, and never
+    #: read for green or red.
+    tests: tuple[FailedTest, ...] = ()
 
 
 def _fault(
@@ -211,8 +237,10 @@ def decide(
         if key not in plan:
             plan.append(key)
     by_key: dict[str, list[JobResult]] = {}
+    tests: list[FailedTest] = []
     for r in results:
         by_key.setdefault(r.key, []).append(r)
+        tests += r.tests
     reasons: list[Reason] = []
     if not plan:
         reasons.append(Reason("", "empty plan", "a plan with no jobs proves nothing"))
@@ -224,7 +252,9 @@ def decide(
         fault = _unplanned(by_key[key])
         if fault:
             reasons.append(Reason(key, *fault))
-    return Verdict(green=not reasons, reasons=tuple(reasons))
+    # The tests are listed, never judged: the green above is read from the results alone.
+    listed = tuple(sorted(tests, key=lambda t: (t.key, t.attempt, t.test)))
+    return Verdict(green=not reasons, reasons=tuple(reasons), tests=listed)
 
 
 #: The reason a push to main's planned job reads red when a newer push's run replaced it.
@@ -286,7 +316,12 @@ def decide_main_push(
     )
     by = {checked[r.key] for r in reasons if r.kind == SUPERSEDED}
     whole = len(by) == 1 and all(r.kind == SUPERSEDED for r in reasons)
-    return Verdict(green=False, reasons=reasons, superseded_by=by.pop() if whole else "")
+    return Verdict(
+        green=False,
+        reasons=reasons,
+        superseded_by=by.pop() if whole else "",
+        tests=base.tests,
+    )
 
 
 def _no_repeats_in(what: str) -> Callable[[list[tuple[str, object]]], dict[str, object]]:
@@ -371,6 +406,12 @@ _RERUN_TEST_KEYS = frozenset({"test", "rerun_result", "why"})
 FLAKE = "flake"
 REPEATED_FAILURE = "repeated failure"
 RERUN_RESULTS = frozenset({FLAKE, REPEATED_FAILURE})
+#: How a failed test stands in a verdict besides the rerun's two words: one the rerun did not
+#: classify, and one that failed under a quarantine entry, which waived it in a job that passed.
+NOT_CLASSIFIED = "not classified"
+QUARANTINED = "quarantined"
+#: Why a quarantined failure is listed and not red.
+WAIVED = "a quarantine entry waived it"
 #: Where a sharded job's file list came from: CI's own plan, or a local run's even split.
 PLANS = frozenset({"ci", "offline"})
 
@@ -548,7 +589,13 @@ def _one_record(text: str, n: int) -> JobResult:
             raise Refused(f"{where}: a step's seconds must be a number, finite and 0 or more")
     if data["result"] == SUCCESS and any(step["exit"] != 0 for step in steps):
         raise Refused(f"{where} says success, and a step exited non-zero")
-    return JobResult(key, data["result"], identity, data["attempt"], run_id)
+    attempt = data["attempt"]
+    tests = [
+        FailedTest(key, attempt, t["test"], t["rerun_result"] or NOT_CLASSIFIED, t["why"])
+        for t in (data["rerun"] or {}).get("tests", [])
+    ]
+    tests += [FailedTest(key, attempt, test, QUARANTINED, WAIVED) for test in quarantined]
+    return JobResult(key, data["result"], identity, attempt, run_id, tuple(tests))
 
 
 def from_job_records(texts: Iterable[str]) -> list[JobResult]:
@@ -576,7 +623,8 @@ def from_job_records(texts: Iterable[str]) -> list[JobResult]:
 RECORD_ARTIFACT_PREFIX = "ci-record-"
 
 #: The most a record file may hold. A record is a few kilobytes; anything far larger is not one.
-_RECORD_BYTES = 1_000_000
+#: The telemetry collector reads a record within it too.
+RECORD_BYTES = 1_000_000
 
 #: A run attempt as text (``github.run_attempt``, ``$GITHUB_RUN_ATTEMPT``): ASCII digits, 1 to
 #: 999999. ``tools/ci/jobs.py`` reads the environment with it too.
@@ -667,14 +715,14 @@ def _entries(folder: str) -> list[os.DirEntry[str]]:
 def _record_text(path: str) -> str:
     """One record file's text: never through a link, and never more than a record can hold."""
     try:
-        if os.stat(path, follow_symlinks=False).st_size > _RECORD_BYTES:
+        if os.stat(path, follow_symlinks=False).st_size > RECORD_BYTES:
             raise Refused(f"{path} is larger than any job record")
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         with os.fdopen(fd, "rb") as handle:
-            data = handle.read(_RECORD_BYTES + 1)
+            data = handle.read(RECORD_BYTES + 1)
     except OSError as exc:
         raise Refused(f"cannot read {path}: {exc}") from None
-    if len(data) > _RECORD_BYTES:
+    if len(data) > RECORD_BYTES:
         raise Refused(f"{path} is larger than any job record")
     try:
         return data.decode("utf-8")
@@ -682,15 +730,54 @@ def _record_text(path: str) -> str:
         raise Refused(f"cannot read {path}: {exc}") from None
 
 
-def summary(verdict: Verdict) -> str:
-    """The verdict as Markdown, one line per reason."""
+def _inline(text: str) -> str:
+    """``text`` kept to its one line inside one code span: a backtick reads as a quote, and every
+    character that is not printable (a line break, a line separator, a control character) is
+    written as its escape. A test id is the suite's text, and may hold any of them."""
+    return "".join("'" if ch == "`" else ch if ch.isprintable() else ascii(ch)[1:-1] for ch in text)
+
+
+#: The most bytes the step summary lists failed tests in. GitHub refuses a step summary over
+#: 1 MiB whole, the verdict's reasons with it, so a mass failure's summary lists the tests within
+#: this and says how many more there are; the log lists every one.
+SUMMARY_TESTS_BYTES = 512 * 1024
+
+
+def tests_summary(tests: Sequence[FailedTest], *, budget: int | None = None) -> str:
+    """Each failed test as Markdown, one line each, after a line saying what they are; empty
+    when there are none. With a ``budget``, the tests' lines stop within that many bytes, and a
+    last line says how many more there are."""
+    if not tests:
+        return ""
+    lines = [
+        "",
+        "Each failed test the records name, and how it stands. A flake is still a failure: only a"
+        " quarantine entry waives one.",
+        "",
+    ]
+    used = 0
+    for n, t in enumerate(tests):
+        why = f" ({_inline(t.why)})" if t.why else ""
+        line = f"- `{_inline(t.key)}` attempt {t.attempt}: `{_inline(t.test)}`: {t.standing}{why}"
+        used += len(line.encode("utf-8", "backslashreplace")) + 1
+        if budget is not None and used > budget:
+            lines.append(f"- {len(tests) - n} more failed tests: the log lists every one.")
+            break
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+def summary(verdict: Verdict, *, budget: int | None = None) -> str:
+    """The verdict as Markdown, one line per reason, then each failed test the records name
+    (within ``budget`` bytes, when given: :func:`tests_summary`)."""
     if verdict.green:
-        return "### Verdict: green\n\nEvery planned job passed on this candidate.\n"
+        head = "### Verdict: green\n\nEvery planned job passed on this candidate.\n"
+        return head + tests_summary(verdict.tests, budget=budget)
     lines = ["### Verdict: red", ""]
     for r in verdict.reasons:
         name = f"`{r.key}`" if r.key else "the plan"
         lines.append(f"- {name}: {r.kind}" + (f" ({r.detail})" if r.detail else ""))
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines) + "\n" + tests_summary(verdict.tests, budget=budget)
 
 
 # ── the command ───────────────────────────────────────────────────────────────────────────────
@@ -833,9 +920,8 @@ def main(argv: list[str] | None = None) -> int:
         _to_summary(f"### Verdict: unreadable input\n\n{reason}\n")
         return 2
     verdict = decide(planned, results, candidate, run_id=run_id)
-    text = _printable(summary(verdict))
-    print(text, end="")
-    _to_summary(text)
+    print(_printable(summary(verdict)), end="")
+    _to_summary(_printable(summary(verdict, budget=SUMMARY_TESTS_BYTES)))
     return 0 if verdict.green else 1
 
 

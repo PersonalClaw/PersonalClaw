@@ -899,6 +899,27 @@ def test_a_run_that_stands_on_a_reused_pass_says_green_on_reuse(
     assert _calls(log) == ["rails", "suite", "suite", "rails"]
 
 
+def test_a_green_on_reuse_summary_lists_each_quarantined_failure_too() -> None:
+    """A run green on reuse lists the failed tests its records name, as a plain green does."""
+    from types import SimpleNamespace
+
+    from tools.ci import verdict
+
+    flaky = "tests/test_a.py::test_flaky"
+    judged = verdict.Verdict(
+        green=True,
+        reasons=(),
+        tests=(verdict.FailedTest("rails", 1, flaky, verdict.QUARANTINED, verdict.WAIVED),),
+    )
+    outcomes = [
+        SimpleNamespace(key="rails", reused=False),
+        SimpleNamespace(key="suite", reused=True),
+    ]
+    text = jobs._summary(judged, outcomes)  # type: ignore[arg-type]
+    assert text.startswith("### Verdict: green on reuse\n")
+    assert text.endswith(f"- `rails` attempt 1: `{flaky}`: quarantined ({verdict.WAIVED})\n")
+
+
 def test_the_docs_name_every_tree_job_of_the_merge_tier():
     """docs/maintainers/ci.md says which merge-tier jobs a second gate can reuse; it names the
     catalogue's own."""

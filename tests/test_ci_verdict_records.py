@@ -42,6 +42,7 @@ def _record(
     head: str = HEAD,
     attempt: int = 1,
     run_id: int | None = RUN,
+    **more: object,
 ) -> str:
     steps = [(["true"], 0 if result == "success" else 1, 0.5)]
     return verdict.job_record(
@@ -51,6 +52,7 @@ def _record(
         steps=steps,
         attempt=attempt,
         run_id=run_id,
+        **more,  # type: ignore[arg-type]
     )
 
 
@@ -136,6 +138,78 @@ def test_a_record_of_an_older_head_reads_red_as_stale(tmp_path, capsys) -> None:
 def test_a_cancelled_matrix_job_in_needs_reads_red_even_with_every_record(tmp_path) -> None:
     needs = dict(NEEDS, test={"result": "cancelled", "outputs": {}})
     assert _run(_setup(tmp_path, _all_green(), needs=needs)) == 1
+
+
+# ── the failed tests the records name ────────────────────────────────────────────────────────
+
+FLAKY = "tests/test_x.py::test_flaky"
+
+
+def test_a_record_whose_only_failure_is_a_flake_reads_red_and_lists_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unquarantined flaky failure reads red: the rerun's word is recorded, in the output and
+    the step summary, and waives nothing."""
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    rerun = {
+        "argv": ["pytest", "-n", "0", FLAKY],
+        "exit": 0,
+        "tests": [{"test": FLAKY, "rerun_result": "flake", "why": "passed rerun alone"}],
+    }
+    records = _all_green()
+    records.update(_named(_record("suite (1/2)", result="failure", rerun=rerun)))
+    assert _run(_setup(tmp_path, records)) == 1
+    out = capsys.readouterr().out
+    assert "- `suite (1/2)`: failure (attempt 1)" in out
+    listed = f"- `suite (1/2)` attempt 1: `{FLAKY}`: flake (passed rerun alone)"
+    assert listed in out
+    assert listed in summary.read_text()
+
+
+def test_the_same_failure_under_a_quarantine_entry_reads_green_and_is_listed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    records = _all_green()
+    records.update(_named(_record("suite (1/2)", quarantined=[FLAKY])))
+    assert _run(_setup(tmp_path, records)) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("### Verdict: green\n")
+    assert f"- `suite (1/2)` attempt 1: `{FLAKY}`: quarantined" in out
+
+
+def test_the_step_summary_lists_failed_tests_within_its_bound_and_the_log_lists_every_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GitHub refuses a step summary over 1 MiB whole, and with it the verdict's reasons: a mass
+    failure's summary lists the failed tests within ``verdict.SUMMARY_TESTS_BYTES`` and says how
+    many more the log lists, and the log lists every one."""
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    records = _all_green()
+    for key in ("suite (1/2)", "suite (2/2)"):
+        tests = [
+            {
+                "test": f"tests/test_x.py::test_{n:04}[{key[7]}-{'y' * 400}]",
+                "rerun_result": "repeated failure",
+                "why": "failed again alone",
+            }
+            for n in range(1500)
+        ]
+        rerun = {"argv": ["pytest", "-n", "0"], "exit": 1, "tests": tests}
+        records.update(_named(_record(key, result="failure", rerun=rerun)))
+    assert _run(_setup(tmp_path, records)) == 1
+    out = capsys.readouterr().out
+    written = summary.read_text()
+    assert len(written.encode()) <= 1024 * 1024
+    assert written.startswith("### Verdict: red\n")
+    assert "- `suite (1/2)`: failure (attempt 1)" in written
+    assert "- `suite (2/2)`: failure (attempt 1)" in written
+    assert out.count("tests/test_x.py::test_") == 3000
+    shown = written.count("tests/test_x.py::test_")
+    assert 0 < shown < 3000
+    assert written.endswith(f"- {3000 - shown} more failed tests: the log lists every one.\n")
+    assert out.startswith(written.rsplit("\n- ", 1)[0])
 
 
 # ── the run a record names ───────────────────────────────────────────────────────────────────

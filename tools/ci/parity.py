@@ -35,8 +35,9 @@ SIDES: Mapping[str, str] = {
     "test-macos": "junit-test-macos-",
 }
 
-#: The same limits the shard planner reads a history within (``tools/ci/shards.py``).
-MAX_LINE_BYTES = 1024 * 1024
+#: The same limits the shard planner reads a history within (``tools/ci/shards.py``): a line
+#: within the collector's one bound, which it writes no line past.
+MAX_LINE_BYTES = telemetry.MAX_LINE_BYTES
 MAX_BYTES = 256 * 1024 * 1024
 
 

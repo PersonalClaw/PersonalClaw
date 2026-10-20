@@ -767,7 +767,7 @@ def test_the_run_line_maps_each_report_to_the_cpu_model_it_ran_on(
     gh.artifacts.append(gh._artifact(13, "junit-test-shard-2", _junit(PASSED)))
     _, lines = _collect(tmp_path, monkeypatch, gh)
     head = lines[0]
-    assert head["version"] == 3 == telemetry.VERSION
+    assert head["version"] >= 3 and telemetry.VERSION == 4
     assert head["cpus"] == {"junit-test-shard-1": "EPYC 7763", "junit-test-shard-2": None}
     assert "cpus" in telemetry.RUN_FIELDS
     for line in lines[1:]:
@@ -790,12 +790,504 @@ def test_a_report_whose_processes_disagree_on_the_cpu_model_writes_nothing(
     assert code == 1 and lines == []
 
 
-def test_the_schema_is_version_three_and_every_reader_accepts_versions_one_and_two() -> None:
-    """Version 3 only adds the run line's ``cpus``, so a version 1 or 2 history kept from before
-    it stays readable for as long as it is kept, and nothing newer is guessed at."""
-    assert telemetry.VERSION == 3
-    assert telemetry.READS == frozenset({1, 2, 3})
-    assert "cpus" in telemetry.RUN_FIELDS
+def test_the_schema_is_version_four_and_every_reader_accepts_versions_one_to_three() -> None:
+    """Version 3 only added the run line's ``cpus``, and version 4 only the record lines, so a
+    history kept from before either stays readable for as long as it is kept, and nothing newer
+    is guessed at."""
+    assert telemetry.VERSION == 4
+    assert telemetry.READS == frozenset({1, 2, 3, 4})
+    assert "cpus" in telemetry.RUN_FIELDS and "records" not in telemetry.RUN_FIELDS
+    assert telemetry.RECORD_FIELDS == ("kind", "key", "result", "rerun", "quarantined")
+
+
+# ── each job's record (schema version 4) ──────────────────────────────────────────────────────
+#
+# Each test-stage entry uploads its job's record (``run-job``'s) as ``ci-record-<key slug>-<run>-
+# <attempt>``. Each record the attempt uploaded is one line after the run line: the job's result,
+# each failed test with the diagnostic rerun's word for it, and each quarantined failure, the one
+# place all three runners' classifications land, Playwright's included, which no junit report
+# carries. A line of its own holds each record within a line's bound however many jobs failed.
+
+FLAKY = "tests/test_a.py::test_flaky"
+TWICE = "tests/test_a.py::test_twice"
+
+
+def _job_record(
+    key: str,
+    *,
+    result: str = "failure",
+    tests: tuple[tuple[str, str | None], ...] = ((FLAKY, "flake"), (TWICE, "repeated failure")),
+    quarantined: tuple[str, ...] = (),
+    run_id: int | None = RUN,
+    attempt: int = 1,
+) -> str:
+    from tools.ci import verdict
+
+    failed = result == "failure"
+    rerun = None
+    if failed and tests:
+        rerun = {
+            "argv": ["pytest", "-n", "0"],
+            "exit": 1,
+            "tests": [{"test": t, "rerun_result": w, "why": "w"} for t, w in tests],
+        }
+    return verdict.job_record(
+        key=key,
+        result=result,
+        identity=verdict.Identity("a" * 40),
+        steps=[(["pytest"], 1 if failed else 0, 1.0)],
+        attempt=attempt,
+        run_id=run_id,
+        rerun=rerun,
+        quarantined=quarantined,
+    )
+
+
+def _zip_members(members: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, data in members.items():
+            archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+def _named(key: str, attempt: int) -> str:
+    from tools.ci import verdict
+
+    return verdict.record_artifact(key, run_id=RUN, attempt=attempt)
+
+
+def _record_artifact(
+    gh: FakeGh,
+    ident: int,
+    key: str,
+    text: str,
+    *,
+    name: str | None = None,
+    members: dict[str, bytes] | None = None,
+    created: str = "2026-10-18T09:30:00Z",
+) -> None:
+    from tools.ci import verdict
+
+    data = _zip_members(members if members is not None else {"record.json": text.encode()})
+    gh.artifacts.append(
+        {
+            "id": ident,
+            "name": name or verdict.record_artifact(key, run_id=RUN, attempt=1),
+            "size_in_bytes": len(data),
+            "expired": False,
+            "created_at": created,
+            "_data": data,
+        }
+    )
+
+
+def _record_lines(lines: list[dict]) -> list[dict]:
+    return [line for line in lines if line["kind"] == "record"]
+
+
+def test_each_job_record_is_one_line_after_the_run_line(tmp_path: Path, monkeypatch) -> None:
+    gh = FakeGh()
+    _record_artifact(gh, 21, "suite (1/2)", _job_record("suite (1/2)"))
+    _record_artifact(
+        gh, 22, "e2e", _job_record("e2e", tests=(("e2e/chat.spec.ts > sends", "flake"),))
+    )
+    _record_artifact(
+        gh, 23, "static", _job_record("static", result="success", quarantined=(FLAKY,))
+    )
+    _record_artifact(gh, 24, "lint", _job_record("lint", result="success"))
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 0
+    head = lines[0]
+    assert head["kind"] == "run" and head["version"] == 4 and "records" not in head
+    records = _record_lines(lines)
+    assert lines[1 : 1 + len(records)] == records
+    assert records == [
+        {
+            "kind": "record",
+            "key": "e2e",
+            "result": "failure",
+            "rerun": [{"test": "e2e/chat.spec.ts > sends", "rerun_result": "flake"}],
+            "quarantined": [],
+        },
+        {"kind": "record", "key": "lint", "result": "success", "rerun": [], "quarantined": []},
+        {
+            "kind": "record",
+            "key": "static",
+            "result": "success",
+            "rerun": [],
+            "quarantined": [FLAKY],
+        },
+        {
+            "kind": "record",
+            "key": "suite (1/2)",
+            "result": "failure",
+            "rerun": [
+                {"test": FLAKY, "rerun_result": "flake"},
+                {"test": TWICE, "rerun_result": "repeated failure"},
+            ],
+            "quarantined": [],
+        },
+    ]
+    assert all(set(line) == set(telemetry.RECORD_FIELDS) for line in records)
+    # A record adds no test line: the test lines are the junit reports' alone.
+    tests = [line for line in lines if line["kind"] == "test"]
+    assert {line["report"] for line in tests} == {"junit-test-shard-1"}
+    assert len(lines) == 1 + len(records) + len(tests)
+
+
+def test_the_records_are_in_their_keys_order_whatever_their_artifacts_names_sort_as(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An artifact's name is its key's slug, lower case, so the two can sort apart."""
+    gh = FakeGh()
+    _record_artifact(gh, 21, "alpha", _job_record("alpha", result="success"))
+    _record_artifact(gh, 22, "Zed", _job_record("Zed", result="success"))
+    _, lines = _collect(tmp_path, monkeypatch, gh)
+    assert [entry["key"] for entry in _record_lines(lines)] == ["Zed", "alpha"]
+
+
+def test_a_failed_test_the_rerun_did_not_classify_is_carried_as_null(
+    tmp_path: Path, monkeypatch
+) -> None:
+    gh = FakeGh()
+    rail = "tests/rails/test_r.py::test_rail"
+    _record_artifact(gh, 21, "rails", _job_record("rails", tests=((rail, None),)))
+    _, lines = _collect(tmp_path, monkeypatch, gh)
+    [entry] = _record_lines(lines)
+    assert entry["rerun"] == [{"test": rail, "rerun_result": None}]
+
+
+def test_an_attempt_that_uploaded_no_record_carries_none(tmp_path: Path, monkeypatch) -> None:
+    code, lines = _collect(tmp_path, monkeypatch, FakeGh())
+    assert code == 0 and _record_lines(lines) == []
+
+
+def test_a_record_another_attempt_uploaded_is_not_this_attempts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from tools.ci import verdict
+
+    gh = FakeGh()
+    later = verdict.record_artifact("suite", run_id=RUN, attempt=2)
+    _record_artifact(
+        gh, 21, "suite", _job_record("suite", attempt=2), name=later, created="2026-10-18T10:30:00Z"
+    )
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 0 and _record_lines(lines) == []
+
+
+def test_two_uploads_of_one_name_are_read_once_the_lower_id(tmp_path: Path, monkeypatch) -> None:
+    gh = FakeGh()
+    _record_artifact(gh, 31, "suite", _job_record("suite", tests=((TWICE, "repeated failure"),)))
+    _record_artifact(gh, 30, "suite", _job_record("suite", tests=((FLAKY, "flake"),)))
+    _, lines = _collect(tmp_path, monkeypatch, gh)
+    [entry] = _record_lines(lines)
+    assert entry["rerun"] == [{"test": FLAKY, "rerun_result": "flake"}]
+
+
+def _not_a_zip(gh: FakeGh) -> None:
+    _record_artifact(gh, 21, "suite", _job_record("suite"))
+    gh.artifacts[-1]["_data"] = b"not a zip"
+    gh.artifacts[-1]["size_in_bytes"] = len(b"not a zip")
+
+
+@pytest.mark.parametrize(
+    ("plant", "why"),
+    [
+        pytest.param(_not_a_zip, "not a record archive", id="not-a-zip"),
+        pytest.param(
+            lambda gh: _record_artifact(gh, 21, "suite", "", members={}),
+            "holds no record",
+            id="no-member",
+        ),
+        pytest.param(
+            lambda gh: _record_artifact(
+                gh,
+                21,
+                "suite",
+                "",
+                members={"a.json": _job_record("suite").encode(), "b.json": b"{}"},
+            ),
+            "holds 2 files",
+            id="two-members",
+        ),
+        pytest.param(
+            lambda gh: _record_artifact(
+                gh, 21, "suite", "", members={"x/record.json": _job_record("suite").encode()}
+            ),
+            "under a folder",
+            id="a-member-under-a-folder",
+        ),
+        pytest.param(
+            lambda gh: _record_artifact(
+                gh, 21, "suite", "", members={"../record.json": _job_record("suite").encode()}
+            ),
+            "holds a parent path",
+            id="a-member-that-climbs-out",
+        ),
+        pytest.param(
+            lambda gh: _record_artifact(
+                gh, 21, "suite", "", members={"/record.json": _job_record("suite").encode()}
+            ),
+            "is an absolute path",
+            id="a-member-at-an-absolute-path",
+        ),
+        pytest.param(
+            lambda gh: _record_artifact(
+                gh, 21, "suite", "", members={"record.txt": _job_record("suite").encode()}
+            ),
+            "not a record file",
+            id="not-json",
+        ),
+        pytest.param(
+            lambda gh: _record_artifact(gh, 21, "suite", '{"key": "suite"}'),
+            "must hold exactly",
+            id="a-record-the-reader-refuses",
+        ),
+        pytest.param(
+            lambda gh: _record_artifact(gh, 21, "suite", "", members={"r.json": b"\xff{"}),
+            "not UTF-8",
+            id="not-utf-8",
+        ),
+        pytest.param(
+            lambda gh: _record_artifact(gh, 21, "suite", _job_record("other")),
+            "holds the record of 'other'",
+            id="renamed",
+        ),
+        pytest.param(
+            lambda gh: _record_artifact(gh, 21, "suite", _job_record("suite", run_id=499)),
+            "names run 499",
+            id="another-runs-record",
+        ),
+        pytest.param(
+            lambda gh: _record_artifact(gh, 21, "suite", _job_record("suite", run_id=None)),
+            "names run None",
+            id="a-local-record",
+        ),
+        pytest.param(
+            lambda gh: _record_artifact(gh, 21, "suite", _job_record("suite", attempt=2)),
+            "holds the record of 'suite' on attempt 2",
+            id="another-attempts-record",
+        ),
+        pytest.param(
+            lambda gh: _record_artifact(
+                gh, 21, "suite", _job_record("suite", attempt=2), name=_named("suite", 2)
+            ),
+            "written by attempt 2, not attempt 1",
+            id="a-later-attempts-upload-in-this-attempts-time",
+        ),
+    ],
+)
+def test_a_record_it_cannot_read_writes_nothing(
+    plant, why: str, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A history with fewer records would read as a run whose reruns found less: a record that
+    cannot be read fails the collection, as a junit report that cannot be read does."""
+    gh = FakeGh()
+    plant(gh)
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 1 and lines == []
+    assert why in capsys.readouterr().out
+
+
+def test_a_record_archive_past_its_bound_is_never_downloaded(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    gh = FakeGh()
+    _record_artifact(gh, 21, "suite", _job_record("suite"))
+    gh.artifacts[-1]["size_in_bytes"] = telemetry.MAX_RECORD_ARCHIVE_BYTES + 1
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 1 and lines == []
+    assert not any(a.endswith("/21/zip") for a in gh.asked), gh.asked
+
+
+@pytest.mark.parametrize("listed", [True, False], ids=["as-listed", "as-downloaded"])
+def test_a_record_archive_over_two_mib_is_refused(
+    listed: bool, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Over 2 MiB, whether the listing says so or only the bytes downloaded do: the record it
+    holds is within 1 MB, so nothing larger is one."""
+    gh = FakeGh()
+    _record_artifact(gh, 21, "suite", _job_record("suite"))
+    over = 2 * 1024 * 1024 + 1
+    if listed:
+        gh.artifacts[-1]["size_in_bytes"] = over
+    else:
+        gh.artifacts[-1]["_data"] += b"\0" * (over - len(gh.artifacts[-1]["_data"]))
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 1 and lines == []
+    assert f"the archive passes {2 * 1024 * 1024} bytes" in capsys.readouterr().out
+
+
+def test_a_record_past_a_records_bound_is_refused(tmp_path: Path, monkeypatch, capsys) -> None:
+    from tools.ci import verdict
+
+    gh = FakeGh()
+    padded = _job_record("suite")[:-2] + " " * (verdict.RECORD_BYTES + 1) + "}\n"
+    _record_artifact(gh, 21, "suite", padded)
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 1 and lines == []
+    assert "larger than any job record" in capsys.readouterr().out
+
+
+def test_a_record_of_exactly_a_records_bound_is_read(tmp_path: Path, monkeypatch) -> None:
+    """The collector reads a record within the bound ``verdict --records`` reads one within, to
+    the byte."""
+    from tools.ci import verdict
+
+    gh = FakeGh()
+    text = _job_record("suite")
+    padded = text[:-2] + " " * (verdict.RECORD_BYTES - len(text)) + "}\n"
+    assert len(padded.encode()) == verdict.RECORD_BYTES
+    _record_artifact(gh, 21, "suite", padded)
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 0 and [entry["key"] for entry in _record_lines(lines)] == ["suite"]
+
+
+@pytest.mark.parametrize("listed", [True, False], ids=["as-listed", "as-downloaded"])
+def test_a_record_archive_of_exactly_two_mib_is_read(
+    listed: bool, tmp_path: Path, monkeypatch
+) -> None:
+    gh = FakeGh()
+    _record_artifact(gh, 21, "suite", _job_record("suite"))
+    bound = 2 * 1024 * 1024
+    if listed:
+        gh.artifacts[-1]["size_in_bytes"] = bound
+    else:
+        # Bytes before a zip's first member are no part of it: the archive still reads.
+        data = gh.artifacts[-1]["_data"]
+        gh.artifacts[-1]["_data"] = b"\0" * (bound - len(data)) + data
+        assert len(gh.artifacts[-1]["_data"]) == bound
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 0 and [entry["key"] for entry in _record_lines(lines)] == ["suite"]
+
+
+def _many_failed(key: str, shard: int, count: int) -> str:
+    """A record of ``count`` repeated failures, each id about as long as the suite's longest."""
+    long = "x" * 40
+    tests = tuple(
+        (f"tests/test_mass_{shard}.py::TestEach::test_{n:05}[{long}]", "repeated failure")
+        for n in range(count)
+    )
+    return _job_record(key, tests=tests)
+
+
+def test_records_that_pass_a_line_together_keep_the_run_in_every_readers_history(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Each record is within its own bound, and together they pass the bound every reader holds a
+    history line to: on one line they would lose the whole run, its test lines included, to the
+    weekly report, its fetch and the shard planner. A line per record keeps every line within
+    the bound, and the run in all three."""
+    from tools.ci import fetch, report, shards, verdict
+
+    gh = FakeGh()
+    keys = ("suite (1/3)", "suite (2/3)", "suite (3/3)")
+    for shard, key in enumerate(keys, 1):
+        text = _many_failed(key, shard, 3000)
+        assert len(text.encode()) <= verdict.RECORD_BYTES
+        _record_artifact(gh, 20 + shard, key, text)
+    code, _ = _collect(tmp_path, monkeypatch, gh)
+    assert code == 0
+    history = tmp_path / "history" / f"history-{RUN}-1.jsonl"
+    found = report.read(history.parent)
+    assert len(found.diagnosed) == 9000 and found.runs_with_records == 1
+    assert found.tests["tests.test_a::test_one"].runs == 1
+    archive = _zip(history.name, history.read_bytes())
+    leg = shards.Leg("suite", "ci.yml", "junit-test-shard-", 1)
+    planned = shards.history_seconds(archive, leg, ["tests/test_a.py", "tests/test_c.py"], run=RUN)
+    assert planned.seconds
+    shown = {RUN: 1}
+    assert (
+        fetch.history_refusal(io.BytesIO(archive), f"telemetry-history-{RUN}-1.zip", shown) is None
+    )
+    raw = history.read_bytes().splitlines(keepends=True)
+    records = [line for line in raw if b'"kind": "record"' in line]
+    assert len(records) == 3 and sum(map(len, records)) > report.MAX_LINE_BYTES
+    assert max(map(len, raw)) <= report.MAX_LINE_BYTES
+
+
+def _raw_utf8(text: str) -> str:
+    """A record as JSON may spell it: its text as UTF-8, not as escapes."""
+    return json.dumps(json.loads(text), ensure_ascii=False, indent=1, sort_keys=True) + "\n"
+
+
+def _a_test_line_past_the_bound(gh: FakeGh) -> None:
+    from tools.ci import report
+
+    name = "test_" + "x" * report.MAX_LINE_BYTES
+    case = f'<testcase classname="tests.test_a" name="{name}" time="1.0"/>'
+    gh.artifacts[0] = gh._artifact(11, "junit-test-shard-1", _junit(case))
+
+
+def _a_record_line_past_the_bound(gh: FakeGh) -> None:
+    # Within a record's bound as UTF-8; each character a six-byte escape as the line writes it.
+    test = "tests/test_a.py::test_" + "\u00e9" * 200_000
+    text = _raw_utf8(_job_record("suite", tests=((test, "flake"),)))
+    _record_artifact(gh, 21, "suite", text)
+
+
+@pytest.mark.parametrize(
+    "plant",
+    [
+        pytest.param(_a_test_line_past_the_bound, id="a-test-line"),
+        pytest.param(_a_record_line_past_the_bound, id="a-record-line"),
+    ],
+)
+def test_a_line_no_reader_would_take_fails_the_collection_and_writes_nothing(
+    plant, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Every reader refuses a history with a line past its bound (``telemetry.MAX_LINE_BYTES``),
+    its line break included, whole: a history no reader takes is no history, so the collection
+    fails by name, as a report it cannot read does."""
+    from tools.ci import report, verdict
+
+    gh = FakeGh()
+    plant(gh)
+    for artifact in gh.artifacts[2:]:
+        member = zipfile.ZipFile(io.BytesIO(artifact["_data"])).infolist()[0]
+        assert member.file_size <= verdict.RECORD_BYTES
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 1 and lines == []
+    assert f"passes {report.MAX_LINE_BYTES} bytes, which no reader takes" in (
+        capsys.readouterr().out
+    )
+
+
+@pytest.mark.parametrize(("over", "written"), [(0, True), (1, False)], ids=["at", "one-past"])
+def test_a_line_of_the_bound_with_its_line_break_is_written_and_one_byte_more_is_not(
+    over: int, written: bool, tmp_path: Path, monkeypatch
+) -> None:
+    """The collector's bound is the readers', to the byte, the line break counted as they count
+    it: a line it writes, a reader takes."""
+    from tools.ci import report
+
+    def collect(length: int) -> tuple[int, Path]:
+        gh = FakeGh()
+        case = f'<testcase classname="tests.test_a" name="test_{"x" * length}" time="1.0"/>'
+        gh.artifacts[0] = gh._artifact(11, "junit-test-shard-1", _junit(case))
+        code, _ = _collect(tmp_path / str(length), monkeypatch, gh)
+        return code, tmp_path / str(length) / "history"
+
+    _, probe = collect(1)
+    [_, line] = (probe / f"history-{RUN}-1.jsonl").read_bytes().splitlines(keepends=True)
+    length = 1 + report.MAX_LINE_BYTES + over - len(line)
+    code, folder = collect(length)
+    assert code == (0 if written else 1)
+    if written:
+        lines = (folder / f"history-{RUN}-1.jsonl").read_bytes().splitlines(keepends=True)
+        assert len(lines[1]) == report.MAX_LINE_BYTES
+        assert report.read(folder).suite_size == 1
+
+
+def test_every_reader_holds_a_history_line_to_the_collectors_one_bound() -> None:
+    from tools.ci import parity, report, shards
+
+    assert telemetry.MAX_LINE_BYTES == 1024 * 1024
+    assert report.MAX_LINE_BYTES == telemetry.MAX_LINE_BYTES
+    assert parity.MAX_LINE_BYTES == telemetry.MAX_LINE_BYTES
+    assert shards.MAX_HISTORY_LINE_BYTES == telemetry.MAX_LINE_BYTES
 
 
 # ── whose upload is the record: the checks the shard planner and the weekly fetch share ───────
