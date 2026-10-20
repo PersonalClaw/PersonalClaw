@@ -1,83 +1,122 @@
-"""The real-tree checks split from ``tests/test_inert_surface_baseline.py``.
+"""The inert-surface census on the real tree: each surface it finds is listed, with its reason.
 
-``scripts/gate_report.py`` in the rails-checks job holds the inert-surface ratchet's shrink-only
-half; these hold what it does not: the committed baseline byte-matches a fresh render and is not
-stale on the shrink side, and two census kinds still find a population. They run once per CI run, in
-the rails job. The module named above says what they hold
-to, and its own tests prove each check works on trees they plant.
+``scripts/generate_inert_surface_baseline.py`` names every declared-but-inert surface as a site,
+``<file>::<kind>:<name>``. :data:`~scripts.generate_inert_surface_baseline.SITES` lists them, one
+line each with the reason the surface is left inert, in the per-site format of
+``tests/site_baseline.py``. A surface the list does not hold fails by name, and the fix is to add
+the missing writer or reader, not its line. A listed surface the census no longer finds fails on
+its stale line until the line is deleted (``python tests/site_baseline.py --prune``), and against
+the gate's base a new line needs ``added`` and a reason. The list replaced the per-file counters
+of ``inert-surface-baseline.json``, which could only shrink.
+
+``scripts/gate_report.py`` in the rails-checks job fails on a new surface as well; these hold the
+rest: the stale and repeated lines, the base, and two vacuity floors (two census kinds still find
+a population). ``tests/test_inert_surface_baseline.py`` proves each detector on trees it plants.
 """
 
 from __future__ import annotations
 
-import json
+import re
+import textwrap
+from functools import cache
+from pathlib import Path
 
 import pytest
+import site_baseline
+from rails_repo import REPO
 
+from scripts import generate_inert_surface_baseline as inert
 from scripts.generate_inert_surface_baseline import (
     KIND_CONFIG_READER,
     _enum_members,
     _parse,
     _src_py_files,
-    baseline_path,
-    build_baseline,
     build_inventory,
 )
 
 
-def _committed_inventory() -> dict:
-    path = baseline_path()
-    assert path.is_file(), (
-        "inert-surface-baseline.json is missing — generate it with "
-        "`python scripts/generate_inert_surface_baseline.py`"
-    )
-    return json.loads(path.read_text(encoding="utf-8"))
+@cache
+def _inventory() -> dict:
+    """The real tree's census, built once for the tests below that read it."""
+    return build_inventory()
 
 
 @pytest.mark.timeout(300)
-def test_committed_baseline_is_not_stale_on_the_shrink_side():
-    """Every committed per-file count must be >= the current count.
+def test_every_inert_surface_is_listed_with_its_reason():
+    """Every surface the census finds is a line of :data:`inert.SITES`, and every line is a
+    surface it finds. A new one fails by name: add the missing writer or reader. A wired one
+    fails on its stale line: delete it in the same commit."""
+    site_baseline.check(inert.sites(_inventory()), inert.SITES)
 
-    The complement of the rise check: if a file's committed count is BELOW its current
-    count that is the rise case (covered above); if it is ABOVE, a cleanup shrank the real
-    population but the baseline was not regenerated, so the ratchet's floor is looser than
-    reality. Neither is allowed to pass silently — a stale-high baseline should be
-    regenerated (see this module's ``# how to update``)."""
-    committed = _committed_inventory()
-    current = build_inventory()
-    stale_high = sorted(
-        f"{rel}: committed {committed['per_file'][rel]['inert']} > current "
-        f"{current['per_file'].get(rel, {}).get('inert', 0)}"
-        for rel in committed["per_file"]
-        if committed["per_file"][rel]["inert"] > current["per_file"].get(rel, {}).get("inert", 0)
-    )
-    assert not stale_high, (
-        "the committed baseline is stale-HIGH — a cleanup shrank the inert population but "
-        "inert-surface-baseline.json was not regenerated:\n  "
-        + "\n  ".join(stale_high)
-        + "\n\nRun `python scripts/generate_inert_surface_baseline.py` in the cleanup commit."
-    )
+
+#: A tree of the control's own: an enum with a member nothing reads and an SDK export nothing
+#: imports, beside the two anchors the census refuses to run without.
+_PLANTED_TREE = {
+    "src/personalclaw/__init__.py": "",
+    "src/personalclaw/config/loader.py": """
+        class AppConfig:
+            @classmethod
+            def load(cls, raw):
+                return cls(name=raw["name"])
+        """,
+    "src/personalclaw/config/editable.py": '_EDITABLE_CONFIG = {"name": str}\n',
+    "src/personalclaw/planted_inert.py": """
+        import enum
+
+        class Planted(enum.Enum):
+            READ = "read"
+            GHOST = "ghost"
+
+        DEFAULT = Planted.READ
+        """,
+    "src/personalclaw/sdk/planted_facade.py": '__all__ = ["planted_lonely"]\n',
+}
+_PLANTED_SITES = (
+    "src/personalclaw/planted_inert.py::enum:Planted.GHOST",
+    "src/personalclaw/sdk/planted_facade.py::sdk_export:planted_lonely",
+)
+
+
+def _planted(root: Path) -> list[str]:
+    for rel, source in _PLANTED_TREE.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(source), encoding="utf-8")
+    planted = ("src/personalclaw/planted_inert.py::", "src/personalclaw/sdk/planted_facade.py::")
+    return [site for site in inert.sites(build_inventory(root)) if site.startswith(planted)]
 
 
 @pytest.mark.timeout(300)
-def test_committed_baseline_byte_matches_a_fresh_render():
-    """Belt-and-suspenders on both directions at once: while the population is unchanged the
-    committed file is byte-identical to a fresh render. This is what makes a legitimate
-    shrink require a regeneration in the same commit (the two prior tests already forbid a
-    silent rise or a stale-high floor)."""
-    fresh = build_baseline()
-    committed = baseline_path().read_text(encoding="utf-8")
-    assert committed == fresh, (
-        "inert-surface-baseline.json does not match a fresh render. If a cleanup "
-        "legitimately shrank a counter, regenerate it with "
-        "`python scripts/generate_inert_surface_baseline.py` in the same commit. If a "
-        "counter ROSE, do NOT regenerate — add the missing writer or reader instead."
-    )
+def test_a_planted_surface_fails_by_name_and_a_wired_one_by_its_line(tmp_path):
+    """The positive control, on the real list: the tree's surfaces with a planted module's fail,
+    naming its unread enum member and its unimported export, and its read member is no site; the
+    gate's comparison names the same two. The tree's surfaces less one, as if a reader for it
+    had landed, fail on that surface's stale line. No run writes the list."""
+    listed = (REPO / inert.SITES).read_text(encoding="utf-8")
+    found = inert.sites(_inventory())
+    planted = _planted(tmp_path)
+    assert sorted(planted) == sorted(_PLANTED_SITES), planted
+    with pytest.raises(AssertionError) as failed:
+        site_baseline.check([*found, *planted], inert.SITES, None, prune=False)
+    message = str(failed.value)
+    for site in _PLANTED_SITES:
+        assert f"Site {site} is not listed" in message, message
+    assert message.count("is not listed") == len(_PLANTED_SITES), message
+    assert "is listed in" not in message, message
+    gate = inert.unlisted(inert.listed(), [*found, *planted])
+    assert [line.split(" ", 2)[1] for line in gate] == sorted(_PLANTED_SITES), gate
+    wired, *rest = found
+    with pytest.raises(AssertionError, match=f"Site {re.escape(wired)} is listed in") as stale:
+        site_baseline.check(rest, inert.SITES, None, prune=False)
+    assert str(stale.value).count("is listed in") == 1, stale.value
+    assert inert.unlisted(inert.listed(), rest) == []
+    assert (REPO / inert.SITES).read_text(encoding="utf-8") == listed
 
 
 @pytest.mark.timeout(300)
 def test_the_real_config_reader_census_fires_and_clears_an_accessor():
     """Vacuity + real-tree calibration in both directions."""
-    inv = build_inventory()
+    inv = _inventory()
     assert inv["totals"]["by_kind"][KIND_CONFIG_READER] > 0
     flagged = {surface for bucket in inv["per_file"].values() for surface in bucket["surfaces"]}
     assert f"{KIND_CONFIG_READER}:routing.energy_sampling" in flagged

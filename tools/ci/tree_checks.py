@@ -94,7 +94,7 @@ CHECKS: Mapping[str, Check] = {
     ),
     "inert-surface": Check(
         owner="ci.yml rails-checks: python scripts/gate_report.py (the inert-surface gate)",
-        entries={(_INERT, "build_inventory"): NO_ARGS, (_INERT, "build_baseline"): NO_ARGS},
+        entries={(_INERT, "build_inventory"): NO_ARGS, (_INERT, "main"): ANY},
         sources=(_INERT_TREE,),
     ),
     "docs-lint": Check(

@@ -5,8 +5,8 @@ ever write. ``inboxMeta.ts`` declares Mentions and Email chips, ``InboxPage`` fi
 ``item_kind``, ``handlers_inbox`` filters and counts by it, and ``inbox.py`` persists it —
 but ``IncomingMessage`` had no kind field at all, so every polled message became the
 default ``message``. A mail source could not say "this is an email"; ``ItemKind.EMAIL`` and
-``ItemKind.MENTION`` were unreachable by construction (both listed inert in
-``inert-surface-baseline.json``).
+``ItemKind.MENTION`` were unreachable by construction (both listed inert by the
+inert-surface census).
 
 So the tests here refuse to stop at the dataclass. Each round trip drives the REAL path —
 a JSON batch dropped in ``<home>/inbox/incoming/`` → ``FilesystemSourceProvider.poll`` →

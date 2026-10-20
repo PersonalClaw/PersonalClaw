@@ -5,9 +5,9 @@ under their declared path, and survived a reload and a gateway restart, while no
 tree consumed the value. The round-trip contract was fully satisfied — which is exactly why
 ``test_config_roundtrip.py`` and ``test_settings_control_coverage.py`` are both green with all
 seven inert: the first proves a field SURVIVES a save/load, the second proves a WRITE PATH
-reaches it, and neither asks whether a reader exists. ``inert-surface-baseline.json`` did
-record all seven, but it is a shrink-only ratchet pinned at the measured population, so they
-were blessed rather than reported.
+reaches it, and neither asks whether a reader exists. The inert-surface census did record
+all seven, but it was a shrink-only ratchet pinned at the measured population, so they were
+blessed rather than reported.
 
 ``RoutingPanel.tsx`` states the rule this file enforces, and acted on it for
 ``routing.energy_sampling``: *"an inert knob needs its reader wired or its allowlist row
@@ -139,18 +139,26 @@ def test_a_deleted_leaf_is_gone_from_the_generated_schema_census(
 
 
 def test_the_inert_population_shrank_by_exactly_these_seven() -> None:
-    """The ratchet's committed population, read for DIRECTION.
+    """The census's committed site list, read for DIRECTION.
 
-    ``inert-surface-baseline.json`` is shrink-only, and regenerating it is legitimate only for
-    a shrink — a counter that ROSE means a reader is missing, and re-baselining that reads
+    The list only shrinks, and deleting a line is legitimate only when the census stopped
+    finding the surface — a surface that is NEW means a reader is missing, and listing it reads
     green while guarding nothing. Seven ``config_reader`` surfaces left the census here (four
-    leaves deleted, three given readers), so the committed count must be 6: the four
+    leaves deleted, three given readers), so the list holds exactly six, by name: the four
     frontend-read ``voice.*`` leaves the Python census cannot see,
     ``routing.energy_sampling`` (deliberately control-less), and ``learning.min_evidence``.
     """
-    committed = json.loads((REPO / "inert-surface-baseline.json").read_text(encoding="utf-8"))
-    assert committed["totals"]["by_kind"]["config_reader"] == 6
-    surfaces = {s for entry in committed["per_file"].values() for s in entry["surfaces"]}
+    from scripts.generate_inert_surface_baseline import listed
+
+    surfaces = {site.split("::", 1)[1] for site in listed()}
+    assert {s for s in surfaces if s.startswith("config_reader:")} == {
+        "config_reader:learning.min_evidence",
+        "config_reader:routing.energy_sampling",
+        "config_reader:voice.confirmation_phrases",
+        "config_reader:voice.duplex_mute_enabled",
+        "config_reader:voice.exit_phrases",
+        "config_reader:voice.push_to_talk_chord",
+    }
     for path_key, _cls, _leaf in DELETED:
         assert f"config_reader:{path_key}" not in surfaces
     for path_key in WIRED:
