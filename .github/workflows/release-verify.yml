@@ -1,0 +1,433 @@
+# Release verify — check what users actually DOWNLOAD, as they download it (#4330, plan item 2).
+#
+# WHY A SECOND WORKFLOW. Every check before a release runs on what the pipeline BUILT. Nothing
+# checked what a user GETS once it is published — the wheel from the index, the images from
+# GHCR, the desktop files from the GitHub Release. `clean-machine-walkthroughs.yml` covers the
+# wheel path but stops before a first chat, and only on its own schedule. This workflow turns
+# each of those downloads into one leg with one verdict, and keeps a single open issue for a
+# release that does not verify.
+#
+# THE THREE TRIGGERS, and what each is for:
+#   * `workflow_run` — after the Release workflow completes. Success only: a run that failed
+#     BEFORE publishing has nothing to verify. (Open question in #4330 — a run that fails
+#     AFTER PyPI and images published, like v0.2.0's, is DECIDED here to be the weekly run's
+#     job rather than a second acceptance path; the weekly run and the dispatch cover it.)
+#   * `workflow_dispatch(tag)` — the manual path, and what the acceptance evidence for #4330
+#     asks to be run once against the newest release.
+#   * `schedule` (weekly) — the newest stable release, so a release that never saw a passing
+#     run does not stay unverified silently.
+#
+# WHAT AN INCOMPLETE LEG MEANS. `tools/ci/release_verdict.py` owns the vocabulary: passed, failed,
+# incomplete — each with its reason. A leg is `incomplete` when it cannot check what was never
+# published (v0.2.0 attaches no AppImage or deb and carries no SHA256SUMS yet — #4323), or
+# what it deliberately did not measure (the arm64 image, #4330 open question). The report job
+# treats incomplete exactly like failed: the release did not verify.
+#
+# THE WHEEL LEG IS A CALL, NOT A SECOND COPY. It delegates to the walkthroughs' own V1 leg,
+# which gained `workflow_call` with a `version` input in #4564 — and that leg writes its own
+# verdict (`verdict-v1-wheel`), because a reusable-call job has no steps to write one in. The
+# `timeout-minutes` that bounds it is the callee's own (30), for the same reason.
+
+name: Release verify
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release tag to verify (e.g. v0.2.0)"
+        required: true
+        type: string
+  schedule:
+    # Weekly on Monday 05:11 UTC, off the top of the hour like every other cron here.
+    - cron: "11 5 * * 1"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  # ── Resolve the release every leg verifies ──────────────────────────────────────────────
+  resolve:
+    # A completed Release run only verifies when it SUCCEEDED; the weekly run and the
+    # dispatch are the paths for anything else (see the header).
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-24.04
+    # Bounded like every other workflow here (#3318/#3320); three `gh api` calls at most.
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - name: Resolve the tag to verify
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          # A tag push run reports its tag as `headBranch` — v0.2.0's run does, and #4330
+          # names that as the resolution the legs can rely on.
+          case "$EVENT_NAME" in
+            workflow_run) TAG="$HEAD_BRANCH" ;;
+            workflow_dispatch) TAG="$INPUT_TAG" ;;
+            schedule) TAG="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)" ;;
+            *) echo "::error::unexpected event $EVENT_NAME"; exit 1 ;;
+          esac
+          # A leg pins `pip install personalclaw==X.Y.Z` and the GHCR tags; a tag that is
+          # not a version tag would send every leg after a reference that cannot exist.
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "::error::refusing to verify non-version tag '$TAG'"; exit 1 ;;
+          esac
+          VERSION="${TAG#v}"
+          echo "verifying $TAG (version $VERSION)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  # ── wheel: the walkthroughs' own Node-absent leg, called, not copied ────────────────────
+  wheel:
+    needs: [resolve]
+    uses: ./.github/workflows/clean-machine-walkthroughs.yml
+    with:
+      which: v1-wheel
+      version: ${{ needs.resolve.outputs.version }}
+
+  # ── images: the gateway image, pulled the way a stranger pulls it ───────────────────────
+  images:
+    needs: [resolve]
+    runs-on: ubuntu-24.04
+    # Sized above the pull plus the smoke, not near it (#3326 was the cost of the other
+    # mistake). The published-image pull measured ~1m in walkthroughs runs.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Pull the released gateway image and drive the README's single-container smoke
+        id: check
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/personalclaw/personalclaw-gateway:${VERSION}"
+          docker pull --platform linux/amd64 "$IMAGE"
+          python3 tools/docker_single_container_smoke.py --image "$IMAGE"
+      - name: Record what this leg deliberately did not measure
+        id: gap
+        # The arm64 image needs QEMU (slow) or an arm runner, and #4330 leaves the choice
+        # open until the smoke is measured under QEMU. An unmeasured architecture is
+        # recorded as incomplete — never dressed up as passed or skipped silently.
+        run: |
+          set -euo pipefail
+          echo "arm64: the image smoke needs QEMU or an arm runner; not measured yet (#4330)."
+          echo "gap=the arm64 image smoke needs QEMU or an arm runner and has not been measured yet (#4330)" >> "$GITHUB_OUTPUT"
+      - name: Write the leg's verdict
+        if: always()
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          CHECK_OUTCOME: ${{ steps.check.outcome }}
+          GAP: ${{ steps.gap.outputs.gap }}
+        run: |
+          set -euo pipefail
+          if [ "$CHECK_OUTCOME" != "success" ]; then
+            word=failed
+            reason="the amd64 single-container smoke failed — see the log above"
+          elif [ -n "$GAP" ]; then
+            word=incomplete
+            reason="$GAP"
+          else
+            word=passed
+            reason="the gateway image pulls and its single-container smoke passes (amd64)"
+          fi
+          python3 tools/ci/release_verdict.py --leg images --verdict "$word" \
+            --release "$VERSION" --out-dir verdict --reason "$reason"
+      - name: Upload the leg's verdict
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verdict-images
+          path: verdict/verdict.json
+          # A step that died before the verdict was written must not turn into a second,
+          # misleading red on the upload (the same guard the JUnit uploads use).
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ── desktop-linux: the AppImage and the deb, from the release, byte for byte ────────────
+  desktop-linux:
+    needs: [resolve]
+    runs-on: ubuntu-24.04
+    # Sized above download + checksum + extract + boot, not near it.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The AppImage and the deb, as a stranger downloads them
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --json assets --jq '.assets[].name' > assets.txt
+          cat assets.txt
+          # An absent format is incomplete, not failed: the release cannot be blamed for a
+          # file the pipeline never attached (#4330 open question, decided; the Tests
+          # section expects exactly this for v0.2.0). The gap is named, never skipped.
+          if ! grep -qE '\.AppImage$' assets.txt || ! grep -qE '\.deb$' assets.txt; then
+            echo "gap=the release attaches no AppImage or no deb, so this leg has no desktop files to verify" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! grep -qx 'SHA256SUMS' assets.txt; then
+            echo "gap=the release carries no SHA256SUMS, so the bytes cannot be checked yet (#4323)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh release download "$TAG" --dir dl --pattern '*.AppImage' --pattern '*.deb' --pattern 'SHA256SUMS'
+          ls -la dl/
+          # The names, against the tree's OWN config at the tag — refreshed from the API
+          # rather than the checkout, because the verification infra (this workflow, the
+          # smoke scripts) comes from main while the package's config comes from the
+          # release being verified.
+          gh api "repos/${GITHUB_REPOSITORY}/contents/desktop/package.json?ref=$TAG" \
+            -H "Accept: application/vnd.github.raw" > desktop-package-at-tag.json
+          python3 - <<'PY'
+          import json, pathlib
+          pkg = json.loads(pathlib.Path("desktop-package-at-tag.json").read_text())
+          product, name, version = pkg["build"]["productName"], pkg["name"], pkg["version"]
+          want = [f"{product}-{version}.AppImage", f"{name}_{version}_amd64.deb"]
+          got = sorted(p.name for p in pathlib.Path("dl").iterdir())
+          print("downloaded:", got)
+          missing = [w for w in want if w not in got]
+          assert not missing, (
+              f"the release's file names do not match desktop/package.json at the tag: "
+              f"missing {missing}, got {got}"
+          )
+          PY
+          # Bytes, through the file: `sha256sum -c` reads a file, never a pipe into grep -q
+          # (the pipefail rail in tests/test_no_workflow_step_feeds_a_quiet_grep...).
+          cd dl
+          sha256sum --ignore-missing -c SHA256SUMS
+          # Boot the packaged backend for real — `--version` is argparse and would pass on a
+          # bundle missing its SDK (scripts/smoke_backend_bundle.sh's own docstring).
+          chmod +x ./PersonalClaw-*.AppImage
+          ./PersonalClaw-*.AppImage --appimage-extract > /dev/null
+          BACKEND=squashfs-root/resources/backend-dist/personalclaw-backend/personalclaw-backend
+          test -x "$BACKEND"
+          "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$(pwd)/$BACKEND"
+      - name: Write the leg's verdict
+        if: always()
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          CHECK_OUTCOME: ${{ steps.check.outcome }}
+          GAP: ${{ steps.check.outputs.gap }}
+        run: |
+          set -euo pipefail
+          if [ "$CHECK_OUTCOME" != "success" ]; then
+            word=failed
+            reason="the AppImage or the deb failed its check — see the log above"
+          elif [ -n "$GAP" ]; then
+            word=incomplete
+            reason="$GAP"
+          else
+            word=passed
+            reason="the AppImage and the deb download, match desktop/package.json, verify against SHA256SUMS, and their backend boots"
+          fi
+          python3 tools/ci/release_verdict.py --leg desktop-linux --verdict "$word" \
+            --release "$VERSION" --out-dir verdict --reason "$reason"
+      - name: Upload the leg's verdict
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verdict-desktop-linux
+          path: verdict/verdict.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ── desktop-mac: the dmg, mounted the way a user mounts it ──────────────────────────────
+  desktop-mac:
+    needs: [resolve]
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The dmg, as a stranger downloads and mounts it
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --json assets --jq '.assets[].name' > assets.txt
+          cat assets.txt
+          if ! grep -qE '\.dmg$' assets.txt; then
+            echo "gap=the release attaches no dmg, so this leg has no desktop file to verify" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! grep -qx 'SHA256SUMS' assets.txt; then
+            echo "gap=the release carries no SHA256SUMS, so the bytes cannot be checked yet (#4323)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh release download "$TAG" --dir dl --pattern '*.dmg' --pattern 'SHA256SUMS'
+          ls -la dl/
+          gh api "repos/${GITHUB_REPOSITORY}/contents/desktop/package.json?ref=$TAG" \
+            -H "Accept: application/vnd.github.raw" > desktop-package-at-tag.json
+          # The arch segment comes from the running machine; #4323 can pin it further once
+          # the config states an explicit artifactName.
+          ARCH="$(uname -m)"
+          [ "$ARCH" = "arm64" ] || ARCH="x64"
+          python3 - "$ARCH" <<'PY'
+          import json, pathlib, sys
+          arch = sys.argv[1]
+          pkg = json.loads(pathlib.Path("desktop-package-at-tag.json").read_text())
+          product, version = pkg["build"]["productName"], pkg["version"]
+          want = f"{product}-{version}-{arch}.dmg"
+          got = sorted(p.name for p in pathlib.Path("dl").iterdir())
+          print("downloaded:", got)
+          assert want in got, (
+              f"the release's dmg name does not match desktop/package.json at the tag: "
+              f"wanted {want}, got {got}"
+          )
+          PY
+          cd dl
+          # BSD shasum reads the same "<hex>  <name>" shape; --ignore-missing skips the
+          # assets this leg did not download rather than redding on their absence.
+          shasum -a 256 --ignore-missing -c SHA256SUMS
+          DMG=$(ls -1 *.dmg | head -1)
+          MNT=$(mktemp -d)
+          hdiutil attach "$DMG" -mountpoint "$MNT" -nobrowse -quiet
+          trap 'hdiutil detach "$MNT" -quiet || true' EXIT
+          APP=$(ls -1d "$MNT"/*.app | head -1)
+          test -n "$APP"
+          echo "mounted: $DMG -> $APP"
+          # The signature state AS SHIPPED inside the dmg: ad-hoc signed, valid seal, no
+          # third-party authority (scripts/verify_macos_app_signature.sh owns the rules).
+          "$GITHUB_WORKSPACE/scripts/verify_macos_app_signature.sh" "$APP"
+          BACKEND="$APP/Contents/Resources/backend-dist/personalclaw-backend/personalclaw-backend"
+          test -x "$BACKEND"
+          "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$BACKEND"
+      - name: Write the leg's verdict
+        if: always()
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          CHECK_OUTCOME: ${{ steps.check.outcome }}
+          GAP: ${{ steps.check.outputs.gap }}
+        run: |
+          set -euo pipefail
+          if [ "$CHECK_OUTCOME" != "success" ]; then
+            word=failed
+            reason="the dmg failed its check — see the log above"
+          elif [ -n "$GAP" ]; then
+            word=incomplete
+            reason="$GAP"
+          else
+            word=passed
+            reason="the dmg downloads, matches desktop/package.json, verifies against SHA256SUMS, is ad-hoc signed with a valid seal, and its backend boots"
+          fi
+          python3 tools/ci/release_verdict.py --leg desktop-mac --verdict "$word" \
+            --release "$VERSION" --out-dir verdict --reason "$reason"
+      - name: Upload the leg's verdict
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verdict-desktop-mac
+          path: verdict/verdict.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ── report: one issue per release, opened / edited / closed ─────────────────────────────
+  report:
+    needs: [resolve, wheel, images, desktop-linux, desktop-mac]
+    # `always()` so the issue is kept even when a leg failed — but never when `resolve`
+    # itself was skipped: a Release run that never published has nothing to report on.
+    if: ${{ always() && needs.resolve.result == 'success' }}
+    runs-on: ubuntu-24.04
+    # Measured small: it reads artifacts and calls `gh`. A false red must not be bounded by
+    # optimism, though, so this clears the two `gh api` calls by an order of magnitude.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: verdict-*
+          path: verdicts
+      - name: Open, edit or close the "did not verify" issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 - "$GITHUB_REPOSITORY" <<'PY'
+          import json, os, pathlib, subprocess, sys, tempfile
+
+          repo = sys.argv[1]
+          tag = os.environ["TAG"]
+          run_url = os.environ["RUN_URL"]
+
+          #: The legs expected in every run. A leg with no verdict.json artifact is reported
+          #: as failed, not skipped: silence must never read as success (the file's own
+          #: header rule), and that includes the runner dying before the verdict is written.
+          LEGS = ("v1-wheel", "images", "desktop-linux", "desktop-mac")
+          found: dict[str, dict] = {}
+          for path in pathlib.Path("verdicts").glob("**/verdict.json"):
+              verdict = json.loads(path.read_text())
+              found[verdict.get("leg", "?")] = verdict
+          rows = []
+          failing = []
+          for leg in LEGS:
+              verdict = found.get(leg)
+              if verdict is None:
+                  word, reason = "failed", "no verdict was written — the leg or its upload died first"
+              else:
+                  word, reason = verdict["verdict"], verdict["reason"]
+              rows.append((leg, word, reason))
+              if word != "passed":
+                  failing.append((leg, word, reason))
+
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as fh:
+                  fh.write(f"## Release verify — {tag}\n\n| leg | verdict | reason |\n|---|---|---|\n")
+                  for leg, word, reason in rows:
+                      fh.write(f"| {leg} | {word} | {reason} |\n")
+
+          title = f"Release {tag} did not verify"
+
+          def gh(*args: str) -> str:
+              return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
+
+          search = json.loads(gh("api", "search/issues", "-f",
+                                 f'q=repo:{repo} is:issue is:open in:title "{title}"'))
+          existing = [item for item in search.get("items", []) if item["title"] == title]
+
+          if failing:
+              body = [f"Release verify could not prove **{tag}** from the files users download.", ""]
+              body.append("| leg | verdict | reason |")
+              body.append("|---|---|---|")
+              body.extend(f"| {leg} | {word} | {reason} |" for leg, word, reason in rows)
+              body.append("")
+              body.append("Withdraw the release with the dry-run-first command in `release-withdraw.yml` (#4305) once it lands. The maintainer decides.")
+              body.append("")
+              body.append(f"Run: {run_url}")
+              body.append("")
+              body.append("This issue is kept by `release-verify.yml` — a later run that passes closes it.")
+              with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as fh:
+                  fh.write("\n".join(body) + "\n")
+                  body_file = fh.name
+              if existing:
+                  gh("issue", "edit", str(existing[0]["number"]), "--body-file", body_file)
+                  print(f"edited issue #{existing[0]['number']}")
+              else:
+                  gh("issue", "create", "--title", title, "--body-file", body_file)
+                  print(f"opened issue: {title}")
+          elif existing:
+              gh("issue", "close", str(existing[0]["number"]),
+                 "--comment", f"Verified by {run_url}")
+              print(f"closed issue #{existing[0]['number']}")
+          else:
+              print("all legs passed; no issue to touch")
+          PY
+
+  # ── The walkthroughs, the images and the desktops keep their own schedules ──────────────
+  # (This workflow only adds the released-artifact view; it does not replace them.)
