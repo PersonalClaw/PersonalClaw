@@ -19,7 +19,10 @@ parameters its decorators compute, does one of these:
   ``tmp_path`` among them, reads a tree the test made, not the repository;
 - reads a file at a path the module binds at its top level or derives from ``__file__``
   (``read_text``, ``read_bytes``, ``open``), or parses product source (``ast.parse`` of
-  ``inspect.getsource``).
+  ``inspect.getsource``);
+- calls a whole-tree check's entry point on the real tree, as ``tools/ci/tree_checks.py``
+  defines it (a baseline generator with no tree named, the asset census, ``harness validate``):
+  the check reads the tree for the test, though the test's own source opens no file.
 
 A test **leaves the process** when it reaches a gateway, a browser, a container, a model
 endpoint or the network: it calls ``urlopen``, ``requests``, ``httpx`` or ``aiohttp``'s client,
@@ -51,6 +54,8 @@ import tomllib
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from . import tree_checks
 
 #: Where rails live. Nothing else under ``tests/`` may hold one.
 RAILS = "tests/rails"
@@ -432,6 +437,11 @@ def classify(rel: str, source: str, helpers: Mapping[str, HelperFacts] | None = 
             found.tree[name] = t
         if o:
             found.outside[name] = o
+    # A test that calls a whole-tree check's entry point on the real tree reads the tree through
+    # the check, though its own source opens no file (tools/ci/tree_checks.py).
+    for check, node_id in sorted(tree_checks.module_copies(rel, source)):
+        name = node_id.split("::", 1)[1].replace("::", ".")
+        found.tree.setdefault(name, f"runs {check} on the real tree")
     if _is_security_marked(tree):
         found.kind = "security"
     elif found.tree and not found.outside:
