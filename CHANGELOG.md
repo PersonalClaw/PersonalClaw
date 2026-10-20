@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **While a reply is running, the composer's Stop button has a thin arc turning round it, at the pace of the Loading sweep slider; with reduced motion on it stays still.**
 - **Settings → Design → Motion has a slider for each animation length: the short, fade, medium and long transitions and each loop's cycle, and every animation takes its length from one of them.**
 - **A chat's task mode is in its address (`?mode=plan`), so a reload, a copied address or a `personalclaw://` link opens a new thread in that mode, and an existing thread keeps its own, so an address never changes how a chat runs; a link into a new thread that is already open moves it to the link's mode with its approval back to Normal.**
 - **On macOS the desktop window's controls sit in the strip above the sidebar, and the sidebar takes the system's translucent material while the page stays opaque; with Reduce transparency on, or on Linux, the window stays opaque.**

@@ -12,7 +12,7 @@ const doc: UiDoc = {
     { name: 'value', description: 'The current draft text (controlled).' },
     { name: 'onChange', description: 'Fires with the new draft on every edit.' },
     { name: 'onSend', description: 'Called to send the draft — also invoked mid-stream, as "steer" when canSteer and "queue" otherwise, when canQueue.' },
-    { name: 'streaming', description: 'True while a turn is streaming — flips the send button to Stop (or Steer with a typed draft).' },
+    { name: 'streaming', description: 'True while a turn is streaming — flips the send button to Stop, a stop square with a thin arc turning round it (design/motion\'s sweep(); no arc under reduced motion), or to Steer or Queue with a typed draft.' },
     { name: 'processing', description: 'One-shot pre-send processing (e.g. the goal analyze pass) → a spinning send button with no stop/queue affordance.' },
     { name: 'onStop', description: 'Called from the Stop button to abort the running turn.' },
     { name: 'placeholder', description: "Editor placeholder (default 'Ask anything')." },
@@ -59,7 +59,7 @@ const doc: UiDoc = {
     { guidance: false, description: 'Do not enable controls.attach or controls.mic without also passing onAttach / onTranscribe — the affordance only appears when its handler exists.' },
     { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens (the token-lint ratchet fails the build otherwise).' },
   ],
-  anatomy: ['outer motion.div (Claw Arcade: focus / drag-over lift + scale spring)', 'conic-gradient ring glow (Claw Arcade only: surges + breathes on drag-over)', 'surface sheet (pill↔sheet radius morph; the plain 2px coral focus ring outside Claw Arcade)', 'drag-and-drop attach overlay (AnimatePresence)', 'top-center resize handle grip', 'MarkdownInput (CodeMirror live-markdown editor)', 'pill cluster row ([+] menu · agent · model · approval · reasoning)', 'action cluster (optimize · mic · send/stop/steer/queue)', 'hidden file input'],
+  anatomy: ['outer motion.div (Claw Arcade: focus / drag-over lift + scale spring)', 'conic-gradient ring glow (Claw Arcade only: surges + breathes on drag-over)', 'surface sheet (pill↔sheet radius morph; the plain 2px coral focus ring outside Claw Arcade)', 'drag-and-drop attach overlay (AnimatePresence)', 'top-center resize handle grip', 'MarkdownInput (CodeMirror live-markdown editor)', 'pill cluster row ([+] menu · agent · model · approval · reasoning)', 'action cluster (optimize · mic · send/stop/steer/queue, with the Stop control\'s turning arc while a turn runs)', 'hidden file input'],
 }
 
 export default doc
