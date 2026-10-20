@@ -1167,15 +1167,16 @@ def test_an_ABSENT_snapshot_history_is_a_NO_OP(tmp_path: Path) -> None:
 def test_the_merge_does_NOT_re_apply_retention(tmp_path: Path) -> None:
     """`ScheduleRunStore.rotate_all()` owns retention and runs at gateway boot. Trimming here
     would be a second copy of that policy — the exact duplication already removed once, after one
-    copy silently reverted the other."""
-    import inspect
+    copy silently reverted the other. A merge past the store's per-job bound keeps every run."""
+    from personalclaw.schedule_history import _MAX_RECORDS_PER_JOB
+    from personalclaw.snapshot import _merge_run_history
 
-    from personalclaw import snapshot
-
-    source = inspect.getsource(snapshot._merge_run_history)
-    body = source.split('"""')[-1]
-    assert "_MAX_RECORDS_PER_JOB" not in body
-    assert "rotate" not in body
+    many = [f"snap-{i}" for i in range(_MAX_RECORDS_PER_JOB + 50)]
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    _hist(snap, "clock:backup.jsonl", many)
+    _hist(pc, "clock:backup.jsonl", ["LIVE-run"])
+    _merge_run_history(snap / "cron-history", pc / "cron-history")
+    assert sorted(_ids(pc, "clock:backup.jsonl")) == sorted(many + ["LIVE-run"])
 
 
 def test_the_run_history_merge_is_WIRED_into_do_merge(tmp_path: Path) -> None:
@@ -1606,26 +1607,39 @@ def test_the_FEEDBACK_merge_recovers_rows_and_dedupes_on_id(tmp_path: Path) -> N
 def test_the_feedback_merge_does_NOT_re_apply_its_CAP(tmp_path: Path) -> None:
     """`feedback.py` owns its own retention ("atomic trim at 2x cap"). Re-implementing the bound
     here would be the duplication already deleted from the run store after one copy silently
-    reverted the other."""
-    import inspect
+    reverted the other. A merge past twice the cap keeps every verdict."""
+    from personalclaw.feedback import _CAP
+    from personalclaw.snapshot import _merge_feedback
 
-    from personalclaw import snapshot
+    snap, pc = tmp_path / "s", tmp_path / "p"
+    snap.mkdir()
+    pc.mkdir()
+    rows = 2 * _CAP + 1
+    (snap / "feedback.jsonl").write_text(
+        "".join(
+            json.dumps({"id": f"f{i}", "created_at": f"2026-01-01T00:00:{i % 60:02d}"}) + "\n"
+            for i in range(rows)
+        ),
+        encoding="utf-8",
+    )
+    (pc / "feedback.jsonl").write_text(
+        json.dumps({"id": "live", "created_at": "2026-02-01T00:00:00"}) + "\n", encoding="utf-8"
+    )
+    _merge_feedback(snap / "feedback.jsonl", pc / "feedback.jsonl")
+    kept = [ln for ln in (pc / "feedback.jsonl").read_text().splitlines() if ln]
+    assert len(kept) == rows + 1, "the merge trimmed the feedback log"
 
-    body = inspect.getsource(snapshot._merge_feedback).split('"""')[-1]
-    assert "_CAP" not in body
-    assert "trim" not in body
 
+def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path, _restore_home) -> None:
+    """The sweep's closing assertion. Every entry that declares `append_dedup` is handled, and by a
+    REASON rather than by accident:
 
-def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path) -> None:
-    """The sweep's closing assertion. Six entries declare `append_dedup`; each must now be handled,
-    and by a REASON rather than by accident:
-
-    * `cron-history` — `_merge_run_history`
-    * `notifications.jsonl` — `_merge_notifications` (pre-existing)
-    * `security_events.jsonl` — `_merge_security_events`, key-gated
-    * `feedback.jsonl` — `_merge_feedback`
-    * `crashes`, `sessions` — directories on disk, so the generic per-file tree copy already
-      gives them entity-level union; a line-dedup executor would be the wrong shape entirely.
+    * `cron-history`, `notifications.jsonl`, `security_events.jsonl`, `feedback.jsonl` and
+      `model_calls.jsonl` each have an executor: a merge restore through `_do_merge` brings in the
+      snapshot's row beside the home's own, for every one of them;
+    * `crashes`, `sessions`, `dashboard_tiles`, `history` — directories on disk, so the generic
+      per-file tree copy already gives them entity-level union; a line-dedup executor would be the
+      wrong shape entirely.
 
     🔴 **A declaration discrepancy found while asserting this:** `sessions` is declared
     `kind=jsonl_append`, but on disk it is a nested tree (`sessions/<key>/tool_results/*.json`),
@@ -1634,73 +1648,51 @@ def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path) -> Non
     by changing a declaration whose other readers I have not swept. Asserted as-declared so the
     discrepancy is visible instead of silently encoded.
 
-    Pinned as a test because the failure mode is a SEVENTH entry being added later and silently
+    Pinned as a test because the failure mode is a new entry being added later and silently
     inheriting copy-if-missing.
     """
-    import inspect
+    from personalclaw.snapshot import _do_merge
 
-    from personalclaw import snapshot
-    from personalclaw.durability import inventory as inv
-
-    # Scope the ratchet to the entries that actually flow through `_do_merge`. A
-    # DERIVED append_dedup entry is excluded from `backup_entries()` (snapshot.py's
-    # merge loop is `for e in backup_entries() ... and not e.derived`), so it never
-    # reaches a merge executor — demanding one for it would be demanding dead code.
-    # `derived` telemetry-of-self (e.g. the CATO usage ledger) rebuilds from the SEL
-    # rather than merging, so its `append_dedup` is a declared identity, not a merge
-    # path. Non-derived append_dedup is still the pinned set the ratchet guards.
+    # A DERIVED append_dedup entry never reaches a merge executor (`backup_entries()` leaves it
+    # out), so the ratchet covers the non-derived set.
     declared = {
         e.path: e for e in inv.INVENTORY if e.merge == inv.MERGE_APPEND_DEDUP and not e.derived
     }
-    assert set(declared) == {
+    executed = {
         "cron-history",
         "notifications.jsonl",
         "security_events.jsonl",
         "feedback.jsonl",
-        # Demanded by THIS test the moment the entry was declared — which is what
-        # the ratchet is for. Keyed on `AttemptRecord.audit_id` via `_merge_keyed_jsonl`.
         "model_calls.jsonl",
-        "crashes",
-        "sessions",
-        # The per-tile refresh ledger. A DIRECTORY per tile on disk, so it joins `crashes`
-        # and `sessions` on the generic per-file tree pass: a line-dedup executor across a
-        # directory-per-tile store would be the wrong shape, and the tree copy already gives
-        # entity-level union.
-        "dashboard_tiles",
-        # #2217's observe-mode channel buffers. A DIRECTORY of `<channel_id>.jsonl` on disk
-        # (`channel_history.py`), so it joins `crashes`/`sessions`/`dashboard_tiles` on the
-        # generic per-file tree pass rather than wanting a line-dedup executor. The per-channel
-        # file is the merge unit, and the buffer is bounded by both an entry cap and a TTL, so a
-        # channel restored whole is the right granularity.
-        "history",
-    }, "a new NON-DERIVED append_dedup entry appeared — give it an executor, not copy-if-missing"
-
-    # Named explicitly rather than derived from the path: `cron-history`'s executor is
-    # `_merge_run_history`, so a stem-to-symbol guess would pass for the wrong reason.
-    merge_src = inspect.getsource(snapshot._do_merge)
-    executors = {
-        "cron-history": "_merge_run_history",
-        "notifications.jsonl": "_merge_notifications",
-        "security_events.jsonl": "_merge_security_events",
-        "feedback.jsonl": "_merge_feedback",
-        # Shares `_merge_keyed_jsonl` with feedback, so the call site is matched by its ARGUMENT —
-        # the symbol alone would pass even if this path were dropped from `_do_merge`.
-        "model_calls.jsonl": "_merge_keyed_jsonl",
     }
-    for path, symbol in executors.items():
-        assert symbol in merge_src, f"{path} has no executor reachable from _do_merge"
-        assert hasattr(snapshot, symbol), f"{symbol} is not defined"
-    # `_merge_keyed_jsonl` is SHARED (feedback + model calls), so the symbol alone cannot prove both
-    # call sites exist — each is pinned by its filename argument. The dedicated executors take their
-    # paths internally, so there is nothing to pin at their call site.
-    for path in ("feedback.jsonl", "model_calls.jsonl"):
-        assert path in merge_src, f"{path} is not passed at any _do_merge call site"
-    # The two directory-shaped ones ride the generic tree pass. `sessions` declares
-    # `jsonl_append` while being a tree on disk (see the docstring) — pinned as-is so the
-    # discrepancy stays visible.
+    trees = {"crashes", "sessions", "dashboard_tiles", "history"}
+    assert (
+        set(declared) == executed | trees
+    ), "a new NON-DERIVED append_dedup entry appeared — give it an executor, not copy-if-missing"
+
+    snap = _sel_home(tmp_path / "snap", ["from-snapshot"])
+    pc = _sel_home(tmp_path / "home", ["live"], key=(snap / "sel_hmac.key").read_bytes())
+    for root, tag, when in (
+        (snap, "SNAP", "2026-01-01T00:00:00"),
+        (pc, "LIVE", "2026-02-01T00:00:00"),
+    ):
+        _hist(root, "clock:backup.jsonl", [f"{tag}-run"])
+        (root / "notifications.jsonl").write_text(json.dumps({"ts": when, "msg": tag}) + "\n")
+        (root / "feedback.jsonl").write_text(json.dumps({"id": tag, "created_at": when}) + "\n")
+        (root / "model_calls.jsonl").write_text(json.dumps({"audit_id": tag, "ts": when}) + "\n")
+
+    _do_merge(snap, pc, None)
+
+    assert sorted(_ids(pc, "clock:backup.jsonl")) == ["LIVE-run", "SNAP-run"]
+    for name in ("notifications.jsonl", "feedback.jsonl", "model_calls.jsonl"):
+        text = (pc / name).read_text()
+        assert "SNAP" in text and "LIVE" in text, f"{name} took no row from the snapshot"
+    events = (pc / "security_events.jsonl").read_text()
+    assert "from-snapshot" in events and "live" in events
+    # The directory-shaped ones ride the generic tree pass. `sessions` declares `jsonl_append`
+    # while being a tree on disk (see the docstring): pinned as-is so the discrepancy stays seen.
     assert declared["crashes"].kind == "json_entity_dir"
     assert declared["sessions"].kind == "jsonl_append"
-    # Declared `tree` from the start — the shape `sessions` mis-declared as its leaf kind.
     assert declared["dashboard_tiles"].kind == "tree"
 
 
@@ -1853,44 +1845,71 @@ def test_SCHEMA_DRIFT_skips_the_table_and_keeps_the_rest(tmp_path: Path) -> None
 
 
 def test_MEMORY_DB_keeps_its_own_executor(tmp_path: Path) -> None:
-    """🔴 The one store that must NOT be routed here. `_merge_memory` filters `WHERE is_deleted=0`,
-    so a generic all-tables merge would **resurrect memories the user deleted** — measured on a
-    synthetic soft-delete table, where the naive merge imported the tombstoned row.
-
-    That filter is the reason its allowlist exists, not an accident of it. The six stores routed to
-    the generic path were checked for soft-delete columns against a long-lived real home and the dev
-    home: none has one.
+    """🔴 The one store that must NOT be routed to the generic merge. `_merge_memory` filters
+    `WHERE is_deleted=0`, so a generic all-tables merge would **resurrect memories the user
+    deleted** — measured on a synthetic soft-delete table, where the naive merge imported the
+    tombstoned row. A merge restore brings in the snapshot's live memory and not the one deleted
+    there.
     """
-    import inspect
-
     from personalclaw import snapshot
 
-    # The path list lives in `_attach_merge_paths(snap)` so `_do_merge` and `merge_plan`
-    # cannot disagree. Assert on the SHARED helper's output, which is the behaviour, rather than on
-    # a substring of one caller's source.
-    assert "memory.db" not in snapshot._attach_merge_paths(tmp_path), "memory.db must not be routed"
-    assert "_merge_memory(" in inspect.getsource(snapshot._do_merge), "its own executor must run"
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    _setup_fake_personalclaw(snap)
+    _setup_fake_personalclaw(pc)
+    conn = sqlite3.connect(str(snap / "memory.db"))
+    conn.executescript("""
+        INSERT INTO semantic_memory (key, value_json, source, created_at, updated_at, is_deleted)
+            VALUES ('snap.alive', '"kept"', 'test', '2026-01-02', '2026-01-02', 0);
+        INSERT INTO semantic_memory (key, value_json, source, created_at, updated_at, is_deleted)
+            VALUES ('snap.gone', '"deleted"', 'test', '2026-01-02', '2026-01-02', 1);
+    """)
+    conn.commit()
+    conn.close()
+
+    assert "memory.db" not in snapshot._attach_merge_paths(snap)
+    snapshot._do_merge(snap, pc, None)
+
+    conn = sqlite3.connect(str(pc / "memory.db"))
+    keys = {r[0] for r in conn.execute("SELECT key FROM semantic_memory")}
+    conn.close()
+    assert "snap.alive" in keys, "memory.db's own executor did not run"
+    assert "snap.gone" not in keys, "a memory deleted in the snapshot came back"
 
 
-def test_the_attach_merge_is_driven_by_the_INVENTORY(tmp_path: Path) -> None:
-    """Read off `sqlite_entries()` rather than a hardcoded list, so a sqlite store declared later
+def test_the_attach_merge_is_driven_by_the_INVENTORY(tmp_path: Path, monkeypatch) -> None:
+    """Read off the inventory rather than a hardcoded list, so a sqlite store declared later
     merges by default — the same reason capture reads `backup_entries()`. A second hand-maintained
-    list is how this whole class of defect started."""
-    import inspect
+    list is how this whole class of defect started. A store declared now is merged with no other
+    change."""
+    import dataclasses
 
     from personalclaw import snapshot
-    from personalclaw.durability import inventory as inv
-
-    helper_src = inspect.getsource(snapshot._attach_merge_paths)
-    assert "sqlite_entries()" in helper_src
-    assert "MERGE_SQLITE_ATTACH_IGNORE" in helper_src
-    assert "_attach_merge_paths(snap)" in inspect.getsource(snapshot._do_merge)
 
     declared = {e.path for e in inv.sqlite_entries() if e.merge == inv.MERGE_SQLITE_ATTACH_IGNORE}
     assert (
         "memory.db" in declared
     ), "memory.db still declares the strategy; it just has its own path"
     assert len(declared - {"memory.db"}) == 6, "the six generic stores"
+
+    template = next(e for e in inv.INVENTORY if e.path == "learning.db")
+    added = dataclasses.replace(template, id="declared_later_db", path="later/declared.db")
+    monkeypatch.setattr(inv, "INVENTORY", (*inv.INVENTORY, added))
+    assert "later/declared.db" in snapshot._attach_merge_paths(tmp_path)
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    for root, tag in ((snap, "FROM-SNAPSHOT"), (pc, "LIVE")):
+        (root / "later").mkdir(parents=True)
+        (root / "config.json").write_text("{}", encoding="utf-8")
+        conn = sqlite3.connect(str(root / "later" / "declared.db"))
+        conn.execute("CREATE TABLE rows(id TEXT PRIMARY KEY)")
+        conn.execute("INSERT INTO rows VALUES(?)", (tag,))
+        conn.commit()
+        conn.close()
+    snapshot._do_merge(snap, pc, None)
+    conn = sqlite3.connect(str(pc / "later" / "declared.db"))
+    ids = sorted(r[0] for r in conn.execute("SELECT id FROM rows"))
+    conn.close()
+    assert ids == ["FROM-SNAPSHOT", "LIVE"], "a newly declared store was not merged"
 
 
 def test_the_FTS_SKIP_avoids_importing_foreign_segment_state(tmp_path: Path) -> None:
@@ -2358,20 +2377,45 @@ def test_the_DRY_RUN_prints_a_PLAN_not_a_file_list(tmp_path, capsys) -> None:
 def test_the_PLAN_and_the_ACT_name_the_same_sqlite_stores(tmp_path) -> None:
     """🔴 Why the plan is DERIVED rather than a `dry_run` flag threaded through twelve helpers.
 
-    Twelve flags are twelve chances for the preview to drift from the act. `_do_merge` and
-    `merge_plan` now read the SAME `_attach_merge_paths(snap)`, so they cannot disagree about which
-    databases participate — a preview that names a different set from the act is worse than none.
+    Twelve flags are twelve chances for the preview to drift from the act. With every declared
+    store on both sides, the databases the plan says it will merge are exactly the ones the merge
+    brings the snapshot's rows into — a preview that names a different set from the act is worse
+    than none.
     """
-    import inspect
-
     from personalclaw import snapshot
 
-    merge_src = inspect.getsource(snapshot._do_merge)
-    plan_src = inspect.getsource(snapshot.merge_plan)
-    assert "_attach_merge_paths(snap)" in merge_src
-    assert "_attach_merge_paths(snap)" in plan_src
-    # and the shared helper excludes memory.db, which has its own executor
-    assert "memory.db" not in snapshot._attach_merge_paths(tmp_path)
+    stores = [e.path for e in inv.sqlite_entries() if e.merge == inv.MERGE_SQLITE_ATTACH_IGNORE]
+    stores.remove("memory.db")  # its own executor, and its own row in the plan
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    for root, tag in ((snap, "FROM-SNAPSHOT"), (pc, "LIVE")):
+        root.mkdir(exist_ok=True)
+        (root / "config.json").write_text("{}", encoding="utf-8")
+        for rel in stores:
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(root / rel))
+            conn.execute("CREATE TABLE rows(id TEXT PRIMARY KEY)")
+            conn.execute("INSERT INTO rows VALUES(?)", (tag,))
+            conn.commit()
+            conn.close()
+
+    # Only the rows for the table-by-table merge: a store the generic pass also reaches gets a
+    # second row with the same strategy, which would hide a store the plan had stopped merging.
+    planned = {
+        row["path"]
+        for row in snapshot.merge_plan(snap, pc, None)
+        if row["strategy"] == inv.MERGE_SQLITE_ATTACH_IGNORE
+        and row["action"] == "merge"
+        and row["detail"] == "every table, INSERT OR IGNORE"
+    }
+    snapshot._do_merge(snap, pc, None)
+    merged = set()
+    for rel in stores:
+        conn = sqlite3.connect(str(pc / rel))
+        if conn.execute("SELECT 1 FROM rows WHERE id='FROM-SNAPSHOT'").fetchone():
+            merged.add(rel)
+        conn.close()
+    assert merged, "nothing was merged, so the comparison below proves nothing"
+    assert planned == merged
 
 
 def test_the_dry_run_WRITES_NOTHING(tmp_path, monkeypatch, capsys) -> None:
@@ -2414,16 +2458,19 @@ def test_the_dry_run_WRITES_NOTHING(tmp_path, monkeypatch, capsys) -> None:
     assert "[replace_only]" in printed, "the plan must name each entry's strategy"
 
 
-def test_REPLACE_mode_previews_where_the_current_state_GOES(tmp_path) -> None:
+def test_REPLACE_mode_previews_where_the_current_state_GOES(env, capsys, monkeypatch) -> None:
     """Replace mode is wholesale by definition, so a per-entry merge table would be misleading. The
     honest preview is what travels PLUS where the existing state is moved — the recoverability that
     makes replace mode safe is the part a user needs told."""
-    import inspect
-
-    from personalclaw import snapshot
-
-    src = inspect.getsource(snapshot.restore_main)
-    assert "pre-restore-<timestamp>" in src
+    _, _, tarball, tmp_path = env
+    home = tmp_path / "replace-preview"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    assert restore_main([str(tarball), "--dry-run", "--mode", "replace"]) == 0
+    out = capsys.readouterr().out
+    assert f"Current state would be moved to {home}/pre-restore-<timestamp>/" in out
+    assert "memory.db" in out, "the preview names what travels"
+    assert not (home / "memory.db").exists(), "a dry run restored something"
 
 
 def test_the_plan_respects_the_COMPONENT_filter(tmp_path) -> None:
