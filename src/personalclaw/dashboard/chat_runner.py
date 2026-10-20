@@ -3011,12 +3011,21 @@ async def run_chat(
             acp_mode = "plan"
 
         session.model = _normalize_model(session.model or "") or ""
+        # A native chat's stored level goes only where its model declares it (Auto declares none),
+        # or where nothing says what the model takes. The composer resets a level its model lacks,
+        # but only while it has the chat open; a turn through the API or another channel sent it.
+        # An agent CLI's level is its runtime's to judge.
+        from personalclaw.providers import model_efforts
+
+        turn_effort = session.reasoning_effort or ""
+        if turn_effort and model_efforts.native_runtime(provider_kind):
+            turn_effort = await model_efforts.turn_effort(session.model, turn_effort)
         client, is_new, resumed = await state.sessions.get_or_create(
             session_key,
             agent=provider_agent or session.agent or None,
             model=session.model or None,
             cwd=session.workspace_dir or None,
-            reasoning_effort_override=session.reasoning_effort or None,
+            reasoning_effort_override=turn_effort or None,
             provider_kind=provider_kind or None,
             acp_mode=acp_mode or None,
             # Brownfield Code/Goal-Loop workers: let the native file tools also reach

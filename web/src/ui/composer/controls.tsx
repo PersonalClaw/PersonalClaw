@@ -97,8 +97,12 @@ function unmeasuredTitle(windowTokens: number | null | undefined): string {
 /** A reasoning-effort level as the pill lists it: the value the chat stores and its name. */
 export type EffortLevel = { value: string; label: string }
 
-/** A level a native model's record declares, as the pill names it: `high` → "High". */
-const levelName = (value: string) => value.charAt(0).toUpperCase() + value.slice(1)
+/** A level whose value is no word, by the name the pill gives it. */
+const LEVEL_NAMES: Record<string, string> = { xhigh: 'Extra high' }
+
+/** A level a native model's record declares, as the pill names it: `high` → "High", `max` →
+ *  "Max", `xhigh` → "Extra high". */
+const levelName = (value: string) => LEVEL_NAMES[value] ?? value.charAt(0).toUpperCase() + value.slice(1)
 
 /** The reasoning-effort levels the chosen agent and model declare; `[]` means none, and then the
  *  pill offers no effort row. An agent CLI declares them for its runtime (`supported_efforts`,

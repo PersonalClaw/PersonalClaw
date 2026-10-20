@@ -1,4 +1,9 @@
-"""Tests for POST /api/chat/sessions/{session}/reasoning-effort endpoint."""
+"""Tests for POST /api/chat/sessions/{session}/reasoning-effort endpoint.
+
+These chats run on an agent CLI that no Test has described, so any well-formed level is its
+runtime's to take. A native chat is held to the levels its model declares
+(``test_a_native_chat_uses_only_the_efforts_its_model_declares.py``).
+"""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -19,6 +24,13 @@ def _make_app(state: DashboardState) -> web.Application:
     return app
 
 
+def _cli_chat() -> _ChatSession:
+    """A chat on an agent CLI whose runtime has not declared its levels."""
+    session = _ChatSession("test")
+    session.acp_provider = "acp:example-cli"
+    return session
+
+
 def _mock_state(session: _ChatSession | None = None) -> DashboardState:
     state = MagicMock(spec=DashboardState)
     state._sessions = {}
@@ -34,7 +46,7 @@ class TestChatSessionReasoningEffort:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("level", ["low", "medium", "high", "max"])
     async def test_set_valid_levels(self, level: str):
-        session = _ChatSession("test")
+        session = _cli_chat()
         state = _mock_state(session)
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
@@ -52,7 +64,7 @@ class TestChatSessionReasoningEffort:
 
     @pytest.mark.asyncio
     async def test_clear_to_default(self):
-        session = _ChatSession("test")
+        session = _cli_chat()
         session.reasoning_effort = "high"
         state = _mock_state(session)
         async with TestClient(TestServer(_make_app(state))) as client:
@@ -68,7 +80,7 @@ class TestChatSessionReasoningEffort:
     async def test_no_op_when_unchanged_skips_session_reset(self):
         # Setting the same value twice must not reset the session
         # (avoids needless subprocess respawn on repeated UI clicks).
-        session = _ChatSession("test")
+        session = _cli_chat()
         session.reasoning_effort = "medium"
         state = _mock_state(session)
         async with TestClient(TestServer(_make_app(state))) as client:
@@ -88,7 +100,7 @@ class TestChatSessionReasoningEffort:
         ["LOW", " low", "low ", "0", "; rm -rf /", "max --evil", "../etc"],
     )
     async def test_rejects_malformed_effort(self, bad_value: str):
-        session = _ChatSession("test")
+        session = _cli_chat()
         state = _mock_state(session)
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
@@ -104,7 +116,7 @@ class TestChatSessionReasoningEffort:
     async def test_accepts_any_backend_token(self, value: str):
         # Effort values come from the bound agent's backend — accept any well-formed
         # short lowercase token, not just the native ladder.
-        session = _ChatSession("test")
+        session = _cli_chat()
         state = _mock_state(session)
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
@@ -116,7 +128,7 @@ class TestChatSessionReasoningEffort:
 
     @pytest.mark.asyncio
     async def test_rejects_non_string(self):
-        session = _ChatSession("test")
+        session = _cli_chat()
         state = _mock_state(session)
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
@@ -137,7 +149,7 @@ class TestChatSessionReasoningEffort:
 
     @pytest.mark.asyncio
     async def test_invalid_json_returns_400(self):
-        session = _ChatSession("test")
+        session = _cli_chat()
         state = _mock_state(session)
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(

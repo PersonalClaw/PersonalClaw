@@ -618,12 +618,19 @@ The same pill sets the reasoning effort, in a row under the chosen model, only w
 declares the levels it takes: an agent CLI's runtime declares them, and a native model's provider
 declares them in its record of the model. A provider app that says nothing of them, on
 PersonalClaw's built-in Anthropic- or OpenAI-compatible client, declares the levels that client
-sends the model: Low to Max on a Claude model (with Xhigh on the ones that take it), and Low,
+sends the model: Low to Max on a Claude model (with Extra high on the ones that take it), and Low,
 Medium and High on an OpenAI reasoning model. A model that declares none has no effort row, and
 nor does Auto. A switch to a model without the chat's level sets the effort back to Default, and the
 pill says so: **Effort set to Default: <model> has no High**. A chat opened already on such a model,
 Auto included, with a level it stored earlier is set back to Default the same way, so no turn runs
 at a level the pill does not show.
+
+The gateway holds a native chat to the same levels when no composer has it open, for a turn sent
+through the API or another channel: the stored level goes to the model only when the model declares
+it, and on Auto none goes. Where nothing says what the model takes (a provider app on a client of
+its own whose listing names no levels for it, or could not be read), the level goes as stored.
+Setting a level the chat's model doesn't declare is refused, and the reason names the model and the
+levels it declares. A chat on an agent CLI is held to its runtime's levels instead.
 
 ## What gets recorded
 

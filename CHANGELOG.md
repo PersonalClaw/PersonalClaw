@@ -33,6 +33,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The composer offers a reasoning effort again for a model whose provider app uses PersonalClaw's built-in Anthropic- or OpenAI-compatible client, with the levels that client sends the model (`personalclaw.sdk.model.wire_efforts`, the `model-efforts` core feature).**
 - **A finished turn's folded steps say how long the turn worked, "Worked for 1m 19s · 12 steps", where they said only how many steps there were.**
 - **Agents, skills, tools, prompts and apps are tabs of one Capabilities destination, with the Store a tab of its own: one sidebar row in place of five, each tab still at its own address, so a bookmark, a reload or a copied link opens the tab it did, and ⌘K goes to each tab, the Store and Add a tool server.**
+- **The composer's effort row names Xhigh as Extra high.**
 
 ### Fixed
 
@@ -40,6 +41,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Filled icon buttons such as the composer's send and stop, a page header's primary and danger actions, and an app's primary header action show their keyboard focus ring in the page's ink colour, like the primary and danger buttons, where the coral ring matched the button's own colour and could barely be seen.**
 - **A chat on Auto, or on any model that declares no effort levels, runs at Default effort, where one that had stored a level kept running at it with no control left to show or change it; the composer says it set Default.**
 - **A model on an OpenAI-compatible provider whose id has `o1`, `o3` or `o4` only inside another word is no longer sent a reasoning effort, and Xhigh reaches an OpenAI reasoning model as High, as Max does.**
+- **A native chat runs at its stored reasoning effort only when its model declares that level, also for a turn sent through the API or another channel with no composer open, and on Auto, which names no model, it runs at Default; setting a level the chat's model doesn't declare is refused, naming the model and the levels it declares.**
 
 ## [0.2.3] — 2026-10-19
 

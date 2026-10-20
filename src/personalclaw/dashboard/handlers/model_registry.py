@@ -872,8 +872,10 @@ async def api_models_chat(request: web.Request) -> web.Response:
     plus ``name``/``provider``/``description`` — a superset shape so every
     consumer (composer model pill reads model_name; agent/chat pickers read
     name/model_id) works off one endpoint. An entry whose provider's record declares the
-    reasoning-effort levels the model takes carries them as ``efforts``; one that declares none
-    has no ``efforts``, and the composer offers it no effort choice.
+    reasoning-effort levels the model takes carries them as ``efforts``, and so does one its
+    provider does not list, with the levels its wire sends it when that wire is core's
+    (``providers.model_efforts.core_wire_efforts``); one that declares none has no ``efforts``,
+    and the composer offers it no effort choice.
     """
     active = load_active_models()
     chat_active = active.get("chat", [])
@@ -893,6 +895,14 @@ async def api_models_chat(request: web.Request) -> web.Response:
         if (rows := _rows_of(ref)) is None or "chat" in _union(rows, "capabilities")
     ]
     if chat_active:
+        from personalclaw.providers.model_efforts import core_wire_efforts
+
+        # A model its provider does not list (an instance's own model, a listing that could not be
+        # read) declares the levels its wire sends it when that wire is core's, as the list the
+        # fallback below discovers does; one listed declares what its listing says.
+        types = {
+            str(p.get("name", "")): str(p.get("type", "")) for p in _get_providers_from_config()
+        }
         result = []
         for model_ref in chat_active:
             if ":" in model_ref:
@@ -906,7 +916,13 @@ async def api_models_chat(request: web.Request) -> web.Response:
                 "provider": provider_name,
                 "description": model_id,
             }
-            efforts = _union(_rows_of(model_ref) or [], "efforts")
+            rows = _rows_of(model_ref)
+            if rows is not None:
+                efforts = _union(rows, "efforts")
+            elif provider_name in types:
+                efforts = list(core_wire_efforts(types[provider_name], model_id) or [])
+            else:
+                efforts = []
             if efforts:
                 row["efforts"] = efforts
             result.append(row)
@@ -948,20 +964,19 @@ async def api_models_chat(request: web.Request) -> web.Response:
             row["efforts"] = list(efforts)
         all_models.append(row)
 
-    from personalclaw.llm.branded_specs import registered_spec, wire_efforts
     from personalclaw.llm.registry import canonical_provider_type
     from personalclaw.providers.connection import (
         FAILED,
         get_connection_board,
         settings_fingerprint,
     )
+    from personalclaw.providers.model_efforts import core_wire_efforts
 
     def _add_own(pname: str, ptype: str, mid: str) -> None:
         # An instance's own model, offered because no listing names it, declares the levels its
         # wire sends it when that wire is core's (an app's branded spec names its protocol); an app
         # on a wire of its own says what that wire sends through its listing, not here.
-        spec = registered_spec(canonical_provider_type(ptype))
-        _add(pname, mid, list(wire_efforts(spec.protocol, mid)) if spec is not None else None)
+        _add(pname, mid, list(core_wire_efforts(ptype, mid) or []))
 
     board = get_connection_board()
     tasks = []  # (pname, type, pinned_model, coro)
