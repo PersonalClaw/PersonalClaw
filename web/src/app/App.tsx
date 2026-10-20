@@ -28,7 +28,7 @@ import { api } from '../lib/api'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { ACTIVE_LOOP_STATUSES } from '../lib/loopStatus'
 import { CommandPalette, keymapCommands, type Command } from './CommandPalette'
-import { THREAD_NUMBERS, useKeyBinding, type CommandId } from './keymap'
+import { THREAD_NUMBERS, useBoundRunner, useKeyBinding, type CommandId } from './keymap'
 import { chatRoute, nextNeedsYouRoute } from './globalKeys'
 import { notify } from './appSdk'
 import { TerminalDrawer } from '../pages/terminal/TerminalDrawer'
@@ -586,12 +586,16 @@ function AppInner() {
   // hook order is stable across renders (React #310).
   const embedRef = useRef(query.embed === '1')
   if (query.embed === '1') embedRef.current = true
+  // ⌘⇧E's runner is the open chat's, which shows and hides its working folder (`chat/panes`); the
+  // palette runs it while a chat is open and lists it dimmed elsewhere.
+  const chatTree = useBoundRunner('workspace-tree')
   const keyRunners: Partial<Record<CommandId, () => void>> = {
     sidebar: toggleNav,
     drawer: toggleDrawer,
     // The two modes change the shell, which an embedded page has none of; reading mode folds a
     // chat's composer, so it runs only where a chat is on screen.
     ...(embedRef.current ? {} : { 'focus-mode': toggleFocus, ...(readsAChat ? { 'reading-mode': toggleReading } : {}) }),
+    'workspace-tree': chatTree,
     'next-needs-you': goNeedsYou,
     'new-chat': () => navigate('chat/new'),
     ...Object.fromEntries(THREAD_NUMBERS.map((n) => [`chat-${n}`, () => goChat(n)])),

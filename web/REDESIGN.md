@@ -253,8 +253,10 @@ overview.
   resolves `true`), a second press of Allow while the confirmation is asked only asks again, and
   every choice, Deny included, goes through the same guard.
 - ⌘1 to ⌘9 open the chats in the chat list's order (pinned first, then the most recent) until
-  threads replace the list. ⇧Esc and ⌘⇧E are not bound yet: they wait for the record of what has
-  been seen and for the file tree.
+  threads replace the list. ⇧Esc is not bound yet: it waits for the record of what has been seen.
+- ⌘⇧E shows and hides a chat's working folder (`web/src/pages/chat/panes`). Its runner is the open
+  chat's, so the shell's palette reaches it through `useBoundRunner(id)`: a row whose runner a page
+  gave it runs from the palette while that page is mounted, and is listed dimmed elsewhere.
 
 ## 7. Desktop buddy
 
