@@ -61,7 +61,7 @@ command = [
   { argv = ["dash", "-n", "deploy/website/install.sh"], env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },
   { argv = ["shellcheck", "-s", "sh", "deploy/website/install.sh"], env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },
   { argv = ["uv", "run", "pytest", "tests/test_website_installer.py", "--junitxml=reports/junit-lint-installer.xml"], env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },
-  { argv = ["uv", "run", "python", "-m", "harness", "validate"] },
+  { argv = ["uv", "run", "python", "-m", "harness", "validate", "--strict"] },
   { argv = ["uv", "run", "python", "-m", "harness", "scan", "--diff", "--base", "{base}"] },
 ]
 

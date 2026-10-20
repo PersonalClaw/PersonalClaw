@@ -8619,11 +8619,13 @@ ROWS = (*ROWS, THE_HARNESS_GATES_RUN_IN_THE_MERGE_TIER)
 # rails-macos), the rails census and the gate aggregate in rails-checks, harness validate and
 # harness scan in static, the security corpus in security. This row holds the catalogue to it:
 # each check runs in a job of every tier listed for it, and a check marked once runs in exactly
-# one job of each such tier, so it is neither skipped nor run twice. It holds the workflows to
-# the other half: a step that runs harness validate, harness scan, the gate aggregate or the
-# rails census fails its job, with no continue-on-error on the step or its job and no `|| true`
-# after the command. The breadth legs that run the rails and the security corpus record the
-# step's outcome and fail the job on it in their last step, so they are held by the tiers half.
+# one job of each such tier, so it is neither skipped nor run twice. Static's validate runs with
+# --strict, so a warning fails it as an error does: no other run checks that the shipped specs
+# carry none. It holds the workflows to the other half: a step that runs harness validate,
+# harness scan, the gate aggregate or the rails census fails its job, with no continue-on-error
+# on the step or its job and no `|| true` after the command. The breadth legs that run the rails
+# and the security corpus record the step's outcome and fail the job on it in their last step,
+# so they are held by the tiers half.
 
 #: ``(what, the words its argv holds, the tiers that need it, whether exactly one job runs it,
 #: the text a workflow step that runs it carries)``.
@@ -8634,6 +8636,13 @@ OWNED_CHECKS: tuple[tuple[str, frozenset[str], tuple[str, ...], bool, str], ...]
         ("change", "merge"),
         True,
         "python -m harness validate",
+    ),
+    (
+        "harness validate --strict",
+        frozenset({"-m", "harness", "validate", "--strict"}),
+        ("change", "merge"),
+        False,
+        "python -m harness validate --strict",
     ),
     (
         "harness scan",
@@ -8729,11 +8738,11 @@ def owning_job_violations(root: Path) -> list[str]:
 
 _STATIC = 'id = "static"\ntiers = ["change", "merge"]'
 _RAILS_CHECKS = 'id = "rails-checks"\ntiers = ["change", "merge"]'
-_VALIDATE_STEP = '  { argv = ["uv", "run", "python", "-m", "harness", "validate"] },\n'
+_VALIDATE_STEP = '  { argv = ["uv", "run", "python", "-m", "harness", "validate", "--strict"] },\n'
 _GATES_STEP = '  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },\n'
 _CI_VALIDATE = (
     "      - name: harness validate (spec shape + reference resolution)\n"
-    "        run: uv run python -m harness validate\n"
+    "        run: uv run python -m harness validate --strict\n"
 )
 
 EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
@@ -8747,6 +8756,20 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             _VALIDATE_STEP,
             "",
             expect="harness validate runs in no job of the change tier",
+        ),
+        _plant(
+            "static's validate without --strict, which passes a warning",
+            catalogue.CATALOGUE,
+            _VALIDATE_STEP,
+            _VALIDATE_STEP.replace(', "--strict"', ""),
+            expect="harness validate --strict runs in no job of the change tier",
+        ),
+        _plant(
+            "the harness step's validate without --strict",
+            _OWNED_WORKFLOWS[0],
+            _CI_VALIDATE,
+            _CI_VALIDATE.replace(" --strict", ""),
+            expect="no workflow step runs harness validate --strict",
         ),
         _plant(
             "static held to the merge tier only",

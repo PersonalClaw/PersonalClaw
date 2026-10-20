@@ -2,8 +2,9 @@
 
 The agent-facing surface of the self-development harness:
 
-- ``validate`` — shape-validate every spec + resolve references (dangling test node-ids,
-  unknown profiles/scanner-checks). The same-PR gate and CI call this.
+- ``validate [--strict]`` — shape-validate every spec + resolve references (dangling test
+  node-ids, unknown profiles/scanner-checks). The same-PR gate and CI call this; CI passes
+  ``--strict``, so a warning fails it too.
 - ``explain <task>`` — print the concrete commands + rules + tests a task must satisfy
   (the "what do I owe before this is done" surface).
 - ``run <task> | --diff`` — execute the union of required profiles. ``--diff`` forces
@@ -25,7 +26,8 @@ The agent-facing surface of the self-development harness:
   the improvement is real on the benchmark rather than assumed. Same exit convention.
 
 Exit codes: 0 == clean/pass, 1 == validation errors or a failed command, 2 == usage error
-(unknown task id, no spec set). Warnings print but do not change the exit code.
+(unknown task id, no spec set). Warnings print but do not change the exit code, except under
+``validate --strict``, where any warning exits 1.
 """
 
 from __future__ import annotations
@@ -77,11 +79,19 @@ def _load_or_die() -> list[Spec]:
 # ── validate ──────────────────────────────────────────────────────────────────
 
 
+def _strict_verdict(args: argparse.Namespace, warnings: int) -> int:
+    """``validate --strict`` (how CI runs it): any warning fails, and says how many."""
+    if args.strict and warnings:
+        print(f"{_FAIL} --strict: {warnings} warning(s) fail")
+        return 1
+    return 0
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     specs = _load_or_die()
     if not specs:
         print(f"{_WARN}no specs found under {specs_root()}")
-        return 0
+        return _strict_verdict(args, 1)
 
     issues = validate_all(specs)
     issues.extend(
@@ -104,7 +114,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         print(f"\n{_FAIL} {len(errors)} error(s), {len(warnings)} warning(s) across {n} specs")
         return 1
     print(f"{_OK} {n} specs valid ({len(warnings)} warning(s))")
-    return 0
+    return _strict_verdict(args, len(warnings))
 
 
 # ── explain ─────────────────────────────────────────────────────────────────
@@ -569,6 +579,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--fast",
         action="store_true",
         help="Skip the pytest --collect-only round-trip (shape only; the inner loop).",
+    )
+    p_val.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail on any warning too, as CI does.",
     )
     p_val.set_defaults(func=cmd_validate)
 

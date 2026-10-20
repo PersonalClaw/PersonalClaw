@@ -168,6 +168,61 @@ def test_cli_explain_unknown_task_errors() -> None:
     assert cli.main(["explain", "no-such-task"]) == 2
 
 
+#: The checkout the ``--strict`` tests plant: ``validate`` reads its specs and root from here.
+_PLANTED = Path("/planted-checkout")
+_PLANTED_SPEC = _PLANTED / "harness/specs/rules/r.md"
+
+
+def _validate_with(monkeypatch: pytest.MonkeyPatch, *issues: object, specs: int = 1) -> None:
+    """``validate`` over *specs* planted specs (0 or 1) in a planted checkout, reporting
+    *issues*: it reads no real spec and no real root."""
+    from harness.specs import KIND_RULE, Spec
+
+    spec = Spec(path=_PLANTED_SPEC, kind=KIND_RULE, meta={"id": "r"}, body="")
+    monkeypatch.setattr(cli, "_repo_root", lambda: _PLANTED)
+    monkeypatch.setattr(cli, "_load_or_die", lambda: [spec][:specs])
+    monkeypatch.setattr(cli, "validate_all", lambda specs: list(issues))
+    monkeypatch.setattr(cli, "validate_refs", lambda specs, **kwargs: [])
+
+
+def test_validate_strict_fails_on_a_warning(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """CI runs ``validate --strict``: a warning fails it, and says so; without ``--strict``
+    the same warning is reported and passes."""
+    from harness.specs import ValidationIssue
+
+    _validate_with(monkeypatch, ValidationIssue(_PLANTED_SPEC, "warning", "a planted warning"))
+    assert cli.main(["validate", "--fast"]) == 0
+    assert cli.main(["validate", "--fast", "--strict"]) == 1
+    out = capsys.readouterr().out
+    assert "harness/specs/rules/r.md: a planted warning" in out
+    assert "--strict: 1 warning(s) fail" in out
+
+
+def test_validate_strict_passes_a_clean_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    _validate_with(monkeypatch)
+    assert cli.main(["validate", "--fast", "--strict"]) == 0
+
+
+def test_validate_strict_still_fails_on_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness.specs import ValidationIssue
+
+    _validate_with(monkeypatch, ValidationIssue(_PLANTED_SPEC, "error", "a planted error"))
+    assert cli.main(["validate", "--fast", "--strict"]) == 1
+
+
+def test_validate_strict_fails_when_no_spec_is_found(
+    monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """An empty spec set is a warning too: a moved or emptied ``harness/specs`` would
+    otherwise pass CI having validated nothing."""
+    _validate_with(monkeypatch, specs=0)
+    assert cli.main(["validate", "--fast"]) == 0
+    assert cli.main(["validate", "--fast", "--strict"]) == 1
+    out = capsys.readouterr().out
+    assert "no specs found" in out
+    assert "--strict: 1 warning(s) fail" in out
+
+
 def _planted_web_checkout(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     """A planted checkout, dirty, with this tree's tools/ci in it (what the web profile runs),
     as the harness's root, and an npm, npx and node on PATH that exit 0 after writing down what

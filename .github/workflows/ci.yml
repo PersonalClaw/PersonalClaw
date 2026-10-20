@@ -1505,7 +1505,8 @@ jobs:
     # Self-verification gate: the repo-inner harness/ package
     # validates its own spec set and runs the static boundary scanner over this change.
     # `validate` shape-checks every spec + resolves references (dangling test node-ids,
-    # unknown profiles/scanner-checks) — a spec regression reds here. `scan --diff` runs
+    # unknown profiles/scanner-checks) — a spec regression reds here, and with `--strict` so
+    # does a warning: no other run checks that the shipped specs carry none. `scan --diff` runs
     # the boundary scanner over the PR's changed lines and fails on any ERROR finding
     # (WARNINGs stay advisory). The harness/ unit tests themselves ride the `test` job
     # (they live under tests/, which is on pytest's testpaths).
@@ -1530,7 +1531,7 @@ jobs:
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: harness validate (spec shape + reference resolution)
-        run: uv run python -m harness validate
+        run: uv run python -m harness validate --strict
       # A pull request names its base, so the scan diffs against that commit. `--base` fails when
       # the named commit does not resolve, where the default falls back to `main` and then
       # `HEAD~1`, either of which can scan a different change from this one. A push to main
