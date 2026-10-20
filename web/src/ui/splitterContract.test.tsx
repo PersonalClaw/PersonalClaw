@@ -21,13 +21,14 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 // ── The rest of the family, recorded rather than silently left ─────────────────────────────────
 //
-// Six drag-to-resize handles exist. This rail governs the ones that CLAIM to be splitters; the others
+// Eight drag-to-resize handles exist. This rail governs the ones that CLAIM to be splitters; the others
 // are pointer-only and do not lie about it, which is a smaller defect but still one:
 //
 //   pages/code/CodeCockpitPage  ×2   full pattern (via the hook)   ← canonical (the terminal's is in
 //                                                                   `pages/code/cockpit/BottomTerminal` now)
 //   ui/NavRail                       full pattern                  ← inline, its own state
 //   ui/SidePanel                     full pattern (via the hook)
+//   ui/PaneHost                      full pattern (via the hook)   ← the shared pane host
 //   pages/chat/ChatFilePanel         full pattern (via the hook)
 //   pages/terminal/TerminalDrawer    full pattern (via the hook)   ← this change
 //   ui/Composer                      pointer-only  ← the last one, deferred on a TASTE CALL
@@ -62,6 +63,8 @@ describe('a declared splitter implements the splitter contract', () => {
       'pages/code/cockpit/CollapsiblePanel.tsx',
       'pages/terminal/TerminalDrawer.tsx',
       'ui/NavRail.tsx',
+      // The shared pane host's handle, on the edge that faces the work.
+      'ui/PaneHost.tsx',
       'ui/SidePanel.tsx',
     ])
   })
