@@ -31,8 +31,11 @@ The rules, in order:
 4. A counted run naming this head with another tree is red: a head has one tree.
 5. The run's ``toJSON(needs)`` is read with ``verdict.from_needs`` and judged with
    ``verdict.decide``: a planned job that is missing, cancelled, skipped or red is red, even when
-   the candidate's own workflow dropped it. Results that cannot be read are red, and so is a
-   plan that cannot be, named as the plan's fault.
+   the candidate's own workflow dropped it. So is :data:`CATALOGUE_CHECK`, the job whose step
+   runs main's ``tools/ci`` over the candidate's catalogue: no plan names it, and it is required
+   beside every non-empty plan, so a refused check reds the decision, and a missing or skipped
+   one is never read as no objection. Results that cannot be read are red, and so is a plan
+   that cannot be, named as the plan's fault.
 6. A green is written as a receipt in ``trust``'s format with ``merge_verdict.render_output``. A
    receipt that is not complete (no toolchain, no evidence) is red, never a green without one.
    A red or pending output carries no receipt, so ``verify-check-run`` can never accept it.
@@ -70,6 +73,11 @@ PENDING = "pending"
 #: Which run a decision counted.
 CANDIDATE_RUN = "candidate"
 DEFAULT_BRANCH_RUN = "default branch"
+
+#: The ``ci.yml`` job whose ``catalogue-check`` step runs main's ``tools/ci`` over the candidate's
+#: catalogue (``tools/ci/catalogue_check.py``). No catalogue entry, so no plan, names it; rule 5
+#: requires it of the run that counts, beside the plan.
+CATALOGUE_CHECK = "changes"
 
 #: A full object id, SHA-1 or SHA-256. Matched with ``fullmatch``, so nothing may follow it.
 _SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
@@ -292,14 +300,17 @@ def decide(
         results = from_needs(counted.needs, run_identity)
     except verdict.Refused as exc:
         return _not_green(RED, f"the {which} run's results cannot be read: {exc}", counted=which)
+    planned = tuple(plan)
+    # Beside a plan, never in place of one: an empty plan stays red as empty.
+    required = (*planned, CATALOGUE_CHECK) if planned else planned
     try:
-        judged = verdict.decide(plan, results, candidate)
+        judged = verdict.decide(required, results, candidate)
     except verdict.Refused as exc:
         return _not_green(RED, f"the plan cannot be read: {exc}", counted=which)
     if not judged.green:
         return _not_green(
             RED,
-            f"{len(judged.reasons)} planned job(s) fell short in the {which} run",
+            f"{len(judged.reasons)} job(s) fell short in the {which} run",
             judged.reasons,
             which,
         )

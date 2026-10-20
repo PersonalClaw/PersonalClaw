@@ -20,6 +20,10 @@ or live job is never reused, by TTL or by tree, and a job that reads one of
 the suite's own run of its security-marked modules on each platform and ``security``, the one run
 of the security corpus.
 
+A pull request's catalogue is read with main's as its reference (:func:`against`): a security or
+live job main has stays, with its posture and its tiers, until main's own copy marks it
+``retiring = "#<issue>"``, so a removal takes two merges and the second only drops the entry.
+
 This module is imported by ``python -m tools.ci``, which ci.yml's shard planner runs on the
 runner image's own ``python3`` before anything is installed, so it imports the standard library
 only.
@@ -177,12 +181,15 @@ _KEYS = frozenset(
         "full_history",
         "after",
         "install_exemptions",
+        "retiring",
     }
 )
 _STEP_KEYS = frozenset({"argv", "workdir", "env"})
 _EXEMPTION_KEYS = frozenset({"install", "reason"})
 _ID = re.compile(r"[a-z][a-z0-9-]*")
 _TTL = re.compile(r"ttl:([1-9][0-9]*)")
+#: ``retiring``: the issue that retires the job, ``#<number>``.
+_RETIRING = re.compile(r"#[1-9][0-9]*")
 _PLACEHOLDER = re.compile(r"\{([^{}]*)\}")
 _PYTHON = re.compile(r"image|[0-9]+\.[0-9]+(\.[0-9]+)?")
 _VARIABLE = re.compile(r"[A-Z_][A-Z0-9_]*")
@@ -334,6 +341,9 @@ class Job:
     full_history: bool = False
     after: tuple[str, ...] = ()
     install_exemptions: tuple[Exemption, ...] = ()
+    #: The issue that retires the job (``#<number>``). The job is still the catalogue's and
+    #: still runs; once main's catalogue marks it, a pull request may drop it (:func:`against`).
+    retiring: str | None = None
 
 
 @dataclass(frozen=True)
@@ -658,6 +668,10 @@ def _job(raw: object, n: int, problems: list[str]) -> Job | None:
             fields.fault("install_exemptions", "entries each name an install and a reason")
             continue
         exemptions.append(Exemption(item["install"], item["reason"]))
+    retiring = fields.string("retiring")
+    if retiring is not None and not _RETIRING.fullmatch(retiring):
+        fields.fault("retiring", "names the issue that retires the job, as #<number>")
+        retiring = None
 
     job = Job(
         id=job_id or "",
@@ -686,12 +700,17 @@ def _job(raw: object, n: int, problems: list[str]) -> Job | None:
         full_history=fields.flag("full_history"),
         after=fields.strings("after"),
         install_exemptions=tuple(exemptions),
+        retiring=retiring,
     )
     return job if len(problems) == before and job_id else None
 
 
-def load(text: str, source: str = CATALOGUE) -> Catalogue:
-    """Read a catalogue's text, or raise :class:`CatalogueError` naming every fault."""
+def load(text: str, source: str = CATALOGUE, reference: Catalogue | None = None) -> Catalogue:
+    """Read a catalogue's text, or raise :class:`CatalogueError` naming every fault.
+
+    ``reference``: main's catalogue, when this one is a pull request's. Its security and live
+    jobs are then held as :func:`against` says, so a pull request's catalogue that drops one is
+    refused here, by the loader, wherever main's copy reads it."""
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
@@ -708,7 +727,11 @@ def load(text: str, source: str = CATALOGUE) -> Catalogue:
         problems.append(f"{job_id}: the id is used by {ids.count(job_id)} entries")
     jobs = [job for n, raw in enumerate(raw_jobs, 1) if (job := _job(raw, n, problems))]
     cat = Catalogue(tuple(jobs), merge_jobs)
-    problems += validate(cat, complete=not problems)
+    complete = not problems
+    problems += validate(cat, complete=complete)
+    if reference is not None and complete:
+        # Only a catalogue whose every entry was read: a broken entry is not also a dropped one.
+        problems += against(cat, reference)
     if problems:
         raise CatalogueError(list(dict.fromkeys(problems)))
     return cat
@@ -1014,6 +1037,59 @@ def read(root: Path = REPO) -> Catalogue:
     path = root / CATALOGUE
     source = str(path.relative_to(root))
     return load(_text(path, source), source)
+
+
+# ── a pull request's catalogue, read against main's ────────────────────────────────────────
+
+
+def _kind(job: Job) -> str:
+    return "security" if job.security == "security" else "live"
+
+
+def against(candidate: Catalogue, trusted: Catalogue) -> list[str]:
+    """What main's catalogue (``trusted``) refuses in a pull request's (``candidate``).
+
+    A security or live job of main's stays, with its posture and every tier main gives it: a
+    candidate cannot drop the evidence its own verdict is judged by. Removal takes two merges.
+    First the job is marked ``retiring = "#<issue>"`` (it stays and still runs); once main's
+    catalogue carries the mark, a pull request may drop that entry, and only drop it. A mark the
+    candidate adds itself is not main's, so it allows nothing. While main runs a security job in
+    the breadth tier, the candidate keeps one there too, whatever main marks. :func:`load` applies
+    this when it is given main's catalogue as its ``reference``."""
+    problems: list[str] = []
+    have = {job.id: job for job in candidate.jobs}
+    for job in trusted.jobs:
+        if job.security != "security" and not job.live:
+            continue
+        mine = have.get(job.id)
+        if mine is None:
+            if job.retiring is None:
+                problems.append(
+                    f"{job.id}: main's catalogue has this {_kind(job)} job, and this catalogue"
+                    f' drops it: mark it retiring = "#<issue>" in a merge of its own first'
+                )
+            continue
+        if job.security == "security" and mine.security != "security":
+            problems.append(
+                f"{job.id}: security is {mine.security}, and main's catalogue has it security"
+            )
+        if job.live and not mine.live:
+            problems.append(f"{job.id}: live is false, and main's catalogue has it live")
+        for tier in job.tiers:
+            if tier not in mine.tiers:
+                problems.append(
+                    f"{job.id}: it leaves the {tier} tier, where main's catalogue runs this"
+                    f" {_kind(job)} job"
+                )
+    if _breadth_security(trusted) and not _breadth_security(candidate):
+        problems.append(
+            "no security job runs in the breadth tier, and main's catalogue runs one there"
+        )
+    return problems
+
+
+def _breadth_security(cat: Catalogue) -> bool:
+    return any(job.security == "security" for job in cat.tier("breadth"))
 
 
 # ── python -m tools.ci list | explain ───────────────────────────────────────────────────────

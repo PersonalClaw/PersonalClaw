@@ -35,7 +35,9 @@ request's, so a pull request that drops or narrows one of main's (the workflows'
 ``deploy/docker``'s whole tier, or a job a script adds) still plans what main's says. A job-adding
 override of main's that names a job the tree's catalogue lacks plans the whole tier for its paths,
 since the job it promised can no longer be named. Either file unreadable plans nothing, exit 2,
-so the caller runs everything.
+so the caller runs everything. Main's catalogue is also the reference the tree's is loaded
+against (``catalogue.against``): a pull request's catalogue that drops a security or live job of
+main's, unless main marks it retiring, is refused, and plans nothing either.
 
 ``--outputs`` prints the two lines ``ci.yml``'s ``changes`` job publishes, ``full=true|false``
 and ``jobs=<JSON list>``, on stdout, and the plan on stderr.
@@ -594,16 +596,26 @@ def read_beside(path: Path, cat: Catalogue, areas: Path | None = None) -> tuple[
     return catalogue.load_areas(catalogue._text(where, str(where)), cat, str(where))
 
 
-def trusted_overrides(areas: Path, cat: Catalogue) -> tuple[Override, ...]:
+def trusted_catalogue(areas: Path) -> Catalogue:
+    """Main's catalogue, beside its trusted areas file. Raises when it cannot be read."""
+    path = areas.with_name(Path(catalogue.CATALOGUE).name)
+    return catalogue.load(catalogue._text(path, str(path)), str(path))
+
+
+def trusted_overrides(
+    areas: Path, cat: Catalogue, trusted: Catalogue | None = None
+) -> tuple[Override, ...]:
     """The overrides of a trusted areas file (main's, beside main's catalogue), read against that
     catalogue, never the tree under test's, as they apply to ``cat``, the tree's. Added to the
     tree's own they make the union: a path is whole-tier when either copy says so, and gets every
     job either copy adds. A job main's override adds that ``cat`` does not have makes its paths
     whole-tier instead, so dropping a job cannot drop the run it promised. Each reason says it is
-    main's. Raises what :func:`read_beside` raises when either file cannot be read, and the
-    command then plans nothing, so its caller runs everything."""
+    main's. ``trusted``: main's catalogue already read (:func:`trusted_catalogue`). Raises what
+    :func:`read_beside` raises when either file cannot be read, and the command then plans
+    nothing, so its caller runs everything."""
     path = areas.with_name(Path(catalogue.CATALOGUE).name)
-    trusted = catalogue.load(catalogue._text(path, str(path)), str(path))
+    if trusted is None:
+        trusted = trusted_catalogue(areas)
     ids = {j.id for j in cat.jobs}
     out: list[Override] = []
     for o in read_beside(path, trusted, areas):
@@ -620,7 +632,8 @@ def trusted_overrides(areas: Path, cat: Catalogue) -> tuple[Override, ...]:
 def main(argv: list[str]) -> int:
     """``python -m tools.ci plan <tier>``: the plan as JSON. Exit 0 with a plan, 2 when the
     tier, the catalogue or its overrides, or the ``--trusted-areas`` file or the catalogue
-    beside it, cannot be read (nothing is printed, so a caller plans everything)."""
+    beside it, cannot be read, or that catalogue refuses this one (nothing is printed, so a
+    caller plans everything)."""
     parser = argparse.ArgumentParser(
         prog="python -m tools.ci plan", description=__doc__.splitlines()[0]
     )
@@ -653,11 +666,14 @@ def main(argv: list[str]) -> int:
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) and exc.code else 2
     try:
+        trusted = None
+        if args.trusted_areas is not None:
+            trusted = trusted_catalogue(args.trusted_areas)
         source = str(args.catalogue)
-        cat = catalogue.load(catalogue._text(args.catalogue, source), source)
+        cat = catalogue.load(catalogue._text(args.catalogue, source), source, trusted)
         overrides = read_beside(args.catalogue, cat, args.areas)
         if args.trusted_areas is not None:
-            overrides += trusted_overrides(args.trusted_areas, cat)
+            overrides += trusted_overrides(args.trusted_areas, cat, trusted)
         result = plan(
             cat,
             args.tier,

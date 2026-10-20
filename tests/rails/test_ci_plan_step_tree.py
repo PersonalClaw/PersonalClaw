@@ -14,6 +14,10 @@ planner is main's, run from a folder of its own over this checkout's catalogue a
 the checkout; a name reaches it whole, a newline in it included; the ``ci:full`` label plans the
 whole tier; and the planner's warnings reach the log, and nothing else it prints a workflow
 command.
+
+The check step after it (#3909) runs main's ``catalogue-check`` over this checkout's catalogue
+from the same folder. Its rows hold that a refusal, or a main whose copy could not be fetched, is
+a red job, and that main's planner plans the whole tier for a catalogue main refuses.
 """
 
 from __future__ import annotations
@@ -556,3 +560,380 @@ def test_a_judge_with_no_planner_runs_the_whole_tier(tmp_path) -> None:
     """A base commit older than the planner archives no tools/ci: git archive fails."""
     ran = _run(tmp_path, judge=None)
     _whole_tier(ran)
+
+
+# ── main's tools/ci checks the pull request's catalogue (#3909) ─────────────────────────────
+#
+# The step after the plan reads the folder the plan step archived main's tools/ci into, and runs
+# main's `catalogue-check` over this checkout's catalogue. Unlike the plan it fails closed: a
+# refusal, or a main whose copy could not be fetched, is a red job.
+
+_CHECK_STEP = "main's tools/ci checks this pull request's catalogue"
+#: How each line of a refusal opens: main's loader names the catalogue it refuses.
+_REFUSED = "catalogue-check: this pull request's catalogue: "
+#: The security job the rows drop: it runs in breadth alone and no other job runs after it, so a
+#: catalogue without it is refused for the drop and for nothing else.
+_DROPPED = "security-macos"
+
+
+def _check_step() -> dict:
+    steps = _ci()["jobs"]["changes"]["steps"]
+    return next(s for s in steps if s.get("id") == "catalogue-check")
+
+
+def _without_verb(judge_tar: Path, tmp: Path, *, module: bool) -> Path:
+    """``judge_tar`` with a ``__main__.py`` that does not name the check's verb. With ``module``
+    false it is a main older than the check: no catalogue_check.py, and no import of it either.
+    With ``module`` true the module stays, and the verb alone is gone."""
+    name = "verbless" if module else "older"
+    tree = tmp / name
+    tree.mkdir()
+    with tarfile.open(judge_tar) as tar:
+        tar.extractall(tree, filter="data")
+    gone = ['    "catalogue-check": catalogue_check.main,\n']
+    if not module:
+        (tree / "tools" / "ci" / "catalogue_check.py").unlink()
+        gone.append("    catalogue_check,\n")
+    entry = tree / "tools" / "ci" / "__main__.py"
+    text = entry.read_text(encoding="utf-8")
+    for line in gone:
+        assert text.count(line) == 1, line
+        text = text.replace(line, "")
+    entry.write_text(text, encoding="utf-8")
+    out = tmp / f"{name}.tar"
+    with tarfile.open(out, mode="w") as tar:
+        tar.add(tree / "tools", arcname="tools")
+    return out
+
+
+def _drop_entry(text: str, job_id: str) -> str:
+    head, *entries = text.split("\n[[job]]\n")
+    kept = [e for e in entries if not e.startswith(f'id = "{job_id}"\n')]
+    assert len(kept) == len(entries) - 1, job_id
+    return "\n[[job]]\n".join([head, *kept])
+
+
+def _mark_entry(text: str, job_id: str) -> str:
+    opening = f'id = "{job_id}"\n'
+    assert text.count(opening) == 1, job_id
+    return text.replace(opening, f'{opening}retiring = "#4999"\n', 1)
+
+
+#: What a planted pull request appends to its own copy of the rules, one file at a time: a check
+#: that passes, or a reference that objects to nothing, whatever the catalogue.
+_ACCEPT_ALL = {
+    "catalogue_check.py": "\n\ndef main(argv):\n    return 0\n",
+    "catalogue.py": "\n\ndef against(candidate, trusted):\n    return []\n",
+}
+
+
+@dataclass
+class Checked:
+    rc: int
+    log: str
+
+
+def _run_check(
+    tmp: Path,
+    judge_tar: Path | None,
+    *,
+    candidate: str | None = None,
+    mains: str | None = None,
+    pr: bool = True,
+    without: tuple[str, ...] = (),
+    own_rules: str | None = None,
+    event: tuple[str, str] | None = None,
+) -> Checked:
+    """Run the check step once: ``judge_tar`` extracted where the plan step leaves main's
+    tools/ci (none when it is None), main's catalogue there replaced by ``mains`` and the files
+    in ``without`` removed from it; ``candidate`` as this checkout's catalogue. ``own_rules``
+    names a file of ``_ACCEPT_ALL``: the checkout then carries tools/ci too, that file of it
+    planted to accept everything. ``event``: the run's event name and ref, as GitHub sets them
+    for every step; by default a pull request's, or with ``pr`` false a push to main's."""
+    bin_, temp, workspace = tmp / "bin", tmp / "runner", tmp / "workspace"
+    for folder in (bin_, temp, workspace / "tools" / "ci"):
+        folder.mkdir(parents=True)
+    if own_rules is not None:
+        assert judge_tar is not None
+        with tarfile.open(judge_tar) as tar:
+            tar.extractall(workspace, filter="data")
+        with (workspace / "tools" / "ci" / own_rules).open("a", encoding="utf-8") as planted:
+            planted.write(_ACCEPT_ALL[own_rules])
+    own = (REPO / "tools" / "ci" / "catalogue.toml").read_text(encoding="utf-8")
+    (workspace / "tools" / "ci" / "catalogue.toml").write_text(
+        own if candidate is None else candidate, encoding="utf-8"
+    )
+    judge = temp / "judge"
+    if judge_tar is not None:
+        judge.mkdir()
+        with tarfile.open(judge_tar) as tar:
+            tar.extractall(judge, filter="data")
+        if mains is not None:
+            (judge / "tools" / "ci" / "catalogue.toml").write_text(mains, encoding="utf-8")
+        for rel in without:
+            (judge / rel).unlink()
+    (bin_ / "python3").write_text(f'#!/bin/sh\nexec {sys.executable} "$@"\n')
+    (bin_ / "python3").chmod(0o755)
+    script = tmp / "check.sh"
+    script.write_text(_check_step()["run"], encoding="utf-8")
+    if event is None:
+        event = ("pull_request", "refs/pull/7/merge") if pr else ("push", "refs/heads/main")
+    env = {
+        "PATH": f"{bin_}:/usr/bin:/bin",
+        "HOME": str(tmp),
+        "PR_NUMBER": "7" if pr else "",
+        "GITHUB_EVENT_NAME": event[0],
+        "GITHUB_REF": event[1],
+        "GITHUB_WORKSPACE": str(workspace),
+        "RUNNER_TEMP": str(temp),
+    }
+    done = subprocess.run(
+        [shutil.which("bash") or "/bin/bash", "-e", str(script)],
+        cwd=workspace,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    return Checked(done.returncode, done.stdout + done.stderr)
+
+
+def test_the_job_the_rows_drop_is_a_breadth_security_job_no_job_runs_after() -> None:
+    from tools.ci import catalogue
+
+    cat = catalogue.read(REPO)
+    assert (cat.job(_DROPPED).security, cat.job(_DROPPED).tiers) == ("security", ("breadth",))
+    assert not [job.id for job in cat.jobs if _DROPPED in job.after]
+
+
+def test_the_check_step_reads_only_the_env_the_harness_gives_it() -> None:
+    step = _check_step()
+    assert step.get("name") == _CHECK_STEP
+    assert step.get("env") == {"PR_NUMBER": "${{ github.event.pull_request.number }}"}
+    assert step.get("shell") is None and step.get("if") is None
+    assert "${{" not in step["run"], "an expression pasted into the shell"
+    ids = [s.get("id") for s in _ci()["jobs"]["changes"]["steps"]]
+    assert ids.index("catalogue-check") > ids.index("plan")
+
+
+def test_a_refusal_fails_the_changes_job() -> None:
+    """The step's non-zero exit is the job's: neither the step nor the job continues on error.
+    The gated jobs survive the red job (``!cancelled()``) and read the plan step's outputs, which
+    the plan step wrote before the check ran."""
+    changes = _ci()["jobs"]["changes"]
+    assert "continue-on-error" not in _check_step()
+    assert "continue-on-error" not in changes
+    ids = [s.get("id") for s in changes["steps"]]
+    assert ids[-1] == "catalogue-check", "a step after the check would run only on its green"
+    for job in _GATED:
+        assert " ".join(str(_ci()["jobs"][job]["if"]).split()).startswith("${{ !cancelled() && ")
+
+
+def test_the_check_runs_mains_copy_over_this_checkouts_catalogue(tmp_path, judge_tar) -> None:
+    run = _check_step()["run"]
+    assert '(cd "$judge" && python3 -m tools.ci catalogue-check' in run
+    assert '--catalogue "$GITHUB_WORKSPACE/tools/ci/catalogue.toml"' in run
+    assert '--against "$judge/tools/ci/catalogue.toml"' in run
+    ran = _run_check(tmp_path, judge_tar)
+    assert ran.rc == 0, ran.log
+    assert "catalogue-check: main's catalogue has no objection to this one" in ran.log
+
+
+def test_a_pull_request_that_drops_an_unmarked_security_job_is_red(tmp_path, judge_tar) -> None:
+    own = (REPO / "tools" / "ci" / "catalogue.toml").read_text(encoding="utf-8")
+    ran = _run_check(tmp_path, judge_tar, candidate=_drop_entry(own, _DROPPED))
+    assert ran.rc == 1, ran.log
+    assert f"{_REFUSED}{_DROPPED}: main's catalogue has this security job" in ran.log
+    assert "::error title=catalogue refused::" in ran.log
+
+
+@pytest.mark.parametrize("planted", sorted(_ACCEPT_ALL))
+def test_a_pull_requests_own_rules_never_judge_its_catalogue(tmp_path, judge_tar, planted) -> None:
+    """The planted pull request drops an unmarked security job and edits its own copy of the
+    rules to accept any catalogue. Run from its checkout, that copy passes it; the step runs
+    main's copy, so the job is red all the same."""
+    own = (REPO / "tools" / "ci" / "catalogue.toml").read_text(encoding="utf-8")
+    ran = _run_check(tmp_path, judge_tar, candidate=_drop_entry(own, _DROPPED), own_rules=planted)
+    assert ran.rc == 1, ran.log
+    assert f"{_REFUSED}{_DROPPED}: main's catalogue has this security job" in ran.log
+    workspace, judge = tmp_path / "workspace", tmp_path / "runner" / "judge"
+    theirs = subprocess.run(
+        [sys.executable, "-m", "tools.ci", "catalogue-check"]
+        + ["--catalogue", str(workspace / "tools" / "ci" / "catalogue.toml")]
+        + ["--against", str(judge / "tools" / "ci" / "catalogue.toml")],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert theirs.returncode == 0, "the plant took no effect: " + theirs.stdout + theirs.stderr
+
+
+def test_the_decision_requires_the_job_the_check_runs_in() -> None:
+    """``merge_decision`` requires the check's job of the run it counts, by its id here, so a
+    refused check reds the verdict and not only this run."""
+    from tools.ci import merge_decision
+
+    steps = _ci()["jobs"][merge_decision.CATALOGUE_CHECK]["steps"]
+    assert [s.get("id") for s in steps].count("catalogue-check") == 1
+
+
+def test_a_pull_request_that_empties_breadth_of_security_jobs_is_red(tmp_path, judge_tar) -> None:
+    """The planted pull request drops every breadth-only security job, each marked retiring on
+    main, and takes `security` out of breadth: breadth keeps a security job all the same."""
+    from tools.ci import catalogue
+
+    own = (REPO / "tools" / "ci" / "catalogue.toml").read_text(encoding="utf-8")
+    cat = catalogue.load(own)
+    gone = [j.id for j in cat.tier("breadth") if j.security == "security" and j.id != "security"]
+    assert gone and all(cat.job(j).tiers == ("breadth",) for j in gone), gone
+    mains, candidate = own, own
+    for job_id in gone:
+        mains, candidate = _mark_entry(mains, job_id), _drop_entry(candidate, job_id)
+    for job in cat.jobs:  # an ordinary job that uses a dropped one's output goes with it
+        if set(job.after) & set(gone):
+            assert job.security == "ordinary" and not job.live, job.id
+            candidate = _drop_entry(candidate, job.id)
+    tiers = 'id = "security"\ntiers = ["change", "merge", "breadth"]\n'
+    assert candidate.count(tiers) == 1
+    candidate = candidate.replace(tiers, 'id = "security"\ntiers = ["change", "merge"]\n')
+    ran = _run_check(tmp_path, judge_tar, candidate=candidate, mains=mains)
+    assert ran.rc == 1, ran.log
+    assert f"{_REFUSED}security: it leaves the breadth tier" in ran.log
+    assert f"{_REFUSED}no security job runs in the breadth tier" in ran.log
+
+
+def test_a_pull_request_that_drops_a_job_main_marks_retiring_passes(tmp_path, judge_tar) -> None:
+    own = (REPO / "tools" / "ci" / "catalogue.toml").read_text(encoding="utf-8")
+    ran = _run_check(
+        tmp_path,
+        judge_tar,
+        candidate=_drop_entry(own, _DROPPED),
+        mains=_mark_entry(own, _DROPPED),
+    )
+    assert ran.rc == 0, ran.log
+
+
+def test_a_pull_request_that_marks_and_drops_a_job_together_is_red(tmp_path, judge_tar) -> None:
+    own = (REPO / "tools" / "ci" / "catalogue.toml").read_text(encoding="utf-8")
+    candidate = _drop_entry(_mark_entry(own, _DROPPED), _DROPPED)
+    ran = _run_check(tmp_path, judge_tar, candidate=candidate)
+    assert ran.rc == 1, ran.log
+
+
+def test_a_pull_request_that_drops_a_live_job_is_red(tmp_path, judge_tar) -> None:
+    own = (REPO / "tools" / "ci" / "catalogue.toml").read_text(encoding="utf-8")
+    ran = _run_check(tmp_path, judge_tar, candidate=_drop_entry(own, "audit-nightly"))
+    assert ran.rc == 1, ran.log
+    assert f"{_REFUSED}audit-nightly: main's catalogue has this live job" in ran.log
+
+
+def test_a_catalogue_only_mains_rules_refuse_is_red(tmp_path, judge_tar) -> None:
+    """Main's loader reads the candidate: the candidate's own copy of the rules does not run."""
+    own = (REPO / "tools" / "ci" / "catalogue.toml").read_text(encoding="utf-8")
+    bad = own.replace("timeout_min = 10\n", 'timeout_min = 10\nretiring = "soon"\n', 1)
+    ran = _run_check(tmp_path, judge_tar, candidate=bad)
+    assert ran.rc == 1, ran.log
+    assert "retiring names the issue that retires the job" in ran.log
+
+
+def test_no_judge_is_red_and_never_unchecked(tmp_path) -> None:
+    ran = _run_check(tmp_path, None)
+    assert ran.rc == 1, ran.log
+    assert "::error title=catalogue unchecked::" in ran.log
+
+
+def test_a_judge_without_its_catalogue_is_red(tmp_path, judge_tar) -> None:
+    ran = _run_check(tmp_path, judge_tar, without=("tools/ci/catalogue.toml",))
+    assert ran.rc == 1, ran.log
+    assert "::error title=catalogue unchecked::" in ran.log
+
+
+def test_a_main_older_than_the_check_plans_and_has_nothing_to_check_against(
+    tmp_path, judge_tar
+) -> None:
+    """The merge that adds the check: main's copy has neither the module nor its verb. Its
+    planner still plans, and the check step has no rules to apply, so it passes, saying so."""
+    older = _without_verb(judge_tar, tmp_path, module=False)
+    (tmp_path / "plan").mkdir()
+    planned = _run(tmp_path / "plan", changed=("docs/guides/x.md",), judge=older)
+    assert planned.rc == 0 and planned.published["full"] == "false", planned.log
+    (tmp_path / "check").mkdir()
+    ran = _run_check(tmp_path / "check", older)
+    assert ran.rc == 0, ran.log
+    assert "::warning title=catalogue unchecked::main's tools/ci has no catalogue check yet" in (
+        ran.log
+    )
+
+
+def test_a_main_that_names_the_check_without_its_module_is_red(tmp_path, judge_tar) -> None:
+    """The warning is only for a main with no check at all, neither the module nor its verb. A
+    copy of main's that names the verb and lacks the module is not that main: it is red, never
+    unchecked."""
+    ran = _run_check(tmp_path, judge_tar, without=("tools/ci/catalogue_check.py",))
+    assert ran.rc == 1, ran.log
+    assert "::warning title=catalogue unchecked::" not in ran.log
+
+
+def test_a_main_with_the_check_module_and_not_its_verb_is_red(tmp_path, judge_tar) -> None:
+    """The other half: catalogue_check.py is there and ``__main__.py`` does not name its verb.
+    Main's copy then knows no ``catalogue-check`` and exits 2, as on any usage error; that is a
+    red job, never the first merge's warning and never a pass."""
+    verbless = _without_verb(judge_tar, tmp_path, module=True)
+    (tmp_path / "check").mkdir()
+    ran = _run_check(tmp_path / "check", verbless)
+    assert ran.rc == 1, ran.log
+    assert "::warning title=catalogue unchecked::" not in ran.log
+    assert "::error title=catalogue refused::" in ran.log and "(exit 2)" in ran.log, ran.log
+
+
+def test_the_real_planner_runs_the_whole_tier_for_a_catalogue_main_refuses(
+    tmp_path, judge_tar
+) -> None:
+    """The planted pull request drops a breadth security job main does not mark. Its own files
+    alone plan a docs path narrowly; through the step, main's planner reads the catalogue against
+    main's, refuses it (exit 2), and the whole tier runs. The check step after it is red."""
+    from tools.ci import catalogue
+    from tools.ci import plan as planner
+
+    checkout = tmp_path / "checkout"
+    (checkout / "tools" / "ci").mkdir(parents=True)
+    own = (REPO / "tools" / "ci" / "catalogue.toml").read_text(encoding="utf-8")
+    (checkout / "tools" / "ci" / "catalogue.toml").write_text(
+        _drop_entry(own, _DROPPED), encoding="utf-8"
+    )
+    shutil.copy(REPO / "tools" / "ci" / "areas.toml", checkout / "tools" / "ci" / "areas.toml")
+    cat = catalogue.read(checkout)
+    alone = planner.plan(
+        cat, "merge", ["docs/guides/x.md"], overrides=catalogue.read_areas(checkout, cat)
+    )
+    assert not alone.full, "the plant took no effect: the path is whole-tier on its own"
+    (tmp_path / "plan").mkdir()
+    ran = _run(tmp_path / "plan", changed=("docs/guides/x.md",), judge=judge_tar, checkout=checkout)
+    _whole_tier(ran)
+    assert f"plan: {_DROPPED}: main's catalogue has this security job" in ran.summary, ran.summary
+    (tmp_path / "check").mkdir()
+    checked = _run_check(tmp_path / "check", judge_tar, candidate=_drop_entry(own, _DROPPED))
+    assert checked.rc == 1, checked.log
+
+
+def test_a_push_to_main_checks_nothing(tmp_path, judge_tar) -> None:
+    own = (REPO / "tools" / "ci" / "catalogue.toml").read_text(encoding="utf-8")
+    ran = _run_check(tmp_path, judge_tar, candidate=_drop_entry(own, _DROPPED), pr=False)
+    assert ran.rc == 0, ran.log
+    assert "a push to main: the catalogue under test is main's own" in ran.log
+
+
+@pytest.mark.parametrize(
+    "event", [("workflow_dispatch", "refs/heads/main"), ("push", "refs/heads/feature")]
+)
+def test_a_run_neither_of_a_pull_request_nor_a_push_to_main_is_red(
+    tmp_path, judge_tar, event
+) -> None:
+    """Only a push to main checks nothing. Any other run with no pull request, as a later
+    workflow on a candidate's tree might be, is red, never unchecked."""
+    own = (REPO / "tools" / "ci" / "catalogue.toml").read_text(encoding="utf-8")
+    candidate = _drop_entry(own, _DROPPED)
+    ran = _run_check(tmp_path, judge_tar, candidate=candidate, pr=False, event=event)
+    assert ran.rc == 1, ran.log
+    assert "::error title=catalogue unchecked::" in ran.log

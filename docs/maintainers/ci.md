@@ -129,8 +129,12 @@ no workflow calls it yet.
   never from an older commit on `main`, the candidate's files or a worktree.
 - **Red:** a planned job that is missing, cancelled, skipped or red, even when the candidate's own
   workflow dropped it (results are read with `verdict.from_needs` and judged with
-  `verdict.decide`); results or a plan that cannot be read; a run naming the head with another
-  tree, whichever run counted; a green whose receipt would lack its toolchain or evidence.
+  `verdict.decide`); the same of the `changes` job (`merge_decision.CATALOGUE_CHECK`), whose
+  `catalogue-check` step runs main's `tools/ci` over the candidate's catalogue: no plan names
+  it, so it is required beside every non-empty plan (an empty plan stays red as empty), and a
+  check that was refused, skipped or never ran is red; results or a plan that cannot be read; a
+  run naming the head with another tree, whichever run counted; a green whose receipt would lack
+  its toolchain or evidence.
 - **Pending:** no counted run yet, or one of an older head, of other definitions, or against
   other partner heads than the current ones, so a partner head that moves takes a green back.
   A red or pending output carries no receipt, so `verify-check-run` never accepts it.
@@ -179,8 +183,9 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
   `pull_request_target` workflow is held like one of a `pull_request` workflow. A push to a feature branch counts as the pull request whose head it is. A push to `main`
   and a scheduled run are not a candidate's, so `main`'s own grouping is not this row's.
 
-Until a validator on the default branch runs the catalogue and this table, these rows run in the
-candidate's own suite, so a candidate could delete one.
+Main's `tools/ci` now reads a pull request's catalogue (see "Main's copy reads a pull request's
+catalogue" under "The catalogue"), but these rows still run in the candidate's own suite, so a
+candidate could delete one. Running them from main's copy is #3915's.
 
 ## The catalogue
 
@@ -302,8 +307,10 @@ Every entry declares:
 
 An entry may also set `platform`, `python`, `live`, `reuse`, `env`, `workers`, `workers_env`,
 `mem_gb`, `junit`, `shards`, `needs_node`, `needs_browser`, `full_history`, `after` (the jobs
-whose output it uses) and `install_exemptions`, each exemption with its reason. A key the reader
-does not know is refused, so a misspelt field fails rather than being ignored.
+whose output it uses), `install_exemptions`, each exemption with its reason, and `retiring`, the
+issue that retires the job, as `"#<number>"` (see "Main's copy reads a pull request's
+catalogue"). A key the reader does not know is refused, so a misspelt field fails rather than
+being ignored.
 
 `workers` is the job's worker count, a whole number or `auto`. Every pytest step's `-n` must equal
 it, and a step that passes `-n` needs it. `workers_env` names the variable through which another
@@ -375,6 +382,52 @@ A local run's reuse of a recorded pass is under [Verdict reuse](#verdict-reuse).
   No job is in them yet.
 
 `explain` prints, for each tier, what it proves and what it does not.
+
+### Main's copy reads a pull request's catalogue
+
+A pull request's catalogue is read by main's `tools/ci`, with main's catalogue as the loader's
+reference (`catalogue.load` with `reference`, its rules in `catalogue.against`). Against main's,
+a pull request's catalogue is refused when it:
+
+- drops a `security` or `live` job main has, by removing its entry or renaming it, unless main's
+  copy marks that entry `retiring = "#<issue>"`;
+- turns one of those jobs `ordinary`, or no longer `live`;
+- takes one out of a tier main runs it in (adding a tier is fine);
+- runs no security job in the `breadth` tier while main runs one there, whatever main marks.
+
+So a security or live job leaves in two merges. The first marks it `retiring`, naming the issue
+that retires it; the job stays in the catalogue and still runs. Once that is on `main`, a second
+pull request drops the entry, and only that: main's mark allows the drop, never a change of
+posture or tiers to a job that stays. A mark the pull request adds in the change that drops the
+entry is its own, not main's, so it allows nothing. An ordinary job leaves in one merge, and a
+new job needs nothing from main.
+
+**In `ci.yml`,** the `changes` job's `catalogue-check` step runs `python -m tools.ci
+catalogue-check --catalogue <the checkout's> --against <main's>` from the folder the plan step
+archived main's `tools/ci` into, so main's loader and rules read the pull request's catalogue,
+never its own. It exits 0 with no objection, 1 on a refusal or a catalogue either side cannot
+read, and 2 on a usage error; each line it prints starts `catalogue-check:`, so none reads as a
+workflow command (a line break in a problem, which can quote the pull request's text, is printed
+escaped). A refusal fails the job, and the merge decision requires that job of the run
+it counts, beside the plan (see "The merge controller's decision"), so a refusal reds the merge
+verdict too. Unlike the plan, the step fails closed: when main's copy, or main's catalogue in
+it, could not be fetched, the job is red. A push to `main` checks nothing, since its catalogue
+is main's own; any other run with no pull request is red. The merge that adds the check, whose
+`main` has neither `catalogue_check.py` nor its verb yet, passes with a warning; a copy of
+main's with one and not the other is red. The planner reads the catalogue against the same
+reference, so a catalogue main refuses plans nothing (exit 2) and the whole tier runs beside
+the red check. `e2e` and `apps-contract` survive the red `changes` job (`!cancelled()`), as they
+survive any other failure of it.
+
+`tests/test_ci_catalogue_check.py` plants each refusal and each allowance.
+`tests/rails/test_ci_plan_step_tree.py` runs the step as written, over this checkout's
+`tools/ci` as main's and over it as a `main` without the check has it, beside a checkout whose
+own copy of the rules accepts everything, and runs the real planner over a catalogue main
+refuses. `tests/test_ci_merge_decision.py` holds the decision red on a refused, skipped,
+cancelled or missing check.
+
+The contract table's rows still run in the candidate's own suite (see "The rows that hold it"
+under "Trust boundary"). Running them from main's copy is #3915's.
 
 ### Adding a job
 
@@ -492,16 +545,17 @@ A pull request that drops or narrows the workflows', `tools/ci`'s or `deploy/doc
 still runs the whole tier for them, one that drops a job-adding override still runs that job,
 and one that removes the job itself runs the whole tier for that override's paths. A trusted
 copy that cannot be read plans nothing, so everything runs. With no such commit, or none that
-can be fetched, nothing plans. The `ci:full` label passes `--full`; the labels are the
-event's, so one added later counts from the next push. The step publishes only `full` and a
-list of job ids exactly as the planner prints it; anything else, and no answer, becomes
-`full=true`. The browser run's jobs and `apps-contract` run when `full` is not `false` or the
-list names them, and survive a failed `changes` job (`!cancelled()`), so an answer that is
-missing, malformed or never written runs them. `tests/rails/test_ci_plan_step_tree.py` runs the
-step as written, against planted answers and the real planner. `browse-live` is a job of its own
+can be fetched, nothing plans. Main's catalogue is also the reference the checkout's is read
+against, so a catalogue main refuses plans nothing either (see "Main's copy reads a pull
+request's catalogue"); the step after the plan fails the job over it. The `ci:full` label passes
+`--full`; the labels are the event's, so one added later counts from the next push. The step
+publishes only `full` and a list of job ids exactly as the planner prints it; anything else, and no
+answer, becomes `full=true`. The browser run's jobs and `apps-contract` run when `full` is not
+`false` or the list names them, and survive a failed `changes` job (`!cancelled()`), so an answer
+that is missing, malformed or never written runs them. `tests/rails/test_ci_plan_step_tree.py` runs
+the step as written, against planted answers and the real planner. `browse-live` is a job of its own
 that waits on nothing and runs on every pull request and every push, a tested tree's included: a
-security job is never planned out, and its evidence is never reused. Every other job runs as
-before.
+security job is never planned out, and its evidence is never reused. Every other job runs as before.
 
 To add a rule, prefer a declared input of the job it affects; use an override only for a path
 that is no job's input but changes a job's result, and give it a reason that says how.

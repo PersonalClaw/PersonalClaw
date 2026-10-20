@@ -7,9 +7,10 @@ The decision counts one run's per-job results against the planned job set:
   own run being advisory, so a definition it edited cannot judge it.
 
 A planned job that is missing, cancelled, skipped or red is red, even when the candidate's own
-workflow dropped it. A counted run for an older head or an older partner head is pending, so a
-changed partner head takes a green back. The planned set is read from the default branch's
-catalogue, at main's tip, never from the candidate's files or the worktree.
+workflow dropped it, and so is the job that runs main's catalogue check, which no plan names. A
+counted run for an older head or an older partner head is pending, so a changed partner head
+takes a green back. The planned set is read from the default branch's catalogue, at main's tip,
+never from the candidate's files or the worktree.
 
 Each table asserts its row count, so a dropped row fails the table. The definition-change rows
 compare real git objects in a planted repository in ``tmp_path``. Only the import scan reads this
@@ -75,10 +76,18 @@ TOOLCHAIN = {"python": "3.12.15"}
 OWN_TOOLCHAIN = {"python": "3.13.9"}
 
 
-def _needs(**results: str) -> str:
-    return json.dumps(
-        {key.replace("_", "-"): {"result": r, "outputs": {}} for key, r in results.items()}
-    )
+#: The ``ci.yml`` job whose ``catalogue-check`` step runs main's ``tools/ci`` over the candidate's
+#: catalogue. No plan names it; the decision requires it of the run it counts.
+CHECK_JOB = "changes"
+
+
+def _needs(*, catalogue_check: str | None = "success", **results: str) -> str:
+    """``toJSON(needs)`` of ``results``, with the catalogue check's job as ``catalogue_check``
+    says (left out when it is None)."""
+    jobs = {key.replace("_", "-"): {"result": r, "outputs": {}} for key, r in results.items()}
+    if catalogue_check is not None:
+        jobs[CHECK_JOB] = {"result": catalogue_check, "outputs": {}}
+    return json.dumps(jobs)
 
 
 ALL_GREEN = _needs(rails="success", python_suite="success", web_unit="success")
@@ -324,6 +333,45 @@ def test_every_way_a_planned_job_falls_short_is_red(subtests: Any) -> None:
             assert decision.state == md.RED, decision.reason
             assert any(r.key == key and r.kind == kind for r in decision.reasons), decision.reasons
             assert decision.receipt is None
+
+
+# ── Red: main's catalogue check, required beside the plan ─────────────────────────────────────
+
+#: Each way the catalogue check's job falls short, with the kind its reason must name.
+CHECK_RED_ROWS: list[tuple[str, str | None, str]] = [
+    ("main's copy refused the candidate's catalogue", "failure", "failure"),
+    ("no catalogue check in the run", None, "missing"),
+    ("a skipped catalogue check", "skipped", "skipped"),
+    ("a cancelled catalogue check", "cancelled", "cancelled"),
+]
+
+
+def test_the_required_check_is_the_job_ci_runs_it_in() -> None:
+    assert md.CATALOGUE_CHECK == CHECK_JOB
+
+
+def test_a_catalogue_check_that_did_not_pass_is_red_with_every_planned_job_green(
+    subtests: Any,
+) -> None:
+    """A refused catalogue check reds the decision, not only its run's conclusion, and a missing,
+    skipped or cancelled one is red too: never read as no objection. No plan names the job, so
+    the decision requires it of whichever run it counts."""
+    assert len(CHECK_RED_ROWS) == 4, "a red row was dropped from the table"
+    for name, result, kind in CHECK_RED_ROWS:
+        needs = _needs(
+            rails="success", python_suite="success", web_unit="success", catalogue_check=result
+        )
+        for counted in (md.CANDIDATE_RUN, md.DEFAULT_BRANCH_RUN):
+            with row(subtests, case=f"{name}, the {counted} run counted"):
+                if counted == md.CANDIDATE_RUN:
+                    decision = _decide(_run(needs))
+                else:
+                    decision = _decide(_run(), comparison=CHANGED, trusted=_trusted_run(needs))
+                assert decision.state == md.RED, decision.reason
+                assert decision.counted == counted
+                kinds = {(r.key, r.kind) for r in decision.reasons}
+                assert kinds == {(CHECK_JOB, kind)}, decision.reasons
+                assert decision.receipt is None
 
 
 def test_needs_that_cannot_be_read_is_red(subtests: Any) -> None:
