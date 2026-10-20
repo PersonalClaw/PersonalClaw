@@ -62,6 +62,8 @@ beforeAll(async () => {
     import('../pages/apps/AppsSection'),
     import('../pages/apps/AppHostPage'),
     import('../pages/dashboard/DashboardPage'),
+    import('../pages/learning/LearningPage'),
+    import('../pages/workflows/WorkflowsSection'),
   ])
 }, 120_000)
 
@@ -239,6 +241,70 @@ describe('the sidebar holds one Capabilities row', () => {
     expect(names.indexOf('An app board'), 'after the destinations, the last of them Workflows').toBeGreaterThan(names.indexOf('Workflows'))
     expect(names.indexOf('An app board'), 'above Settings').toBeLessThan(names.indexOf('Settings'))
   })
+})
+
+/** The sidebar top to bottom: each section header with the rows under it, the rows above the first
+ *  header, and the rows pinned to the bottom, under ''. A destination is a row of the rail, its
+ *  button, with its section's header line just above it where a section starts; the threads are a
+ *  group of their own and no row here. */
+function railGroups(): { header: string, rows: string[] }[] {
+  const groups = [{ header: '', rows: [] as string[] }]
+  for (const item of rail().children) {
+    // The spacer that pins Settings to the bottom ends every section.
+    if (item.tagName === 'DIV' && item.children.length === 0) { groups.push({ header: '', rows: [] }); continue }
+    const button = item.lastElementChild
+    if (item.tagName !== 'DIV' || item.getAttribute('role') === 'group' || !(button instanceof HTMLButtonElement)) continue
+    const header = item.children.length === 2 ? item.firstElementChild : null
+    if (header) groups.push({ header: header.textContent ?? '', rows: [] })
+    groups[groups.length - 1].rows.push(button.getAttribute('aria-label') ?? '')
+  }
+  return groups
+}
+
+/** The destinations the full sidebar holds, top to bottom, each with the address its row opens. */
+const DESTINATIONS = [
+  ['Home', 'dashboard'],
+  ['Chat', 'chat'],
+  ['Projects', 'projects'],
+  ['Knowledge', 'knowledge'],
+  ['Tasks', 'tasks'],
+  ['Inbox', 'inbox'],
+  ['Triggers', 'triggers'],
+  ['Files', 'files'],
+  ['Artifacts', 'artifacts'],
+  ['Terminal', 'terminal'],
+  ['Capabilities', 'capabilities'],
+  ['Learning', 'learning'],
+  ['Workflows', 'workflows'],
+  ['Settings', 'settings'],
+] as const
+
+describe('no sidebar header repeats a row under it', () => {
+  it('no section header names a row under it', async () => {
+    await open('dashboard')
+    const groups = railGroups()
+    expect(groups.filter((g) => g.header).length, 'the full sidebar draws its section headers').toBeGreaterThan(0)
+    for (const { header, rows } of groups.filter((g) => g.header)) {
+      expect(rows.map((r) => r.toLowerCase()), `the "${header}" header repeats a row under it`).not.toContain(header.toLowerCase())
+    }
+  })
+
+  it('Capabilities, Learning and Workflows keep their place and their order, with no header of their own', async () => {
+    await open('dashboard')
+    const labels = DESTINATIONS.map(([label]) => label) as string[]
+    expect(railRows().filter((r) => labels.includes(r))).toEqual(labels)
+    const headers = railGroups().map((g) => g.header)
+    for (const name of ['Capabilities', 'Learning', 'Workflows']) expect(headers).not.toContain(name)
+  })
+
+  it.each(DESTINATIONS.filter(([label]) => ['Capabilities', 'Learning', 'Workflows'].includes(label)))(
+    'the %s row still opens #/%s', async (label, address) => {
+      await open('dashboard')
+      fireEvent.click(within(rail()).getByRole('button', { name: label }))
+      await settle()
+      expect(location.hash).toBe(`#/${address}`)
+      expect(railLit()).toEqual([label])
+    })
 })
 
 describe('the palette and the catalogue cover every tab', () => {
