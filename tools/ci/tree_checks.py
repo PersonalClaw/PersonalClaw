@@ -164,7 +164,7 @@ CHECKS: Mapping[str, Check] = {
         sources=(),
     ),
     "harness": Check(
-        owner="ci.yml harness: python -m harness validate, and python -m harness scan",
+        owner="ci.yml harness: python -m harness validate --strict, and python -m harness scan",
         entries={(_HARNESS, "main"): "harness"},
         sources=(_group(_HARNESS, "_repo_root"),),
     ),

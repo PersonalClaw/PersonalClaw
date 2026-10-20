@@ -158,8 +158,9 @@ spec author can add requirements; the diff can only add more, never remove.
 Run on the repo venv, from the repo root:
 
 ```bash
-.venv/bin/python -m harness validate        # shape + reference-resolve every spec
-.venv/bin/python -m harness validate --fast  # shape only (skip pytest collection)
+.venv/bin/python -m harness validate          # shape + reference-resolve every spec
+.venv/bin/python -m harness validate --fast   # shape only (skip pytest collection)
+.venv/bin/python -m harness validate --strict # a warning fails too (what CI runs)
 .venv/bin/python -m harness explain T1.foo    # what commands/rules/tests a task owes
 .venv/bin/python -m harness run T1.foo         # execute the task's required profiles
 .venv/bin/python -m harness run --diff         # diff-aware selection
