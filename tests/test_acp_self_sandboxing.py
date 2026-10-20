@@ -163,17 +163,56 @@ def test_the_readiness_probe_honours_the_declared_sandbox_mode(
     assert seen[0] == expected
 
 
-def test_every_options_spawn_path_reads_the_mode_through_one_helper():
-    """Guard against another reader drifting. The defect was call sites each deciding for
-    themselves; ``options.get("sandbox_mode")`` must therefore appear exactly once in the
-    module — inside :func:`options_sandbox_mode` — and both spawn paths read it there."""
-    from pathlib import Path as _Path
+#: ``(case, options, mode)``: what an entry's options declare, and the mode the helper reads.
+_DECLARED = [
+    ("nothing declared", {}, "auto"),
+    ("a self-sandboxing runtime", {"sandbox_mode": "off"}, "off"),
+    ("an empty declaration", {"sandbox_mode": ""}, "auto"),
+    ("a null declaration", {"sandbox_mode": None}, "auto"),
+]
 
+
+def test_the_helper_reads_the_mode_an_entry_declares(subtests):
+    """What :func:`options_sandbox_mode` reads off an entry: its declaration, else ``auto``."""
+    from table_rows import row
+
+    from personalclaw.llm.acp_agent import options_sandbox_mode
+
+    assert len(_DECLARED) == 4, "a case was dropped from the table"
+    for case, options, mode in _DECLARED:
+        with row(subtests, case=case):
+            assert options_sandbox_mode(dict(options)) == mode, case
+
+
+def test_both_spawn_paths_take_the_mode_from_the_one_helper(monkeypatch, tmp_path):
+    """Guard against another reader drifting. The defect was call sites each deciding for
+    themselves, so only the factory honoured a declared mode. With a helper that answers ``off``
+    for an entry declaring nothing, the probe (a Test) spawns its CLI under ``off`` and the factory
+    builds its runtime under ``off``, each having handed the helper the entry's own options: a
+    path that read the option itself would spawn under ``auto``."""
     import personalclaw.llm.acp_agent as mod
 
-    source = _Path(mod.__file__).read_text()
-    assert source.count('options.get("sandbox_mode")') == 1
-    assert source.count("options_sandbox_mode(options)") == 2  # the probe (a Test), the factory
+    fake = _fake_cli(monkeypatch, tmp_path, "plain-cli", _DIES_ON_STDERR)
+    register_acp_cli_entry(cli="plain-cli", dialect="default", command=[str(fake)])
+    entry = get_default_registry().get_entry("acp:plain-cli")
+    assert mod.options_sandbox_mode(dict(entry.options)) == "auto", "the entry declares nothing"
+    asked: list[object] = []
+
+    def _helper(options: dict) -> str:
+        asked.append(options.get("command"))
+        return "off"
+
+    monkeypatch.setattr(mod, "options_sandbox_mode", _helper)
+    seen = _spy_transport_mode(monkeypatch)
+
+    asyncio.run(AcpAgentProvider.probe_readiness({**entry.options, "probe_timeout_secs": 20}))
+    assert seen == ["off"], f"the probe spawned under {seen}, not the helper's mode"
+    assert asked == [[str(fake)]], "the probe did not ask the helper about this entry"
+
+    provider = mod._factory(entry=entry)
+    assert provider._sandbox_mode == "off", "the factory decided the mode itself"
+    assert provider.client._sandbox_mode == "off"
+    assert asked == [[str(fake)]] * 2, "the factory did not ask the helper about this entry"
 
 
 def test_a_plain_runtime_is_still_wrapped_when_a_backend_exists():

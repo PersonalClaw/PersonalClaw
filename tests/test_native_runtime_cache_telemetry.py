@@ -36,8 +36,15 @@ import pytest
 
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
+from personalclaw.guardrails.failure import BudgetExceededError
 from personalclaw.llm.anthropic import _read_cache_usage as _anthropic_read_cache
-from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, EVENT_TOOL_CALL, AgentEvent
+from personalclaw.llm.events import (
+    EVENT_COMPLETE,
+    EVENT_SPENT,
+    EVENT_TEXT_CHUNK,
+    EVENT_TOOL_CALL,
+    AgentEvent,
+)
 from personalclaw.llm.openai import _read_cache_usage as _openai_read_cache
 
 # The measured numbers from the issue: the provider reported 4224 cache reads and the
@@ -81,13 +88,15 @@ class _ScriptedModel:
     supports_tools = True
     _model = "scripted"
 
-    def __init__(self, turns: list[list[AgentEvent]]) -> None:
+    def __init__(self, turns: list[list[AgentEvent] | Exception]) -> None:
         self._turns = turns
         self.calls = 0
 
     async def complete(self, messages, *, tools=None, model=None, reasoning_effort=""):
         idx = min(self.calls, len(self._turns) - 1)
         self.calls += 1
+        if isinstance(self._turns[idx], Exception):
+            raise self._turns[idx]  # a call refused before it was made
         for ev in self._turns[idx]:
             yield ev
 
@@ -235,14 +244,130 @@ def test_a_stop_between_cycles_keeps_the_cache_counts_it_already_spent(
     assert terminal.cache_creation_tokens == 12
 
 
-# ── the field names exist at all (guards a silent rename) ──────────────────────
+# ── every event that ends a turn carries them ───────────────────────────────────
 
 
-def test_the_runtime_names_both_cache_fields() -> None:
-    """The filed symptom was literally "zero references to either field name"."""
-    from personalclaw.agents.native import runtime as rt
+def _asks(*, creation: int, read: int, inp: int) -> list[AgentEvent]:
+    """A cycle that asks for a tool, so the turn goes on to another."""
+    return [
+        AgentEvent(kind=EVENT_TOOL_CALL, tool_call_id=f"c{inp}", title="nope", tool_input="{}"),
+        _complete(creation=creation, read=read, inp=inp),
+    ]
 
-    text = Path(rt.__file__).read_text(encoding="utf-8")
-    # The three terminal events, and the one a turn ending in an error sends first (EVENT_SPENT).
-    assert text.count("cache_read_tokens=") == 4, "every event that carries usage must carry it"
-    assert text.count("cache_creation_tokens=") == 4
+
+def _answers(*, creation: int, read: int, inp: int) -> list[AgentEvent]:
+    return [
+        AgentEvent(kind=EVENT_TEXT_CHUNK, text="Done."),
+        _complete(creation=creation, read=read, inp=inp),
+    ]
+
+
+#: ``(case, cycles, max_turns, stop on, the event that ends it, its stop reason, input, creation,
+#: read)``: each way a turn ends, its cycles' counts apart from every other row's, so no constant
+#: passes two rows. The stop is the person pressing Stop when the runtime yields that event kind.
+_ENDINGS = [
+    (
+        "the turn answers",
+        [_asks(creation=10, read=100, inp=7), _answers(creation=20, read=200, inp=11)],
+        100,
+        "",
+        EVENT_COMPLETE,
+        "",
+        18,
+        30,
+        300,
+    ),
+    (
+        "a stop between cycles",
+        [_asks(creation=12, read=340, inp=9)],
+        100,
+        EVENT_TOOL_CALL,
+        EVENT_COMPLETE,
+        "",
+        9,
+        12,
+        340,
+    ),
+    (
+        "a stop while the model is answering",
+        [
+            _asks(creation=14, read=420, inp=5),
+            # Stopped on the text, so the call and the counts after it are never read.
+            [AgentEvent(kind=EVENT_TEXT_CHUNK, text="partial"), *_asks(creation=1, read=1, inp=1)],
+        ],
+        100,
+        EVENT_TEXT_CHUNK,
+        EVENT_COMPLETE,
+        "",
+        5,
+        14,
+        420,
+    ),
+    (
+        "the turn runs out of cycles",
+        [_asks(creation=3, read=30, inp=2)],
+        2,
+        "",
+        EVENT_COMPLETE,
+        "max_turns",
+        4,
+        6,
+        60,
+    ),
+    (
+        "a dollar cap refuses the next call",
+        [_asks(creation=16, read=160, inp=6), BudgetExceededError("run", "dollars", 1.0, 1.0)],
+        100,
+        "",
+        EVENT_SPENT,
+        "",
+        6,
+        16,
+        160,
+    ),
+]
+
+
+def test_every_way_a_turn_ends_carries_the_cache_counts_it_spent(tmp_path: Path, subtests) -> None:
+    """The filed symptom was "zero references to either field name": each event that ends a turn
+    (an answer, a stop between cycles or during one, the cycle limit) and the one a turn ending in
+    an error sends first (``EVENT_SPENT``) must carry the cache counts of the cycles it ran, each
+    summed like ``input_tokens``, which is the firing control: it always arrived."""
+    from table_rows import row
+
+    assert len(_ENDINGS) == 5, "a way to end a turn was dropped from the table"
+    for case, cycles, max_turns, stop_on, kind, reason, inp, creation, read in _ENDINGS:
+        with row(subtests, case=case):
+
+            async def _run(cycles=cycles, max_turns=max_turns, stop_on=stop_on):
+                runtime = NativeAgentRuntime(
+                    definition=AgentRuntimeDefinition(name="T", provider="native", model="s"),
+                    model_provider=_ScriptedModel(cycles),
+                    tool_providers=[],
+                    cwd=tmp_path,
+                    max_turns=max_turns,
+                )
+                await runtime.start()
+                runtime.set_approval_policy("auto")
+                seen: list[AgentEvent] = []
+                try:
+                    async for ev in runtime.stream("go"):
+                        seen.append(ev)
+                        if stop_on and ev.kind == stop_on:
+                            await runtime.cancel()
+                except BudgetExceededError:
+                    seen.append(AgentEvent(kind="refused"))
+                return seen
+
+            seen = asyncio.run(_run())
+            kinds = [ev.kind for ev in seen]
+            ends = [ev for ev in seen if ev.kind in (EVENT_COMPLETE, EVENT_SPENT)]
+            assert [ev.kind for ev in ends] == [kind], (case, kinds)
+            if kind == EVENT_SPENT:
+                assert kinds[-1] == "refused", f"{case}: the refusal did not reach the caller"
+            end = ends[0]
+            if reason:
+                assert end.stop_reason == reason, (case, end.stop_reason)
+            assert end.input_tokens == inp, f"{case}: the turn's spend did not arrive at all"
+            assert end.cache_read_tokens == read, case
+            assert end.cache_creation_tokens == creation, case

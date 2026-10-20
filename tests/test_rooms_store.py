@@ -1966,14 +1966,83 @@ def test_an_overflow_that_folding_cannot_fix_still_takes_the_turn(
     assert _prompts(sessions, room_id, "skeptic"), "it was given something to answer"
 
 
-def test_the_context_path_adds_no_second_token_counter(enabled):
+#: ``(case, messages, the window's input tokens, what the counter says on its first read or None
+#: for its own answer, folded)``; every later read is the counter's own answer. The last two rows
+#: set the counter's verdict against the room's size: a second measure (a tokenizer called
+#: directly, a chars-per-token estimate) deciding instead would fold the room the counter says
+#: fits, or send whole the one it says is over.
+_MEASURED = [
+    ("a room over its window", 200, 200, None, True),
+    ("a room that fits", 20, 100_000, None, False),
+    ("a long room the counter says fits", 200, 200, "fits", False),
+    ("a short room the counter says is over", 40, 100_000, "cannot_fit", True),
+]
+
+
+def test_the_one_counter_on_the_one_window_decides_the_fold(
+    enabled, monkeypatch, fresh_fold_history, subtests
+):
     """``context_headroom`` is the one token measurement, and the window is resolved ONCE per
-    turn, so the before and after reads cannot disagree about what a token is."""
+    turn, so the before and after reads cannot disagree about what a token is: the member's runner
+    is asked for its window once, every read is of that window, the first reads the whole prompt and
+    the second (only after a fold) reads what is sent, and the counter's verdict is what folds."""
+    import dataclasses
+
+    from table_rows import row
+
+    from personalclaw import context_headroom as ch
     from personalclaw.rooms import turn
 
-    source = Path(turn.__file__).read_text(encoding="utf-8")
+    real_check = ch.check
+    assert len(_MEASURED) == 4, "a case was dropped from the table"
+    for case, count, room_tokens, verdict, folds in _MEASURED:
+        with row(subtests, case=case):
+            room_id = _two_member_room(case)
+            _long_room(room_id, count=count)
+            room = store.require_room(room_id)
+            member = room.member("skeptic")
+            messages = store.read_messages(room_id)
+            serving = _StreamingProvider("k")
+            asked: list[object] = []
+            windows: list[ch.Window] = []
+            reads: list[tuple[ch.Window, str]] = []
 
-    assert "context_headroom.check(" in source, "positive control: it measures at all"
-    assert "count_tokens" not in source, "no direct tokenizer call"
-    assert "/ 4" not in source and "// 4" not in source, "no chars-per-token estimate"
-    assert source.count("resolve_window(") == 1, "resolved once, reused for before and after"
+            async def _resolve(*_args, serving=None, room_tokens=room_tokens, **_kwargs):
+                asked.append(serving)
+                # A new window each time it is asked: a second read of another one is told apart.
+                windows.append(
+                    ch.Window(
+                        tokens=room_tokens + 64,
+                        output_reserve_tokens=64,
+                        input_tokens=room_tokens,
+                        source="window-table",
+                    )
+                )
+                return windows[-1]
+
+            def _check(components, *, window, verdict=verdict):
+                reads.append((window, "".join(c.text for c in components)))
+                measured = real_check(components, window=window)
+                if verdict is None or len(reads) > 1:
+                    return measured
+                return dataclasses.replace(measured, state=ch.HeadroomState(verdict))
+
+            monkeypatch.setattr(ch, "resolve_window", _resolve)
+            monkeypatch.setattr(ch, "check", _check)
+            whole = turn.build_member_prompt(
+                room, member, messages, since_last_turn=False, reach=""
+            )
+
+            out = asyncio.run(
+                turn.member_context(
+                    room, member, messages, since_last_turn=False, serving=serving, reach=""
+                )
+            )
+
+            if folds:
+                assert "CONTEXT COMPACTION" in out and len(out) < len(whole), f"{case}: not folded"
+            else:
+                assert out == whole, f"{case}: folded"
+            assert asked == [serving], f"{case}: the runner was asked for its window {len(asked)}x"
+            assert [text for _w, text in reads] == ([whole, out] if folds else [whole]), case
+            assert all(window is windows[0] for window, _t in reads), f"{case}: another window"
