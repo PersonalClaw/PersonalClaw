@@ -153,12 +153,14 @@ describe('fmtElapsed', () => {
 // blank space for two measurements seven milliseconds apart.
 
 describe('elapsedStat', () => {
-  it('renders a measured zero as 0s, never as nothing', () => {
+  it('renders a measured zero as under a second, never as nothing', () => {
     // The exact figures the container produced.
-    expect(elapsedStat(0)).toBe('0s')
-    expect(elapsedStat(0.0)).toBe('0s')
-    // …and its sibling, which already worked — the two must agree that something happened.
-    expect(elapsedStat(0.007)).toBe('0s')
+    expect(elapsedStat(0)).toBe('under 1s')
+    expect(elapsedStat(0.0)).toBe('under 1s')
+    // …and its sibling, which `fmtElapsed` says is under a second — the two must agree that
+    // something happened, and read the same.
+    expect(elapsedStat(0.007)).toBe('under 1s')
+    expect(elapsedStat(0)).toBe(elapsedStat(0.007))
   })
 
   it('keeps fmtElapsed’s rounding for every non-zero figure, so the two never disagree', () => {

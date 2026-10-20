@@ -139,7 +139,7 @@ describe('the nine questions reach the DOM', () => {
     expect(statValue('To first output')).toBe('under 1s')
   })
 
-  it('renders a sub-second run’s duration as 0s, not as a label with nothing after it', async () => {
+  it('renders a sub-second run’s duration as under 1s, not as a label with nothing after it', async () => {
     // Measured on a fresh container: `knowledge-health` (a deterministic bundled template, no
     // model call) completed with `stats.duration_secs: 0.0` and `template_card.duration_p50/p95:
     // 0.0`, and `fmtElapsed` returns '' for a zero — so THREE labels in this panel rendered with
@@ -153,13 +153,13 @@ describe('the nine questions reach the DOM', () => {
     })
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
     await waitFor(() => expect(screen.getByText('Duration')).toBeTruthy())
-    // Read the VALUE beside each label rather than searching the panel for the string: a `0s`
+    // Read the VALUE beside each label rather than searching the panel for the string: a `under 1s`
     // anywhere on screen would satisfy a text query while these three cells stayed blank.
     for (const label of ['Duration', 'Duration p50', 'Duration p95']) {
       const dt = screen.getByText(label)
       const dd = dt.parentElement?.querySelector('dd')
       expect(dd, `${label} has no <dd>`).toBeTruthy()
-      expect(dd!.textContent?.trim(), `${label} rendered a label with no value`).toBe('0s')
+      expect(dd!.textContent?.trim(), `${label} rendered a label with no value`).toBe('under 1s')
     }
   })
 

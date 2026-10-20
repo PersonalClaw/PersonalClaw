@@ -146,7 +146,7 @@ describe('the run-side ledger rails panel', () => {
     expect(screen.queryByText('~$0.1000')).toBeNull()
   })
 
-  it('renders a zero DURATION as 0s, so the label is never left with nothing after it', async () => {
+  it('renders a zero DURATION as under 1s, so the label is never left with nothing after it', async () => {
     // The same measured-vs-absent rule, one column over — and the column that was still wrong.
     // Measured on a fresh container: `knowledge-health`'s two steps recorded `duration_secs` of
     // `0.007` and `0.0`; the first rounded to `0s` and rendered, the second went through
@@ -166,16 +166,17 @@ describe('the run-side ledger rails panel', () => {
     })
     const { container } = render(<LedgerRailsPanel runId="r1" />)
     await waitFor(() => expect(screen.getByText('Findings rail')).toBeTruthy())
-    // Read each `Took` cell's own value: a `0s` elsewhere on the panel would satisfy a text query
-    // while this cell stayed blank, which is exactly how the defect survived.
+    // Read each `Took` cell's own value: a `under 1s` elsewhere on the panel would satisfy a text query
+    // while this cell stayed blank, which is exactly how the defect survived. Both steps read the
+    // same: 7 ms and a measured zero are each under a second.
     const took = [...container.querySelectorAll('dt')].filter((dt) => dt.textContent?.trim() === 'Took')
     expect(took.length).toBe(2)
     for (const dt of took) {
-      expect(dt.parentElement?.querySelector('dd')?.textContent?.trim()).toBe('0s')
+      expect(dt.parentElement?.querySelector('dd')?.textContent?.trim()).toBe('under 1s')
     }
     // …and the totals cell above them, from the same formatter.
     const stepTime = screen.getByText('Step time').parentElement?.querySelector('dd')
-    expect(stepTime?.textContent?.trim()).toBe('0s')
+    expect(stepTime?.textContent?.trim()).toBe('under 1s')
   })
 
   it('names a kind with no run-side producer instead of showing it as zero events', async () => {
