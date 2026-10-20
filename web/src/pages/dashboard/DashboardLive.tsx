@@ -293,8 +293,9 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
     onMessage,
     refreshAll,                              // reopened after a drop → catch up on everything
     // NOTE: no onStatus callback — the WS is used for push-signal routing only.
-    // Gateway connectivity is surfaced by the shell's SystemWidget dot (a live
-    // /api/system poll), so the dashboard feed doesn't track link state itself.
+    // Gateway connectivity is surfaced by the shell's status line (one reading of
+    // /api/system and this socket, app/gatewayConnection), so the dashboard feed
+    // doesn't track link state itself.
   )
 
   // Initial load once, then visibility-gated polls (pause when the tab is hidden) for the slices

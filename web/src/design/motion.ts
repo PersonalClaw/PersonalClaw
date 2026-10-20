@@ -118,7 +118,7 @@ export const duration = {
   get breath(): number { return seconds(runtime.durationBreath) },
   /** slow idle motion: the mark's sway */
   get drift(): number { return seconds(runtime.durationDrift) },
-  /** an outward pulse ring: the status dot's, and the tour's halo (`--status-pulse-speed`) */
+  /** an outward pulse ring: a live status dot's, and the tour's halo (`--status-pulse-speed`) */
   get statusPulse(): number { return seconds(runtime.statusPulse) },
 }
 

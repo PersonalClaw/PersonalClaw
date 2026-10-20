@@ -207,10 +207,10 @@ export const TOKENS: Token[] = [
   // ── Elevation & glass (frosted overlay intensity) ──
   s('--glass-blur', 'Glass blur', 'Elevation & glass', 16, 0, 40, 1, 'px'),
   s('--glass-alpha', 'Glass opacity', 'Elevation & glass', 0.72, 0.4, 1, 0.02),
-  // Duration (seconds) of ONE outward pulse of the gateway-connectivity status
-  // dot (top-right shell corner). Higher = slower, calmer pulse. The default 2.4s
-  // is a gentle breath; the built-in Tailwind ping (1s) read as too fast. The tour's halo is the
-  // same outward ring, so JS reads it too (`duration.statusPulse`).
+  // Duration (seconds) of ONE outward pulse of a live status dot (the microphone and screen-share
+  // chips). Higher = slower, calmer pulse. The default 2.4s is a gentle breath; the built-in
+  // Tailwind ping (1s) read as too fast. The tour's halo is the same outward ring, so JS reads it
+  // too (`duration.statusPulse`). The gateway connection's dot holds still (`app/StatusLine`).
   s('--status-pulse-speed', 'Status dot pulse', 'Motion', 2.4, 0.6, 6, 0.1, 's', 'statusPulse'),
 ]
 

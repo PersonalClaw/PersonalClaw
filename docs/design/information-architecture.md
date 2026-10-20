@@ -140,7 +140,7 @@ Top to bottom:
 | Context, tokens and cost | collapsed: opened from the composer, or pinned to the status line by the owner | a composer warning near the limit |
 | Working directory and sandbox | the Execution Boundary control | none |
 | Sources and grounding | inline citations at the answer; the full list in the right pane | none |
-| Gateway connection and sync | the status line, quiet while connected | a banner, only while disconnected |
+| Gateway connection and sync | the status line, quiet while connected; in words, with when it was last reached, while not | a banner, once the connection has stayed lost for 2 s, and gone when it is back |
 | Background helpers | inside the parent turn's folded steps; counted in Running Now | none |
 | Blocked or failed actions (the egress guard, the scanner, tool errors) | inline at the action; their history in Settings › Security | the blocked state of the orb and the buddy |
 

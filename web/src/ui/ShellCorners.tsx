@@ -5,7 +5,6 @@ import { spring } from '../design/motion'
 import { ThemeControl } from './TopBar'
 import { WidthPill } from './WidthPill'
 import { NotificationBell } from './NotificationBell'
-import { SystemWidget } from './SystemWidget'
 import { DegradedChip } from './DegradedChip'
 import { useIsMobile } from '../app/useIsMobile'
 import { WidgetBoundary } from '../app/ErrorBoundary'
@@ -58,8 +57,8 @@ export function ShellCornerLeft({ collapsed, onToggle, focusMode = false }: {
   )
 }
 
-/** Right corner — the screen's top-right. Terminal-drawer toggle + theme +
- *  content-width as native shell controls, above any page chrome. Publishes
+/** Right corner — the screen's top-right. Terminal-drawer toggle + content-width +
+ *  notifications + theme as native shell controls, above any page chrome. Publishes
  *  width to `--shell-corner-r`. */
 export function ShellCornerRight({ terminalOpen, onToggleTerminal, navigate }: { terminalOpen: boolean; onToggleTerminal: () => void; navigate: (path: string) => void }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -95,11 +94,9 @@ export function ShellCornerRight({ terminalOpen, onToggleTerminal, navigate }: {
         <WidgetBoundary what="notifications" compact><NotificationBell navigate={navigate} /></WidgetBoundary>
         <WidgetBoundary what="the theme control" compact><ThemeControl /></WidgetBoundary>
         {/* No-model degraded-mode chip — self-polling;
-            renders nothing unless a model-dependent surface is on its LLM-free floor. */}
+            renders nothing unless a model-dependent surface is on its LLM-free floor. The gateway
+            connection is the status line's (`app/StatusLine`). */}
         <WidgetBoundary what="the model status" compact><DegradedChip /></WidgetBoundary>
-        {/* Gateway connectivity dot (live) → click opens the full system widget. */}
-        <span className="h-4 w-px bg-outline-variant/40" aria-hidden />
-        <WidgetBoundary what="the system status" compact><SystemWidget /></WidgetBoundary>
       </div>
     </div>
   )

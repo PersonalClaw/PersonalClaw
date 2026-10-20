@@ -245,7 +245,7 @@
   --drag-elastic: 0.9;
   --swipe-dismiss-velocity: 500px/s;
   --swipe-dismiss-distance: 80px;
-  /* seconds per outward pulse of the gateway-status dot (customizable in Design
+  /* seconds per outward pulse of a live status dot (customizable in Design
      settings via --status-pulse-speed). A calm default; the Tailwind ping
      default (1s) pulsed too fast. */
   --status-pulse-speed: 2.4s;
@@ -654,9 +654,10 @@
 @keyframes reveal-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
 .reveal-caret { animation: reveal-blink var(--duration-blink) step-end infinite; }
 
-/* Gateway-connectivity status dot: an outward-expanding pulse ring (same shape as
-   Tailwind's `ping` — scale to 2 + fade — but the duration is customizable via
-   --status-pulse-speed, set in Design settings, instead of Tailwind's fixed 1s). */
+/* A live status dot (the microphone and screen-share chips): an outward-expanding pulse ring (same
+   shape as Tailwind's `ping` — scale to 2 + fade — but the duration is customizable via
+   --status-pulse-speed, set in Design settings, instead of Tailwind's fixed 1s). The gateway
+   connection's dot in the status line holds still. */
 @keyframes status-pulse {
   0%   { transform: scale(1);   opacity: 0.55; }
   75%, 100% { transform: scale(2.2); opacity: 0; }

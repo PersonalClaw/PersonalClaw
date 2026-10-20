@@ -24,18 +24,18 @@ const docs: UiDoc[] = [
     name: 'ShellCornerRight',
     keywords: ['shell', 'corner', 'terminal', 'theme', 'notifications', 'width', 'system', 'chrome'],
     description:
-      "The app shell's RIGHT corner — the screen's top-right control cluster (terminal-drawer toggle • content-width pill • notification bell • theme • system health dot) rendered as native shell chrome above any page header. Publishes its measured width to `--shell-corner-r` and height to `--shell-corner-rh`.",
+      "The app shell's RIGHT corner — the screen's top-right control cluster (terminal-drawer toggle • content-width pill • notification bell • theme • the model status chip) rendered as native shell chrome above any page header. Publishes its measured width to `--shell-corner-r` and height to `--shell-corner-rh`.",
     props: [
       { name: 'terminalOpen', description: 'Whether the terminal drawer is open — drives the toggle glyph highlight + aria/title copy.' },
       { name: 'onToggleTerminal', description: "Fires to open/close the terminal drawer; its title names the drawer's keys, read from the keymap." },
       { name: 'navigate', description: 'Router navigation function, passed straight through to the embedded NotificationBell.' },
     ],
     bestPractices: [
-      { guidance: true, description: 'Reach for this as the app-level native control cluster (terminal / width / notifications / theme / system) — do not scatter these controls into individual page TopBars.' },
+      { guidance: true, description: 'Reach for this as the app-level native control cluster (terminal / width / notifications / theme) — do not scatter these controls into individual page TopBars. The gateway connection is the status line\'s (app/StatusLine), not the corner\'s.' },
       { guidance: false, description: 'Do not drop or hardcode the `--shell-corner-r` / `--shell-corner-rh` vars it publishes — TopBar pads its right edge and SidePanel starts below the corner band using them, so overriding them causes overlap.' },
       { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens.' },
     ],
-    anatomy: ['absolutely-positioned top-right cluster (rounded inner corner, backdrop-blur)', 'terminal toggle', 'WidthPill (desktop only — dropped on mobile)', 'NotificationBell', 'ThemeControl', 'SystemWidget connectivity dot'],
+    anatomy: ['absolutely-positioned top-right cluster (rounded inner corner, backdrop-blur)', 'terminal toggle', 'WidthPill (desktop only — dropped on mobile)', 'NotificationBell', 'ThemeControl', 'DegradedChip (only while a surface is on its no-model floor)'],
   },
 ]
 

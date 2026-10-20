@@ -12,8 +12,8 @@ import { mirroredApprovalId } from '../../../lib/attentionLanes'
  *  "YOLO active" warning while every tool call is auto-approved. A count swaps its number in
  *  place: it used to re-mount and pop on every tick, and what waits on the owner changes too
  *  often for each tick to be an event. Gateway connectivity and
- *  version are NOT here — the shell's top-right SystemWidget owns both (a live
- *  dot on every page + the version in its expanded card).
+ *  version are NOT here — the status line's SystemWidget owns both (the connection
+ *  on every page + the version in its expanded card).
  *
  *  Two placements, one visible at a time (DashboardPage swaps them at `lg`):
  *  - `header`: compact single-line row, right-aligned in the TopBar. Degrades
@@ -139,9 +139,9 @@ export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { varian
         </button>
       )}
       {/* Neither gateway connectivity NOR version is shown here — the app shell's
-          top-right corner carries a live connectivity dot (ui/SystemWidget) on
-          every page, and its expanded card carries the gateway version, so the
-          dashboard strip is just the at-a-glance count pills. */}
+          status line carries the connection (ui/SystemWidget) on every page, and
+          its expanded card carries the gateway version, so the dashboard strip is
+          just the at-a-glance count pills. */}
     </div>
   )
 }

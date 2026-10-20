@@ -10,47 +10,43 @@ import { Meter } from './Meter'
 import { reportingWrite } from '../app/reportingWrite'
 import { WidgetBoundary } from '../app/ErrorBoundary'
 import { NO_READING, fixedReading, isReading, percentReading } from '../lib/readings'
+import { connectionWords, useGatewayConnection } from '../app/gatewayConnection'
 
-/** Live system + auth health — the app shell's top-right corner dot.
- *  - Collapsed (resting): a single connectivity dot. GREEN + pulsing = gateway
- *    live/connected; ORANGE = connecting / status unknown; RED = disconnected /
- *    not found. Status is driven live by the /api/system poll succeeding vs
- *    failing.
- *  - Click the dot → the full card popover (CPU/mem/disk/GPU bars, network,
- *    processes, agent activity, and auth merged in) — unchanged. Click outside
- *    to close. Polls /api/system + /api/auth-status.
+/** Live system + auth health — the status line's connection, at the window's bottom left.
+ *  - Collapsed (resting): the gateway connection, read from the shell's one reading of it
+ *    (`app/gatewayConnection`): a still dot, GREEN = connected, ORANGE = connecting, RED =
+ *    disconnected, with the state in words beside it while not connected. No pulse: an endless
+ *    animation said nothing the colour did not, and kept the compositor drawing all day.
+ *  - Click it → the full card popover (CPU/mem/disk/GPU bars, network, processes, agent activity,
+ *    and auth merged in), opening up from the status line. Click outside to close. Reads
+ *    /api/system while the card is open, and /api/auth-status.
  *  Deliberately omits Ollama-specific status (vendor leakage). */
-type ConnStatus = 'connected' | 'connecting' | 'disconnected'
-
 export function SystemWidget() {
+  const connection = useGatewayConnection()
+  const { state: status, check } = connection
   const [sys, setSys] = useState<SystemInfo | null>(null)
   const [auth, setAuth] = useState<AuthStatus | null>(null)
-  const [status, setStatus] = useState<ConnStatus>('connecting')
   const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
+  const [pos, setPos] = useState<{ bottom: number; left: number } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
 
-  // Anchor the (portaled) card to the trigger, opening DOWN + LEFT from the
-  // top-right corner (right-aligned to the trigger's right edge).
+  // Anchor the (portaled) card to the trigger, opening UP + RIGHT from the status line's left end
+  // (left-aligned to the trigger's left edge).
   const openCard = () => {
     const r = triggerRef.current?.getBoundingClientRect()
-    if (r) setPos({ top: r.bottom + 8, right: Math.max(8, window.innerWidth - r.right) })
+    if (r) setPos({ bottom: window.innerHeight - r.top + 8, left: Math.max(8, r.left) })
     setOpen((v) => !v)
   }
 
-  // A successful /api/system poll = the gateway answered → connected. A failure
-  // (network error, gateway down/restarting) → disconnected. This is the live
-  // connectivity signal the dot reflects; auth is secondary detail for the card.
-  //
-  // The metrics are only READ while the card is open, so only then does this poll at 5s: closed,
-  // the dot needs a heartbeat, not a sampling rate. It polled at 5s on every page regardless —
-  // 24 requests a minute, the most of any single shell poller (measured, day 8). The session's
+  // The metrics are only READ while the card is open, at 5s. The connection is not this read's:
+  // the shell's heartbeat keeps it (`app/gatewayConnection`). A read that fails here asks that
+  // reading to look again at once, rather than leaving it to the next heartbeat. The session's
   // remaining lifetime changes in minutes, so its read is a minute apart.
   useVisiblePoll(() => {
-    api.system().then((s) => { setSys(s); setStatus('connected') }).catch(() => setStatus('disconnected'))
-  }, open ? 5000 : 30_000)
+    api.system().then(setSys).catch(() => check())
+  }, open ? 5000 : null)
   useVisiblePoll(() => {
     api.authStatus().then(setAuth).catch(() => {})
   }, 60_000)
@@ -65,31 +61,27 @@ export function SystemWidget() {
     return () => document.removeEventListener('mousedown', onDoc)
   }, [])
 
-  // Dot color = gateway CONNECTIVITY (not CPU/mem pressure). Green pulses outward
-  // while live; orange while first connecting / unknown; red when the poll fails.
+  // Dot color = gateway CONNECTIVITY (not CPU/mem pressure): green while connected, orange while
+  // first connecting, red once a read failed. It holds still in every state.
   const dotColor = status === 'connected'
     ? 'var(--color-success)'
     : status === 'connecting'
       ? 'var(--color-warning)'
       : 'var(--color-error)'
-  const statusLabel = status === 'connected' ? 'Gateway connected' : status === 'connecting' ? 'Connecting to gateway…' : 'Gateway disconnected'
+  const statusLabel = connectionWords(connection)
 
   return (
-    <div ref={ref} className="relative grid place-items-center">
+    <div ref={ref} className="relative flex min-w-0 items-center">
       <button ref={triggerRef} type="button" onClick={openCard}
         aria-label={`System status — ${statusLabel}`} title={statusLabel}
-        className="grid size-7 place-items-center rounded-pill transition-colors"
+        className="flex h-6 min-w-6 items-center gap-s rounded-pill px-1.5 transition-colors hover:bg-surface-high"
         style={open ? { background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)' } : undefined}>
-        <span className="relative grid size-3 place-items-center">
-          {/* solid core */}
-          <span className="size-2 rounded-full" style={{ background: dotColor }} />
-          {/* outward pulse ring — only while connected (a live "breathing" beacon).
-              Pulse cadence is user-configurable (Design → Motion → "Status dot
-              pulse") via the status-pulse animation's --status-pulse-speed. */}
-          {status === 'connected' && (
-            <span className="status-pulse absolute inline-flex size-2 rounded-full" style={{ background: dotColor }} />
-          )}
-        </span>
+        <span className="size-2 shrink-0 rounded-full" style={{ background: dotColor }} />
+        {/* Quiet while connected: the dot alone. Otherwise the state in words, which the control's
+            name carries too. */}
+        {status !== 'connected' && (
+          <span data-type="caption" className="truncate text-on-surface-var">{statusLabel}</span>
+        )}
       </button>
 
       {createPortal(
@@ -98,10 +90,10 @@ export function SystemWidget() {
             <motion.div ref={cardRef}
               variants={overlayEnter} initial="initial" animate="animate" exit="exit"
               // Portaled to <body> with FIXED coords anchored to the trigger, so
-              // no overflow/stacking context can clip it. Opens DOWN + LEFT from
-              // the top-right shell corner, right-aligned to the dot.
+              // no overflow/stacking context can clip it. Opens UP + RIGHT from
+              // the status line, left-aligned to the dot.
               className="fixed z-[var(--z-modal)] w-72 rounded-2xl border border-outline/40 bg-surface-container p-4"
-              style={{ top: pos.top, right: pos.right, borderRadius: 'var(--radius-xl)', boxShadow: 'var(--shadow-lift)' }}>
+              style={{ bottom: pos.bottom, left: pos.left, borderRadius: 'var(--radius-xl)', boxShadow: 'var(--shadow-lift)' }}>
             {/* Each polled section has its own boundary, so a section that cannot render shows
                 "Couldn't show …" with Retry in its place while the rest of the card, and the dot,
                 keep working. Restart in particular must stay reachable when the readings break. */}

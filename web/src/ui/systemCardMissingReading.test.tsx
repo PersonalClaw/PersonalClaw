@@ -41,10 +41,15 @@ vi.mock('../lib/api', async (orig) => {
   }
 })
 
+// The control reads the connection from the shell's one reading of it.
+vi.mock('../lib/useChatSocket', () => ({ useChatSocket: () => {} }))
+
 const { SystemWidget } = await import('./SystemWidget')
+const { GatewayConnectionProvider } = await import('../app/gatewayConnection')
+const renderWidget = () => render(<GatewayConnectionProvider><SystemWidget /></GatewayConnectionProvider>)
 
 async function openCard(): Promise<HTMLElement> {
-  render(<SystemWidget />)
+  renderWidget()
   const trigger = await screen.findByRole('button', { name: 'System status — Gateway connected' })
   fireEvent.click(trigger)
   // The hostname heads the card, so finding it proves the readings section rendered.
@@ -87,7 +92,7 @@ describe('the System status card on a poll that is missing readings', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     // A shape the readings cannot draw: the boundary around them, not the app, catches it.
     payload.current = { ...FULL, os: null }
-    render(<SystemWidget />)
+    renderWidget()
     fireEvent.click(await screen.findByRole('button', { name: 'System status — Gateway connected' }))
     const notice = (await screen.findByText("Couldn't show the system readings.")).closest('[role="alert"]') as HTMLElement
     expect(within(notice).getByRole('button', { name: 'Retry' })).toBeTruthy()

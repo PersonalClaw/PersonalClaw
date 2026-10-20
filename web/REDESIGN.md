@@ -101,7 +101,7 @@ new chrome.
 | Composer | the next turn, and everything that decides what it may do (§5) |
 | Right pane | the selection's detail. Closed by default. |
 | Bottom drawer | the terminal |
-| Status line | ambient state only: the connection, sync, and the context the owner pinned |
+| Status line | ambient state only: the connection, sync, and the context the owner pinned. On a phone, the connection only |
 
 **Rules**
 
@@ -119,12 +119,12 @@ new chrome.
   one keystroke away in the palette, with its shortcut shown.
 - Status stays at the periphery (the status line, sidebar pips) until it needs a decision, then
   moves to the centre.
-- Focus mode (⌘\): one key hides the sidebar and the right pane. Selecting something that needs a
-  pane opens only that pane, one at a time while the mode lasts. The same key, the palette or the
-  sidebar's own control leaves it, and the sidebar and the panes it closed come back. It lasts
-  across reloads, as the collapsed sidebar does. On a phone the sidebar is already a drawer, so
-  focus mode only closes the pane. Nothing is hover-only: what a hover shows is also reachable by
-  keyboard and by touch.
+- Focus mode (⌘\): one key hides the sidebar and the right pane, and nothing else: the shell
+  corners and the status line stay. Selecting something that needs a pane opens only that pane, one
+  at a time while the mode lasts. The same key, the palette or the sidebar's own control leaves it,
+  and the sidebar and the panes it closed come back. It lasts across reloads, as the collapsed
+  sidebar does. On a phone the sidebar is already a drawer, so focus mode only closes the pane.
+  Nothing is hover-only: what a hover shows is also reachable by keyboard and by touch.
 - Every route and substate round-trips through the URL and browser history.
 
 **The per-screen checklist.** Every redesign PR answers it for its screen:
