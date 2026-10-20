@@ -1647,6 +1647,7 @@ def _summary(judged: verdict.Verdict, outcomes: Sequence[Outcome]) -> str:
     reused = [o.key for o in outcomes if o.reused]
     if not judged.green or not reused:
         return verdict.summary(judged)
+    listed = verdict.tests_summary(judged.tests)
     named = ", ".join(f"`{key}`" for key in reused)
     stands = f"a recorded clean pass of the same tree and inputs: {named}"
     if all(o.reused for o in outcomes):
@@ -1656,7 +1657,7 @@ def _summary(judged: verdict.Verdict, outcomes: Sequence[Outcome]) -> str:
             "Every planned job that ran passed on this candidate, and each other stands on"
             f" {stands}."
         )
-    return f"### Verdict: green on reuse\n\n{said}\n"
+    return f"### Verdict: green on reuse\n\n{said}\n{listed}"
 
 
 # ── a tier ───────────────────────────────────────────────────────────────────────────────────
@@ -1771,6 +1772,7 @@ def run_tier(
     records = [o.record.read_text(encoding="utf-8") for o in outcomes if o.record is not None]
     results = verdict.from_job_records(records)
     reasons: list[verdict.Reason] = []
+    tests: list[verdict.FailedTest] = []
     counted: set[str] = set()
     if reuse is not None and reuse.receipt is not None and reuse.start is not None:
         try:
@@ -1785,8 +1787,10 @@ def run_tier(
         if job_id in counted:
             continue  # reused: judged by its receipt, above
         mine = [r for r in results if r.key in keys]
-        reasons.extend(verdict.decide(keys, mine, expected[job_id]).reasons)
-    judged = verdict.Verdict(green=not reasons, reasons=tuple(reasons))
+        each = verdict.decide(keys, mine, expected[job_id])
+        reasons.extend(each.reasons)
+        tests.extend(each.tests)
+    judged = verdict.Verdict(green=not reasons, reasons=tuple(reasons), tests=tuple(tests))
     return _tier_code(outcomes, unproven=not judged.green), outcomes, judged
 
 

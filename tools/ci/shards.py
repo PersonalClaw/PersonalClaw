@@ -204,9 +204,9 @@ HISTORY_ARTIFACT = telemetry.HISTORY_ARTIFACT
 MAX_HISTORY_ARCHIVE_BYTES = telemetry.MAX_HISTORY_ARCHIVE_BYTES
 #: A history larger than this, unzipped, is not read on: one main run's is about 49 MB.
 MAX_HISTORY_BYTES = 256 * 1024 * 1024
-#: One history line longer than this is refused: a test line is a few hundred bytes, and a run
-#: line with its jobs a few tens of kilobytes.
-MAX_HISTORY_LINE_BYTES = 1024 * 1024
+#: One history line longer than this is refused, its line break included: the collector's one
+#: bound (``telemetry.MAX_LINE_BYTES``), which it writes no line past.
+MAX_HISTORY_LINE_BYTES = telemetry.MAX_LINE_BYTES
 
 
 def _file_of(dotted: str, modules: Mapping[str, str]) -> str | None:

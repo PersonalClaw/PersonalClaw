@@ -30,13 +30,15 @@ def _write(
     *,
     workflow: str = "ci.yml",
     extra: list[dict] | None = None,
+    records: list[object] | None = None,
+    version: int = telemetry.VERSION,
 ) -> None:
     created = (DAY0 + datetime.timedelta(days=day)).isoformat().replace("+00:00", "Z")
     head = {f: None for f in telemetry.RUN_FIELDS}
     head.update(
         kind="run",
         schema=telemetry.SCHEMA,
-        version=telemetry.VERSION,
+        version=version,
         run_id=run_id,
         attempt=attempt,
         workflow=workflow,
@@ -45,7 +47,11 @@ def _write(
         created_at=created,
         jobs=[],
     )
-    lines = [head]
+    lines: list[object] = [head]
+    # Each job record is a line of its own after the run line, as the collector writes it.
+    lines += [
+        dict(entry, kind="record") if isinstance(entry, dict) else entry for entry in records or []
+    ]
     for test, (result, seconds) in tests.items():
         line = {f: None for f in telemetry.TEST_FIELDS}
         line.update(
@@ -369,6 +375,231 @@ def test_a_history_line_past_the_limit_fails_the_report(tmp_path: Path, monkeypa
     _write(folder, 1500, 1, 0, {}, extra=[long])
     code, _, _ = _report(folder, monkeypatch, tmp_path)
     assert code == 2
+
+
+# ── what the diagnostic reruns found, from each job's record (schema version 4) ──────────────
+
+FLAKY = "tests/test_a.py::test_flaky"
+TWICE = "tests/test_a.py::test_twice"
+WEB = "e2e/chat.spec.ts > chat > sends"
+
+
+def _job(key: str, *rerun: tuple[str, str | None], quarantined: tuple[str, ...] = ()) -> dict:
+    """One job record as the collector writes it on its own line, ``kind`` aside."""
+    return {
+        "key": key,
+        "result": "failure" if rerun else "success",
+        "rerun": [{"test": t, "rerun_result": w} for t, w in rerun],
+        "quarantined": list(quarantined),
+    }
+
+
+def _diagnosed(data: dict) -> dict[str, tuple[int, int, list[str]]]:
+    return {r["test"]: (r["flakes"], r["repeated_failures"], r["jobs"]) for r in data["diagnosed"]}
+
+
+def test_each_test_the_reruns_classified_is_counted_from_the_job_records(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Every runner's classification is in the records, Playwright's too, which no junit report
+    carries: each job record that found a test a flake or a repeated failure counts once."""
+    folder = tmp_path / "h"
+    suite = ("suite (1/2)", (FLAKY, "flake"), (TWICE, "repeated failure"))
+    _write(folder, 1, 1, 0, {}, records=[_job(*suite), _job("e2e", (WEB, "flake"))])
+    _write(folder, 2, 1, 1, {}, records=[_job("suite (2/2)", (FLAKY, "flake"), (TWICE, None))])
+    _write(folder, 3, 1, 2, {}, records=[_job("macos (1/2)", (FLAKY, "repeated failure"))])
+    _write(folder, 4, 1, 3, {}, records=[_job("static", quarantined=(FLAKY,))])
+    code, data, summary = _report(folder, monkeypatch, tmp_path)
+    assert code == 0
+    assert _diagnosed(data) == {
+        FLAKY: (2, 1, ["macos (1/2)", "suite (1/2)", "suite (2/2)"]),
+        WEB: (1, 0, ["e2e"]),
+        TWICE: (0, 1, ["suite (1/2)"]),
+    }
+    # Most flakes first.
+    assert [r["test"] for r in data["diagnosed"]] == [FLAKY, WEB, TWICE]
+    assert data["record"]["runs_with_records"] == 4
+    assert "### What the reruns found" in summary
+    assert f"| `{FLAKY}` | 2 | 1 | `macos (1/2)`, `suite (1/2)`, `suite (2/2)` |" in summary
+
+
+def test_of_two_tests_as_often_a_flake_the_one_more_often_a_repeated_failure_comes_first(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """By name the first would come first; by repeated failures, the tie-break, it comes last."""
+    folder = tmp_path / "h"
+    fewer, more = "tests/test_a.py::test_a_few", "tests/test_a.py::test_b_more"
+    _write(folder, 1, 1, 0, {}, records=[_job("suite", (fewer, "flake"), (more, "flake"))])
+    _write(folder, 2, 1, 1, {}, records=[_job("suite", (more, "repeated failure"))])
+    _, data, _ = _report(folder, monkeypatch, tmp_path)
+    assert _diagnosed(data) == {fewer: (1, 0, ["suite"]), more: (1, 1, ["suite"])}
+    assert [r["test"] for r in data["diagnosed"]] == [more, fewer]
+
+
+def test_only_each_runs_first_attempt_counts_as_the_flake_rates_first_results_do(
+    tmp_path: Path, monkeypatch
+) -> None:
+    folder = tmp_path / "h"
+    _write(folder, 1, 2, 0, {}, records=[_job("suite", (FLAKY, "flake"))])
+    _write(folder, 1, 1, 0, {}, records=[_job("suite", (TWICE, "repeated failure"))])
+    _, data, _ = _report(folder, monkeypatch, tmp_path)
+    assert _diagnosed(data) == {TWICE: (0, 1, ["suite"])}
+
+
+def test_a_history_that_carries_no_records_says_the_reruns_found_nothing_in_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A version-3 history predates the records, and a version-4 one with no record line is a
+    run that uploaded none: the issue says how many runs carried any."""
+    folder = tmp_path / "h"
+    _write(folder, 1, 1, 0, {"t::a": ("passed", 1.0)}, version=3)
+    _write(folder, 2, 1, 1, {"t::a": ("passed", 1.0)})
+    _write(folder, 3, 1, 2, {"t::a": ("passed", 1.0)}, records=[_job("static")])
+    code, data, summary = _report(folder, monkeypatch, tmp_path)
+    assert code == 0 and data["diagnosed"] == []
+    assert data["record"]["runs_with_records"] == 1
+    assert "1 of the window's 3 runs carried its jobs' records" in summary
+    assert "No job record in the window classified a failed test." in summary
+
+
+def test_a_record_outside_the_window_is_not_counted(tmp_path: Path, monkeypatch) -> None:
+    folder = tmp_path / "h"
+    _write(folder, 1, 1, 0, {}, records=[_job("suite", (FLAKY, "flake"))])
+    _write(folder, 2, 1, report.WINDOW_DAYS + 5, {}, records=[])
+    _, data, _ = _report(folder, monkeypatch, tmp_path)
+    assert data["diagnosed"] == []
+
+
+def _rerun(*tests: object) -> dict:
+    return dict(_job("suite"), result="failure", rerun=list(tests))
+
+
+@pytest.mark.parametrize(
+    ("records", "why"),
+    [
+        pytest.param(["suite"], "a line is not a JSON object", id="a-line-not-an-object"),
+        pytest.param([dict(_job("suite"), extra=1)], "does not hold", id="an-unknown-field"),
+        pytest.param(
+            [{"key": "suite", "result": "failure", "rerun": []}],
+            "does not hold",
+            id="a-missing-field",
+        ),
+        pytest.param([dict(_job("suite"), key="")], "names no key", id="no-key"),
+        pytest.param([dict(_job("suite"), key=["suite"])], "names no key", id="a-key-not-text"),
+        pytest.param([dict(_job("suite"), result="passed")], "is no job's", id="no-jobs-result"),
+        pytest.param(
+            [dict(_job("suite"), result=["failure"])], "is no job's", id="a-result-that-is-a-list"
+        ),
+        pytest.param(
+            [dict(_job("suite"), result={"failure": 1})],
+            "is no job's",
+            id="a-result-that-is-an-object",
+        ),
+        pytest.param([dict(_job("suite"), rerun="flake")], "not in their shape", id="rerun-text"),
+        pytest.param(
+            [_job("suite", (FLAKY, "passed"))], "not in their shape", id="a-word-no-rerun-gives"
+        ),
+        pytest.param(
+            [_rerun({"test": FLAKY, "rerun_result": ["flake"]})],
+            "not in their shape",
+            id="a-rerun-result-that-is-a-list",
+        ),
+        pytest.param(
+            [_rerun({"test": FLAKY, "rerun_result": {"flake": 1}})],
+            "not in their shape",
+            id="a-rerun-result-that-is-an-object",
+        ),
+        pytest.param([_job("suite", ("", "flake"))], "not in their shape", id="no-test"),
+        pytest.param(
+            [_rerun({"test": FLAKY, "rerun_result": "flake", "x": 1})],
+            "not in their shape",
+            id="a-test-of-another-shape",
+        ),
+        pytest.param(
+            [_job("suite", (FLAKY, "flake"), (FLAKY, "repeated failure"))],
+            f"names {FLAKY} twice",
+            id="one-test-twice",
+        ),
+        pytest.param(
+            [dict(_job("suite"), quarantined=[1])], "not test ids", id="quarantined-not-test-ids"
+        ),
+        pytest.param(
+            [_job("suite", (FLAKY, "flake")), _job("suite")], "a key twice", id="one-key-twice"
+        ),
+    ],
+)
+def test_records_not_in_their_shape_fail_the_report(
+    records: list[object], why: str, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Each by name, in the file it is in: the collector writes none of these, and a figure read
+    from one would be a guess."""
+    folder = tmp_path / "h"
+    _write(folder, 1, 1, 0, {}, records=records)
+    code, _, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 2
+    said = capsys.readouterr().out
+    assert "history-1-1.jsonl" in said and why in said, said
+
+
+def test_a_record_line_in_a_history_of_an_older_version_fails_the_report(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Version 4 is the first to write a record line: in an older history one is no line the
+    collector wrote."""
+    folder = tmp_path / "h"
+    _write(folder, 1, 1, 0, {}, records=[_job("suite", (FLAKY, "flake"))], version=3)
+    code, _, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 2
+    assert "history-1-1.jsonl: a line after the first is not a test line" in capsys.readouterr().out
+
+
+def test_a_later_attempts_records_not_in_their_shape_fail_the_report_too(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Only the first attempt's records count, and every attempt's are read: a figure beside one
+    that cannot be read would be a guess."""
+    folder = tmp_path / "h"
+    _write(folder, 1, 1, 0, {}, records=[_job("suite", (FLAKY, "flake"))])
+    _write(folder, 1, 2, 0, {}, records=[dict(_job("suite"), result="passed")])
+    code, _, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 2
+
+
+def test_the_issue_shows_the_first_twenty_tests_and_report_json_holds_every_one(
+    tmp_path: Path, monkeypatch
+) -> None:
+    folder = tmp_path / "h"
+    found = [(f"tests/test_a.py::test_{n:02}", "flake") for n in range(report.DIAGNOSED_SHOWN + 1)]
+    _write(folder, 1, 1, 0, {}, records=[_job("suite", *found)])
+    code, data, summary = _report(folder, monkeypatch, tmp_path)
+    assert code == 0 and len(data["diagnosed"]) == 21 == report.DIAGNOSED_SHOWN + 1
+    rows = [line for line in summary.splitlines() if line.startswith("| `tests/test_a.py::")]
+    assert len(rows) == 20
+    assert "1 more in report.json." in summary
+
+
+def test_the_report_and_the_collector_read_one_record_shape() -> None:
+    from tools.ci import verdict
+
+    text = verdict.job_record(
+        key="suite",
+        result=verdict.FAILURE,
+        identity=verdict.Identity("a" * 40),
+        steps=[(["pytest"], 1, 1.0)],
+        run_id=7,
+        rerun={
+            "argv": ["pytest"],
+            "exit": 1,
+            "tests": [{"test": FLAKY, "rerun_result": "flake", "why": "w"}],
+        },
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("suite.json", text)
+    name = verdict.record_artifact("suite", run_id=7, attempt=1)
+    line = telemetry.record_line(name, buffer.getvalue(), 7, 1)
+    assert line["kind"] == "record" and set(line) == set(report.RECORD_FIELDS)
+    assert report.job_records([line], "h") == [line]
 
 
 # ── the quarantine's status ───────────────────────────────────────────────────────────────────

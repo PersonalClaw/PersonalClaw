@@ -11,6 +11,7 @@ Security-marked: the rerun must never turn a red green, and never run a rail or 
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import subprocess
@@ -27,6 +28,7 @@ from tools.ci.catalogue import Catalogue, Job, Step
 pytestmark = pytest.mark.security
 
 PY = sys.executable
+TESTS = Path(__file__).resolve().parent
 REPORT = "reports/junit.xml"
 
 
@@ -365,13 +367,13 @@ def test_only_a_failure_carries_a_rerun(result, code):
 # ── the telemetry rerun_result field ──────────────────────────────────────────────────────────
 
 
-def _zipped(report: bytes) -> bytes:
+def _zipped(report: bytes, member: str = "junit.xml") -> bytes:
     import io
     import zipfile
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr("junit.xml", report)
+        archive.writestr(member, report)
     return buffer.getvalue()
 
 
@@ -750,6 +752,201 @@ def test_the_weekly_report_counts_a_flake_and_not_a_repeated_failure(tmp_path):
         "tests.test_broken.TestBroken::test_fails_twice[a b]": 0,
         "tests.test_broken.TestBroken::test_fails_twice[c]": 0,
     }
+
+
+def test_the_weekly_report_reads_the_classification_from_the_job_record(tmp_path):
+    """From the job's record, as the collector reads the record's artifact into its line of the
+    history, to the report's figure of what the reruns found: one flake and two repeated
+    failures, each in the job that found it."""
+    from tools.ci import report, telemetry
+
+    root, _, _ = _suite(tmp_path)
+    outcome = _run(root, _job("tests/test_flaky.py", "tests/test_broken.py"), tmp_path)
+    name = verdict.record_artifact("suite", run_id=7, attempt=1)
+    record = outcome.record.read_text().replace('"run_id": null', '"run_id": 7')
+    line = telemetry.record_line(name, _zipped(record.encode(), "suite.json"), 7, 1)
+    head = dict.fromkeys(telemetry.RUN_FIELDS)
+    head.update(
+        kind="run",
+        schema=telemetry.SCHEMA,
+        version=telemetry.VERSION,
+        run_id=7,
+        attempt=1,
+        workflow="ci.yml",
+        event="push",
+        branch="main",
+        created_at="2026-09-01T09:00:00Z",
+        jobs=[],
+    )
+    folder = tmp_path / "history"
+    folder.mkdir()
+    (folder / "history-7-1.jsonl").write_text(telemetry.history_text([head, line]))
+    diagnosed = {
+        row["test"]: (row["flakes"], row["repeated_failures"], row["jobs"])
+        for row in report.figures(report.read(folder), [], [])["diagnosed"]
+    }
+    assert diagnosed == {
+        FLAKY: (1, 0, ["suite"]),
+        TWICE_A: (0, 1, ["suite"]),
+        TWICE_C: (0, 1, ["suite"]),
+    }
+
+
+# ── the merge verdict reads the record's classification ───────────────────────────────────────
+#
+# The results stage judges a run's uploaded records with ``verdict --records`` (#3915): an
+# unquarantined flaky failure reads red, and the same failure under a valid quarantine entry reads
+# green, each listed with how it stands. The controller's merge-verdict check run, which posts
+# that reading, is #3910's.
+
+RUN_ID = 31415
+
+
+def _on_github(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> jobs.Host:
+    """A GitHub runner's host: the record names this run and its attempt."""
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir()
+    monkeypatch.setenv("RUNNER_TEMP", str(runner_temp))
+    monkeypatch.setenv("GITHUB_RUN_ID", str(RUN_ID))
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    return jobs.Host(
+        root=root, family="ubuntu-", path=os.environ.get("PATH", os.defpath), on_github=True
+    )
+
+
+def _results_stage(
+    tmp_path: Path, root: Path, outcome: jobs.Outcome, capsys: pytest.CaptureFixture[str]
+) -> tuple[int, str]:
+    """``verdict --records`` over the job's record as download-artifact lays out its upload."""
+    assert outcome.record is not None, outcome.reasons
+    downloaded = tmp_path / "downloaded"
+    folder = downloaded / verdict.record_artifact("suite", run_id=RUN_ID, attempt=1)
+    folder.mkdir(parents=True)
+    (folder / outcome.record.name).write_text(outcome.record.read_text())
+    (tmp_path / "plan.json").write_text('["suite"]')
+    (tmp_path / "needs.json").write_text("{}")
+    head = _git(root, "rev-parse", "HEAD")
+    capsys.readouterr()
+    code = verdict.main(
+        [
+            "--plan", str(tmp_path / "plan.json"), "--needs", str(tmp_path / "needs.json"),
+            "--records", str(downloaded), "--run-id", str(RUN_ID),
+            "--head", head, "--run-head", head,
+        ]
+    )  # fmt: skip
+    return code, capsys.readouterr().out
+
+
+def _quarantine(root: Path, nodeid: str, *, days: int = 10, assignee: bool = True) -> None:
+    """The suite's own quarantine (tests/quarantine.py) loaded in the planted tree, with one entry
+    for *nodeid* that expires *days* from today, committed."""
+    expires = datetime.datetime.now(datetime.UTC).date() + datetime.timedelta(days=days)
+    _commit(
+        root,
+        {
+            "tests/conftest.py": (
+                "import sys\n"
+                "from pathlib import Path\n\n"
+                f"sys.path.insert(0, {str(TESTS)!r})\n"
+                "import quarantine\n\n\n"
+                "def pytest_configure(config):\n"
+                "    quarantine.configure(config, Path(__file__).resolve().parents[1])\n"
+            ),
+            "tests/quarantine.toml": (
+                "[[entry]]\n"
+                f'nodeid = "{nodeid}"\n'
+                "issue = 4000\n"
+                + ('assignee = "someone"\n' if assignee else "")
+                + f"expires = {expires.isoformat()}\n"
+                'reason = "fails on its first call in a process"\n'
+            ),
+        },
+        "a quarantine entry",
+    )
+
+
+def test_a_merge_verdict_over_an_unquarantined_flaky_failure_reads_red_and_lists_it(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    root, log, _ = _suite(tmp_path)
+    host = _on_github(root, tmp_path, monkeypatch)
+    job = _job("tests/test_flaky.py")
+    outcome = jobs.run_one(Catalogue((job,)), job, None, host, jobs.Options(), tmp_path / "work")
+    assert outcome.code == run.RED, outcome.reasons
+    assert log.read_text().splitlines() == ["test_fails_then_passes"] * 2
+    code, out = _results_stage(tmp_path, root, outcome, capsys)
+    assert code == 1, out
+    assert "- `suite`: failure (attempt 1)" in out
+    assert f"- `suite` attempt 1: `{FLAKY}`: flake (passed rerun alone in a new process)" in out
+
+
+def test_the_same_failure_under_a_valid_quarantine_entry_reads_green_and_is_listed(
+    tmp_path, monkeypatch, capsys
+):
+    """The suite's own quarantine (tests/quarantine.py) loaded in the planted tree, with one entry
+    for the flaky test: the test still runs, its failure is recorded, and the job passes."""
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    root, log, _ = _suite(tmp_path)
+    _quarantine(root, FLAKY)
+    host = _on_github(root, tmp_path, monkeypatch)
+    job = _job("tests/test_flaky.py")
+    outcome = jobs.run_one(Catalogue((job,)), job, None, host, jobs.Options(), tmp_path / "work")
+    assert outcome.code == run.OK, outcome.reasons
+    # It ran once, failed under its entry, and was never rerun.
+    assert log.read_text().splitlines() == ["test_fails_then_passes"]
+    record = _record(outcome)
+    assert record["result"] == verdict.SUCCESS and record["rerun"] is None
+    assert record["quarantined"] == ["tests.test_flaky::test_fails_then_passes"]
+    code, out = _results_stage(tmp_path, root, outcome, capsys)
+    assert code == 0, out
+    assert out.startswith("### Verdict: green\n")
+    assert "- `suite` attempt 1: `tests.test_flaky::test_fails_then_passes`: quarantined" in out
+
+
+@pytest.mark.parametrize(
+    ("nodeid", "days", "assignee"),
+    [
+        pytest.param(FLAKY, 0, True, id="expired"),
+        pytest.param(FLAKY, 10, False, id="malformed"),
+        pytest.param("tests/test_broken.py::test_passes", 10, True, id="for-another-test"),
+    ],
+)
+def test_a_quarantine_entry_that_waives_nothing_leaves_the_flaky_failure_red(
+    nodeid, days, assignee, tmp_path, monkeypatch, capsys
+):
+    """Only a valid entry for the failed test waives it: one that has expired or breaks a rule
+    stops the session before any test runs, and one for another test leaves this failure a
+    failure. Each job reads red, and its verdict too, with no failure listed as quarantined."""
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    root, _, _ = _suite(tmp_path)
+    _quarantine(root, nodeid, days=days, assignee=assignee)
+    host = _on_github(root, tmp_path, monkeypatch)
+    job = _job("tests/test_flaky.py", "tests/test_broken.py::test_passes")
+    outcome = jobs.run_one(Catalogue((job,)), job, None, host, jobs.Options(), tmp_path / "work")
+    assert outcome.code == run.RED, outcome.reasons
+    record = _record(outcome)
+    assert record["result"] == verdict.FAILURE and record["quarantined"] == []
+    code, out = _results_stage(tmp_path, root, outcome, capsys)
+    assert code == 1, out
+    assert "- `suite`: failure (attempt 1)" in out
+    assert ": quarantined" not in out
+    if nodeid != FLAKY:
+        assert f"- `suite` attempt 1: `{FLAKY}`: flake" in out
+
+
+def test_a_local_tier_run_lists_the_failed_tests_with_its_verdict(tmp_path):
+    root, _, _ = _suite(tmp_path)
+    job = _job("tests/test_flaky.py", "tests/test_broken.py")
+    code, _, judged = jobs.run_tier(
+        Catalogue((job,)), "change", _host(root), jobs.Options(), tmp_path / "work"
+    )
+    assert code == run.RED and not judged.green
+    assert [(t.key, t.test, t.standing) for t in judged.tests] == [
+        ("suite", TWICE_A, verdict.REPEATED_FAILURE),
+        ("suite", TWICE_C, verdict.REPEATED_FAILURE),
+        ("suite", FLAKY, verdict.FLAKE),
+    ]
 
 
 # ── which test a failed case names ────────────────────────────────────────────────────────────

@@ -7,8 +7,13 @@ run completes, from main's own code, and writes ``history-<run>-<attempt>.jsonl`
 - the first line is the run's: the schema and its version, then the facts only the Actions API
   knows (queue delay, setup, time to the first failed job, verdict time, runner-minutes,
   cancelled work, artifact volume, schedule lag) and one entry per job;
+- then one line per job record the attempt uploaded (version 4), by key;
 - every other line is one test case of that attempt's junit reports: its id, its first result,
   its seconds, the report it came from.
+
+Every line is within ``MAX_LINE_BYTES``, its line break included, the bound each reader (the
+weekly report and its fetch, the shard planner, the parity check) holds a history line to and
+refuses a whole history past: a line that would pass it fails the collection and writes nothing.
 
 **Which runs count.** A push to ``main`` of ``ci.yml``, and a scheduled or dispatched Breadth
 run on ``main``, both from this repository. That is decided from the run itself, before any
@@ -33,6 +38,23 @@ seconds by how fast its host model is.
 so every reader takes a version 1 or 2 history (:data:`READS`) as one whose reports recorded no
 CPU model.
 
+**Each job's record** (version 4). Each test-stage entry uploads its job's record, the one
+``run-job`` writes (``tools/ci/verdict.py``), as ``ci-record-<key slug>-<run>-<attempt>``. Each
+record the attempt uploaded is one ``record`` line after the run line, by key: the job's result,
+each failed test with the diagnostic rerun's word for it (null when it was not classified), and
+each quarantined failure. That is the one place every runner's classification lands, Playwright's
+included, which no junit report carries. A line of its own holds each record within the line bound
+however many jobs failed: one run line holding them all would pass it in a run with several
+thousand failed tests, and lose the run, its test lines too, to every reader. A record archive
+holds one ``.json`` file within the record's bound, read in memory with
+``verdict.from_job_records``, in the artifact its own key, this run and this attempt name; anything
+else fails the collection, as a report that cannot be read does, since a history with fewer records
+would read as reruns that found less. So a job whose record passes that bound (several thousand
+failed tests: ``run-job`` does not yet hold its record within it, and ``verdict --records`` refuses
+that record too) leaves its run with no history. Version 4 adds the record lines and changes
+nothing else: the shard planner and the parity check read test lines alone, and every reader takes
+an older history as one that carries no records.
+
 **Artifacts are data.** Their content is never executed or extracted to disk: an archive larger
 than ``MAX_ARCHIVE_BYTES`` is never downloaded, a report is read in memory up to
 ``MAX_JUNIT_BYTES``, a report that is not UTF-8 is refused, and so is one that declares a
@@ -52,8 +74,8 @@ failed or errored with those words in the failure's message or text, and false f
 case. Version 2 adds that field and changes nothing else, so every reader takes a version-1
 history (:data:`READS`) as one whose lines carry no such field.
 
-Quarantine facts (``quarantined``) and cache hits (``cache_hits``) no API reports, so until they
-are written they are null, never guessed. Standard library only, like every file in
+Quarantine facts on a test line (``quarantined``) and cache hits (``cache_hits``) no API reports,
+so until they are written they are null, never guessed. Standard library only, like every file in
 ``tools/ci``.
 """
 
@@ -72,11 +94,13 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from . import verdict
+
 SCHEMA = "personalclaw-ci-telemetry"
-VERSION = 3
-#: The versions a reader takes: this one; version 2, whose run line lacks ``cpus``; and version 1,
-#: whose test lines also lack ``environment_failure``.
-READS = frozenset({1, 2, VERSION})
+VERSION = 4
+#: The versions a reader takes: this one; version 3, whose run line lacks ``records``; version 2,
+#: which lacks ``cpus`` too; and version 1, whose test lines also lack ``environment_failure``.
+READS = frozenset({1, 2, 3, VERSION})
 
 #: The run line's fields, after ``kind``, ``schema`` and ``version``.
 RUN_FIELDS = (
@@ -101,6 +125,9 @@ RUN_FIELDS = (
     "jobs",
     "cpus",
 )
+
+#: A record line's fields, exactly: one line per job record the attempt uploaded (version 4).
+RECORD_FIELDS = ("kind", "key", "result", "rerun", "quarantined")
 
 #: A test line's fields, exactly.
 TEST_FIELDS = (
@@ -160,6 +187,10 @@ MAX_WINDOW_MEMBERS = 2000
 MAX_WINDOW_BYTES = 6 * 1024 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 8 * 1024 * 1024
 MAX_JUNIT_BYTES = 8 * 1024 * 1024
+#: The most one history line holds, its line break included. Every reader refuses a history with
+#: a longer line whole, so the collector writes none: a test line is a few hundred bytes, a run
+#: line with its jobs a few tens of kilobytes, and a record line about its record's size.
+MAX_LINE_BYTES = 1024 * 1024
 #: Pages of 100 read for one listing at most: a Breadth attempt uploads about 63 artifacts.
 MAX_PAGES = 10
 #: How long one ``gh`` call may take, so a hung call cannot hold the job to its limit.
@@ -409,11 +440,10 @@ def _result(case: ET.Element) -> str:
 
 
 #: The junit property ``run-job``'s diagnostic rerun writes on each failed case it classified,
-#: and its two words (``tools/ci/verdict.py``'s ``FLAKE`` and ``REPEATED_FAILURE``; this module
-#: imports no sibling, so they are spelled here and a test holds the two lists equal).
+#: and its two words, ``tools/ci/verdict.py``'s ``FLAKE`` and ``REPEATED_FAILURE``.
 RERUN_PROPERTY = "rerun_result"
-FLAKE = "flake"
-RERUN_RESULTS = frozenset({FLAKE, "repeated failure"})
+FLAKE = verdict.FLAKE
+RERUN_RESULTS = verdict.RERUN_RESULTS
 
 #: The words a failure carries when the environment, not the code under test, caused it.
 ENVIRONMENT_MARKER = "ENVIRONMENT, NOT POLICY"
@@ -514,6 +544,71 @@ def report_facts(
     return cases, platform, count, next(iter(models), None)
 
 
+# ── each job's record ─────────────────────────────────────────────────────────────────────────
+
+#: The name every job record's artifact starts with (``verdict.record_artifact``).
+RECORD_PREFIX = verdict.RECORD_ARTIFACT_PREFIX
+#: A record archive larger than this is never downloaded: the one record it holds is within
+#: ``verdict.RECORD_BYTES``.
+MAX_RECORD_ARCHIVE_BYTES = 2 * 1024 * 1024
+
+
+def record_line(name: str, archive: bytes, run_id: int, attempt: int) -> dict[str, Any]:
+    """The history's line for the job record artifact ``name`` of this run's ``attempt``: the
+    job's key and result, each failed test with the diagnostic rerun's word for it (None when it
+    was not classified), and each quarantined failure.
+
+    The archive holds one ``.json`` file, read in memory within ``verdict.RECORD_BYTES`` and with
+    ``verdict.from_job_records``, the record of this run and this attempt, in the artifact its own
+    key names. Anything else raises :class:`CollectError`."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
+            members = zipped.infolist()
+            if not members:
+                raise CollectError(f"{name}: the archive holds no record")
+            if len(members) != 1:
+                raise CollectError(f"{name}: the archive holds {len(members)} files, not one")
+            [member] = members
+            why = member_refusal(member)
+            if why is not None:
+                raise CollectError(f"{name}: {why}")
+            if not member.filename.endswith(".json"):
+                raise CollectError(f"{name}: {member.filename!r} is not a record file")
+            with zipped.open(member) as fh:
+                data = fh.read(verdict.RECORD_BYTES + 1)
+    except (zipfile.BadZipFile, OSError, EOFError) as exc:
+        raise CollectError(f"{name}: not a record archive ({exc})") from None
+    if len(data) > verdict.RECORD_BYTES:
+        raise CollectError(f"{name}: larger than any job record")
+    try:
+        [result] = verdict.from_job_records([data.decode("utf-8")])
+    except UnicodeDecodeError:
+        raise CollectError(f"{name}: the record is not UTF-8") from None
+    except verdict.Refused as exc:
+        raise CollectError(f"{name}: {exc}") from None
+    expected = verdict.record_artifact(result.key, run_id=run_id, attempt=result.attempt)
+    if name != expected:
+        raise CollectError(
+            f"{name} holds the record of {result.key!r} on attempt {result.attempt}, which this"
+            f" run uploads as {expected}"
+        )
+    if result.attempt != attempt:
+        raise CollectError(f"{name}: written by attempt {result.attempt}, not attempt {attempt}")
+    if result.run_id != run_id:
+        raise CollectError(f"{name}: the record names run {result.run_id}, not run {run_id}")
+    failed = [t for t in result.tests if t.standing != verdict.QUARANTINED]
+    return {
+        "kind": "record",
+        "key": result.key,
+        "result": result.result,
+        "rerun": [
+            {"test": t.test, "rerun_result": t.standing if t.standing in RERUN_RESULTS else None}
+            for t in failed
+        ],
+        "quarantined": [t.test for t in result.tests if t.standing == verdict.QUARANTINED],
+    }
+
+
 # ── the collection ────────────────────────────────────────────────────────────────────────────
 
 
@@ -579,10 +674,21 @@ def collect(
         if since <= made <= until:
             artifacts.append(a)
     reports: dict[str, Mapping[str, Any]] = {}
+    uploaded: dict[str, Mapping[str, Any]] = {}
     for artifact in sorted(artifacts, key=lambda a: int(a["id"])):
         name = str(artifact.get("name", ""))
         if name.startswith(REPORT_PREFIX) and name not in reports:
             reports[name] = artifact
+        if name.startswith(RECORD_PREFIX) and name not in uploaded:
+            uploaded[name] = artifact
+    records: list[dict[str, Any]] = []
+    for name, artifact in sorted(uploaded.items()):
+        if int(artifact.get("size_in_bytes") or 0) > MAX_RECORD_ARCHIVE_BYTES:
+            raise CollectError(f"{name}: the archive passes {MAX_RECORD_ARCHIVE_BYTES} bytes")
+        data = binary("api", f"repos/{repo}/actions/artifacts/{artifact['id']}/zip")
+        if len(data) > MAX_RECORD_ARCHIVE_BYTES:
+            raise CollectError(f"{name}: the archive passes {MAX_RECORD_ARCHIVE_BYTES} bytes")
+        records.append(record_line(name, data, run_id, attempt))
     tests: list[dict[str, Any]] = []
     cpus: dict[str, str | None] = {}
     for name, artifact in sorted(reports.items()):
@@ -650,7 +756,25 @@ def collect(
         "jobs": [_job_entry(j) for j in jobs],
         "cpus": cpus,
     }
-    return [head, *tests]
+    return [head, *sorted(records, key=lambda r: str(r["key"])), *tests]
+
+
+def history_text(lines: Sequence[Mapping[str, Any]]) -> str:
+    """The history file's text, one JSON line each, every line within :data:`MAX_LINE_BYTES` with
+    its line break. A line past it, which every reader would refuse the whole history for, raises
+    :class:`CollectError`."""
+    out: list[str] = []
+    for n, line in enumerate(lines, 1):
+        text = json.dumps(line, sort_keys=True) + "\n"
+        size = len(text.encode("utf-8"))
+        if size > MAX_LINE_BYTES:
+            named = str(line.get("key") or line.get("test") or "")[:80]
+            raise CollectError(
+                f"history line {n}, the {line.get('kind')} line {named!r}, is {size} bytes: it"
+                f" passes {MAX_LINE_BYTES} bytes, which no reader takes"
+            )
+        out.append(text)
+    return "".join(out)
 
 
 # ── scheduled slots: late, and missed ─────────────────────────────────────────────────────────
@@ -783,16 +907,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     try:
         lines = collect(args.repo, args.run_id, args.attempt, text=_gh_text, binary=_gh_binary)
+        if isinstance(lines, str):
+            print(f"run {args.run_id} is not collected: {lines}")
+            return 0
+        body = history_text(lines)
     except (CollectError, subprocess.SubprocessError, OSError) as err:
         print(f"::error title=no history written::{err}")
         return 1
-    if isinstance(lines, str):
-        print(f"run {args.run_id} is not collected: {lines}")
-        return 0
     args.out.mkdir(parents=True, exist_ok=True)
     path = args.out / f"history-{args.run_id}-{args.attempt}.jsonl"
-    path.write_text("".join(json.dumps(line, sort_keys=True) + "\n" for line in lines), "utf-8")
-    print(f"wrote {path}: {len(lines) - 1} test case(s)")
+    path.write_text(body, "utf-8")
+    kinds = [line["kind"] for line in lines]
+    print(
+        f"wrote {path}: {kinds.count('test')} test case(s), {kinds.count('record')} job record(s)"
+    )
     return 0
 
 
