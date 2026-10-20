@@ -304,7 +304,9 @@ Everything else is in [`docs/design/buddy/`](../docs/design/buddy/README.md).
 8. Every route and substate it touches round-trips through the URL and browser history.
 9. A motion or backdrop change attaches a browser Performance trace and Electron
    `app.getAppMetrics()` CPU, before and after, with the window idle. With the default identity, the
-   window focused and no turn running, the app schedules no animation-frame callbacks.
+   window focused and no turn running, the app schedules no animation-frame callbacks. The UI
+   quality check's idle-cost probe (`web/e2e/idleCost.spec.ts`) holds Home and Chat to that over
+   5 s, and to no timer or request that recurs more than once a second.
 10. A visual change never changes what the agent says or may do. The instructions a turn sends
     change only in a PR that is about them.
 11. Where the look changed, `web/DESIGN.md` changed first.
