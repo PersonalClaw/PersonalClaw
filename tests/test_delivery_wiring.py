@@ -21,11 +21,13 @@ from __future__ import annotations
 
 import asyncio
 import types
+from unittest.mock import MagicMock
 
 import personalclaw.action_providers as AP
 from personalclaw.gateway import GatewayOrchestrator
+from personalclaw.schedule_history import ScheduleRunStore
 from personalclaw.triggers.delivery import build_delivery, deliver, is_duplicate
-from personalclaw.triggers.models import Trigger
+from personalclaw.triggers.models import Trigger, TriggerState
 from personalclaw.triggers.store import TriggerStore
 
 #: The action the fixtures below fire. NOT `notify`: a notify action's success already IS the
@@ -90,6 +92,50 @@ def _fire(tmp_path, monkeypatch, provider, tid="clock:n") -> _State:
     finally:
         AP.get_action_provider = real
     return state
+
+
+class _Outcomes:
+    """A provider that ends each fire the next way its list says: ``ok``, ``fail`` (a returned
+    ``success=False`` carrying the fire's error) or ``raise`` (a `RuntimeError` of it)."""
+
+    def __init__(self, outcomes: list[str], errors: list[str]) -> None:
+        self.outcomes, self.errors = list(outcomes), list(errors)
+
+    async def execute(self, config, ctx, timeout=30):
+        outcome, error = self.outcomes.pop(0), self.errors.pop(0)
+        if outcome == "raise":
+            raise RuntimeError(error)
+        return types.SimpleNamespace(success=outcome == "ok", error=error)
+
+
+def _fire_each(tmp_path, monkeypatch, outcomes, *, errors=None, policy=None, tid="clock:n"):
+    """Fire one trigger through the REAL fire path once per outcome, each fire handed the row as
+    the store holds it then, as the tick does. Returns every note that reached `notify`, the
+    stored trigger after the last fire, and its run history, newest first."""
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(
+        Trigger(
+            id=tid,
+            name="nightly index",
+            kind="clock",
+            enabled=True,
+            spec={"kind": "interval", "interval_secs": 60},
+            delivery="inbox",
+            failure_policy=dict(policy or {}),
+            capabilities={"providers": [_ACTION]},
+            workflow={"inline": {"provider": _ACTION, "config": {}}},
+        )
+    )
+    provider = _Outcomes(outcomes, errors or ["index locked"] * len(outcomes))
+    monkeypatch.setattr(AP, "get_action_provider", lambda name: provider)
+    state = _State()
+    orch = object.__new__(GatewayOrchestrator)
+    orch.dashboard_state = state
+    for _ in outcomes:
+        asyncio.run(orch._fire_store_trigger(store.get(tid).trigger, {"trigger_id": tid}))
+    rows, _total = asyncio.run(ScheduleRunStore(tmp_path).list_for_job(tid, 0, 50))
+    return state.sent, store.get(tid).trigger, rows
 
 
 # ── the defect ──
@@ -167,10 +213,39 @@ def test_is_duplicate_tolerates_NO_seen_set():
 def test_it_routes_through_STATE_NOTIFY():
     """The substrate does not build a second notification path. Going around `notify` would
     bypass `notification_allowed` and the per-(source, kind) rule — a muted channel would start
-    talking."""
-    import inspect
+    talking.
 
-    assert "state.notify" in inspect.getsource(deliver)
+    Driven on the real dashboard state, the gate the recording fakes above stand in for: a
+    failure's note reaches the bell with its deep link and its event id, and the owner's own
+    controls still hold the next one back — with everything muted nothing arrives, and with a
+    `never` rule for the failure's kind nothing arrives while a success still does."""
+    from personalclaw import notification_kinds as nk
+    from personalclaw import notification_rules
+    from personalclaw.dashboard.state import DashboardState
+    from personalclaw.providers import entity_routes
+
+    state = DashboardState(sessions=MagicMock(count=0), start_time=0.0)
+
+    def bell_after(run_id: str, *, ok: bool = False) -> tuple:
+        before = len(state._notification_log)
+        note = build_delivery(
+            trigger_id="clock:n", trigger_name="nightly index", ok=ok, run_id=run_id
+        )
+        assert deliver(state, note) is True
+        return note, state._notification_log[before:]
+
+    note, landed = bell_after("r1")
+    assert [(n["kind"], n["title"], n["statusUrl"], n["eventId"]) for n in landed] == [
+        (note.kind, "nightly index failed", "#/workflows/runs/r1", note.event_id)
+    ]
+
+    entity_routes._save_entity_settings("notifications", {"mute_all": True})
+    assert bell_after("r2")[1] == []
+
+    entity_routes._save_entity_settings("notifications", {"mute_all": False})
+    notification_rules.save_rules({"rules": {nk.kind_for_legacy(note.kind).key: {"mode": "never"}}})
+    assert bell_after("r3")[1] == []
+    assert [n["title"] for n in bell_after("r4", ok=True)[1]] == ["nightly index finished"]
 
 
 def test_NO_dashboard_state_is_survived(tmp_path, monkeypatch):
@@ -234,13 +309,27 @@ def test_a_NOTIFY_FAILURE_does_not_fail_the_fire(tmp_path, monkeypatch):
 # ── the wiring ──
 
 
-def test_the_FIRE_PATH_delivers():
+def test_the_FIRE_PATH_delivers(tmp_path, monkeypatch):
     """A delivery contract nothing calls is the defect this file found — twice over, since
-    `executor.delivery_for` was itself uncalled."""
-    import inspect
+    `executor.delivery_for` was itself uncalled.
 
-    src = inspect.getsource(GatewayOrchestrator._fire_store_trigger)
-    assert "report_run" in src
+    Every way a fire ends reaches its trigger's report (`delivery.report_run`), not a note built
+    beside it: a success, a failure the action returned and one it raised each send one note, of
+    the scheduled-job kinds a clock trigger's report picks, linked to the trigger, and a failure's
+    note says what failed."""
+    from personalclaw import notification_kinds as nk
+
+    sent, _trigger, _rows = _fire_each(
+        tmp_path, monkeypatch, ["ok", "fail", "raise"], errors=["", "disk full", "index locked"]
+    )
+    link = "#/triggers?open=clock:n"
+    assert [(n["kind"], n["meta"]["event"], n["meta"]["statusUrl"]) for n in sent] == [
+        (nk.CRON, "automation.run.succeeded", link),
+        (nk.CRON_FAILED, "automation.run.failed", link),
+        (nk.CRON_FAILED, "automation.run.failed", link),
+    ], sent
+    assert "disk full" in sent[1]["body"]
+    assert "RuntimeError: index locked" in sent[2]["body"]
 
 
 # ── 🔴 every fire shared one event id, so a healthy automation notified ONCE ──
@@ -373,17 +462,39 @@ def test_the_reminder_window_lets_a_still_broken_automation_RE_ALERT():
     assert inside is True and outside is False
 
 
-def test_dedup_does_NOT_touch_the_autopause_counter():
+def test_dedup_does_NOT_touch_the_autopause_counter(tmp_path, monkeypatch):
     """The legacy control advanced `consecutive_failures` while suppressing the notification,
     and that separation is the point: dedup is about how loudly the user is told, never about
-    whether the failure counted. Coupling them lets a repeating error escape autopause."""
-    import inspect
+    whether the failure counted. Coupling them lets a repeating error escape autopause.
 
-    from personalclaw.triggers.delivery import repeats_last_failure
+    Driven through the real fire path, five fires failing the same way (returned, then raised):
+    with `dedupe_hash` one failure note goes out where five do without it, and the trigger ends
+    exactly where it ends without it — five failures in its history and paused by the fifth,
+    which says so. With a different error on each fire, every fire alerts and writes its hash on
+    the trigger, the fifth after the pause: that write must not undo it."""
 
-    source = inspect.getsource(repeats_last_failure)
-    assert "consecutive_failures" in source, "the reasoning must be recorded"
-    assert "consecutive_failures =" not in source and "consecutive_failures=" not in source
+    def failure_notes(sent) -> int:
+        return sum(n["meta"].get("event") == "automation.run.failed" for n in sent)
+
+    paused = (["failure"] * 5, TriggerState.AUTOPAUSED.value, False)
+    for outcome in ("fail", "raise"):
+        for policy, notes in (({"dedupe_hash": True}, 1), ({}, 5)):
+            home = tmp_path / f"{outcome}-{len(policy)}"
+            sent, trigger, rows = _fire_each(home, monkeypatch, [outcome] * 5, policy=policy)
+            assert failure_notes(sent) == notes, (outcome, policy, sent)
+            assert [n["meta"].get("event") for n in sent].count("automation.needs_attention") == 1
+            ended = ([r["status"] for r in rows], trigger.state, trigger.enabled)
+            assert ended == paused, (outcome, policy)
+
+    sent, trigger, _rows = _fire_each(
+        tmp_path / "different",
+        monkeypatch,
+        ["raise"] * 5,
+        errors=[f"host-{i} down" for i in range(5)],
+        policy={"dedupe_hash": True},
+    )
+    assert failure_notes(sent) == 5
+    assert (trigger.state, trigger.enabled) == (TriggerState.AUTOPAUSED.value, False)
 
 
 def test_the_hash_normalises_VOLATILE_data():
