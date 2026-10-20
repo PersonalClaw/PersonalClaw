@@ -10,6 +10,7 @@ import { DiffReveal } from '../DiffReveal'
 import { BottomTerminal } from './BottomTerminal'
 import { CommitView } from './CommitView'
 import { useCenterEditor } from './useCenterEditor'
+import type { RouteProps } from '../../../app/useQueryState'
 
 // ── The cockpit editor ─────────────────────────────────────────────────────────────────────────
 //
@@ -17,12 +18,14 @@ import { useCenterEditor } from './useCenterEditor'
 // under them the open file in the editor, or a file the worker is writing as it lands, a diff, or a
 // commit, with the terminal drawer beneath. `useCenterEditor` keeps what it shows and does.
 
-export function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: string; showTerm: boolean; onCloseTerm: () => void; running: boolean; runCmd?: { cmd: string; n: number } | null }) {
+export function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd, query, setQuery }: {
+  ws: string; showTerm: boolean; onCloseTerm: () => void; running: boolean; runCmd?: { cmd: string; n: number } | null
+} & Partial<Pick<RouteProps, 'query' | 'setQuery'>>) {
   const {
     termOpened, closeTerm, tabs, active, activePath, dirty, open, closeNow, setActivePath, markDirty,
     requestClose, viewerRef, draftStore, collapsedLeft, collapsedRight, reopenPanel, saveFileAsArtifact,
     diff, setDiff, commit, setCommit, mode, reveal, setReveal, tabLabels, activeTabRef,
-  } = useCenterEditor({ ws, showTerm, onCloseTerm })
+  } = useCenterEditor({ ws, showTerm, onCloseTerm, query, setQuery })
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       {/* editor tabs + pull-out re-open tabs for any collapsed side panel. Render the

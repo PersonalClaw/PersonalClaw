@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type CodeProject, type CodeFinding, type TaskItem } from '../../../lib/api'
 import { isTerminalTask } from './tasks/taskState'
 import { stageKey } from './cockpitShared'
+import type { RouteProps } from '../../../app/useQueryState'
 
 // ── The cockpit Tasks panel's controller ──────────────────────────────────────────────────────
 //
@@ -18,19 +19,40 @@ export function normalizeStageLabel(s: string): string {
   return s.replace(/^\s*(stage\s*)?\d+(\s*\/\s*\d+)?\s*[—:\-–]\s*/i, '').trim().toLowerCase()
 }
 
-export function useRightPanel({ project, tasksNonce, answerWanted }: {
+/** A task id the address may name: an id's characters, as the link parser holds a `task` to. */
+const TASK_ID = /^[A-Za-z0-9._:-]{1,128}$/
+
+export function useRightPanel({ project, tasksNonce, answerWanted, query, setQuery }: {
   project: CodeProject; tasksNonce: number; answerWanted?: boolean
-}) {
+} & Partial<Pick<RouteProps, 'query' | 'setQuery'>>) {
   // Navigable Tasks panel: a list view (all tasks, grouped by stage) and a per-task
   // DETAIL view (task plan + its agent loop events + a task-scoped steer box). The
   // selected task makes "what is the user steering" unambiguous for both sides.
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
+  // The open task is in the cockpit's address (`task=<id>`): opening or closing one is a push, so
+  // Back closes it, and a reload, a copied address or a link opens it again. Opening it only shows
+  // it; its steer box starts empty. Without an address (a caller that passes none) it is kept here.
+  const [localTaskId, setLocalTaskId] = useState<string | null>(null)
+  const named = query?.task ?? ''
+  const selectedTaskId = setQuery ? (TASK_ID.test(named) ? named : null) : localTaskId
+  const setQueryRef = useRef(setQuery); setQueryRef.current = setQuery
+  const selectTask = useCallback((id: string | null, opts?: { replace?: boolean }) => {
+    const write = setQueryRef.current
+    if (write) write({ task: id || null }, { replace: !!opts?.replace })
+    else setLocalTaskId(id)
+  }, [])
+  const setSelectedTaskId = useCallback((id: string | null) => selectTask(id), [selectTask])
+  /** Drops the task from the address as a correction, not a step Back would undo. */
+  const dropTask = useCallback(() => selectTask(null, { replace: true }), [selectTask])
+  // An id outside an id's shape opens nothing, and is dropped from the address.
+  useEffect(() => {
+    if (setQueryRef.current && named && !TASK_ID.test(named)) dropTask()
+  }, [named, dropTask])
   // The toast's Respond is a project-level answer, and the project footer that takes it is
   // unmounted while a TASK is open (the detail view replaces it), so a Respond then closes the
   // task. The footer mounts with the request still standing and takes the cursor itself.
   useEffect(() => {
-    if (answerWanted) setSelectedTaskId(null)
-  }, [answerWanted])
+    if (answerWanted && selectedTaskId) dropTask()
+  }, [answerWanted]) // eslint-disable-line react-hooks/exhaustive-deps
   const links = project.task_list_ids ?? {}
   const [tasksByList, setTasksByList] = useState<Record<string, TaskItem[]>>({})
   const [loading, setLoading] = useState(true)
@@ -73,7 +95,7 @@ export function useRightPanel({ project, tasksNonce, answerWanted }: {
   // so a refetch race can't snap a stale task back into focus. Only once loaded +
   // non-empty, so the normal "still fetching" window doesn't wrongly clear it.
   const selectionStale = !!selectedTaskId && !loading && allTasks.length > 0 && !selected
-  useEffect(() => { if (selectionStale) setSelectedTaskId(null) }, [selectionStale])
+  useEffect(() => { if (selectionStale) dropTask() }, [selectionStale, dropTask])
   // findings per task (task_id, or sequential findings attributed to their stage's
   // active task) — the agent loop events shown in TASK SCOPE.
   const findingsByTask: Record<string, CodeFinding[]> = {}

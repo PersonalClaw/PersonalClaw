@@ -8,6 +8,7 @@ import { StageTasks } from './tasks/StageTasks'
 import { stageKey, type ActivityItem } from './cockpitShared'
 import { ProjectFooter } from './footer/ProjectFooter'
 import { useRightPanel } from './useRightPanel'
+import type { RouteProps } from '../../../app/useQueryState'
 
 // ── The cockpit's Tasks panel ──────────────────────────────────────────────────────────────────
 //
@@ -15,7 +16,7 @@ import { useRightPanel } from './useRightPanel'
 // with its findings, live activity and blockers, and a notice with Retry when some tasks could not
 // be re-read. `useRightPanel` keeps what it knows.
 
-export function RightPanel({ project, onTasksChanged, tasksNonce, activityBySession, gateFail, stalled, onNudged, onStartNew, onAnswerOnScreen, answerWanted, onAnswerShown }: {
+export function RightPanel({ project, onTasksChanged, tasksNonce, activityBySession, gateFail, stalled, onNudged, onStartNew, onAnswerOnScreen, answerWanted, onAnswerShown, query, setQuery }: Partial<Pick<RouteProps, 'query' | 'setQuery'>> & {
   project: CodeProject; onTasksChanged: () => void; tasksNonce: number
   activityBySession: Record<string, ActivityItem[]>; gateFail: { label: string; command: string; output: string } | null
   stalled: StallInfo | null; onNudged: () => void; onStartNew?: () => void
@@ -27,7 +28,7 @@ export function RightPanel({ project, onTasksChanged, tasksNonce, activityBySess
   const {
     setSelectedTaskId, tasksByList, loading, loadFailed, refresh, allTasks, selected, findingsByTask, stages,
     tasksByStage,
-  } = useRightPanel({ project, tasksNonce, answerWanted })
+  } = useRightPanel({ project, tasksNonce, answerWanted, query, setQuery })
   if (selected) {
     const doneIds = new Set(allTasks.filter(isTerminalTask).map((t) => t.id))
     // This task's live events: its own task-worker session (parallel) if present;

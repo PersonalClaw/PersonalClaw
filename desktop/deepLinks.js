@@ -78,6 +78,8 @@ const LIMITS = Object.freeze({
 const SEGMENT = /^[A-Za-z0-9._:@~-]+$/;
 const ID = /^[A-Za-z0-9._:-]+$/;
 const WORD = /^[a-z][a-z0-9-]*$/;
+/** A commit, by its hash: 7 to 40 lowercase hex characters, so no ref name, range or revision syntax. */
+const COMMIT = /^[0-9a-f]{7,40}$/;
 /** C0 controls (bar tab, line feed, carriage return), DEL, C1 controls, and the direction overrides and isolates. */
 const UNSAFE_TEXT = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/;
 const UNSAFE_PATH = /[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/;
@@ -101,9 +103,17 @@ const PARAMETERS = [
   ["mode", (v) => v.length <= LIMITS.word && WORD.test(v)],
   ["pane", (v) => v.length <= LIMITS.word && WORD.test(v)],
   ["file", (v) => v.length <= LIMITS.file && !UNSAFE_PATH.test(v) && isRelativePath(v)],
+  ["diff", (v) => v.length <= LIMITS.file && !UNSAFE_PATH.test(v) && isRelativePath(v)],
+  ["commit", (v) => COMMIT.test(v)],
+  ["task", (v) => v.length <= LIMITS.id && ID.test(v)],
   ["prompt", (v) => v.length <= LIMITS.prompt && !UNSAFE_TEXT.test(v)],
 ];
 const PARAMETER_CHECKS = new Map(PARAMETERS);
+
+/** The parameters only a code cockpit (`code/<id>`) takes: the diff or commit its center shows, and its open task. */
+const COCKPIT_ONLY = new Set(["diff", "commit", "task"]);
+/** What a cockpit's center shows, one at a time: an open file, a working-copy diff or a commit. */
+const CENTER = ["file", "diff", "commit"];
 
 const refuse = (reason) => ({ ok: false, reason });
 
@@ -166,9 +176,15 @@ function parseDeepLink(raw) {
       if (key === "prompt" && !(route === "chat" && segments.length === 1 && segments[0] === "new")) {
         return refuse("a prompt fills only a new thread's composer");
       }
+      if (COCKPIT_ONLY.has(key) && !(route === "code" && segments.length === 1 && segments[0] !== "history")) {
+        return refuse(`a ${key} opens only in a code cockpit`);
+      }
       if (!PARAMETER_CHECKS.get(key)(value)) return refuse(`the ${key} parameter is not one`);
       given.set(key, value);
     }
+  }
+  if (CENTER.filter((key) => given.has(key)).length > 1) {
+    return refuse("a link names one of file, diff and commit at most");
   }
 
   const query = new URLSearchParams();

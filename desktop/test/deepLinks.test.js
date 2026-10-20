@@ -297,6 +297,80 @@ describe("parseDeepLink — refusals (each opens the app without navigating)", (
   });
 });
 
+describe("parseDeepLink — a code cockpit's review state", () => {
+  it("carries a cockpit's rail tab, open task and the one thing its center shows into its hash", () => {
+    assert.equal(ok("personalclaw://code/u-1?pane=changes&diff=src%2Fa.py&task=t-1"), "#/code/u-1?pane=changes&diff=src%2Fa.py&task=t-1");
+    assert.equal(ok("personalclaw://code/u-1?commit=0123abc"), "#/code/u-1?commit=0123abc");
+    assert.equal(ok("personalclaw://code/u-1?commit=" + "a".repeat(40)), "#/code/u-1?commit=" + "a".repeat(40));
+    assert.equal(ok("personalclaw://code/u-1?pane=files&file=src%2Fa.py"), "#/code/u-1?pane=files&file=src%2Fa.py");
+    // And the page's own parser reads back exactly what the link said.
+    const qs = new URLSearchParams(ok("personalclaw://code/u-1?task=t-1&diff=src%2Fa%20b.py").split("?")[1]);
+    assert.deepStrictEqual(Object.fromEntries(qs), { diff: "src/a b.py", task: "t-1" });
+  });
+
+  it("refuses a diff, a commit or a task anywhere but one code cockpit", () => {
+    for (const [key, value] of [["diff", "src%2Fa.py"], ["commit", "0123abc"], ["task", "t-1"]]) {
+      for (const at of ["threads/k", "threads/new", "code", "code/history", "code/u-1/x", "files", "tasks", "loop"]) {
+        assert.match(refused(`personalclaw://${at}?${key}=${value}`), /code cockpit/, `${at} ${key}`);
+      }
+    }
+  });
+
+  it("refuses a link that names more than one of file, diff and commit: the center shows one at a time", () => {
+    for (const pair of [
+      "file=src%2Fa.py&diff=src%2Fb.py",
+      "diff=src%2Fb.py&file=src%2Fa.py",
+      "file=src%2Fa.py&commit=0123abc",
+      "commit=0123abc&file=src%2Fa.py",
+      "diff=src%2Fb.py&commit=0123abc",
+      "commit=0123abc&diff=src%2Fb.py",
+      "file=src%2Fa.py&diff=src%2Fb.py&commit=0123abc",
+    ]) {
+      assert.match(refused(`personalclaw://code/u-1?${pair}`), /one of file, diff and commit/, pair);
+    }
+  });
+
+  it("holds a commit to 7 to 40 lowercase hex characters", () => {
+    for (const value of ["012345", "a".repeat(41), "0123ABC", "0123abg", "0123abc%20", "HEAD", "main", "-0123abc", "0123abc~1", "0123abc%5E"]) {
+      assert.match(refused(`personalclaw://code/u-1?commit=${value}`), /the commit parameter/, value);
+    }
+    ok("personalclaw://code/u-1?commit=0123456");
+  });
+
+  it("holds a diff to the review file's own rules: a path inside the workspace", () => {
+    for (const file of ["%2Fetc%2Fpasswd", "~%2F.ssh%2Fid_rsa", "..%2Fsecrets", "src%2F..%2F..%2Fx", "src%2F..", "a%5Cb", "C%3A%2Fx"]) {
+      assert.match(refused(`personalclaw://code/u-1?diff=${file}`), /the diff parameter/, file);
+    }
+    // The same control and direction-override characters as a file, tab and line breaks included.
+    for (const ch of ["%00", "%09", "%0A", "%0D", "%1F", "%7F", "%C2%85", "%E2%80%AE", "%E2%81%A6"]) {
+      assert.match(refused(`personalclaw://code/u-1?diff=src%2Fa${ch}b.py`), /the diff parameter/, ch);
+    }
+    assert.match(refused(`personalclaw://code/u-1?diff=${"a".repeat(LIMITS.file + 1)}`), /the diff parameter/);
+    ok(`personalclaw://code/u-1?diff=${"a".repeat(LIMITS.file)}`);
+  });
+
+  it("holds a task to an id's own characters and cap", () => {
+    for (const value of ["a%40b", "a~b", "a%2Fb", "a%20b", "a".repeat(LIMITS.id + 1)]) {
+      assert.match(refused(`personalclaw://code/u-1?task=${value}`), /the task parameter/, value);
+    }
+    ok(`personalclaw://code/u-1?task=${"a".repeat(LIMITS.id)}`);
+  });
+
+  it("refuses a diff, commit or task given twice, or with no value", () => {
+    for (const key of ["diff", "commit", "task"]) {
+      refused(`personalclaw://code/u-1?${key}=0123abc&${key}=0123abd`);
+      assert.match(refused(`personalclaw://code/u-1?${key}=`), /no value/, key);
+    }
+  });
+
+  it("every accepted cockpit hash holds only inert characters", () => {
+    for (const raw of [
+      "personalclaw://code/u-1?diff=src%2F%22%27%3C%3E%60.py&task=t-1",
+      "personalclaw://code/u-1?commit=0123abc&pane=changes",
+    ]) assert.match(ok(raw), SAFE_HASH, raw);
+  });
+});
+
 describe("hashAssignmentScript — the hash reaches the page as data", () => {
   it("assigns exactly the hash, and nothing in it runs", () => {
     const hostile = parseDeepLink("personalclaw://threads/new?prompt=%22%3Bwindow.ran%3D1%3B%22%5Cu0022");

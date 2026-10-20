@@ -5,6 +5,12 @@ import { type ArtifactCopy, type FileViewerHandle, type SaveAsArtifact } from '.
 import type { DraftEntry } from '../../../ui/content/ContentSurface'
 import { useFileTabs } from '../../files/browse/useFileTabs'
 import { useMode } from '../../../app/theme'
+import type { RouteProps } from '../../../app/useQueryState'
+import { centerFromQuery, centerPatch, fromReviewPath, isReviewCommit, toReviewPath, type Center } from './reviewState'
+
+/** A center's identity, for comparing what the address names with what is shown. */
+const centerKey = (c: Center | null | 'invalid'): string =>
+  c === 'invalid' ? '!' : c ? `${c.kind}:${c.kind === 'commit' ? c.hash : c.path}` : ''
 
 // ── The cockpit editor's controller ───────────────────────────────────────────────────────────
 //
@@ -18,7 +24,9 @@ import { useMode } from '../../../app/theme'
 // a giant DOM string + janks, with no readability payoff for machine-generated bulk.
 const REVEAL_MAX_CHARS = 40_000
 
-export function useCenterEditor({ ws, showTerm, onCloseTerm }: { ws: string; showTerm: boolean; onCloseTerm: () => void }) {
+export function useCenterEditor({ ws, showTerm, onCloseTerm, query, setQuery }: {
+  ws: string; showTerm: boolean; onCloseTerm: () => void
+} & Partial<Pick<RouteProps, 'query' | 'setQuery'>>) {
   // Latch: once the terminal is opened it stays MOUNTED (toggled via CSS) so the header
   // Hide/Show button preserves the PTY + running process + scrollback. The terminal's
   // own X is a real CLOSE → reset the latch to tear the PTY down. Header toggle just
@@ -369,6 +377,57 @@ export function useCenterEditor({ ws, showTerm, onCloseTerm }: { ws: string; sho
   useEffect(() => {
     activeTabRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }, [activePath])
+
+  // The one thing the center shows is in the cockpit's address (`file`, `diff` or `commit`, see
+  // `reviewState`), so a reload, Back, a copied address or a link opens the same review. The
+  // address is read once the workspace is known, and only when it MOVES: then the center opens
+  // what it names through the same open events a click sends, so it is opened as if she had
+  // clicked it. An address naming more than one, or a path outside the workspace or a hash outside
+  // a commit's shape, shows nothing and is corrected. What the center shows is written back as a
+  // replace whenever it changes. A commit's hash goes only to the read of that commit. A file
+  // outside the workspace, or a commit by a short hash the address cannot hold, is shown and
+  // written as none of the three.
+  const wanted = ws && setQuery ? centerFromQuery(query ?? {}) : null
+  const wantedKey = centerKey(wanted)
+  const shownPath = (abs: string) => toReviewPath(ws, abs)
+  const shown: Center | null = commit ? (isReviewCommit(commit.hash) ? { kind: 'commit', hash: commit.hash } : null)
+    : diff ? (shownPath(diff.path) ? { kind: 'diff', path: shownPath(diff.path)! } : null)
+    : active ? (shownPath(active.path) ? { kind: 'file', path: shownPath(active.path)! } : null)
+    : null
+  const shownKey = centerKey(shown)
+  const setQueryRef = useRef(setQuery); setQueryRef.current = setQuery
+  const shownKeyRef = useRef(shownKey); shownKeyRef.current = shownKey
+  useEffect(() => {
+    if (!wanted || wantedKey === shownKeyRef.current) return
+    if (wanted === 'invalid') {
+      setDiff(null); setCommit(null)
+      setQueryRef.current?.(centerPatch(null), { replace: true })
+      return
+    }
+    const send = (name: string, detail: unknown) => window.dispatchEvent(new CustomEvent(name, { detail }))
+    if (wanted.kind === 'commit') send('ne:code-open-commit', { hash: wanted.hash, subject: '' })
+    else {
+      const path = fromReviewPath(ws, wanted.path)
+      const name = wanted.path.split('/').pop() || wanted.path
+      if (wanted.kind === 'diff') send('ne:code-open-diff', { path, name })
+      else send('ne:code-open-file', { name, path, is_dir: false })
+    }
+  }, [wantedKey, ws]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Written back only when what is shown CHANGES, so a tab restored from an earlier visit never
+  // overwrites what the address names before the address has been opened. In a render where the
+  // address moved, or the workspace became known, the address wins: the read above opens what it
+  // names, and what is shown is not written over it. Without that the two can chase each other,
+  // each opening or writing what the other just replaced.
+  const lastShownKey = useRef(shownKey)
+  const lastRead = useRef({ wantedKey, ws })
+  useEffect(() => {
+    const moved = lastRead.current.wantedKey !== wantedKey || lastRead.current.ws !== ws
+    lastRead.current = { wantedKey, ws }
+    if (lastShownKey.current === shownKey) return
+    lastShownKey.current = shownKey
+    if (moved || !ws || !setQueryRef.current || shownKey === wantedKey) return
+    setQueryRef.current(centerPatch(shown), { replace: true })
+  }, [shownKey, wantedKey, ws]) // eslint-disable-line react-hooks/exhaustive-deps
   return {
     termOpened, closeTerm, tabs, active, activePath, dirty, open, closeNow, setActivePath, markDirty,
     requestClose, viewerRef, draftStore, collapsedLeft, collapsedRight, reopenPanel, saveFileAsArtifact,
