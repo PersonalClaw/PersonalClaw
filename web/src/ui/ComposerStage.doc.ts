@@ -14,6 +14,7 @@ const doc: UiDoc = {
     { name: 'onChange', description: 'Fires with the new draft on every edit — forwarded to Composer.' },
     { name: 'onSend', description: 'Called to send the draft — also invoked mid-stream, as "steer" when canSteer and "queue" otherwise, when canQueue.' },
     { name: 'streaming', description: 'True while a turn is streaming — flips the send button to Stop (or Steer with a typed draft).' },
+    { name: 'phase', description: 'The running turn\'s phase (lib/workPhase), null until the gateway says one: the Stop control\'s arc holds still while the turn waits on the owner (an approval or a question), as the agent orb does.' },
     { name: 'processing', description: 'One-shot pre-send processing (e.g. the goal analyze pass) → a spinning send button with no stop/queue affordance.' },
     { name: 'onStop', description: 'Called from the Stop button to abort the running turn.' },
     { name: 'placeholder', description: "Editor placeholder (default 'Ask anything')." },
