@@ -171,13 +171,15 @@ export function nodeDepth(instancePath: string): number {
  *
  *  This is the shape `runCostStat` and `runTokensStat` already exist for: a cell needs its own
  *  formatter because the inline chip's "render nothing" is not available to it. The rounding is
- *  `fmtElapsed`'s, unchanged, so the two never disagree about a non-zero figure. */
+ *  `fmtElapsed`'s, unchanged, so the two never disagree about a non-zero figure; a measured zero
+ *  reads `under 1s`, as `fmtElapsed` says a figure that rounds to nothing, so those two steps seven
+ *  milliseconds apart read the same. */
 export function elapsedStat(secs: number): string {
   // A non-finite figure is not a measurement of zero — say nothing was measured rather than
   // asserting an instant. `LedgerRailsPanel.cell` already screens `null`/`undefined`; this covers
   // the `NaN` a division could hand a `<Stat>` directly.
   if (!Number.isFinite(secs)) return 'not recorded'
-  return secs > 0 ? fmtElapsed(secs) : '0s'
+  return secs > 0 ? fmtElapsed(secs) : 'under 1s'
 }
 
 /** "To first output", said at the resolution it was measured at.

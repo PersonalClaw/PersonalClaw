@@ -45,6 +45,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A model on an OpenAI-compatible provider whose id has `o1`, `o3` or `o4` only inside another word is no longer sent a reasoning effort, and Xhigh reaches an OpenAI reasoning model as High, as Max does.**
 - **A native chat runs at its stored reasoning effort only when its model declares that level, also for a turn sent through the API or another channel with no composer open, and on Auto, which names no model, it runs at Default; setting a level the chat's model doesn't declare is refused, naming the model and the levels it declares.**
 - **A native chat's turns and the effort setting read a model's levels as the composer's effort row does: the levels its provider app lists for the model, none when the listing names none, and the levels PersonalClaw's built-in client sends only where the app says nothing of it; an app that listed a model with no levels hid the effort row while its turns still ran at the client's levels.**
+- **Workflow run and step times, on the workflow pages and the chat's workflow card, round to the whole second before they split off the minutes, so 119.6 seconds reads "2m 0s" where it read "1m 60s" and 59.6 seconds "1m 0s" where it read "60s"; a time under half a second reads "under 1s" where it read "0s".**
 
 ## [0.2.3] — 2026-10-19
 
