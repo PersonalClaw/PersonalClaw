@@ -115,6 +115,62 @@ ROWS: list[tuple[str, str, str]] = [
         "    urllib.request.urlopen('https://example.com')\n",
         "mixed",
     ),
+    # A whole-tree check run on the real tree through an import (tools/ci/tree_checks.py): the
+    # check reads the tree for the test, though the test's own source opens no file.
+    (
+        "a baseline generator called with no tree is a rail",
+        "from scripts.generate_docs_lint_baseline import build_inventory\n\n\n"
+        "def test_it():\n    assert build_inventory()\n",
+        "rail",
+    ),
+    (
+        "a baseline generator given a tree the test made is not",
+        "from scripts.generate_docs_lint_baseline import build_inventory\n\n\n"
+        "def test_it(tmp_path):\n    assert build_inventory(tmp_path)\n",
+        "suite",
+    ),
+    (
+        "a baseline generator whose tree source the test replaces is not",
+        "from scripts import generate_docs_lint_baseline as gen\n\n\n"
+        "def test_it(monkeypatch):\n    monkeypatch.setattr(gen, '_tracked_files', lambda: [])\n"
+        "    assert gen.build_inventory()\n",
+        "suite",
+    ),
+    (
+        "the gate aggregate run for real is a rail",
+        "from scripts.gate_report import run_all_gates\n\n\n"
+        "def test_it():\n    assert run_all_gates()\n",
+        "rail",
+    ),
+    (
+        "the asset census with no tree named is a rail",
+        "from scripts import check_asset_licenses as assets\n\n\n"
+        "def test_it():\n    assert assets.violations() == []\n",
+        "rail",
+    ),
+    (
+        "harness validate on the shipped specs is a rail",
+        "from harness import cli\n\n\ndef test_it():\n    assert cli.main(['validate']) == 0\n",
+        "rail",
+    ),
+    (
+        "harness explain, which reads one spec, is not",
+        "from harness import cli\n\n\ndef test_it():\n    assert cli.main(['explain', 'x']) == 2\n",
+        "suite",
+    ),
+    (
+        "a real-tree check reached through a module-level helper is a rail",
+        "from scripts.generate_docs_lint_baseline import build_inventory\n\n\n"
+        "def _fresh():\n    return build_inventory()\n\n\ndef test_it():\n    assert _fresh()\n",
+        "rail",
+    ),
+    (
+        "a module with a real-tree check run and a network test is mixed",
+        "import urllib.request\n\nfrom harness import cli\n\n\ndef test_tree():\n"
+        "    assert cli.main(['validate']) == 0\n\n\ndef test_wire():\n"
+        "    urllib.request.urlopen('https://example.com')\n",
+        "mixed",
+    ),
     (
         "a security-marked module stays put whatever it reads",
         "import pytest\nimport source_index\n\npytestmark = pytest.mark.security\n\n\n"
@@ -138,6 +194,29 @@ def test_each_verdict_says_why() -> None:
     found = rails_census.classify("tests/test_x.py", ROWS[0][1])
     assert found.tree == {"test_it": "walks the repository (rglob)"}
     assert "walks the repository (rglob)" in found.line()
+
+
+def test_a_real_tree_check_run_says_which_check() -> None:
+    """The reason names the whole-tree check, so a reader sees why a module that opens no file
+    is a rail. The census and the copy rail read that one definition (tools/ci/tree_checks.py)."""
+    row = next(s for name, s, _ in ROWS if name.startswith("harness validate"))
+    found = rails_census.classify("tests/test_x.py", row)
+    assert found.tree == {"test_it": "runs harness on the real tree"}
+    assert "runs harness on the real tree" in found.line()
+
+
+def test_a_planted_real_tree_check_outside_the_rails_is_misplaced(tmp_path: Path) -> None:
+    """The planted module: a suite module that runs a baseline generator on the real tree is a
+    rail outside tests/rails, and `rails check` fails on it; the same module under tests/rails
+    is a rail and passes."""
+    row = next(s for name, s, _ in ROWS if name.startswith("a baseline generator called"))
+    _plant(tmp_path, "tests/test_ratchet_copy.py", row)
+    _plant(tmp_path, "tests/rails/test_ratchet_tree.py", row)
+    bad = rails_census.misplaced(rails_census.census(tmp_path))
+    assert bad == [
+        "tests/test_ratchet_copy.py is a rail outside tests/rails/: "
+        "1/1 read the tree; runs docs-lint on the real tree)"
+    ], bad
 
 
 def _plant(root: Path, rel: str, source: str) -> None:
