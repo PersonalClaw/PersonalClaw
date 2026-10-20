@@ -25,6 +25,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **CI: `make gate` reuses a job's earlier clean pass on the same tree, inputs and machine, for the jobs whose class allows it, and says which job it reused and from which commit; `--no-reuse` runs every job.**
 - **Navigation and sending are instant; motion is kept for panels and moves.**
 - **A code project's cockpit opens a diff in a pane beside the editor instead of over it: drag its edge or use the arrow keys to resize it, it opens at the same width next time, and closing it puts the keyboard focus back on the change you opened it from.**
+- **A chat's turns read in one centred column 768 px wide, whatever content width you picked; the content width still sets the other pages and the composer.**
 
 ### Fixed
 

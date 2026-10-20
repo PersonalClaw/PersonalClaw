@@ -254,8 +254,14 @@
   --dot-density: 1;
   --dot-size: 1;
 
-  /* ── main content max-width (Chat composer + conversation column) ── */
+  /* ── main content max-width (every page's content column, the Chat composer among them) ── */
   --content-width: 820px;
+  /* ── the reading column: a chat's turns, centred, at one width whatever the window's.
+     Fixed, so not in the registry, and nothing writes it at runtime: the width preset above
+     still sets the pages and the chat's composer, but no longer widens a thread's turns
+     (web/REDESIGN.md §5, "around 720 to 780 px"). A whole column, bubbles and code included,
+     so wider than the prose measure (design/measure.ts), which caps a line of running text. ── */
+  --reading-width: 768px;
 
   /* ── spacing (4px base × the customizable --space-scale multiplier, mirroring
      --radius-scale) — so the `data-ui` density axis can tighten the WHOLE app's

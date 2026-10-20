@@ -90,9 +90,9 @@ Top to bottom:
 
 - **The header** holds the thread's own actions only: its title, Share and the overflow.
   Configuration never appears here.
-- **The reading column**, around 720 to 780 px whatever the window's width, holds the turns. Code,
-  tables, diffs and artifacts open beside it in an adjustable split that remembers its size; a
-  compact window stacks them under it.
+- **The reading column**, around 720 to 780 px whatever the window's width (`--reading-width`,
+  768 px, in `web/src/design/tokens.css`), holds the turns. Code, tables, diffs and artifacts open
+  beside it in an adjustable split that remembers its size; a compact window stacks them under it.
 - **Each turn** opens with the agent orb and one status line at its head
   ([`agent-orb.md`](agent-orb.md)). Its tool calls are dense rows (an icon, the tool's own label, a
   status pip) that fold, once the turn ends, into one line: "Worked for 12s · 6 steps", with any
