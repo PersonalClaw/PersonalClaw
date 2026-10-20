@@ -1,22 +1,24 @@
-"""The reasoning-effort levels a native chat's model declares: the one answer its turns and the
-effort endpoint both read.
+"""The reasoning-effort levels a native chat's model declares: the one rule the composer's list
+(``GET /api/models/chat``), a native chat's turns and the effort endpoint all read.
 
 The composer lists an effort only for a model that declares it (``efforts`` on
 ``GET /api/models/chat``) and sets a chat whose model lacks its level back to Default, but only
 while a composer has the chat open. A turn sent through the API or another channel ran at whatever
 level the chat had stored, and ``POST /api/chat/sessions/{session}/reasoning-effort`` stored any
-well-formed level on a native chat. Both ask here now, of the model the chat is bound to:
+well-formed level on a native chat. Each asks :func:`efforts_declared` now, of the model the chat is
+bound to:
 
-* Auto names no model, so it declares none.
-* A model on core's own wire, one whose provider type's app registered a branded spec so core
-  builds its requests, declares the levels that wire sends it
+* The model's app has the first word: the levels its listing names for the model, ``[]`` (a
+  curated row's ``"efforts": []``) declaring none, whichever wire serves it.
+* Where the app says nothing of the model (its listing does not name it, it has none, or the
+  listing cannot be read), a model on core's own wire, one whose provider type's app registered a
+  branded spec so core builds its requests, declares the levels that wire sends it
   (:func:`~personalclaw.llm.branded_specs.wire_efforts`).
-* A model whose app runs a wire of its own declares the levels the app's listing names for it.
+* Auto names no model, so it declares none.
 
-Where nothing says, the answer is ``None``: a model whose app could not be asked, does not list it,
-or names no levels for it (a listing that names none cannot be told from one that says nothing of
-efforts), and a ref that names no provider instance. The turn then sends the level as stored and
-the endpoint takes it, because core does not guess what another wire takes.
+Where nothing says, the answer is ``None``: a model on an app's own wire that the app says nothing
+of, and a ref that names no provider instance. The turn then sends the level as stored and the
+endpoint takes it, because core does not guess what another wire takes.
 
 An agent CLI's chat is not judged here: its runtime declares its own levels (``supported_efforts``)
 and the endpoint holds a level to those.
@@ -27,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Iterable
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -72,6 +75,21 @@ def core_wire_efforts(provider_type: str, model_id: str) -> tuple[str, ...] | No
 
     spec = registered_spec(canonical_provider_type(provider_type))
     return wire_efforts(spec.protocol, model_id) if spec is not None else None
+
+
+def efforts_declared(
+    provider_type: str, model_id: str, listed: Iterable[str] | None
+) -> tuple[str, ...] | None:
+    """The levels ``model_id`` on an instance of ``provider_type`` declares, given ``listed``, what
+    its app's listing names for it: its rows' levels (``[]`` for none), or ``None`` where the
+    listing does not name it or could not be read.
+
+    The app's word wins; where it says nothing, the levels core's own wire sends the model, lowest
+    first (:func:`core_wire_efforts`); and ``None`` on an app's own wire that says nothing, where
+    core does not guess."""
+    if listed is not None:
+        return tuple(dict.fromkeys(listed))
+    return core_wire_efforts(provider_type, model_id)
 
 
 def _bound(model_ref: str) -> tuple[Any, str] | None:
@@ -144,10 +162,8 @@ async def declared_efforts(model_ref: str) -> tuple[str, ...] | None:
     if bound is None:
         return None
     entry, model_id = bound
-    wire = core_wire_efforts(entry.type, model_id)
-    if wire is not None:
-        return wire
-    return (await _listing(entry) or {}).get(model_id) or None
+    listing = await _listing(entry)
+    return efforts_declared(entry.type, model_id, (listing or {}).get(model_id))
 
 
 async def turn_effort(model_ref: str, effort: str) -> str:

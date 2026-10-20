@@ -4,20 +4,25 @@ The composer offers a reasoning effort only for a model that declares it, and se
 model lacks its level back to Default, but only while it has the chat open. The gateway itself
 still sent a stored level the model does not declare whenever no composer had the chat open (a
 turn through the API or another channel), and the effort endpoint stored any well-formed level on
-a native chat. Both now read one answer of the chat's model:
+a native chat. Both now read one rule of the chat's model, and the composer's list
+(``GET /api/models/chat``) reads the same one:
 
-* a model on core's own wire declares what that wire sends it (``wire_efforts``);
-* a model whose app runs its own wire declares what the app's listing names for it, and where
-  nothing says (not listed, no levels named, the listing unreadable) the level goes as stored:
-  core does not guess what another wire takes;
+* the model's app has the first word: the levels its listing names for the model, ``[]`` (a curated
+  row's ``"efforts": []``) declaring none, on core's own wire as on the app's;
+* where the app says nothing of the model (its listing does not name it, or there is none to
+  read), a model on core's own wire declares what that wire sends it (``wire_efforts``);
+* on an app's own wire that says nothing, the level goes as stored: core does not guess what
+  another wire takes;
 * Auto names no model, so it declares none.
 
-An agent CLI's chat keeps its runtime's rule. And ``GET /api/models/chat`` gives a bound model its
-provider does not list the levels of its wire when that wire is core's, as the list it discovers
-already did.
+The pill, a turn and the endpoint once read two rules: on core's own wire the turn and the endpoint
+took the wire's levels even where the app's listing declared its own, so a curated
+``"efforts": []`` hid the pill's effort row while a turn still sent the wire's levels.
+
+An agent CLI's chat keeps its runtime's rule.
 
 Driven through the real chat runner and session manager, the routes and the provider registry;
-the model answers from a script and the app's listing is recorded. The instances' names are
+the model answers from a script and the apps' listings are recorded. The instances' names are
 invented; the model ids are ones the wires' tables name.
 """
 
@@ -40,6 +45,10 @@ from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, AgentEvent
 ATLAS, ZENITH, OWN = "Atlas", "Zenith", "Own"
 #: The app on its own wire lists these, with the levels it declares for each.
 OWN_LISTING = {"own-thinker": ["low", "high"], "own-plain": []}
+#: Atlas's app curates these rows of models on core's Anthropic wire, which would send
+#: claude-opus-4-6 low, medium, high and max, and claude-haiku-4-5 every level up to max. It lists
+#: neither claude-opus-4-8 nor claude-sonnet-4-6, and Zenith's app has no listing at all.
+ATLAS_LISTING = {"claude-opus-4-6": ["low", "high"], "claude-haiku-4-5": []}
 
 ANSWER = "Done."
 
@@ -69,23 +78,34 @@ def _forget_listings() -> None:
 
 @pytest.fixture(autouse=True)
 def providers(monkeypatch):
-    """Settings → Providers: Atlas on core's Anthropic wire, Zenith on its OpenAI one, and Own on
-    an app's wire of its own, whose listing is recorded."""
+    """Settings → Providers: Atlas on core's Anthropic wire, whose app curates its listing, Zenith
+    on core's OpenAI one, and Own on an app's wire of its own, whose listing is recorded."""
     from personalclaw.llm import branded_specs
     from personalclaw.llm.registry import ProviderEntry, ProviderRegistry, set_default_registry
     from personalclaw.sdk.model import BrandedProviderSpec
+    from personalclaw.sdk.provider_helpers import BrandedCatalog
 
+    curated = tuple(
+        {"id": m, "capabilities": ["chat"], "efforts": levels}
+        for m, levels in ATLAS_LISTING.items()
+    )
+    specs = {
+        "acme-claude": BrandedProviderSpec(
+            type="acme-claude", protocol="anthropic", fallback_models=curated
+        ),
+        "acme-gpt": BrandedProviderSpec(type="acme-gpt", protocol="openai"),
+    }
     registry = ProviderRegistry()
     for name, ptype in ((ATLAS, "acme-claude"), (ZENITH, "acme-gpt"), (OWN, "acme-own")):
         registry.register_entry(ProviderEntry(name=name, type=ptype, model=""))
+    # The Anthropic wire has no models route, so Atlas's catalog lists its curated rows as they are.
+    registry.register_catalog(
+        "acme-claude", lambda options, model="": BrandedCatalog(specs["acme-claude"])
+    )
     registry.register_catalog("acme-own", lambda options, model="": _OwnListing())
     set_default_registry(registry)  # conftest restores the singleton afterwards
-    for ptype, protocol in (("acme-claude", "anthropic"), ("acme-gpt", "openai")):
-        monkeypatch.setitem(
-            branded_specs._REGISTERED_SPECS,
-            ptype,
-            BrandedProviderSpec(type=ptype, protocol=protocol),
-        )
+    for ptype, spec in specs.items():
+        monkeypatch.setitem(branded_specs._REGISTERED_SPECS, ptype, spec)
     monkeypatch.setattr(_OwnListing, "reads", 0)
     monkeypatch.setattr(_OwnListing, "fails", False)
     _forget_listings()
@@ -185,13 +205,18 @@ async def _sent(state, *, model: str, effort: str, agent_cli: str = "") -> str:
         (f"{ZENITH}:gpt-4o", "high", ""),
         (f"{ZENITH}:o3", "xhigh", ""),
         (f"{OWN}:own-thinker", "medium", ""),
+        # 🔴 Each sent the level core's wire sends, though the app's listing declares otherwise.
+        (f"{ATLAS}:claude-opus-4-6", "max", ""),
+        (f"{ATLAS}:claude-haiku-4-5", "high", ""),
+        # 🔴 The app's listing names no levels for it: it declares none, as the pill shows.
+        (f"{OWN}:own-plain", "medium", ""),
         # A level the model declares goes as stored.
         (f"{ATLAS}:claude-opus-4-8", "xhigh", "xhigh"),
         (f"{ATLAS}:claude-sonnet-4-6", "max", "max"),
+        (f"{ATLAS}:claude-opus-4-6", "high", "high"),
         (f"{ZENITH}:o3", "medium", "medium"),
         (f"{OWN}:own-thinker", "high", "high"),
         # Where nothing says what the model takes, the level goes as stored.
-        (f"{OWN}:own-plain", "medium", "medium"),
         (f"{OWN}:own-unlisted", "medium", "medium"),
         ("own-bare-id", "medium", "medium"),
     ],
@@ -200,11 +225,14 @@ async def _sent(state, *, model: str, effort: str, agent_cli: str = "") -> str:
         "openai wire, no reasoning",
         "openai wire, xhigh",
         "own wire, undeclared",
-        "anthropic wire, xhigh",
-        "anthropic wire, max",
+        "anthropic wire, outside the app's levels",
+        "anthropic wire, the app declares none",
+        "own wire, the app declares none",
+        "anthropic wire, not listed, xhigh",
+        "anthropic wire, not listed, max",
+        "anthropic wire, the app's level",
         "openai wire, declared",
         "own wire, declared",
-        "own wire, no levels named",
         "own wire, not listed",
         "no provider named",
     ],
@@ -300,8 +328,34 @@ async def _set(model: str, effort: str, *, stored: str = "", agent_cli: str = ""
             "“own-thinker” on Own declares the reasoning efforts low and high, and medium isn't "
             "one.",
         ),
+        (
+            f"{ATLAS}:claude-opus-4-6",
+            "max",
+            "“claude-opus-4-6” on Atlas declares the reasoning efforts low and high, and max isn't "
+            "one.",
+        ),
+        (
+            f"{ATLAS}:claude-haiku-4-5",
+            "high",
+            "“claude-haiku-4-5” on Atlas declares no reasoning efforts, so high can't be set. "
+            "Leave the effort at Default.",
+        ),
+        (
+            f"{OWN}:own-plain",
+            "medium",
+            "“own-plain” on Own declares no reasoning efforts, so medium can't be set. Leave the "
+            "effort at Default.",
+        ),
     ],
-    ids=["auto", "openai wire, no reasoning", "openai wire, xhigh", "own wire, undeclared"],
+    ids=[
+        "auto",
+        "openai wire, no reasoning",
+        "openai wire, xhigh",
+        "own wire, undeclared",
+        "anthropic wire, outside the app's levels",
+        "anthropic wire, the app declares none",
+        "own wire, the app declares none",
+    ],
 )
 @pytest.mark.asyncio
 async def test_the_endpoint_refuses_a_level_the_native_model_does_not_declare(
@@ -319,12 +373,12 @@ async def test_the_endpoint_refuses_a_level_the_native_model_does_not_declare(
     ("model", "effort"),
     [
         (f"{ATLAS}:claude-opus-4-8", "xhigh"),
+        (f"{ATLAS}:claude-opus-4-6", "high"),
         (f"{ZENITH}:o3", "medium"),
         (f"{OWN}:own-thinker", "high"),
-        (f"{OWN}:own-plain", "medium"),
         (f"{OWN}:own-unlisted", "max"),
     ],
-    ids=["anthropic wire", "openai wire", "own wire", "own wire, no levels named", "not listed"],
+    ids=["anthropic wire", "the app's level", "openai wire", "own wire", "not listed"],
 )
 @pytest.mark.asyncio
 async def test_the_endpoint_takes_a_level_the_model_declares_or_where_nothing_says(model, effort):
@@ -337,6 +391,15 @@ async def test_the_endpoint_takes_a_level_the_model_declares_or_where_nothing_sa
 async def test_default_is_always_taken(model):
     status, _body, held = await _set(model, "", stored="high")
     assert (status, held) == (200, "")
+
+
+@pytest.mark.asyncio
+async def test_setting_the_level_a_chat_already_holds_is_judged_too():
+    """The bar is checked before the endpoint's answer that nothing changed: a chat holding a level
+    its model does not declare is refused that level again, not told it has it, because its turns
+    would not send it."""
+    status, body, held = await _set(f"{ATLAS}:claude-haiku-4-5", "high", stored="high")
+    assert (status, body["error"]["code"], held) == (400, "reasoning_effort_not_declared", "high")
 
 
 @pytest.mark.asyncio
@@ -409,3 +472,65 @@ def _run(coro):
     import asyncio
 
     return asyncio.run(coro)
+
+
+# ── the pill, a turn and the endpoint read one rule ─────────────────────────────────────────
+
+#: Every level a model on core's wires can declare.
+LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+#: Each case: the model a chat is bound to, and the levels the rule says it declares (``None``:
+#: nothing says what it takes).
+AGREEMENT = {
+    "the app declares levels, on core's wire": (f"{ATLAS}:claude-opus-4-6", ("low", "high")),
+    "the app declares levels, on its own wire": (f"{OWN}:own-thinker", ("low", "high")),
+    "the app declares none, on core's wire": (f"{ATLAS}:claude-haiku-4-5", ()),
+    "the app declares none, on its own wire": (f"{OWN}:own-plain", ()),
+    "the app is silent, on core's wire": (
+        f"{ATLAS}:claude-sonnet-4-6",
+        ("low", "medium", "high", "max"),
+    ),
+    "the app has no listing, on core's wire": (f"{ZENITH}:o3", ("low", "medium", "high")),
+    "the app is silent, on its own wire": (f"{OWN}:own-unlisted", None),
+    "auto": ("", ()),
+}
+
+
+async def _pill(monkeypatch, model: str) -> tuple[str, ...]:
+    """The levels the pill's effort row offers a chat on *model*: the ``efforts`` of its row in
+    ``GET /api/models/chat``, with every case's model in the Chat chain. Auto has no row, and the
+    composer offers it none (``effortsFor``)."""
+    from personalclaw.dashboard.handlers import model_registry as mr
+
+    if not model:
+        return ()
+    configured = [
+        {"name": ATLAS, "type": "acme-claude"},
+        {"name": ZENITH, "type": "acme-gpt"},
+        {"name": OWN, "type": "acme-own"},
+    ]
+    chain = [ref for ref, _levels in AGREEMENT.values() if ref]
+    monkeypatch.setattr(mr, "_get_providers_from_config", lambda: configured)
+    monkeypatch.setattr(mr, "load_active_models", lambda: {"chat": chain})
+    resp = await mr.api_models_chat(make_mocked_request("GET", "/api/models/chat"))
+    rows = {r["name"]: r for r in json.loads(resp.text)}
+    return tuple(rows[model].get("efforts", ()))
+
+
+@pytest.mark.parametrize("case", list(AGREEMENT))
+@pytest.mark.asyncio
+async def test_the_pill_a_turn_and_the_endpoint_read_one_rule(gateway, monkeypatch, case):
+    """The same model through the pill's list, a turn and the endpoint, at every level.
+
+    🔴 Red before wherever the app's listing names the model's levels, ``[]`` included: on core's
+    wire the turn and the endpoint took the wire's levels, and on the app's own a listed model with
+    none named let any level through, while the pill offered the listing's."""
+    model, declared = AGREEMENT[case]
+    pill = await _pill(monkeypatch, model)
+    turn = tuple([lvl for lvl in LEVELS if await _sent(gateway, model=model, effort=lvl) == lvl])
+    endpoint = tuple([lvl for lvl in LEVELS if (await _set(model, lvl))[0] == 200])
+    if declared is None:
+        # The pill names no level it doesn't know of, and the level goes as stored: no guess.
+        assert (pill, turn, endpoint) == ((), LEVELS, LEVELS)
+    else:
+        assert (pill, turn, endpoint) == (declared, declared, declared)

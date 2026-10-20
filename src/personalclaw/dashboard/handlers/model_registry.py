@@ -16,6 +16,7 @@ import asyncio
 import functools
 import json
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from aiohttp import web
@@ -871,11 +872,11 @@ async def api_models_chat(request: web.Request) -> web.Response:
     Each entry carries BOTH ``model_name`` and ``model_id`` (the same bare id)
     plus ``name``/``provider``/``description`` — a superset shape so every
     consumer (composer model pill reads model_name; agent/chat pickers read
-    name/model_id) works off one endpoint. An entry whose provider's record declares the
-    reasoning-effort levels the model takes carries them as ``efforts``, and so does one its
-    provider does not list, with the levels its wire sends it when that wire is core's
-    (``providers.model_efforts.core_wire_efforts``); one that declares none has no ``efforts``,
-    and the composer offers it no effort choice.
+    name/model_id) works off one endpoint. An entry carries the reasoning-effort levels its model
+    declares as ``efforts``, by the rule a native chat's turns and the effort endpoint read
+    (``providers.model_efforts.efforts_declared``): what its provider's listing names for it, else
+    the levels its wire sends it when that wire is core's. One that declares none, or that nothing
+    says of, has no ``efforts``, and the composer offers it no effort choice.
     """
     active = load_active_models()
     chat_active = active.get("chat", [])
@@ -895,11 +896,11 @@ async def api_models_chat(request: web.Request) -> web.Response:
         if (rows := _rows_of(ref)) is None or "chat" in _union(rows, "capabilities")
     ]
     if chat_active:
-        from personalclaw.providers.model_efforts import core_wire_efforts
+        from personalclaw.providers.model_efforts import efforts_declared
 
-        # A model its provider does not list (an instance's own model, a listing that could not be
-        # read) declares the levels its wire sends it when that wire is core's, as the list the
-        # fallback below discovers does; one listed declares what its listing says.
+        # A model its provider lists declares what its listing says, ``[]`` declaring none; one it
+        # does not (an instance's own model, a listing that could not be read), the levels its
+        # wire sends it when that wire is core's, as the list the fallback below discovers does.
         types = {
             str(p.get("name", "")): str(p.get("type", "")) for p in _get_providers_from_config()
         }
@@ -917,14 +918,13 @@ async def api_models_chat(request: web.Request) -> web.Response:
                 "description": model_id,
             }
             rows = _rows_of(model_ref)
-            if rows is not None:
-                efforts = _union(rows, "efforts")
-            elif provider_name in types:
-                efforts = list(core_wire_efforts(types[provider_name], model_id) or [])
-            else:
-                efforts = []
+            efforts = efforts_declared(
+                types.get(provider_name, ""),
+                model_id,
+                _union(rows, "efforts") if rows is not None else None,
+            )
             if efforts:
-                row["efforts"] = efforts
+                row["efforts"] = list(efforts)
             result.append(row)
         return web.json_response(result)
 
@@ -950,7 +950,7 @@ async def api_models_chat(request: web.Request) -> web.Response:
     providers_cfg = [p for p in config_rows if not _cannot_serve(p.get("name", ""))]
     all_models: list[dict[str, Any]] = []
 
-    def _add(pname: str, mid: str, efforts: list[str] | None = None) -> None:
+    def _add(pname: str, mid: str, efforts: Sequence[str] | None = None) -> None:
         if not str(mid or "").strip():
             return  # a listing row with no id is no model to offer
         row: dict[str, Any] = {
@@ -970,13 +970,13 @@ async def api_models_chat(request: web.Request) -> web.Response:
         get_connection_board,
         settings_fingerprint,
     )
-    from personalclaw.providers.model_efforts import core_wire_efforts
+    from personalclaw.providers.model_efforts import efforts_declared
 
     def _add_own(pname: str, ptype: str, mid: str) -> None:
         # An instance's own model, offered because no listing names it, declares the levels its
         # wire sends it when that wire is core's (an app's branded spec names its protocol); an app
         # on a wire of its own says what that wire sends through its listing, not here.
-        _add(pname, mid, list(core_wire_efforts(ptype, mid) or []))
+        _add(pname, mid, efforts_declared(ptype, mid, None))
 
     board = get_connection_board()
     tasks = []  # (pname, type, pinned_model, coro)
@@ -1012,7 +1012,11 @@ async def api_models_chat(request: web.Request) -> web.Response:
                 continue
             for mi in models_or_exc:
                 if "chat" in (mi.capabilities or []):
-                    _add(pname, mi.id, getattr(mi, "efforts", None))
+                    _add(
+                        pname,
+                        mi.id,
+                        efforts_declared(ptype, mi.id, getattr(mi, "efforts", None) or []),
+                    )
 
     # Entries an APP registers itself rather than a config.json row — the bundled floor model —
     # contribute their pinned model when they can serve. They are what a fresh install actually

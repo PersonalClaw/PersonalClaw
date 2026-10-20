@@ -628,8 +628,10 @@ at a level the pill does not show.
 
 The gateway holds a native chat to the same levels when no composer has it open, for a turn sent
 through the API or another channel: the stored level goes to the model only when the model declares
-it, and on Auto none goes. Where nothing says what the model takes (a provider app on a client of
-its own whose listing names no levels for it, or could not be read), the level goes as stored.
+it, read as the pill reads it (the provider app's listing of the model first, a listing that names
+no levels for it declaring none, and the client's levels only where the app says nothing), and on
+Auto none goes. Where nothing says what the model takes (a provider app on a client of its own
+whose listing does not name the model, or could not be read), the level goes as stored.
 Setting a level the chat's model doesn't declare is refused, and the reason names the model and the
 levels it declares. A chat on an agent CLI is held to its runtime's levels instead.
 

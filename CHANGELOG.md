@@ -44,6 +44,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A chat on Auto, or on any model that declares no effort levels, runs at Default effort, where one that had stored a level kept running at it with no control left to show or change it; the composer says it set Default.**
 - **A model on an OpenAI-compatible provider whose id has `o1`, `o3` or `o4` only inside another word is no longer sent a reasoning effort, and Xhigh reaches an OpenAI reasoning model as High, as Max does.**
 - **A native chat runs at its stored reasoning effort only when its model declares that level, also for a turn sent through the API or another channel with no composer open, and on Auto, which names no model, it runs at Default; setting a level the chat's model doesn't declare is refused, naming the model and the levels it declares.**
+- **A native chat's turns and the effort setting read a model's levels as the composer's effort row does: the levels its provider app lists for the model, none when the listing names none, and the levels PersonalClaw's built-in client sends only where the app says nothing of it; an app that listed a model with no levels hid the effort row while its turns still ran at the client's levels.**
 
 ## [0.2.3] — 2026-10-19
 
