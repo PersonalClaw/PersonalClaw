@@ -304,6 +304,57 @@ jobs:
           esac
           echo "full=$full jobs=$jobs"
           printf 'full=%s\njobs=%s\n' "$full" "$jobs" >> "$GITHUB_OUTPUT"
+      # 🪤 MAIN'S RULES JUDGE THIS CATALOGUE, NOT ITS OWN. The plan step archived tools/ci as
+      # main has it into $RUNNER_TEMP/judge; from there main's loader reads this pull request's
+      # catalogue with main's rules and main's own catalogue as its reference
+      # (tools/ci/catalogue_check.py): a security or live job main has must stay, keep its
+      # posture and keep its tiers, unless main's copy already marks it `retiring`, and breadth
+      # keeps a security job. A refusal fails this job, which the merge decision requires
+      # (tools/ci/merge_decision.py, CATALOGUE_CHECK), so the verdict is red too; the plan step's
+      # planner refused the same catalogue (exit 2), so the whole tier runs. Unlike the plan, this
+      # fails closed: a pull request whose catalogue nothing could check is red, never unchecked.
+      - name: main's tools/ci checks this pull request's catalogue
+        id: catalogue-check
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          judge="$RUNNER_TEMP/judge"
+          if [ -z "${PR_NUMBER:-}" ]; then
+            # Only a push to main checks nothing; any other run with no pull request has no
+            # main's copy to be checked against, and is red.
+            if [ "${GITHUB_EVENT_NAME:-}" = "push" ] \
+               && [ "${GITHUB_REF:-}" = "refs/heads/main" ]; then
+              echo "a push to main: the catalogue under test is main's own"
+              exit 0
+            fi
+            echo "::error title=catalogue unchecked::this run is neither a pull request nor a" \
+                 "push to main, so nothing checked its catalogue against main's"
+            exit 1
+          fi
+          if [ ! -f "$judge/tools/ci/__main__.py" ] || [ ! -f "$judge/tools/ci/catalogue.toml" ]; then
+            echo "::error title=catalogue unchecked::main's tools/ci could not be fetched, so" \
+                 "nothing checked this pull request's catalogue. Re-run the job."
+            exit 1
+          fi
+          if [ ! -f "$judge/tools/ci/catalogue_check.py" ] \
+             && ! grep -qF '"catalogue-check"' "$judge/tools/ci/__main__.py"; then
+            # Only the merge that adds the check: a main with neither the module nor its verb
+            # has no rules to apply. A copy with one and not the other is not whole, and runs
+            # below, red.
+            echo "::warning title=catalogue unchecked::main's tools/ci has no catalogue check yet," \
+                 "so there is nothing to check this pull request's catalogue against"
+            exit 0
+          fi
+          rc=0
+          (cd "$judge" && python3 -m tools.ci catalogue-check \
+             --catalogue "$GITHUB_WORKSPACE/tools/ci/catalogue.toml" \
+             --against "$judge/tools/ci/catalogue.toml") || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=catalogue refused::main's tools/ci refuses this pull request's" \
+                 "catalogue (exit $rc); the lines above say why."
+            exit 1
+          fi
 
   apps-contract:
     # The first-party apps' SDK contract checks, run against THIS core (#3599 → PersonalClawApps

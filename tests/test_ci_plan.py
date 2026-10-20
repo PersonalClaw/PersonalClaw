@@ -1018,6 +1018,38 @@ def test_main_is_read_against_its_own_catalogue(tmp_path) -> None:
     assert done.returncode == 0 and json.loads(done.stdout)["full"] is True, done.stderr
 
 
+#: The planted pull request's catalogue: the live audit dropped, from its entry and the merge list.
+_NO_AUDIT = _TEXT[: _TEXT.index('[[job]]\nid = "audit"')].replace('"lint", "audit",', '"lint",', 1)
+
+
+def test_a_catalogue_main_refuses_plans_nothing(tmp_path) -> None:
+    """Main's catalogue, beside the trusted areas file, is the reference the tree's is read
+    against: a pull request that drops main's live audit plans nothing, exit 2, so the changes
+    step runs the whole tier. Read alone, the same files plan."""
+    assert 'id = "audit"' not in _NO_AUDIT and '"audit"' not in _NO_AUDIT
+    argv = _pull_request(tmp_path, text=_NO_AUDIT, areas=_AREAS)
+    assert _command(*argv).returncode == 0, "the plant took no effect: it does not load alone"
+    done = _command(*argv, "--trusted-areas", str(_main_copy(tmp_path)), "--outputs")
+    assert done.returncode == 2 and done.stdout == "", done.stdout
+    assert (
+        "plan: audit: main's catalogue has this live job, and this catalogue drops it: mark it"
+        ' retiring = "#<issue>" in a merge of its own first'
+    ) in done.stderr.splitlines(), done.stderr
+
+
+def test_a_job_main_marks_retiring_may_leave_the_plan(tmp_path) -> None:
+    """The second of the two merges: main's copy marks the audit retiring, so a pull request
+    that drops it plans, without it."""
+    main = _main_copy(tmp_path)
+    marked = _TEXT.replace('id = "audit"\n', 'id = "audit"\nretiring = "#4999"\n', 1)
+    assert marked != _TEXT
+    (main.parent / "catalogue.toml").write_text(marked)
+    argv = _pull_request(tmp_path, text=_NO_AUDIT, areas=_AREAS)
+    done = _command(*argv, "--trusted-areas", str(main))
+    assert done.returncode == 0, done.stderr
+    assert "audit" not in json.loads(done.stdout)["jobs"]
+
+
 @pytest.mark.parametrize("what", ["no areas file", "no catalogue beside it", "a bad areas file"])
 def test_a_trusted_copy_it_cannot_read_plans_nothing(tmp_path, what) -> None:
     """Exit 2 and nothing on stdout: the changes step then publishes the whole tier. The error
