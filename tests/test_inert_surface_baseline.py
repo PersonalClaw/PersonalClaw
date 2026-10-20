@@ -177,27 +177,64 @@ def test_committed_baseline_byte_matches_a_fresh_render():
     )
 
 
-@pytest.mark.timeout(300)
-def test_render_is_deterministic():
+#: A small tree with one inert surface of every file-walking kind, plus the two anchors the
+#: census refuses to run without (``AppConfig.load`` and ``_EDITABLE_CONFIG``).
+_RENDER_TREE = {
+    "src/personalclaw/__init__.py": "",
+    "src/personalclaw/config/loader.py": """
+        class AppConfig:
+            @classmethod
+            def load(cls, raw):
+                return cls(name=raw["name"])
+        """,
+    "src/personalclaw/config/editable.py": '_EDITABLE_CONFIG = {"name": str, "ghost.key": str}\n',
+    "src/personalclaw/triggers/models.py": 'KINDS = ("clock", "orphan")\n',
+    "src/personalclaw/triggers/run.py": 'HANDLED = "clock"\n',
+    "src/personalclaw/kinds.py": """
+        import enum
+
+        class Colour(enum.Enum):
+            RED = "red"
+            UNUSED = "unused"
+        """,
+    "src/personalclaw/use.py": "from personalclaw.kinds import Colour\nX = Colour.RED\n",
+    "src/personalclaw/sdk/tool.py": '__all__ = ["used", "lonely"]\n',
+    "src/personalclaw/consumer.py": "from personalclaw.sdk.tool import used\n",
+}
+
+
+def _render_tree(root: Path) -> Path:
+    for rel, source in _RENDER_TREE.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(source), encoding="utf-8")
+    return root
+
+
+def test_render_is_deterministic(tmp_path):
     """Generating twice yields byte-identical output — no set-ordering, no timestamps, no
     absolute paths. Determinism is the whole contract; without it the ratchet is noise.
 
-    🔴 The timeout is RAISED, not the work reduced, and the number is measured. Before the
-    sixth census kind, two builds took **13.1s** on an idle machine (6.7s + 6.4s), but CI
-    starved the CPU-bound whole-tree walk past 120s twice (#1205, #1222). With the sixth
-    kind, one cold six-kind build measured **76.5s** on the shared host under the mandated
-    three-worker cap. The parser cache removes duplicate parsing inside a process, but both
-    calls still recollect and render every surface, so 300s remains measured headroom rather
-    than a new cliff.
-
-    Serializing this test instead is NOT available: the suite runs `--dist worksteal`
-    (`pyproject.toml`), which ignores `xdist_group` — measured, where switching to
-    `loadgroup` cost +58% wall time and was rejected.
-
-    Building once and comparing a re-render would be cheaper and WRONG: the contract is that
-    *collection* is order-stable too, so both builds have to be real.
+    Both builds are real (collection has to be order-stable too), over a small tree of this
+    test's own: the real tree's render is the rails job's (``scripts/gate_report.py``). The
+    fixture's findings are asserted as well, so a render that ignored *root* and read this
+    checkout cannot pass, and the override must not outlive the call.
     """
-    assert build_baseline() == build_baseline()
+    from scripts import generate_inert_surface_baseline as gen
+
+    root = _render_tree(tmp_path)
+    first = build_baseline(root)
+    assert first == build_baseline(root)
+    surfaces = {
+        rel: [s for s in bucket["surfaces"] if not s.startswith("config:")]
+        for rel, bucket in json.loads(first)["per_file"].items()
+    }
+    assert surfaces["src/personalclaw/kinds.py"] == ["enum:Colour.UNUSED"]
+    assert surfaces["src/personalclaw/triggers/models.py"] == ["trigger_kind:orphan"]
+    assert surfaces["src/personalclaw/sdk/tool.py"] == ["sdk_export:lonely"]
+    assert "editable_config:ghost.key" in surfaces["src/personalclaw/config/editable.py"]
+    assert not any(rel.startswith("/") or str(tmp_path) in rel for rel in surfaces), surfaces
+    assert gen._repo_root() == Path(gen.__file__).resolve().parents[1]
 
 
 def test_baseline_is_well_shaped_and_sorted():

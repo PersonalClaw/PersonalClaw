@@ -169,8 +169,9 @@ CHECKS: Mapping[str, Check] = {
 #: The calls that still run a check on the real tree in the suite, each removed by the step of
 #: #3929 that gives its check one place. ``(check, "path::test")``. The gate aggregate's copies
 #: are gone: its tests run every gate on stubs. So are the licence sweep's: its real-tree tests
-#: are the rail ``tests/rails/test_licence_governance_tree.py``. Next, the scanner's whole-tree
-#: scan, which moves to tests/rails.
+#: are the rail ``tests/rails/test_licence_governance_tree.py``, the scanner's whole-tree scan is
+#: ``tests/rails/test_harness_scanner_tree.py``, and the three render-determinism tests render a
+#: small tree of their own.
 KNOWN_COPIES: frozenset[tuple[str, str]] = frozenset(
     {
         (
@@ -182,7 +183,6 @@ KNOWN_COPIES: frozenset[tuple[str, str]] = frozenset(
             "asset-licences",
             "tests/test_asset_licenses.py::test_every_tracked_asset_has_a_licence_record",
         ),
-        ("asset-licences", "tests/test_asset_licenses.py::test_the_asset_census_is_not_vacuous"),
         (
             "docs-lint",
             "tests/test_docs_lint_baseline.py::"
@@ -201,8 +201,6 @@ KNOWN_COPIES: frozenset[tuple[str, str]] = frozenset(
             "docs-lint",
             "tests/test_docs_lint_baseline.py::test_no_per_file_counter_rose_vs_committed_baseline",
         ),
-        ("docs-lint", "tests/test_docs_lint_baseline.py::test_render_is_deterministic"),
-        ("harness", "tests/test_harness_validate.py::test_cli_scan_whole_tree_returns_zero"),
         (
             "harness",
             "tests/test_harness_validate.py::test_cli_validate_has_no_scanner_warnings_now",
@@ -226,7 +224,6 @@ KNOWN_COPIES: frozenset[tuple[str, str]] = frozenset(
             "tests/test_inert_surface_baseline.py::"
             "test_no_per_file_counter_rose_vs_committed_baseline",
         ),
-        ("inert-surface", "tests/test_inert_surface_baseline.py::test_render_is_deterministic"),
         (
             "inert-surface",
             "tests/test_inert_surface_baseline.py::"
@@ -262,7 +259,6 @@ KNOWN_COPIES: frozenset[tuple[str, str]] = frozenset(
             "tests/test_structural_baseline.py::"
             "test_no_structural_counter_rose_vs_committed_baseline",
         ),
-        ("structural", "tests/test_structural_baseline.py::test_the_render_is_deterministic"),
     }
 )
 

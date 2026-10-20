@@ -91,10 +91,13 @@ Regenerate in place (ONLY on a legitimate shrink) with::
 from __future__ import annotations
 
 import ast
+import contextlib
+import contextvars
 import dataclasses
 import functools
 import json
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -117,9 +120,26 @@ KIND_SDK_EXPORT = "sdk_export"
 
 _ENUM_BASES = {"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"}
 
+# A render may be pointed at another tree (a test's fixture) for one call. With no override,
+# every reader below sees this checkout exactly as before.
+_ROOT_OVERRIDE: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
+    "_ROOT_OVERRIDE", default=None
+)
+
+
+@contextlib.contextmanager
+def _rooted(root: Path | None) -> Iterator[None]:
+    """Render against *root* for the length of the block; ``None`` keeps this checkout."""
+    previous = _ROOT_OVERRIDE.set(None if root is None else Path(root).resolve())
+    try:
+        yield
+    finally:
+        _ROOT_OVERRIDE.reset(previous)
+
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    override = _ROOT_OVERRIDE.get()
+    return override if override is not None else Path(__file__).resolve().parents[1]
 
 
 def _src_root() -> Path:
@@ -1402,8 +1422,12 @@ def _all_inert_surfaces() -> list[tuple[str, str]]:
     return surfaces
 
 
-def build_inventory() -> dict[str, Any]:
+def build_inventory(root: Path | None = None) -> dict[str, Any]:
     """Render the full inert-surface inventory as a deterministic, JSON-safe dict.
+
+    *root* points the file-walking kinds at another tree (a test fixture); with no *root* the
+    render reads this checkout. The kinds that import live code (the config schema and the SDK
+    signature closure) read this checkout's modules either way.
 
     Shape::
 
@@ -1422,7 +1446,9 @@ def build_inventory() -> dict[str, Any]:
         KIND_CONFIG_READER: 0,
         KIND_SDK_EXPORT: 0,
     }
-    for rel, surface in _all_inert_surfaces():
+    with _rooted(root):
+        surfaces = _all_inert_surfaces()
+    for rel, surface in surfaces:
         bucket = per_file.setdefault(rel, {"inert": 0, "surfaces": []})
         bucket["surfaces"].append(surface)
         kind = surface.split(":", 1)[0]
@@ -1439,9 +1465,9 @@ def build_inventory() -> dict[str, Any]:
     }
 
 
-def build_baseline() -> str:
+def build_baseline(root: Path | None = None) -> str:
     """Render the inventory as a deterministic JSON string (sorted, trailing newline)."""
-    return json.dumps(build_inventory(), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    return json.dumps(build_inventory(root), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
 
 def regressions(baseline_per_file: dict[str, Any], current_per_file: dict[str, Any]) -> list[str]:

@@ -129,10 +129,45 @@ def test_committed_baseline_byte_matches_a_fresh_render():
     )
 
 
-def test_the_render_is_deterministic():
+def test_the_render_is_deterministic(tmp_path):
     """Two renders in the same process are byte-identical: sorted keys, sorted site lists, no
-    timestamps, no absolute paths, no line numbers."""
-    assert gen.build_baseline() == gen.build_baseline()
+    timestamps, no absolute paths, no line numbers.
+
+    Rendered over a small tree of this test's own; the real tree's render is the rails job's
+    (``scripts/gate_report.py``). The fixture's findings are asserted too, so a render that
+    ignored *root* (or was served this checkout's memoized scan) cannot pass, and this
+    checkout's scan must not be served the fixture's afterwards.
+    """
+    files = {
+        "src/personalclaw/__init__.py": "",
+        "src/personalclaw/dashboard/app.py": "X = 1\n",
+        "src/personalclaw/ledger/store.py": "from personalclaw.dashboard import app\n",
+        "src/personalclaw/handlers.py": (
+            'def _err(m):\n    return {"error": {"code": "bad", "message": m}}\n'
+        ),
+    }
+    for rel, body in files.items():
+        _module(tmp_path, rel, body)
+    first = gen.build_baseline(tmp_path)
+    assert first == gen.build_baseline(tmp_path)
+    inv = json.loads(first)
+    assert list(inv[gen.RATCHET_IMPORT_DIRECTION]["per_file"]) == [
+        "src/personalclaw/ledger/store.py"
+    ]
+    assert inv[gen.RATCHET_DUPLICATION]["per_file"] == {
+        "src/personalclaw/handlers.py": {
+            "count": 1,
+            "sites": ["http-error-envelope-helper:_err"],
+        }
+    }
+    assert str(tmp_path) not in first
+    assert gen._repo_root() == gen._REPO_ROOT
+    # Each ratchet's memo now holds the fixture's scan, keyed on the fixture's root, so a call
+    # with no root (this checkout) misses it and walks its own tree. Read off the key, never by
+    # scanning this checkout: the suite does not read the real tree.
+    assert sorted(gen._SCAN_CACHE) == sorted(gen.RATCHETS)
+    for ratchet, (key, _) in gen._SCAN_CACHE.items():
+        assert key[2] == tmp_path.resolve() != gen._REPO_ROOT, (ratchet, key)
 
 
 # ── Never at zero (the rule, restated as a rail) ─────────────────────────────

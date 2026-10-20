@@ -36,6 +36,8 @@ every per-file finding counter **may only shrink** versus the committed baseline
 from __future__ import annotations
 
 import json
+import subprocess
+from pathlib import Path
 
 from scripts.generate_docs_lint_baseline import (
     baseline_path,
@@ -135,10 +137,37 @@ def test_committed_baseline_byte_matches_a_fresh_render():
     )
 
 
-def test_render_is_deterministic():
+def test_render_is_deterministic(tmp_path):
     """Generating twice yields byte-identical output — no set-ordering, no timestamps, no
-    absolute paths. Determinism is the whole contract; without it the ratchet is noise."""
-    assert build_baseline() == build_baseline()
+    absolute paths. Determinism is the whole contract; without it the ratchet is noise.
+
+    Rendered over a small git work tree this test builds (the census reads ``git ls-files``);
+    the real tree's render is the rails job's (``scripts/gate_report.py``). Its findings are
+    asserted too, so a render that ignored *root* and read this checkout cannot pass.
+    """
+    from scripts import generate_docs_lint_baseline as gen
+
+    docs = {
+        "README.md": "[ok](docs/a.md) [dead](docs/missing.md) and src/gone.py:12\n",
+        "docs/a.md": "back to [readme](../README.md)\n",
+        "docs/untracked-neighbour.md": "[also dead](nowhere.md)\n",
+    }
+    for rel, text in docs.items():
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "README.md", "docs/a.md"], check=True)
+    first = build_baseline(tmp_path)
+    assert first == build_baseline(tmp_path)
+    assert json.loads(first)["per_file"] == {
+        "README.md": {
+            "findings": ["dead_link:docs/missing.md", "stale_citation:src/gone.py"],
+            "total": 2,
+        }
+    }
+    assert str(tmp_path) not in first
+    assert gen._repo_root() == Path(gen.__file__).resolve().parents[1]
 
 
 def test_baseline_is_well_shaped_and_sorted():

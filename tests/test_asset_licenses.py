@@ -98,19 +98,6 @@ def test_every_tracked_asset_has_a_licence_record():
     assert assets.violations() == []
 
 
-def test_the_asset_census_is_not_vacuous():
-    paths = assets.asset_paths()
-    assert len(paths) > 200, f"only {len(paths)} assets found; the census is broken"
-    for expected in (
-        "desktop/icon.png",
-        "src/personalclaw/tests_fixtures/empty/fixture.yaml",
-        "tests/fixtures/word_authored.docx",
-        "web/public/claw.svg",
-        "web/public/fonts/dm-sans.woff2",
-    ):
-        assert expected in paths
-
-
 def test_every_bundled_font_is_a_pinned_third_party_record_with_a_notice_beside_it():
     manifest = assets.load_manifest()
     fonts = [path for path in assets.asset_paths() if path.endswith(_FONT_SUFFIXES)]
