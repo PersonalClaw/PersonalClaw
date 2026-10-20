@@ -171,9 +171,10 @@ test-e2e:
 test-visual:
 	cd $(WEB_DIR) && npx playwright test e2e/visual.spec.ts --project=chromium
 
-## harness-validate: shape-validate + reference-resolve the self-dev harness specs
+## harness-validate: shape-validate + reference-resolve the self-dev harness specs; a warning
+## fails it too, as in CI's static job
 harness-validate:
-	$(PYTHON) -m harness validate
+	$(PYTHON) -m harness validate --strict
 
 ## mutation-check: fail if a mutation run died mid-mutation and left the mutation in the
 ## source (#2710). The signal is the on-disk session directory scripts/mutation_harness.py
