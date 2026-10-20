@@ -297,10 +297,11 @@ def test_git_scan_is_cached_within_its_ttl(tmp_path, offline_git_sources):
 
 
 def _with_a_package(folder: Path, name: str, *, native: bool = False) -> None:
-    """An app in *folder* that declares one Python package, so its card has one to disclose."""
+    """An app in *folder* that declares two Python packages, one core does not own and one it
+    does (numpy), so its card has both kinds to disclose."""
     folder.mkdir(parents=True)
     manifest = json.loads(_app_manifest(name))
-    manifest["dependencies"] = {"pythonDependencies": ["openai>=1.0"]}
+    manifest["dependencies"] = {"pythonDependencies": ["openai>=1.0", "numpy>=1.21"]}
     if native:
         manifest["native"] = True
     (folder / "app.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -309,8 +310,12 @@ def _with_a_package(folder: Path, name: str, *, native: bool = False) -> None:
 def test_every_scan_path_puts_the_package_disclosure_on_its_card(tmp_path, offline_git_sources):
     """Git, local and native scans each build a card from a manifest, and each card carries what
     installing it would pip-install, classified as the install dialog shows it. A scan path that
-    forgot the packages would show a card whose consent screen says nothing about them."""
-    disclosed = [{"spec": "openai>=1.0", "coreOwned": False}]
+    forgot the packages would show a card whose consent screen says nothing about them, and one
+    that listed them by hand beside the shared projection would lose which of them core owns."""
+    disclosed = [
+        {"spec": "openai>=1.0", "coreOwned": False},
+        {"spec": "numpy>=1.21", "coreOwned": True},
+    ]
 
     work = tmp_path / "repo" / "work"
     work.mkdir(parents=True)
