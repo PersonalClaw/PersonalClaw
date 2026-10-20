@@ -307,9 +307,9 @@ def test_every_code_an_uninstall_raises_is_a_registered_literal() -> None:
     """Every `PackUninstallError` code is a bare literal AND has a wire-registry row.
 
     `api_pack_uninstall` answers `json_error(exc.code, ...)`, which the registry scanner in
-    `test_http_error_codes_append_only` cannot resolve, so that site counts as the 19th dynamic
-    one. This closes it one level up, where the codes are chosen, the way
-    `test_request_validation` closes the 18th. Enumerated from the SOURCE, not from a list here:
+    `test_http_error_codes_append_only` cannot resolve, so that site is on its list of dynamic
+    ones. This closes it one level up, where the codes are chosen, the way
+    `test_request_validation` closes its own. Enumerated from the SOURCE, not from a list here:
     the site shipped with two codes that had no registry row, and a hand-written tuple could not
     have seen them.
     """

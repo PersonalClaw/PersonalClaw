@@ -316,11 +316,11 @@ async def test_a_refusal_off_the_api_surface_is_still_answered() -> None:
 def test_every_code_this_module_raises_is_a_registered_literal() -> None:
     """Every `RequestValidationError` code is a bare literal AND has a registry row.
 
-    This is the rail that lets `test_http_error_codes_append_only`'s dynamic-site ceiling
-    accommodate `RequestValidationError.response`. That emitter passes `self.code`, which
-    the static registry scanner cannot resolve, so the site reads as dynamic — the same
-    shape as `inbound/openai_dialect.openai_error`, the 17th site, and closed the same way:
-    one level up, where the indirection actually is.
+    This is the rail that lets `test_http_error_codes_append_only`'s list of dynamic sites
+    hold `RequestValidationError.response`. That emitter passes `self.code`, which the
+    static registry scanner cannot resolve, so the site reads as dynamic — the same shape
+    as `inbound/openai_dialect.openai_error`, and closed the same way: one level up, where
+    the indirection actually is.
 
     Enumerated from the SOURCE, not from a list in this test. A hand-written tuple of the
     four current codes would pass forever while a fifth was added unregistered — an

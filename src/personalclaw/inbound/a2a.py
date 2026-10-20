@@ -197,7 +197,7 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, str, 
     if problem:
         # Two literal calls rather than one with a computed code. A code in a variable is
         # invisible to the registry rail in `test_http_error_codes_append_only`, which is
-        # why that rail ceilings dynamic sites — a surface that mints its code at runtime
+        # why that rail lists dynamic sites — a surface that mints its code at runtime
         # can ship an unregistered one. The status still comes from `admission_problem`,
         # which is the layer that decides 404-vs-503.
         refusal = (
