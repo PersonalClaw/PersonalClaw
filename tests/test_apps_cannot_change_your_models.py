@@ -29,6 +29,14 @@ run the real handler (a pip install, a model download, a write to your credentia
 model), so the stand-in is what makes the demonstration safe to run. The provider, binding and
 onboarding cases run the real handlers, against a private model registry and a loopback stand-in
 for Ollama.
+
+The app is installed once for the module (``shared_app_rows.SharedApp``), and each route, each
+onboarding-bind case and each of your own setups is a row on that install: the home is put back to
+what the install left before every row and checked by digest, every session is signed out, the
+fenced registries are read around it, and each row runs on a model registry of its own. A refused
+row also reads the home before and after the app's two requests, so a refusal that wrote anything
+fails its own row. The end-to-end refusal of both families stays its own test, on an app installed
+for it alone.
 """
 
 from __future__ import annotations
@@ -45,6 +53,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from aiohttp import DummyCookieJar, web
 from aiohttp.test_utils import TestClient, TestServer
+from shared_app_rows import RecordedRows, Row, SharedApp, planted_rows
+from table_rows import row
 
 # Imported before any test patches `config_dir`: a module first imported under a patch keeps the
 # mock bound.
@@ -219,6 +229,11 @@ def _denials(rows: MagicMock, path: str) -> list:
 @pytest.fixture
 def models(monkeypatch) -> Any:
     """A private model registry in which a model app is installed: the type it registers."""
+    return _private_models(monkeypatch)
+
+
+def _private_models(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """:func:`models`, for a test or for one row, on *monkeypatch*."""
     from personalclaw.llm import registry as llm_registry
     from personalclaw.llm.capabilities import Capability, ProviderCapability
 
@@ -429,147 +444,320 @@ def _chat_binding() -> list[str]:
     return list(load_active_models().get("chat") or [])
 
 
+#: What the token middleware stamps on the session of any authorized request, refused or not:
+#: when it was last seen, and from where (``session_store.touch_device_last_seen``).
+_SIGN_IN_STAMPS = frozenset({"last_seen", "ip"})
+
+
+def _unstamped(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _unstamped(v) for k, v in value.items() if k not in _SIGN_IN_STAMPS}
+    if isinstance(value, list):
+        return [_unstamped(v) for v in value]
+    return value
+
+
+def _files(home: Path) -> dict[str, bytes]:
+    """Every file under *home* by its path, the sessions' sign-in stamps left out of their file."""
+    from personalclaw.dashboard.session_store import SESSIONS_FILE
+
+    files = {}
+    for path in (p for p in home.rglob("*") if p.is_file()):
+        name, raw = path.relative_to(home).as_posix(), path.read_bytes()
+        if name == SESSIONS_FILE:
+            raw = json.dumps(_unstamped(json.loads(raw)), sort_keys=True).encode()
+        files[name] = raw
+    return files
+
+
+def _changed_since(home: Path, before: dict[str, bytes]) -> list[str]:
+    """The files in *home* that differ from *before*, by their path in the home."""
+    now = _files(home)
+    return sorted(k for k in before.keys() | now.keys() if before.get(k) != now.get(k))
+
+
+#: The fixture app, installed once for the module.
+SHARED = SharedApp(APP, _bundle, _gateway)
+
+
 # ── 1. Every route in both families, and the onboarding bind, is yours ──────────────────────────
 
 
-class TestAnAppCannotReachYourModels:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("method", "template", "body"), MODEL_ROUTES, ids=[f"{m} {t}" for m, t, _ in MODEL_ROUTES]
-    )
-    async def test_an_app_is_refused_and_you_are_not(
-        self, home, sel_rows, method, template, body
-    ) -> None:
-        reached: list[tuple[str, str]] = []
-        path = _path(template)
-        async with _gateway(_stand_ins(reached)) as gw:
-            await gw.install(_bundle(home))
-            token = await gw.app_token()
-            as_sdk = await gw.call(method, path, body, app_token=token)
-            as_backend = await gw.call(method, path, body, app_token=token, as_backend=True)
-            yours = await gw.call(method, path, body)
-        for status, text in (as_sdk, as_backend):
-            assert status == 403, text
-            assert "owner-only capability, not grantable to an app" in text, text
-        assert len(_denials(sel_rows, path)) == 2, "each refusal leaves an SEL row naming the app"
-        assert yours[0] == 200, yours
-        assert reached == [("", method)], "only your request reached the handler"
+def _route_rows(reached: list[tuple[str, str]]) -> list[tuple[str, Any]]:
+    """A row per route of :data:`MODEL_ROUTES`, and one for ``HEAD``: the app refused both ways it
+    sends its token, each refusal an SEL row naming it, the home as it was after both, and only
+    your request reaching the stand-in."""
 
-    @pytest.mark.asyncio
-    async def test_head_is_the_same_read(self, home, sel_rows) -> None:
-        reached: list[tuple[str, str]] = []
+    def refused(method: str, template: str, body: Any):
+        path = _path(template)
+
+        async def case(r: Row) -> None:
+            reached.clear()
+            before = _files(r.home)
+            as_sdk = await r.gw.call(method, path, body, app_token=r.token)
+            as_backend = await r.gw.call(method, path, body, app_token=r.token, as_backend=True)
+            written = _changed_since(r.home, before)
+            yours = await r.gw.call(method, path, body)
+            for status, text in (as_sdk, as_backend):
+                assert status == 403, text
+                assert "owner-only capability, not grantable to an app" in text, text
+            assert not written, f"a refusal changed your home: {written}"
+            assert len(r.denials(path)) == 2, "each refusal leaves an SEL row naming the app"
+            assert yours[0] == 200, yours
+            assert reached == [("", method)], "only your request reached the handler"
+
+        return case
+
+    async def head_is_the_same_read(r: Row) -> None:
+        reached.clear()
         path = "/api/models/hf-token/status"
-        async with _gateway(_stand_ins(reached)) as gw:
-            await gw.install(_bundle(home))
-            token = await gw.app_token()
-            status, _text = await gw.call("HEAD", path, app_token=token)
-            yours, _ = await gw.call("HEAD", path)
-        assert status == 403
-        assert _denials(sel_rows, path)
+        as_sdk, _ = await r.gw.call("HEAD", path, app_token=r.token)
+        as_backend, _ = await r.gw.call("HEAD", path, app_token=r.token, as_backend=True)
+        yours, _ = await r.gw.call("HEAD", path)
+        assert [as_sdk, as_backend] == [403, 403]
+        # A HEAD answer has no body, so the reason is read from the refusal's SEL rows.
+        reasons = [c.kwargs.get("error", "") for c in r.denials(path)]
+        assert len(reasons) == 2, "each refusal leaves an SEL row naming the app"
+        assert all("owner-only capability, not grantable to an app" in w for w in reasons), reasons
         assert yours == 200 and reached == [("", "HEAD")]
+
+    rows = [(f"{m} {t}", refused(m, t, b)) for m, t, b in MODEL_ROUTES]
+    return [*rows, ("HEAD /api/models/hf-token/status", head_is_the_same_read)]
+
+
+@pytest.mark.asyncio
+async def test_an_app_is_refused_every_route_and_you_are_not(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    rows = _route_rows(reached)
+    assert len(rows) == len(MODEL_ROUTES) + 1, "a route was left out of the table"
+    await SHARED.run(subtests, rows, _stand_ins(reached), label="route")
+
+
+@pytest.mark.asyncio
+async def test_a_row_that_leaves_state_behind_fails_the_next_row(
+    tmp_path_factory, monkeypatch
+) -> None:
+    """The table's isolation, shown rather than assumed: a row that leaves the home, the SEL rows
+    or a fenced registry changed is caught, by name, in the row after it."""
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    probe = _route_rows(reached)[0]
+    failed = await planted_rows(SHARED, _stand_ins(reached), probe)
+    name = probe[0]
+    # Reset as every row is, a grant left in the home and an SEL row reach nothing after them.
+    assert failed["home"]["reset"] == {} and failed["sel"]["reset"] == {}, failed
+    # Without the reset, the row after them fails, by name, on the check that guards it.
+    assert "a home other than the installed app's" in failed["home"]["no reset"][name]
+    assert "planted-grant.json" in failed["home"]["no reset"][name]
+    assert "Security Event Log rows" in failed["sel"]["no reset"][name]
+    # A fenced registry is caught in the row that changed it, and again in the row after.
+    assert set(failed["fenced"]["reset"]) == {"planted fenced", name}, failed["fenced"]
+    assert all("left registries" in why for why in failed["fenced"]["reset"].values())
+
+
+#: The route the planted refusal below answers: where your chats' provider points.
+PLANTED = "PUT /api/model-providers/{name}"
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_that_writes_state_fails_its_own_row_and_no_other(
+    tmp_path_factory, monkeypatch
+) -> None:
+    """A handler the app reaches, which writes a provider of the app's into your config and then
+    answers as a refusal does: a 403 naming an owner-only capability, and an SEL row naming the
+    app. Only your home tells it from a refusal, so its row fails on that, and the rows either
+    side of it, the home put back before each, pass."""
+    from personalclaw.apps import permissions
+    from personalclaw.config.loader import config_path
+
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    reached: list[tuple[str, str]] = []
+    rows = _route_rows(reached)
+    at = [name for name, _ in rows].index(PLANTED)
+    method, template = PLANTED.split(" ", 1)
+
+    async def writes_then_refuses(request: web.Request) -> web.Response:
+        from personalclaw import sel
+
+        app = request.get("app", "")
+        if not app:
+            reached.append(("", request.method))
+            return web.json_response({"reached": True})
+        theirs = {"name": THEIRS, "type": VENDOR, "options": {"endpoint": ATTACKER}}
+        config_path().write_text(json.dumps({"providers": [theirs]}), encoding="utf-8")
+        sel.sel().log_api_access(
+            caller=f"app:{app}", outcome="denied", source="app_permissions", resources=request.path
+        )
+        refusal = permissions.owner_only_refusal("changing a model provider")
+        raise web.HTTPForbidden(
+            text=f"app {app!r} not permitted to access {request.path}: {refusal}"
+        )
+
+    decide = permissions.app_request_denial
+
+    def lets_the_planted_route_through(app: str, path: str, *, method: str = "", route: str = ""):
+        return (
+            "" if f"{method} {route}" == PLANTED else decide(app, path, method=method, route=route)
+        )
+
+    monkeypatch.setattr(permissions, "app_request_denial", lets_the_planted_route_through)
+    routes = [
+        (m, t, writes_then_refuses if (m, t) == (method, template) else handler)
+        for m, t, handler in _stand_ins(reached)
+    ]
+    recorded = RecordedRows()
+    await SHARED.run(recorded, rows[at - 1 : at + 2], routes, label="route")
+    assert list(recorded.failed) == [PLANTED], recorded.failed
+    assert "a refusal changed your home: ['config.json']" in recorded.failed[PLANTED]
 
 
 # ── 2. What a refusal protects: where your chats go, and which model answers them ──────────────
 
 
-class TestAnAppCannotMoveYourChats:
-    @pytest.mark.asyncio
-    async def test_your_provider_keeps_its_endpoint_and_your_chats_their_model(
-        self, home, models, sel_rows
-    ) -> None:
-        async with _gateway(_real_routes()) as gw:
-            await gw.install(_bundle(home))
-            token = await gw.app_token()
-            await _your_models(gw)
-            repoint = await gw.call(
-                "PUT",
-                f"/api/model-providers/{YOURS}",
-                {"options": {"endpoint": ATTACKER}},
-                app_token=token,
-            )
-            add = await gw.call(
-                "POST",
-                "/api/model-providers",
-                {"name": THEIRS, "type": VENDOR, "model": THEIR_MODEL, "options": {}},
-                app_token=token,
-            )
-            rebind = await gw.call(
-                "PUT",
-                "/api/models/active/chat",
-                {"models": [f"{THEIRS}:{THEIR_MODEL}"]},
-                app_token=token,
-            )
-            listing = await gw.call("GET", "/api/model-providers", app_token=token)
-            bindings = await gw.call("GET", "/api/models/active", app_token=token)
-        live = models.get_entry(YOURS)
-        assert live.options.get("endpoint") == YOUR_ENDPOINT, "your chats go where you pointed them"
-        assert live.options.get("api_key") == YOUR_KEY
-        assert _stored_providers() == [YOURS], "no provider of the app's was added"
-        assert _chat_binding() == [f"{YOURS}:{YOUR_MODEL}"], "your chats run on your model"
-        answers = [repoint, add, rebind, listing, bindings]
-        assert [status for status, _ in answers] == [403] * 5, answers
-        assert YOUR_ENDPOINT not in listing[1] and YOUR_MODEL not in bindings[1]
-        for path in (f"/api/model-providers/{YOURS}", "/api/model-providers", "/api/models/active"):
-            assert _denials(sel_rows, path), path
+@pytest.mark.asyncio
+async def test_your_provider_keeps_its_endpoint_and_your_chats_their_model(
+    home, models, sel_rows
+) -> None:
+    """Both families' end-to-end refusal, on an app installed for this test alone."""
+    async with _gateway(_real_routes()) as gw:
+        await gw.install(_bundle(home))
+        token = await gw.app_token()
+        await _your_models(gw)
+        repoint = await gw.call(
+            "PUT",
+            f"/api/model-providers/{YOURS}",
+            {"options": {"endpoint": ATTACKER}},
+            app_token=token,
+        )
+        add = await gw.call(
+            "POST",
+            "/api/model-providers",
+            {"name": THEIRS, "type": VENDOR, "model": THEIR_MODEL, "options": {}},
+            app_token=token,
+        )
+        rebind = await gw.call(
+            "PUT",
+            "/api/models/active/chat",
+            {"models": [f"{THEIRS}:{THEIR_MODEL}"]},
+            app_token=token,
+        )
+        listing = await gw.call("GET", "/api/model-providers", app_token=token)
+        bindings = await gw.call("GET", "/api/models/active", app_token=token)
+    live = models.get_entry(YOURS)
+    assert live.options.get("endpoint") == YOUR_ENDPOINT, "your chats go where you pointed them"
+    assert live.options.get("api_key") == YOUR_KEY
+    assert _stored_providers() == [YOURS], "no provider of the app's was added"
+    assert _chat_binding() == [f"{YOURS}:{YOUR_MODEL}"], "your chats run on your model"
+    answers = [repoint, add, rebind, listing, bindings]
+    assert [status for status, _ in answers] == [403] * 5, answers
+    assert YOUR_ENDPOINT not in listing[1] and YOUR_MODEL not in bindings[1]
+    for path in (f"/api/model-providers/{YOURS}", "/api/model-providers", "/api/models/active"):
+        assert _denials(sel_rows, path), path
 
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("bind_chat", [True, False])
-    async def test_the_onboarding_bind_does_not_move_them_onto_the_apps_server(
-        self, home, models, ollama, sel_rows, bind_chat
-    ) -> None:
-        """The app's backend answers as an Ollama on loopback. Bound, your chats would be its;
-        added, it would be one of your providers."""
-        async with _gateway(_real_routes()) as gw:
-            await gw.install(_bundle(home))
-            token = await gw.app_token()
-            await _your_models(gw)
-            status, text = await gw.call(
-                "POST", BIND, {"endpoint": ollama.endpoint, "bind_chat": bind_chat}, app_token=token
-            )
+
+def _on_private_models(case):
+    """*case* run on a model registry of its own, which goes when the row ends."""
+
+    async def run(r: Row) -> None:
+        with pytest.MonkeyPatch.context() as mp:
+            await case(r, _private_models(mp))
+
+    return run
+
+
+def _the_bind_is_refused(ollama: _Ollama, bind_chat: bool):
+    """The app's backend answers as an Ollama on loopback. Bound, your chats would be its; added,
+    it would be one of your providers."""
+
+    async def case(r: Row, _models: Any) -> None:
+        await _your_models(r.gw)
+        ollama.hits = 0
+        before = _files(r.home)
+        status, text = await r.gw.call(
+            "POST", BIND, {"endpoint": ollama.endpoint, "bind_chat": bind_chat}, app_token=r.token
+        )
+        assert _changed_since(r.home, before) == [], "the refusal wrote nothing"
         assert _chat_binding() == [f"{YOURS}:{YOUR_MODEL}"], "your chats run on your model"
         assert _stored_providers() == [YOURS], "no provider was added at the app's server"
         assert ollama.hits == 0, "the gateway never asked the app's server anything"
         assert status == 403, text
         assert "model provider" in text, text
-        assert _denials(sel_rows, BIND)
+        assert r.denials(BIND)
+
+    return _on_private_models(case)
+
+
+#: Both answers to the bind's one question, each a row: whether your chats move onto the server.
+BIND_CHAT = (True, False)
+
+
+@pytest.mark.asyncio
+async def test_the_onboarding_bind_does_not_move_them_onto_the_apps_server(
+    subtests, tmp_path_factory, monkeypatch, ollama
+) -> None:
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    rows = [(f"bind_chat={b}", _the_bind_is_refused(ollama, b)) for b in BIND_CHAT]
+    assert set(BIND_CHAT) == {True, False}, "an answer to the bind was left out of the table"
+    await SHARED.run(subtests, rows, _real_routes(), label="case")
 
 
 # ── 3. You still set up your models ─────────────────────────────────────────────────────────────
 
 
-class TestYouStillSetUpYourModels:
-    @pytest.mark.asyncio
-    async def test_you_add_edit_bind_and_remove_a_model_provider(self, home, models) -> None:
-        from personalclaw.apps.secret_fields import SECRET_MASK
+async def _you_add_edit_bind_and_remove_a_model_provider(r: Row, models: Any) -> None:
+    from personalclaw.apps.secret_fields import SECRET_MASK
 
-        moved = "https://yours-2.example/v1"
-        async with _gateway(_real_routes()) as gw:
-            await gw.install(_bundle(home))  # an app is installed: the permission layer is live
-            await _your_models(gw)
-            listed = await gw.ok("GET", "/api/model-providers")
-            bound = await gw.ok("GET", "/api/models/active")
-            # The edit form sends the saved key back masked, which means "unchanged".
-            edit = {"options": {"endpoint": moved, "api_key": SECRET_MASK}}
-            await gw.ok("PUT", f"/api/model-providers/{YOURS}", edit)
-            edited = models.get_entry(YOURS).options
-            await gw.ok("DELETE", f"/api/model-providers/{YOURS}")
-            after = await gw.ok("GET", "/api/models/active")
-        (row,) = [p for p in listed["providers"] if p["name"] == YOURS]
-        assert row["options"]["endpoint"] == YOUR_ENDPOINT
-        assert YOUR_KEY not in json.dumps(listed), "your key stays masked on the wire"
-        assert bound["use_cases"]["chat"] == [f"{YOURS}:{YOUR_MODEL}"]
-        assert edited["endpoint"] == moved and edited["api_key"] == YOUR_KEY
-        assert not after["use_cases"].get("chat"), "its binding went with it"
-        assert _stored_providers() == []
+    moved = "https://yours-2.example/v1"
+    # The app is installed: the permission layer is live for every request below.
+    await _your_models(r.gw)
+    listed = await r.gw.ok("GET", "/api/model-providers")
+    bound = await r.gw.ok("GET", "/api/models/active")
+    # The edit form sends the saved key back masked, which means "unchanged".
+    edit = {"options": {"endpoint": moved, "api_key": SECRET_MASK}}
+    await r.gw.ok("PUT", f"/api/model-providers/{YOURS}", edit)
+    edited = models.get_entry(YOURS).options
+    await r.gw.ok("DELETE", f"/api/model-providers/{YOURS}")
+    after = await r.gw.ok("GET", "/api/models/active")
+    (provider,) = [p for p in listed["providers"] if p["name"] == YOURS]
+    assert provider["options"]["endpoint"] == YOUR_ENDPOINT
+    assert YOUR_KEY not in json.dumps(listed), "your key stays masked on the wire"
+    assert bound["use_cases"]["chat"] == [f"{YOURS}:{YOUR_MODEL}"]
+    assert edited["endpoint"] == moved and edited["api_key"] == YOUR_KEY
+    assert not after["use_cases"].get("chat"), "its binding went with it"
+    assert _stored_providers() == []
 
-    @pytest.mark.asyncio
-    async def test_you_still_bind_the_ollama_on_your_machine(self, home, models, ollama) -> None:
-        async with _gateway(_real_routes()) as gw:
-            await gw.install(_bundle(home))
-            answer = await gw.ok("POST", BIND, {"endpoint": ollama.endpoint, "bind_chat": True})
+
+def _you_still_bind_the_model_server_on_your_machine(ollama: _Ollama):
+    async def case(r: Row, _models: Any) -> None:
+        answer = await r.gw.ok("POST", BIND, {"endpoint": ollama.endpoint, "bind_chat": True})
         assert answer["ok"] is True and answer["model"] == THEIR_MODEL
         assert _chat_binding() == [f"{answer['provider']}:{THEIR_MODEL}"]
         assert answer["provider"] in _stored_providers()
+
+    return case
+
+
+@pytest.mark.asyncio
+async def test_you_still_set_up_your_models(
+    subtests, tmp_path_factory, monkeypatch, ollama
+) -> None:
+    await SHARED.home(tmp_path_factory, monkeypatch)
+    rows = [
+        (
+            "you add, edit, bind and remove a model provider",
+            _you_add_edit_bind_and_remove_a_model_provider,
+        ),
+        (
+            "you still bind the model server on your machine",
+            _you_still_bind_the_model_server_on_your_machine(ollama),
+        ),
+    ]
+    await SHARED.run(
+        subtests, [(n, _on_private_models(c)) for n, c in rows], _real_routes(), label="case"
+    )
 
 
 # ── 4. The route table declares every route in both families ───────────────────────────────────
@@ -585,32 +773,31 @@ def _census() -> set[str]:
     }
 
 
-class TestTheRouteTableDeclaresYourModels:
-    def test_both_families_are_declared_reads_included(self) -> None:
-        from personalclaw.apps.permissions import (
-            READ_DECLARED_FAMILIES,
-            SECURITY_ROUTE_FAMILIES,
-            owner_only_api_reason,
-        )
+def test_the_route_table_declares_your_models(subtests) -> None:
+    from personalclaw.apps.permissions import (
+        READ_DECLARED_FAMILIES,
+        ROUTE_AUTHZ,
+        SECURITY_ROUTE_FAMILIES,
+        OwnerOnly,
+        owner_only_api_reason,
+        security_family,
+    )
 
+    census = _census()
+    with row(subtests, check="both families are declared, reads included"):
         for family in FAMILIES:
             assert family in SECURITY_ROUTE_FAMILIES, family
             assert family in READ_DECLARED_FAMILIES, f"{family}: an app reads none of it"
         assert "model provider" in owner_only_api_reason(BIND)
-
-    def test_every_route_in_both_families_is_driven_here(self) -> None:
-        census = _census()
+    with row(subtests, check="every route in both families is driven here"):
         assert len(census) >= 45, f"only {len(census)} model routes — vacuous"
-        driven = {f"{m} {t}" for m, t, _body in MODEL_ROUTES}
-        assert census == driven - {f"POST {BIND}"}, census ^ (driven - {f"POST {BIND}"})
+        driven = {f"{m} {t}" for m, t, _body in MODEL_ROUTES} - {f"POST {BIND}"}
+        assert census == driven, census ^ driven
         real = {f"{m} {t}" for m, t, _handler in _real_routes()}
         assert real <= census | {f"POST {BIND}"}, "a real handler at a template nothing registers"
-
-    def test_no_app_is_granted_any_of_them(self) -> None:
-        """No shipped app calls these routes. One that needs a read gets an ``AppMay`` row saying
-        why it is safe, and a case here."""
-        from personalclaw.apps.permissions import ROUTE_AUTHZ, OwnerOnly, security_family
-
+    with row(subtests, check="no app is granted any of them"):
+        # No shipped app calls these routes. One that needs a read gets an `AppMay` row saying
+        # why it is safe, and a case here.
         rows = {
             k: v for k, v in ROUTE_AUTHZ.items() if security_family(k.split(" ", 1)[1]) in FAMILIES
         }
