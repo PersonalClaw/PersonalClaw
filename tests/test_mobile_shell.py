@@ -88,10 +88,11 @@ def test_the_shell_targets_the_pair_page_the_gateway_serves():
     route = match.group(1)
     assert route == "/pair"
 
-    devices = (
-        REPO_ROOT / "src" / "personalclaw" / "dashboard" / "handlers" / "devices.py"
-    ).read_text(encoding="utf-8")
-    assert f'add_get("{route}"' in devices, f"the gateway does not serve GET {route}"
+    from gateway_routes_shared import handler_for
+
+    from personalclaw.dashboard.handlers import devices
+
+    assert handler_for("GET", route) is devices.pair_page, f"the gateway does not serve GET {route}"
 
 
 # ── the navigation rail ─────────────────────────────────────────────────────

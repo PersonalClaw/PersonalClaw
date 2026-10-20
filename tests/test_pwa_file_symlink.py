@@ -156,16 +156,16 @@ def test_unmatched_api_routes_answer_in_the_wire_envelope() -> None:
     assert 'return json_error("not_found", status=404)' in source
 
 
-def test_pwa_routes_are_registered_at_the_origin_root() -> None:
+def test_the_pwa_files_are_served_at_the_origin_root() -> None:
     """A service worker's scope is its path: served from ``/assets/`` it could only
-    control ``/assets/``, so ``/sw.js`` must be registered at the root."""
-    from pathlib import Path
+    control ``/assets/``, so the gateway serves ``/sw.js`` at the root, and the manifest beside
+    it (its ``start_url`` and ``scope`` resolve against its own URL)."""
+    from gateway_routes_shared import handler_for
 
-    import personalclaw.dashboard.routes as routes_mod
+    from personalclaw.dashboard import handlers
 
-    source = Path(routes_mod.__file__).read_text(encoding="utf-8")
-    assert 'add_get("/sw.js", handlers.service_worker)' in source
-    assert 'add_get("/manifest.webmanifest", handlers.manifest_webmanifest)' in source
+    assert handler_for("GET", "/sw.js") is handlers.service_worker
+    assert handler_for("GET", "/manifest.webmanifest") is handlers.manifest_webmanifest
 
 
 # ── Web fonts under /fonts/* (issue #2916) ──
@@ -278,16 +278,58 @@ async def test_font_asset_serves_through_symlinked_dist(tmp_path) -> None:
     assert resp.headers["Content-Type"] == "font/woff2"
 
 
-def test_fonts_route_is_a_typed_handler_not_a_static_mount() -> None:
-    """Clean break: /fonts is served by the explicit-Content-Type handler, not
-    ``add_static`` (whose ``FileResponse`` emits ``application/octet-stream``)."""
-    from pathlib import Path
+#: What the booted gateway answers under ``/fonts/``: each font the build ships under its stated
+#: type (a static mount sends a ``.woff2`` as ``application/octet-stream``); a font the build did
+#: not write as a plain 404 (a static mount raises one, and the SPA fallback answers it with the
+#: dashboard's index.html: the "invalid sfntVersion" failure); and a file there that is no font as
+#: a 404 too (a static mount serves anything in the folder).
+_FONT_DOORS = (
+    ("dm-sans.woff2", 200, "font/woff2"),
+    ("legacy.woff", 200, "font/woff"),
+    ("fallback.ttf", 200, "font/ttf"),
+    ("fallback.otf", 200, "font/otf"),
+    ("does-not-exist.woff2", 404, "text/plain"),
+    ("notes.txt", 404, "text/plain"),
+)
 
+
+@pytest.mark.asyncio
+async def test_the_gateway_serves_each_font_under_its_own_type(tmp_path, monkeypatch) -> None:
+    """``fonts.css`` names the fonts at ``/fonts/*``. The real gateway (``start_dashboard``), over
+    a build that ships four fonts, a file that is no font and the dashboard's index.html, answers
+    each request under ``/fonts/`` with the font and its stated type, or a plain 404."""
+    import aiohttp
+
+    import personalclaw.dashboard.handlers.core as handlers_core_mod
     import personalclaw.dashboard.server as server_mod
 
-    source = Path(server_mod.__file__).read_text(encoding="utf-8")
-    assert 'add_get("/fonts/{name}", handlers.font_asset)' in source
-    assert 'add_static("/fonts"' not in source
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("PERSONALCLAW_AUTH_MODE", "none")
+    dist = _dist_with_index(tmp_path)
+    (dist / "fonts").mkdir()
+    shipped = {
+        name: f"bytes of {name}".encode() for name, status, _ in _FONT_DOORS if status == 200
+    }
+    for name, data in {**shipped, "notes.txt": b"not a font"}.items():
+        (dist / "fonts" / name).write_bytes(data)
+    monkeypatch.setattr(server_mod, "_DIST_DIR", dist)
+    monkeypatch.setattr(handlers_core_mod, "_DIST_DIR", dist)
+
+    runner, _state = await server_mod.start_dashboard(sessions=MagicMock(count=0), port=0)
+    try:
+        port = runner.addresses[0][1]
+        async with aiohttp.ClientSession() as http:
+            for name, status, content_type in _FONT_DOORS:
+                async with http.get(f"http://127.0.0.1:{port}/fonts/{name}") as resp:
+                    body = await resp.read()
+                    assert resp.status == status, name
+                    assert resp.content_type == content_type, (name, resp.content_type)
+                    if status == 200:
+                        assert body == shipped[name], name
+                    else:
+                        assert b"<!doctype" not in body.lower(), name
+    finally:
+        await runner.cleanup()
 
 
 # ── The licence notices, /THIRD_PARTY_NOTICES.txt and /THIRD_PARTY_NOTICES_NPM.txt ──
@@ -356,18 +398,24 @@ async def test_a_notice_the_build_did_not_write_is_a_404_not_the_dashboard(tmp_p
                 assert "<!doctype" not in (await resp.text()).lower(), path
 
 
-def test_the_licence_notices_are_registered_at_the_paths_settings_links() -> None:
-    """The gateway serves both notices at the origin root, and Settings → Updates links those
-    same two paths (``updatesPanelLicences.test.tsx`` holds the links themselves)."""
+def test_the_licence_notices_are_served_at_the_paths_settings_links() -> None:
+    """The gateway serves each notice at the origin root by its own handler, and Settings →
+    Updates links those same two paths (``updatesPanelLicences.test.tsx`` holds the links
+    themselves)."""
     from pathlib import Path
 
-    import personalclaw.dashboard.routes as routes_mod
+    from gateway_routes_shared import handler_for
 
-    source = Path(routes_mod.__file__).read_text(encoding="utf-8")
-    assert 'add_get("/THIRD_PARTY_NOTICES.txt", handlers.third_party_notices)' in source
-    assert 'add_get("/THIRD_PARTY_NOTICES_NPM.txt", handlers.third_party_notices_npm)' in source
+    from personalclaw.dashboard import handlers
+
+    served = {
+        "/THIRD_PARTY_NOTICES.txt": handlers.third_party_notices,
+        "/THIRD_PARTY_NOTICES_NPM.txt": handlers.third_party_notices_npm,
+    }
+    for path, handler in served.items():
+        assert handler_for("GET", path) is handler, path
     panel = Path(__file__).resolve().parents[1] / "web/src/pages/settings/UpdatesPanel.tsx"
     linked = set(
         re.findall(r'href="(/THIRD_PARTY_NOTICES[^"]*)"', panel.read_text(encoding="utf-8"))
     )
-    assert linked == {path for path, _body in _NOTICES}
+    assert linked == set(served) == {path for path, _body in _NOTICES}

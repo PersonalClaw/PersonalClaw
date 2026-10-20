@@ -6,8 +6,8 @@ the HTTP layer can get wrong:
 * the `rooms.enabled` kill switch covering the READS too, not just the writes;
 * the stable error envelope, so every refusal the store can raise has a registry row and a
   sensible status rather than a 500;
-* route ordering, since `/api/rooms/{room_id}` would swallow every sibling sub-path if it
-  were registered first — the same failure `/api/channels/trust` already shipped once;
+* each door reaching its own handler in the gateway's route table, since `/api/rooms/{room_id}`
+  taking a sibling sub-path's request is the failure `/api/channels/trust` already shipped once;
 * the app-scoped refusal, which is inherited from `APP_SCOPED_PREFIXES` rather than coded
   here, and is therefore exactly the kind of property that silently stops being true.
 """
@@ -603,20 +603,43 @@ def test_room_routes_sit_under_the_app_scoped_prefixes():
     assert any("/api/rooms".startswith(p) for p in APP_SCOPED_PREFIXES)
 
 
-def test_the_room_id_route_is_registered_after_its_siblings():
-    """`/api/rooms/{room_id}` would swallow `/archive`, `/members`, `/messages`, `/continue`,
-    `/export` if it came first — aiohttp resolves in registration order, and this is the failure
-    `/api/channels/trust` already shipped once."""
-    from personalclaw.dashboard import routes
+def _room_doors(room: str, archive: str, export: str) -> tuple[tuple[str, str, str], ...]:
+    """Every room door, each with the handler the gateway runs for it, for a room with the id
+    *room*, and for rooms whose ids are a sub-path's last segment (*archive*, *export*)."""
+    return (
+        ("GET", "/api/rooms", "api_rooms_list"),
+        ("POST", "/api/rooms", "api_rooms_create"),
+        ("POST", f"/api/rooms/{room}/archive", "api_room_archive"),
+        ("POST", f"/api/rooms/{room}/members", "api_room_member_add"),
+        ("DELETE", f"/api/rooms/{room}/members/analyst", "api_room_member_remove"),
+        ("POST", f"/api/rooms/{room}/messages", "api_room_message_post"),
+        ("POST", f"/api/rooms/{room}/continue", "api_room_continue"),
+        ("GET", f"/api/rooms/{room}/export", "api_room_export"),
+        ("GET", f"/api/rooms/{room}", "api_room_get"),
+        ("PATCH", f"/api/rooms/{room}", "api_room_update"),
+        ("GET", f"/api/rooms/{archive}", "api_room_get"),
+        ("PATCH", f"/api/rooms/{export}", "api_room_update"),
+        ("POST", f"/api/rooms/{archive}/archive", "api_room_archive"),
+        ("GET", f"/api/rooms/{export}/export", "api_room_export"),
+    )
 
-    source = open(routes.__file__, encoding="utf-8").read()
-    catch_all = source.index('"/api/rooms/{room_id}", api_room_get')
-    for sibling in ("/archive", "/members", "/messages", "/continue", "/export"):
-        assert source.index(f'"/api/rooms/{{room_id}}{sibling}"') < catch_all, sibling
-    # The PATCH shares the catch-all's PATH and differs only in method, so ordering does not
-    # apply to it — but it must still be registered, or the write path this change added is a
-    # handler nothing can reach.
-    assert 'add_patch("/api/rooms/{room_id}", api_room_update)' in source
+
+def test_each_room_door_reaches_its_own_handler(subtests):
+    """The gateway's route table runs each room door's own handler: every sub-path, the room
+    itself (read and renamed), and the doors of a room whose id is a sub-path's name. A room's
+    id is its title's slug, so a room called "Archive" has the id `archive`.
+    `/api/rooms/{room_id}` taking a sub-path's request, or a sub-path taking the room's, is the
+    failure `/api/channels/trust` shipped once."""
+    from gateway_routes_shared import handler_for
+    from table_rows import row
+
+    ids = [store.create_room(title).id for title in ("Design review", "Archive", "Export")]
+    assert ids == ["design-review", "archive", "export"]
+    doors = _room_doors(*ids)
+    assert len(doors) == 14, "a door was dropped from the table"
+    for method, path, name in doors:
+        with row(subtests, door=f"{method} {path}"):
+            assert handler_for(method, path) is getattr(h, name), (method, path)
 
 
 # ── the turn the message route now starts ──────────────────────────────────

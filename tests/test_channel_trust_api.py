@@ -17,7 +17,9 @@ import pytest
 from aiohttp.test_utils import make_mocked_request
 
 from personalclaw import channel_trust as ct
+from personalclaw.dashboard.handlers import channel_owner
 from personalclaw.dashboard.handlers import channel_trust as h
+from personalclaw.dashboard.handlers import channels
 
 
 @pytest.fixture(autouse=True)
@@ -207,28 +209,32 @@ def test_the_error_code_is_in_the_append_only_registry():
     assert HTTP_ERROR_CODES["channel_trust_sender_unknown"]
 
 
-def test_trust_route_is_not_shadowed_by_the_name_route():
-    """`/api/channels/trust` must be registered BEFORE `/api/channels/{name}`.
+#: The trust doors and the transport doors beside them, each with the handler the gateway runs for
+#: it. `{name}` takes any one segment, `trust` included.
+_CHANNEL_DOORS = (
+    ("GET", "/api/channels/trust", h.api_channel_trust),
+    ("DELETE", "/api/channels/trust/slack/senders/U123", h.api_channel_trust_revoke),
+    ("PUT", "/api/channels/trust/slack/policies", h.api_channel_trust_policies),
+    ("POST", "/api/channels/trust/slack/channels", h.api_channel_trust_track),
+    ("DELETE", "/api/channels/trust/slack/channels/C123", h.api_channel_trust_untrack),
+    ("POST", "/api/channels/trust/slack/pairing", h.api_channel_trust_pairing_start),
+    ("DELETE", "/api/channels/trust/slack/pairing", h.api_channel_trust_pairing_cancel),
+    ("GET", "/api/channels/slack", channels.api_channel_get),
+    ("POST", "/api/channels/slack/connect", channels.api_channel_connect),
+    ("GET", "/api/channels/slack/owner", channel_owner.api_channel_owner),
+)
 
-    aiohttp resolves in registration order, so the dynamic `{name}` route swallows any
-    literal sibling registered after it — the request would reach `api_channel_get` and
-    answer `{"error": "unknown transport"}` with a 404, which reads like a missing provider
-    rather than a mis-ordered router. The registration is in the dashboard's route table
-    (`dashboard/routes.py`, run by a function that boots a real server), so the order is
-    asserted where it is decided: in the source.
-    """
-    from pathlib import Path
 
-    import personalclaw.dashboard.routes as routes
+def test_trust_route_is_not_shadowed_by_the_name_route(subtests):
+    """`/api/channels/trust` is the trust posture, never `/api/channels/{name}` for a transport
+    called `trust`: answered by `api_channel_get`, it would be `{"error": "unknown transport"}`
+    with a 404, which reads like a missing provider rather than a route sent to the wrong
+    handler. The gateway's route table runs each trust door's own handler, and each transport
+    door's."""
+    from gateway_routes_shared import handler_for
+    from table_rows import row
 
-    lines = Path(routes.__file__).read_text(encoding="utf-8").splitlines()
-    trust = [i for i, ln in enumerate(lines) if '"/api/channels/trust"' in ln]
-    named = [i for i, ln in enumerate(lines) if '"/api/channels/{name}"' in ln]
-
-    # Floor: both registrations were actually found, so a rename cannot make this vacuous.
-    assert trust, "no /api/channels/trust registration found in the route table"
-    assert named, "no /api/channels/{name} registration found in the route table"
-    assert max(trust) < min(named), (
-        "/api/channels/trust is registered after /api/channels/{name} and will be shadowed "
-        f"(trust at {[i + 1 for i in trust]}, name at {[i + 1 for i in named]})"
-    )
+    assert len(_CHANNEL_DOORS) == 10, "a door was dropped from the table"
+    for method, path, handler in _CHANNEL_DOORS:
+        with row(subtests, door=f"{method} {path}"):
+            assert handler_for(method, path) is handler, (method, path)

@@ -654,20 +654,20 @@ def test_triage_rules_branches(monkeypatch):
     assert "Error" in mcp_memory._call_tool_inner("triage_rules", {"action": "revoke"})
 
 
-def test_the_approval_rule_routes_are_registered():
-    """A handler nobody can reach is not a feature."""
-    import pathlib
+def test_the_gateway_serves_each_approval_rule_door_with_its_handler():
+    """A handler nobody can reach is not a feature. The gateway's route table runs the rules
+    manager's list, teach and revoke handlers for its three doors, the revoke for the key a rule
+    is stored under."""
+    from gateway_routes_shared import handler_for
 
-    from personalclaw.dashboard import handlers, routes
+    from personalclaw.dashboard import handlers
 
-    src = pathlib.Path(routes.__file__).read_text(encoding="utf-8")
-    for verb, name in (
-        ("add_get", "api_memory_approval_rules"),
-        ("add_post", "api_memory_approval_rule_add"),
-        ("add_delete", "api_memory_approval_rule_delete"),
-    ):
-        assert hasattr(handlers, name)
-        assert f"handlers.{name}" in src
-        assert verb in src
-    assert '"/api/memory/approval-rules"' in src
-    assert '"/api/memory/approval-rules/{key:.+}"' in src
+    key = rule_key(ITEM)
+    assert handler_for("GET", "/api/memory/approval-rules") is handlers.api_memory_approval_rules
+    assert (
+        handler_for("POST", "/api/memory/approval-rules") is handlers.api_memory_approval_rule_add
+    )
+    assert (
+        handler_for("DELETE", f"/api/memory/approval-rules/{key}")
+        is handlers.api_memory_approval_rule_delete
+    )
