@@ -42,6 +42,12 @@ main's, unless main marks it retiring, is refused, and plans nothing either.
 ``--outputs`` prints the two lines ``ci.yml``'s ``changes`` job publishes, ``full=true|false``
 and ``jobs=<JSON list>``, on stdout, and the plan on stderr.
 
+``--matrix`` prints the plan as a job matrix (:func:`matrix`): one entry per planned job and
+shard, keyed as ``run-job`` keys its record, each with the stage it runs in after the planned
+jobs whose output it uses. With ``--outputs`` it adds two lines, ``matrix=<JSON>`` (the
+``include`` list a ``strategy.matrix`` reads) and ``keys=<JSON list>`` (every entry's key, the
+plan a results stage judges the uploaded records against).
+
 Standard library only, like every ``tools/ci`` module. Pathspecs are read as git reads them;
 a test holds :func:`reaches` to ``git ls-files`` over the forms the catalogue accepts, and the
 loader refuses a form git reads otherwise (``catalogue.pathspec_fault``).
@@ -403,6 +409,62 @@ def _plan(
     return Plan(tier, False, order, {j: reasons[j] for j in order}, (), floor)
 
 
+# ── the plan as a job matrix ─────────────────────────────────────────────────────────────────
+
+
+def matrix_key(job: Job, shard: int | None) -> str:
+    """The key of one matrix entry: ``run-job``'s record key for that job and shard, so a
+    workflow's results stage can name exactly which planned record is missing."""
+    return f"{job.id} ({shard}/{job.shards})" if shard is not None else job.id
+
+
+def matrix(cat: Catalogue, planned: Plan) -> dict[str, Any]:
+    """``planned`` as a job matrix: one entry per planned job and shard, in plan order, each with
+    what its runner needs (``runs-on``, ``timeout``, ``python``, ``node``, ``browser``, and the
+    ``container`` a script job runs in, or empty) and the ``shard`` ``run-job`` takes (``i/N``,
+    or empty for a job that takes no ``--shard``). ``after`` names the planned jobs whose output
+    the entry's job uses, and ``stage`` is 1 for an entry that waits for none, else one more than
+    the latest stage it waits for: a ``strategy.matrix`` starts every entry at once, so a
+    workflow runs one matrix per stage, each after the one before. ``keys`` lists every entry's
+    key: the plan a results stage judges the run's records against. A planned job the catalogue
+    does not hold, or an ``after`` that makes a cycle, raises ValueError naming it, so the
+    command plans nothing and its caller runs everything."""
+    by_id = {j.id: j for j in cat.jobs}
+    gone = [j for j in planned.jobs if j not in by_id]
+    if gone:
+        raise ValueError(f"the plan names {', '.join(gone)}, which the catalogue does not hold")
+    waits = {j: [a for a in by_id[j].after if a in planned.jobs] for j in planned.jobs}
+    stages: dict[str, int] = {}
+
+    def stage(job_id: str, path: tuple[str, ...] = ()) -> int:
+        if job_id in path:
+            raise ValueError(f"the jobs' after makes a cycle: {' -> '.join((*path, job_id))}")
+        if job_id not in stages:
+            stages[job_id] = 1 + max((stage(a, (*path, job_id)) for a in waits[job_id]), default=0)
+        return stages[job_id]
+
+    include: list[dict[str, Any]] = []
+    for job_id in planned.jobs:
+        job = by_id[job_id]
+        for shard in range(1, job.shards + 1) if job.shards > 1 else (None,):
+            include.append(
+                {
+                    "id": job.id,
+                    "key": matrix_key(job, shard),
+                    "shard": f"{shard}/{job.shards}" if shard is not None else "",
+                    "runs-on": job.platform,
+                    "timeout": job.timeout_min,
+                    "python": job.python or "",
+                    "node": job.needs_node,
+                    "browser": job.needs_browser,
+                    "container": job.container or "",
+                    "after": list(waits[job_id]),
+                    "stage": stage(job_id),
+                }
+            )
+    return {"include": include, "keys": [e["key"] for e in include]}
+
+
 # ── the rails floor ──────────────────────────────────────────────────────────────────────────
 
 
@@ -661,6 +723,11 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="print GitHub output lines (full=<bool>, jobs=<JSON>) and the plan on stderr",
     )
+    parser.add_argument(
+        "--matrix",
+        action="store_true",
+        help="print the plan as a job matrix; with --outputs, add matrix= and keys= lines",
+    )
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -685,6 +752,7 @@ def main(argv: list[str]) -> int:
             floor=_ci_floor(args.repo) if args.repo else None,
         )
         text = json.dumps(result.as_json(), sort_keys=True, indent=1, allow_nan=False)
+        grid = matrix(cat, result) if args.matrix else None
     except (OSError, ValueError, catalogue.CatalogueError) as exc:
         problems = exc.problems if isinstance(exc, catalogue.CatalogueError) else [str(exc)]
         for problem in problems:
@@ -694,6 +762,14 @@ def main(argv: list[str]) -> int:
         print(text, file=sys.stderr)
         print(f"full={'true' if result.full else 'false'}")
         print("jobs=" + json.dumps(list(result.jobs), separators=(",", ":")))
+        if grid is not None:
+            # `strategy.matrix` gets `include` alone: any other key would become a dimension.
+            include = {"include": grid["include"]}
+            print("matrix=" + json.dumps(include, separators=(",", ":"), sort_keys=True))
+            print("keys=" + json.dumps(grid["keys"], separators=(",", ":")))
+        return 0
+    if grid is not None:
+        print(json.dumps(grid, sort_keys=True, indent=1))
         return 0
     print(text)
     return 0

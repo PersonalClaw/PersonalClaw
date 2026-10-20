@@ -16,6 +16,11 @@ Anything else is red, with one :class:`Reason` per key that fell short: ``missin
 outside the plan that was skipped or passed changes nothing; one that failed, was cancelled or
 reported a word this module does not know, on any attempt, reads red, so the verdict fails closed.
 
+Given the run's id (``run_id``, when the results are one run's own records, :func:`read_records`),
+:func:`decide` reads two more reds: a result of another run (``another run``) or of none (``no
+run``: a local record), and a planned key with no result on attempt 1 (``missing on attempt 1``),
+so a rerun carries only what attempt 1 recorded and never fills a record attempt 1 left empty.
+
 Planned keys are opaque strings: a job id from ``needs``, a matrix entry from a per-job verdict
 file, or a job the controller read from the API all mean the same thing here.
 
@@ -30,13 +35,14 @@ the default branch's copy) reads a plan file and a needs file and exits 0 green,
 it cannot read. Every usage error is input it cannot read: there is no ``-h``, since a help page
 would exit 0 having judged nothing, and an option given twice is refused, not last-wins. When
 ``$GITHUB_STEP_SUMMARY`` is set, the verdict's reasons, or why the input could not be read, are
-appended to it.
+appended to it. ``--records`` adds one run's per-job records (:func:`read_records`), with
+``--run-id`` naming that run, and ``--attempt`` names the run's attempt.
 
-:func:`job_record` writes, and :func:`from_job_records` reads, the per-job record a local run of a
-catalogue job leaves (``python -m tools.ci run-job``): its key, result, identity, attempt, the
-diagnostic rerun of a red job's failed tests (each classified :data:`FLAKE` or
-:data:`REPEATED_FAILURE`, never turning the result green), which quarantined tests failed, and
-each step's argv, exit and seconds.
+:func:`job_record` writes, and :func:`from_job_records` reads, the per-job record a run of a
+catalogue job leaves (``python -m tools.ci run-job``): its key, result, identity, the GitHub run
+that wrote it (none for a local run), attempt, the diagnostic rerun of a red job's failed tests
+(each classified :data:`FLAKE` or :data:`REPEATED_FAILURE`, never turning the result green),
+which quarantined tests failed, and each step's argv, exit and seconds.
 
 Standard library only, with no relative imports, so a trusted job can run it as a script.
 """
@@ -95,12 +101,14 @@ class Identity:
 
 @dataclass(frozen=True)
 class JobResult:
-    """One job's result on one attempt. ``identity`` is None when the result named none."""
+    """One job's result on one attempt. ``identity`` is None when the result named none, and
+    ``run_id`` when it named no run (a local record, or a ``needs`` result)."""
 
     key: str
     result: str
     identity: Identity | None
     attempt: int = 1
+    run_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -121,12 +129,19 @@ class Verdict:
     superseded_by: str = ""
 
 
-def _fault(result: JobResult, candidate: Identity) -> tuple[str, str] | None:
-    """What is wrong with one planned result, or None when it counts for the candidate."""
+def _fault(
+    result: JobResult, candidate: Identity, run_id: int | None = None
+) -> tuple[str, str] | None:
+    """What is wrong with one planned result, or None when it counts for the candidate (and,
+    when ``run_id`` is given, for that run)."""
     if result.result not in WORDS:
         return "unknown result", f"GitHub gives no job the result {result.result!r}"
     if result.result != SUCCESS:
         return result.result, f"attempt {result.attempt}"
+    if run_id is not None and result.run_id is None:
+        return "no run", "the result names no run, so it cannot be this run's"
+    if run_id is not None and result.run_id != run_id:
+        return "another run", f"recorded by run {result.run_id}, not run {run_id}"
     if result.identity is None:
         return "no identity", "the result names no head, so it cannot be this candidate's"
     if result.identity.head_sha != candidate.head_sha:
@@ -143,18 +158,24 @@ def _revisions(identity: Identity) -> str:
     return "{" + ", ".join(f"{k}={v}" for k, v in pairs) + "}" if pairs else "none"
 
 
-def _planned(results: Sequence[JobResult], candidate: Identity) -> tuple[str, str] | None:
+def _planned(
+    results: Sequence[JobResult], candidate: Identity, run_id: int | None = None
+) -> tuple[str, str] | None:
     """The fault of one planned key's results, or None when every attempt was green here."""
     if not results:
         return "missing", "no result for a planned job"
+    if run_id is not None and all(r.attempt != 1 for r in results):
+        # Every planned entry ran on attempt 1, so its record is attempt 1's: a later attempt's
+        # result alone is a rerun filling a record attempt 1 never wrote.
+        return "missing on attempt 1", "a rerun carries only what attempt 1 recorded"
     latest = max(r.attempt for r in results)
     for r in results:
         if r.attempt == latest:
-            fault = _fault(r, candidate)
+            fault = _fault(r, candidate, run_id)
             if fault:
                 return fault
     for r in sorted(results, key=lambda r: r.attempt):
-        fault = _fault(r, candidate)
+        fault = _fault(r, candidate, run_id)
         if fault:
             return "red on an earlier attempt", f"attempt {r.attempt}: {fault[0]}; {fault[1]}"
     return None
@@ -170,8 +191,19 @@ def _unplanned(results: Sequence[JobResult]) -> tuple[str, str] | None:
     return None
 
 
-def decide(planned: Iterable[str], results: Iterable[JobResult], candidate: Identity) -> Verdict:
-    """The verdict on ``candidate``: green only when every planned job did its work on it."""
+def decide(
+    planned: Iterable[str],
+    results: Iterable[JobResult],
+    candidate: Identity,
+    *,
+    run_id: int | None = None,
+) -> Verdict:
+    """The verdict on ``candidate``: green only when every planned job did its work on it.
+
+    ``run_id`` is given when ``results`` are one run's own: each planned result must then name
+    that run, and each planned key must have a result on attempt 1."""
+    if run_id is not None and (not _whole(run_id) or run_id < 1):
+        raise Refused(f"run_id must be a whole number from 1, got {run_id!r}")
     plan: list[str] = []
     for key in planned:
         if not isinstance(key, str) or not key:
@@ -185,7 +217,7 @@ def decide(planned: Iterable[str], results: Iterable[JobResult], candidate: Iden
     if not plan:
         reasons.append(Reason("", "empty plan", "a plan with no jobs proves nothing"))
     for key in plan:
-        fault = _planned(by_key.get(key, []), candidate)
+        fault = _planned(by_key.get(key, []), candidate, run_id)
         if fault:
             reasons.append(Reason(key, *fault))
     for key in sorted(set(by_key) - set(plan)):
@@ -277,7 +309,9 @@ _no_repeats = _no_repeats_in("needs")
 
 
 def from_needs(text: str, identity: Identity, attempt: int = 1) -> list[JobResult]:
-    """The results in GitHub's ``toJSON(needs)``, each stamped with the run's ``identity``.
+    """The results in GitHub's ``toJSON(needs)``, each stamped with the run's ``identity`` and
+    ``attempt``. They name no run: with a run's records, no ``needs`` job may answer a planned
+    key (``verdict --records``), so a ``needs`` result is only ever read as outside the plan.
 
     ``needs`` holds each needed job's latest result only; a red on an earlier attempt of the
     same run is the controller's to read from the API.
@@ -310,7 +344,7 @@ def from_needs(text: str, identity: Identity, attempt: int = 1) -> list[JobResul
 
 
 #: The per-job record ``python -m tools.ci run-job`` writes: its schema name, and its fields.
-JOB_RECORD_SCHEMA = "personalclaw.ci.job-record/1"
+JOB_RECORD_SCHEMA = "personalclaw.ci.job-record/2"
 _RECORD_KEYS = frozenset(
     {
         "schema",
@@ -318,6 +352,7 @@ _RECORD_KEYS = frozenset(
         "result",
         "head_sha",
         "external_revisions",
+        "run_id",
         "attempt",
         "rerun",
         "quarantined",
@@ -347,6 +382,7 @@ def job_record(
     identity: Identity,
     steps: Sequence[tuple[Sequence[str], int, float]],
     attempt: int = 1,
+    run_id: int | None = None,
     rerun: Mapping[str, object] | None = None,
     quarantined: Sequence[str] = (),
     plan: str | None = None,
@@ -354,6 +390,7 @@ def job_record(
 ) -> str:
     """One job's (or one shard's) result as the JSON :func:`from_job_records` reads.
 
+    ``run_id`` is the GitHub run that wrote it, or None for a local record, which names no run.
     ``steps`` are each step's argv as run, its exit status and its seconds. ``rerun`` is the
     diagnostic rerun of a red job's failed tests, or None when there was no failed test to
     diagnose: the rerun's ``argv`` and ``exit`` (both null when no failed test could be rerun),
@@ -369,6 +406,7 @@ def job_record(
         "result": result,
         "head_sha": identity.head_sha,
         "external_revisions": dict(sorted(identity.external_revisions.items())),
+        "run_id": run_id,
         "attempt": attempt,
         # A copy of a mapping; anything else is written as given, so the reader refuses it by name.
         "rerun": dict(rerun) if isinstance(rerun, Mapping) else rerun,
@@ -475,6 +513,9 @@ def _one_record(text: str, n: int) -> JobResult:
     if not isinstance(revisions, dict):
         raise Refused(f"{where}: external_revisions must be an object")
     identity = Identity(data["head_sha"], revisions)
+    run_id = data["run_id"]
+    if run_id is not None and (not _whole(run_id) or run_id < 1):
+        raise Refused(f"{where}: run_id must be a whole number from 1, or null")
     if not _whole(data["attempt"]) or data["attempt"] < 1:
         raise Refused(f"{where}: attempt must be a whole number from 1")
     _rerun_faults(data["rerun"], where)
@@ -507,7 +548,7 @@ def _one_record(text: str, n: int) -> JobResult:
             raise Refused(f"{where}: a step's seconds must be a number, finite and 0 or more")
     if data["result"] == SUCCESS and any(step["exit"] != 0 for step in steps):
         raise Refused(f"{where} says success, and a step exited non-zero")
-    return JobResult(key, data["result"], identity, data["attempt"])
+    return JobResult(key, data["result"], identity, data["attempt"], run_id)
 
 
 def from_job_records(texts: Iterable[str]) -> list[JobResult]:
@@ -515,7 +556,8 @@ def from_job_records(texts: Iterable[str]) -> list[JobResult]:
 
     Like :func:`from_needs` it refuses what it cannot read as a record: a repeated key, NaN or
     Infinity, a field missing or unknown, a result word that is no job's, an object id that is
-    not a full one, a step's seconds that are not a finite number, a success with a step that
+    not a full one, an attempt that is not a whole number from 1, a run id that is neither that
+    nor null, a step's seconds that are not a finite number, a success with a step that
     failed, or a rerun on a record that is not a failure. Two records for the same key and attempt
     are refused, so a failure cannot be followed by a success that hides it.
     """
@@ -528,6 +570,116 @@ def from_job_records(texts: Iterable[str]) -> list[JobResult]:
         seen.add((result.key, result.attempt))
         out.append(result)
     return out
+
+
+#: The prefix of every per-job record artifact a workflow's test stage uploads.
+RECORD_ARTIFACT_PREFIX = "ci-record-"
+
+#: The most a record file may hold. A record is a few kilobytes; anything far larger is not one.
+_RECORD_BYTES = 1_000_000
+
+#: A run attempt as text (``github.run_attempt``, ``$GITHUB_RUN_ATTEMPT``): ASCII digits, 1 to
+#: 999999. ``tools/ci/jobs.py`` reads the environment with it too.
+ATTEMPT_TEXT = re.compile(r"[1-9][0-9]{0,5}")
+
+#: A run id as text (``github.run_id``, ``$GITHUB_RUN_ID``): ASCII digits, from 1, at most 19 of
+#: them, so it fits the 64-bit id GitHub gives a run.
+RUN_ID_TEXT = re.compile(r"[1-9][0-9]{0,18}")
+
+
+def record_artifact(key: str, *, run_id: int, attempt: int) -> str:
+    """The artifact name a test-stage entry uploads its record under: the key's slug, the run and
+    the attempt, so a rerun's records never overwrite the first attempt's. :func:`read_records`
+    reads a record only from the folder this names for its own key and attempt in the run it
+    judges, so another run's artifact, or a renamed one, is refused."""
+    slug = re.sub(r"[^a-z0-9-]+", "-", key.lower()).strip("-") if isinstance(key, str) else ""
+    if not slug:
+        raise Refused(f"a record's key must name a job, got {key!r}")
+    for name, value in (("run_id", run_id), ("attempt", attempt)):
+        if not _whole(value) or value < 1:
+            raise Refused(
+                f"a record artifact's {name} must be a whole number from 1, got {value!r}"
+            )
+    return f"{RECORD_ARTIFACT_PREFIX}{slug}-{run_id}-{attempt}"
+
+
+def read_records(folder: str, *, run_id: int, attempt: int) -> list[JobResult]:
+    """The records run ``run_id``'s test stage uploaded, as ``download-artifact`` lays them out in
+    ``folder``: one folder per artifact, each holding one ``.json`` record, read with
+    :func:`from_job_records`. Each record must sit in the folder :func:`record_artifact` names for
+    its key and attempt in this run.
+
+    Refused: a folder that cannot be read; a link anywhere in it; a file beside the artifact
+    folders; an artifact folder holding anything but one record file; a file too large to be a
+    record; a record the reader refuses; a record in a folder its key and attempt do not name in
+    this run (another run's artifact, a renamed one, or a second upload of one record, since a key
+    and attempt name one folder); and a record written by a later attempt than ``attempt`` (the
+    run's own), since a rerun's record must never stand in an earlier attempt's reading. A record
+    naming another run, or none, is read as it is, and :func:`decide` given ``run_id`` reads it
+    red."""
+    for name, value in (("run_id", run_id), ("attempt", attempt)):
+        if not _whole(value) or value < 1:
+            raise Refused(f"the records' {name} must be a whole number from 1, got {value!r}")
+    if not os.path.isdir(folder) or os.path.islink(folder):
+        raise Refused(f"cannot read the records folder {folder}: not a folder")
+    out: list[JobResult] = []
+    for top in _entries(folder):
+        if not top.is_dir(follow_symlinks=False):
+            raise Refused(f"{top.path} is not an artifact's folder")
+        inner = _entries(top.path)
+        if len(inner) != 1:
+            raise Refused(f"{top.path} holds {len(inner)} entries, not one record")
+        [entry] = inner
+        if not entry.is_file(follow_symlinks=False) or not entry.name.endswith(".json"):
+            raise Refused(f"{entry.path} is not a record file")
+        try:
+            [result] = from_job_records([_record_text(entry.path)])
+        except Refused as exc:
+            raise Refused(f"{entry.path}: {exc}") from None
+        expected = record_artifact(result.key, run_id=run_id, attempt=result.attempt)
+        if top.name != expected:
+            raise Refused(
+                f"{top.name} holds the record of {result.key!r} on attempt {result.attempt},"
+                f" which this run uploads as {expected}"
+            )
+        if result.attempt > attempt:
+            raise Refused(
+                f"job record {result.key!r} was written by attempt {result.attempt}, after this"
+                f" run's attempt {attempt}"
+            )
+        out.append(result)
+    return out
+
+
+def _entries(folder: str) -> list[os.DirEntry[str]]:
+    """What ``folder`` holds, by name, refusing a link or a folder it cannot read."""
+    try:
+        with os.scandir(folder) as listing:
+            entries = sorted(listing, key=lambda e: e.name)
+    except OSError as exc:
+        raise Refused(f"cannot read the records folder {folder}: {exc}") from None
+    for entry in entries:
+        if entry.is_symlink():
+            raise Refused(f"the records folder holds a link: {entry.path}")
+    return entries
+
+
+def _record_text(path: str) -> str:
+    """One record file's text: never through a link, and never more than a record can hold."""
+    try:
+        if os.stat(path, follow_symlinks=False).st_size > _RECORD_BYTES:
+            raise Refused(f"{path} is larger than any job record")
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as handle:
+            data = handle.read(_RECORD_BYTES + 1)
+    except OSError as exc:
+        raise Refused(f"cannot read {path}: {exc}") from None
+    if len(data) > _RECORD_BYTES:
+        raise Refused(f"{path} is larger than any job record")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise Refused(f"cannot read {path}: {exc}") from None
 
 
 def summary(verdict: Verdict) -> str:
@@ -592,6 +744,23 @@ def _plan(path: str) -> list[str]:
     return data
 
 
+def _attempt(text: str | None) -> int:
+    if text is None:
+        return 1
+    if not ATTEMPT_TEXT.fullmatch(text):
+        raise Refused(f"--attempt must be a whole number from 1 to 999999, got {text!r}")
+    return int(text)
+
+
+def _run_id(text: str | None) -> int:
+    """``--run-id``: the run whose records ``--records`` holds."""
+    if text is None:
+        raise Refused("--records needs --run-id, the run whose records it holds")
+    if not RUN_ID_TEXT.fullmatch(text):
+        raise Refused(f"--run-id must be a whole number from 1, of 19 digits at most, got {text!r}")
+    return int(text)
+
+
 def _read(path: str) -> str:
     try:
         with open(path, encoding="utf-8") as handle:
@@ -625,18 +794,45 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--partner", action="append", default=[], help="the candidate's NAME=SHA")
     parser.add_argument("--run-head", action=_Once, required=True, help="this run's head SHA")
     parser.add_argument("--run-partner", action="append", default=[], help="the run's NAME=SHA")
+    parser.add_argument(
+        "--records", action=_Once, help="a folder of the per-job records the run uploaded"
+    )
+    parser.add_argument(
+        "--run-id", action=_Once, help="this run's id, github.run_id (with --records only)"
+    )
+    parser.add_argument(
+        "--attempt", action=_Once, help="this run's attempt, 1 to 999999 (default 1)"
+    )
     try:
         args = parser.parse_args(argv)
         candidate = Identity(args.head, _partners(args.partner))
         run = Identity(args.run_head, _partners(args.run_partner))
+        attempt = _attempt(args.attempt)
         planned = _plan(args.plan)
-        results = from_needs(_read(args.needs), run)
+        run_id: int | None = None
+        if args.records is None:
+            if args.run_id is not None:
+                raise Refused("--run-id is read only with --records")
+            results = from_needs(_read(args.needs), run, attempt)
+        else:
+            run_id = own = _run_id(args.run_id)
+            results = from_needs(_read(args.needs), run, attempt)
+            # A planned key is met only by its record: a needs job of the same name would stand
+            # in for a record that was never written.
+            clash = sorted({r.key for r in results} & set(planned))
+            if clash:
+                raise Refused(
+                    f"needs names {', '.join(clash)}, which"
+                    f" {'is a planned key' if len(clash) == 1 else 'are planned keys'}: with"
+                    " --records a planned key is met only by its record"
+                )
+            results += read_records(args.records, run_id=own, attempt=attempt)
     except Refused as exc:
         reason = _printable(str(exc))
         print(f"verdict: unreadable input: {reason}", file=sys.stderr)
         _to_summary(f"### Verdict: unreadable input\n\n{reason}\n")
         return 2
-    verdict = decide(planned, results, candidate)
+    verdict = decide(planned, results, candidate, run_id=run_id)
     text = _printable(summary(verdict))
     print(text, end="")
     _to_summary(text)

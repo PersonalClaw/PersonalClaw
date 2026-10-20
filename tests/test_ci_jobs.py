@@ -671,11 +671,79 @@ def test_a_sharded_job_on_github_takes_cis_plan_and_writes_no_offline_one(
     runner_temp = tmp_path / "runner-temp"
     runner_temp.mkdir()
     monkeypatch.setenv("RUNNER_TEMP", str(runner_temp))
+    # GitHub sets these on every job; run-job refuses a GitHub run without the run or attempt.
+    monkeypatch.setenv("GITHUB_RUN_ID", "1234")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
     step = Step((PY, "-c", "pass", "{shard}"))
     host = _host(repo, on_github=True)
     outcome = _run(repo, _job("sh", steps=(step,), shards=2), tmp_path, shard=1, host=host)
     assert _record(outcome)["plan"] == "ci"
     assert not (runner_temp / "shard-plan").exists()
+
+
+def test_a_record_on_github_names_the_runs_id_and_attempt(repo, tmp_path, monkeypatch):
+    # A rerun of a run writes records under the same run id, so each record says which attempt
+    # wrote it: a reader of attempt 1 can then refuse a record a later attempt wrote. The run id
+    # lets the run's verdict read another run's record red.
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "18273645546")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "3")
+    outcome = _run(repo, _job("a", "pass"), tmp_path, host=_host(repo, on_github=True))
+    assert (_record(outcome)["run_id"], _record(outcome)["attempt"]) == (18273645546, 3)
+
+
+def test_a_local_record_names_no_run_and_attempt_1_whatever_the_environment_says(
+    repo, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("GITHUB_RUN_ID", "18273645546")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "3")
+    record = _record(_run(repo, _job("a", "pass"), tmp_path))
+    assert (record["run_id"], record["attempt"]) == (None, 1)
+
+
+# A digit of another script reads as a number to int() ("1\u0661" is 11), so only ASCII digits do.
+_UNREADABLE = [
+    *(None, "", "0", "-1", "two", "1.0", " 2", "2\n", "+2"),
+    *("\u0661", "\uff12", "1\u0661", "2\uff10"),
+]
+
+
+@pytest.mark.parametrize("attempt", [*_UNREADABLE, "1000000"])
+def test_a_github_run_attempt_it_cannot_read_runs_nothing(repo, tmp_path, monkeypatch, attempt):
+    marker = tmp_path / "ran"
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "1234")
+    if attempt is None:
+        monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
+    else:
+        monkeypatch.setenv("GITHUB_RUN_ATTEMPT", attempt)
+    job = _job("a", f"open({str(marker)!r}, 'w')")
+    with pytest.raises(jobs.Unreadable, match="GITHUB_RUN_ATTEMPT must be a whole number from 1"):
+        _run(repo, job, tmp_path, host=_host(repo, on_github=True))
+    assert not marker.exists()
+
+
+def test_the_largest_github_run_attempt_is_read(repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "1234")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "999999")
+    outcome = _run(repo, _job("a", "pass"), tmp_path, host=_host(repo, on_github=True))
+    assert _record(outcome)["attempt"] == 999999
+
+
+@pytest.mark.parametrize("run_id", [*_UNREADABLE, "1" * 20])
+def test_a_github_run_id_it_cannot_read_runs_nothing(repo, tmp_path, monkeypatch, run_id):
+    marker = tmp_path / "ran"
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    if run_id is None:
+        monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    else:
+        monkeypatch.setenv("GITHUB_RUN_ID", run_id)
+    job = _job("a", f"open({str(marker)!r}, 'w')")
+    with pytest.raises(jobs.Unreadable, match="GITHUB_RUN_ID must be a whole number from 1"):
+        _run(repo, job, tmp_path, host=_host(repo, on_github=True))
+    assert not marker.exists()
 
 
 # ── a tier ───────────────────────────────────────────────────────────────────────────────────

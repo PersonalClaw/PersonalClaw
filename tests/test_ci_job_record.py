@@ -36,6 +36,18 @@ def test_a_record_reads_back_as_the_result_it_names() -> None:
     )
 
 
+def test_a_record_names_the_run_that_wrote_it_or_none() -> None:
+    # On GitHub run-job writes $GITHUB_RUN_ID; a local record names no run.
+    data = json.loads(_record(run_id=987654321))
+    assert data["schema"] == "personalclaw.ci.job-record/2"
+    assert data["run_id"] == 987654321
+    [result] = verdict.from_job_records([_record(run_id=987654321)])
+    assert result.run_id == 987654321
+    assert json.loads(_record())["run_id"] is None
+    [local] = verdict.from_job_records([_record()])
+    assert local.run_id is None
+
+
 def test_a_record_holds_what_a_reuse_store_reads() -> None:
     data = json.loads(_record(quarantined=["tests/test_a.py::test_x"], plan="offline", workers=2))
     assert data["schema"] == verdict.JOB_RECORD_SCHEMA
@@ -84,6 +96,13 @@ def test_a_record_with_seconds_that_are_no_number_is_never_written(seconds: floa
         (_with(external_revisions=[]), "external_revisions must be an object"),
         (_with(attempt=0), "attempt must be a whole number from 1"),
         (_with(attempt=True), "attempt must be a whole number from 1"),
+        (_with(run_id=0), "run_id must be a whole number from 1, or null"),
+        (_with(run_id=-1), "run_id must be a whole number from 1, or null"),
+        (_with(run_id=True), "run_id must be a whole number from 1, or null"),
+        (_with(run_id="7"), "run_id must be a whole number from 1, or null"),
+        (_with(run_id=7.0), "run_id must be a whole number from 1, or null"),
+        # A record of the schema before the run id: it names no run, so it is never read.
+        (_with(schema="personalclaw.ci.job-record/1"), "has schema"),
         (_with(rerun="no"), "rerun must be null or an object"),
         (_with(rerun=False), "rerun must be null or an object"),
         (_with(quarantined=[""]), "quarantined must be a list of test ids"),
@@ -129,3 +148,49 @@ def test_a_red_attempt_and_a_green_rerun_read_red() -> None:
     judged = verdict.decide(["rails"], results, candidate)
     assert not judged.green
     assert judged.reasons[0].kind == "red on an earlier attempt"
+
+
+# ── decide, reading one run's records ────────────────────────────────────────────────────────
+
+CANDIDATE = verdict.Identity(HEAD, {"apps-partner": PARTNER})
+
+
+def _judged(*records: str, run_id: int | None) -> verdict.Verdict:
+    return verdict.decide(["rails"], verdict.from_job_records(records), CANDIDATE, run_id=run_id)
+
+
+def test_a_record_of_another_run_reads_red_when_the_run_is_named() -> None:
+    judged = _judged(_record(run_id=8), run_id=7)
+    assert judged.reasons == (
+        verdict.Reason("rails", "another run", "recorded by run 8, not run 7"),
+    )
+
+
+def test_a_record_naming_no_run_reads_red_when_the_run_is_named() -> None:
+    [reason] = _judged(_record(), run_id=7).reasons
+    assert (reason.key, reason.kind) == ("rails", "no run")
+
+
+def test_a_key_with_no_attempt_1_record_reads_red_when_the_run_is_named() -> None:
+    judged = _judged(_record(run_id=7, attempt=2), run_id=7)
+    assert judged.reasons == (
+        verdict.Reason(
+            "rails", "missing on attempt 1", "a rerun carries only what attempt 1 recorded"
+        ),
+    )
+
+
+def test_a_records_own_run_on_attempt_1_and_a_later_one_reads_green() -> None:
+    assert _judged(_record(run_id=7), _record(run_id=7, attempt=3), run_id=7).green
+
+
+def test_without_a_run_decide_reads_no_run_and_no_attempt_1() -> None:
+    # The reading every caller had before the run id: unchanged.
+    assert _judged(_record(), run_id=None).green
+    assert _judged(_record(run_id=8, attempt=2), run_id=None).green
+
+
+@pytest.mark.parametrize("run_id", [0, -1, True, "7", 7.0])
+def test_decide_refuses_a_run_that_is_no_whole_number_from_1(run_id) -> None:
+    with pytest.raises(verdict.Refused, match="run_id"):
+        _judged(_record(run_id=7), run_id=run_id)
