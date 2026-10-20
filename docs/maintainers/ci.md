@@ -191,9 +191,11 @@ candidate could delete one. Running them from main's copy is #3915's.
 
 `tools/ci/catalogue.toml` lists CI's validation jobs, one `[[job]]` entry each, and
 `tools/ci/catalogue.py` reads it into typed jobs. `python -m tools.ci run-job` and `run` run its
-jobs on a maintainer's machine (see "Local runs"); `ci.yml` and `breadth.yml` still run their own
-`run:` lines. The contract table's row "every catalogue command is the workflow's" holds each
-entry to the `ci.yml` and `breadth.yml` jobs it maps to, in both directions:
+jobs on a maintainer's machine (see "Local runs"), and `pr.yml` and `merge.yml` run each planned
+job through `run-job` when they are dispatched (see "The tier workflows"); `ci.yml` and
+`breadth.yml` still run their own `run:` lines. The contract table's row "every catalogue command
+is the workflow's" holds each entry to the `ci.yml` and `breadth.yml` jobs it maps to, in both
+directions:
 
 - Each step is one of those jobs' `run:` lines, token for token, from the same working directory
   and with the same step `env`. An entry's steps come in `ci.yml`'s order, and none comes twice.
@@ -253,10 +255,17 @@ The map from entry to job lives in that row.
 
 ### The setup action
 
-`ci.yml`'s jobs set up their toolchain with one composite action, `.github/actions/setup`. It
-runs setup-uv with the one uv release and the exact Python the job names (`python-version`),
-and setup-node from `.nvmrc` when the job asks for it (`node: "true"`, with `node-cache`, `npm`
-by default). Each job keeps the rest itself:
+`ci.yml`'s jobs, and the stage jobs of `pr.yml` and `merge.yml`, set up their toolchain with one
+composite action, `.github/actions/setup`. It runs setup-uv with the one uv release and the exact
+Python the job names (`python-version`), and setup-node from `.nvmrc` when the job asks for it
+(`node: "true"`, with `node-cache`, `npm` by default). `programs` names the programs of a
+catalogue job's toolchain that `run-job` finds on PATH and does not install
+(`tools/ci/plan.py`'s `SETUP_PROGRAMS`: `tmux`, `shellcheck`, `dash`), space-separated, as the
+plan's matrix gives them: every name is checked before anything installs, and any other name
+fails the step with nothing installed (none is read as a pattern); each one PATH lacks is then
+installed from the runner's package manager (`apt-get` on Linux, `brew` on macOS, nothing
+elsewhere); and empty, the default, installs none, so no `ci.yml` call changes. Each job keeps
+the rest itself:
 
 - the checkout, before the action, because a local action loads only from a checkout;
 - the Runner identity step, first, so a failed checkout still logs the image. The runner
@@ -504,17 +513,26 @@ overrides (`--areas`, beside the catalogue by default):
   in plan order, each with its `id`, `key`, `shard` (`i/N`, or empty for a job that takes no
   `--shard`, so a workflow passes `--shard` only when it is set), `runs-on`, `timeout`,
   `python`, `node`, `browser`, `container` (a script job's, or empty), `after` and `stage`, all
-  taken from the catalogue. `after` names the planned jobs whose output the entry's job uses
-  (the catalogue's `after`), and `stage` is 1 for an entry that waits for none, else one more
+  taken from the catalogue. Each also carries what a workflow's test stage needs: `slug`, the
+  key as the record artifact's name spells it (`verdict.record_slug`, since a workflow cannot
+  work it out from the key), `history` (the checkout needs the whole history: a step names
+  `{base}`, which `run-job` reads as the merge-base with `origin/main`), `programs` (the toolchain's `SETUP_PROGRAMS`, which the setup action installs)
+  and `external` (the job's external inputs: the shard plan, a partner checkout). `after`
+  names the planned jobs whose output the entry's job uses (the catalogue's `after`), and
+  `stage` is 1 for an entry that waits for none, else one more
   than the latest stage it waits for: a `strategy.matrix` starts every entry at once, so a
   workflow runs one matrix per stage, each after the one before (in the merge tier `web-build`
   is stage 1, `package` and the e2e legs 2, and `e2e`, which merges the legs, 3). An entry's
   `key` is the key `run-job` writes in that shard's record (`python-suite (2/4)`), and `keys`
   lists them all: the plan a results stage judges the uploaded records against. With
-  `--outputs` it adds two lines, `matrix=` (holding `include` alone, since any other key of a
-  `strategy.matrix` would become a dimension) and `keys=`. A planned job the catalogue does not
-  hold, or an `after` that makes a cycle, exits 2. Nothing calls it yet; the candidate
-  workflows will, and split the entries by stage.
+  `--outputs` it adds `matrix=` (holding `include` alone, since any other key of a
+  `strategy.matrix` would become a dimension), `keys=`, and one `matrix-<job>=` line for each
+  workflow job that runs part of it, each holding `include` alone (`plan.stage_jobs`): `build`,
+  the stage-1 entries a later entry waits for; `test`, every other stage-1 entry, which starts
+  beside `build`; and `test-<k>` for stage `k` from 2, after the stage before it (`test-2` after
+  `build`). So a long stage-1 entry no other entry needs, a suite shard, never holds back the
+  stages that wait on the build. A planned job the catalogue does not hold, or an `after` that
+  makes a cycle, exits 2. `pr.yml` and `merge.yml` call it (see "The tier workflows").
 - **Exit codes:** 0 with a plan; 2, printing nothing, when the tier has no job in the catalogue
   (`weekly` and `release` have none yet), or the catalogue or its overrides, or the
   `--trusted-areas` file or the catalogue beside it, cannot be read, so a caller plans
@@ -648,10 +666,111 @@ On a push to `main` only, `decide_main_push` takes one more input: the planned j
 Such a cancelled job reads `superseded` instead of `cancelled`, and is still red. `decide`, the
 reading of every candidate, takes no such input.
 
-Nothing calls it yet. The results stage of each candidate workflow and the default branch's
-controller will, so a candidate and its judge read the same results the same way.
+The `results` job of `pr.yml` and of `merge.yml` calls it, main's copy, with `--records`,
+`--run-id` and `--attempt` (see "The tier workflows"); the default branch's controller will, so a
+candidate and its judge read the same results the same way.
 `tests/test_ci_verdict.py` holds every red to a row, every refusal to a row naming its reason,
 and a green plan to a control.
+
+## The tier workflows
+
+`pr.yml` (the change tier's fast feedback) and `merge.yml` (the merge tier's verdict) are the
+candidate workflows of #3915, in one shape: plan, build, test, results. Each runs on
+`workflow_dispatch` alone for now, beside `ci.yml`, which stays the check every pull request and
+push to `main` runs, so no check a pull request reports moves. Dispatching one on a branch times
+a run of its tier on that branch's head without doubling every pull request's cost. Neither
+posts a check of its own: the pull request and push triggers come with the change that retires
+`ci.yml`, and `merge-verdict` is the trusted controller's alone (#3910).
+
+- **`changes`** plans the workflow's tier (`TIER`: `change` or `merge`) over what the commit
+  changed against `main`'s tip, with `main`'s planner, archived from `main`'s tip into a folder
+  of its own as `ci.yml`'s `changes` runs it, and `plan --outputs --matrix`. Only the keys and
+  the matrices of the stage jobs the workflow runs (`STAGE_JOBS`) are published, each read back
+  as JSON first. An answer that is not a plan the workflow can run publishes nothing and fails
+  the job: no answer, a planner that fails, keys missing, empty or given twice, a stage job the
+  workflow does not run, a stage job's matrix that is not a list of entries alone, an entry in a
+  container (neither tier has one), a slug no artifact name can hold, or stage jobs that run
+  other entries than the keys name. So does a `main` whose `tools/ci` cannot be fetched. The
+  verdict then reads an empty plan and a failed job: red, never a skip. Both workflows plan with
+  the same step text.
+- **Main's catalogue check** is `merge.yml`'s `changes` job's last step (the job
+  `merge_decision.CATALOGUE_CHECK` names), as `ci.yml`'s: main's `catalogue-check` over this
+  run's catalogue. A refusal fails the job, which `results` reads in `needs`, so the merge tier's
+  verdict is red. A run of `main` itself checks nothing: its catalogue is main's own.
+- **`shard-plan`** (`merge.yml`) makes the run's one shard plan, as `ci.yml`'s does, for the
+  suite's legs (an entry whose job reads `shard-history`).
+- **The stage jobs** run the matrix: `build`, `test`, `test-2` and `test-3` in `merge.yml`, and
+  `test` alone in `pr.yml`, whose tier's jobs wait for no other job's output. Each is skipped
+  when the plan gives it no entry, and runs after the stage before it whatever that stage's
+  result (`!cancelled()`). Every stage job has the same steps: the checkout (the whole history
+  for an entry whose `history` is set), the partner checkout for an entry that reads
+  `apps-partner`, the setup action with the entry's `python`, `node` and `programs`, the shard
+  plan for one that reads `shard-history`, the build (`web-dist`) for one that waits on
+  `web-build` and the browser legs' blob reports for one that waits on them; then one line,
+  `python3 -m tools.ci run-job "$JOB" [--shard "$SHARD"] --out "$RUNNER_TEMP/run-job"`; then,
+  whatever it answered, the entry's record under `ci-record-<slug>-<run id>-<attempt>`
+  (`verdict.record_artifact`) and its reports, and `web-build`'s dist and each browser leg's
+  blob for the entries that wait on them. Each entry's cap is its job's `timeout_min`, its runner
+  its job's `platform`, and one red entry cancels no other.
+- **`results`** runs whatever ran before it (`always()`), after every other job, and judges the
+  plan's keys against `toJSON(needs)` and the records the run's entries uploaded, with `main`'s
+  `tools/ci/verdict.py`, read from the API and run under `python3 -I`: a planned entry with no
+  record, a cancelled, skipped or red one, a record of another head, run or later attempt, and a
+  failed job of the run each read red. A `verdict.py` that cannot be read is red too. The
+  verdict is the job's last step and runs unless the run is cancelled (`!cancelled()`), so a run
+  whose `changes` published no plan is judged, red, never skipped.
+
+Each workflow's runs of one commit share one concurrency group (`pr-<sha>`, `merge-<sha>`) that
+never cancels a run in flight: a later dispatch of the commit waits, and never waits on the other
+tier's run.
+
+Records are kept 30 days: the controller and the push replay read them at merge, after the run.
+The issue gave no retention, so 30 is the default until the owner sets one. Reports are kept a
+week and the build three days, as `ci.yml` keeps its own.
+
+What the dispatch-only workflows do not do yet: a run whose plan holds `apps-contract` reads red
+as `stale partner`, because the verdict holds every record to one set of partner revisions and
+only `apps-contract`'s record names the apps checkout; `merge.yml` repeats the change tier's
+quick jobs, since its verdict is the merge tier's whole plan; and neither has a push stage. The
+tree check, the security corpus and `apps-contract` on every push to `main` are `merge.yml`'s to
+add with its push trigger.
+
+The rows that hold them, in `tests/rails/test_ci_contract.py`, each with planted violations:
+
+- "the-tier-workflows-run-only-their-closed-lists-of-lines": every job is a stage job or
+  orchestration (`changes`, `shard-plan`, `results`); each orchestration job runs only the lines
+  the row lists for it, each spelled exactly, its indentation too (a blank line or a comment
+  aside), and a listed line no job of either workflow runs fails too; a stage job runs its
+  runner's identity and the run-job line and nothing else, its other steps use only the
+  checkout, the setup action and the artifact actions, and every stage job's steps are the same.
+- "the-tier-workflows-run-their-tiers-matrix-and-judge-its-records": the plan step plans the
+  workflow's tier for its stage jobs; the stage jobs are exactly the parts the tier's whole plan
+  splits into, each reading its own part after the stage before, with the matrix's runner and
+  cap and `fail-fast: false`; each uploads its record always, under the name the verdict reads
+  for every entry's key, run and attempt, kept 30 days; an entry that reads the shard plan waits
+  for the run's `shard-plan`; `results` runs always, after every other job, downloads the records
+  with no condition and ends with the verdict over them and `needs`, held back by nothing but a
+  cancelled run; one concurrency group per workflow and commit, never cancelling, and no job's
+  group of its own; no job is `merge-verdict`, by its id, its name or any key the tier's plan can
+  give a stage job; and no expensive job (the suite's shards, the browser run, the package) is in
+  both tiers' plans, so the expensive tier runs once per candidate.
+- "main's catalogue check stands in front of merge.yml's verdict": the check is the last step of
+  the `changes` job, after the plan, with no condition and no `continue-on-error`, and `results`
+  reads the job.
+- "pr.yml carries no push stage": no push trigger, no job or step condition and no workflow, job
+  or step env that reads a push, `main`'s ref or the commit a push replaced, and no tree check.
+- "the tier workflows take no trusted trigger and hold no write": no `pull_request_target`,
+  `workflow_run` or `workflow_call`; `workflow_dispatch` alone until `ci.yml` is retired;
+  declared permissions, every one `read` or `none`; no secret, in any spelling (`secrets.X`,
+  `secrets['X']`, `toJSON(secrets)`, any case).
+
+The supply-chain contract's action row reads every workflow, these included, so each action is
+pinned by commit with its release. The Python row reads a stage job's `python-version` from the
+plan's matrix as the Pythons the catalogue's jobs of its tier name, and the timeout row accepts
+its `${{ matrix.timeout }}`, since the catalogue's loader holds every `timeout_min` to at least
+`MIN_TIMEOUT_MIN`.
+`tests/rails/test_ci_tier_workflow_steps_tree.py` runs the plan step, the catalogue check and the
+verdict step as written, against the real planner and planted answers.
 
 ## A push to main, and the nightly breadth
 

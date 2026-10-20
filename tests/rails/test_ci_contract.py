@@ -44,7 +44,9 @@ from rails_repo import REPO
 
 from tools.ci import breadth_evidence, catalogue
 from tools.ci import jobs as run_jobs
-from tools.ci import rails_census, shards, shell_installs, supply_chain
+from tools.ci import merge_decision
+from tools.ci import plan as ci_plan
+from tools.ci import rails_census, shards, shell_installs, supply_chain, verdict
 
 #: An exact release, ``X.Y.Z``.
 _EXACT = re.compile(r"\d+\.\d+\.\d+")
@@ -67,6 +69,8 @@ def _read_paths(root: Path) -> list[Path]:
         root / "pyproject.toml",
         root / ".python-version",
         root / ".nvmrc",
+        # What a tier workflow's planned matrix gives each entry (its Python, its cap).
+        root / catalogue.CATALOGUE,
     ]
 
 
@@ -116,6 +120,28 @@ def _matrix_values(job: dict[str, Any], key: str) -> list[str]:
     values = [str(v) for v in matrix.get(key) or []]
     values += [str(entry[key]) for entry in matrix.get("include") or [] if key in entry]
     return values
+
+
+#: Each tier workflow (#3915) and the tier it runs.
+_TIER_WORKFLOWS: dict[str, str] = {"pr.yml": "change", "merge.yml": "merge"}
+#: A tier workflow's stage job's matrix: its own part of the plan's matrix (pr.yml, merge.yml).
+_PLANNED_MATRIX = re.compile(r"\$\{\{ fromJSON\(needs\.changes\.outputs\.[\w-]+\) \}\}")
+
+
+def _planned_tier(name: str, job: dict[str, Any]) -> str | None:
+    """The tier whose plan a tier workflow's stage job runs a part of, or None for any other
+    job: its matrix is the planner's, so each entry's values are the catalogue's for that tier."""
+    matrix = (job.get("strategy") or {}).get("matrix")
+    if isinstance(matrix, str) and _PLANNED_MATRIX.fullmatch(matrix):
+        return _TIER_WORKFLOWS.get(name)
+    return None
+
+
+def _planned_pythons(tree: Tree, tier: str) -> list[str]:
+    """Each Python the tier's catalogue jobs name, the values a planned ``matrix.python`` takes
+    (a job with none sets up no uv)."""
+    cat = catalogue.load(tree.get(catalogue.CATALOGUE, ""), catalogue.CATALOGUE)
+    return sorted({j.python for j in cat.tier(tier) if j.python and j.python != "image"})
 
 
 def _action(step: dict[str, Any]) -> str:
@@ -176,6 +202,9 @@ def python_violations(tree: Tree) -> list[str]:
         value = str((step.get("with") or {}).get("python-version", ""))
         if value == "${{ matrix.python }}":
             values = _matrix_values(job, "python")
+            tier = _planned_tier(name, job)
+            if not values and tier is not None:
+                values = _planned_pythons(tree, tier)
             if not values:
                 bad.append(f"{where}: python-version reads a matrix.python the job does not set")
             named += [(f"{where} (matrix)", v) for v in values]
@@ -750,6 +779,7 @@ PER_TEST_TEMPORARY_FOLDERS = Row(
 # the candidate, and any workflow such a job calls.
 
 _WORKFLOWS = ".github/workflows"
+_PR_YML, _MERGE_YML = f"{_WORKFLOWS}/pr.yml", f"{_WORKFLOWS}/merge.yml"
 _TRUSTED_TRIGGERS = {"pull_request_target", "workflow_run"}
 #: Where a trusted job could name the candidate's code: its head, its ref, the run's head, and the
 #: test-merge commit GitHub builds from the candidate (`pull_request.merge_commit_sha`), and
@@ -2562,6 +2592,10 @@ def job_timeout_violations(tree: Tree) -> list[str]:
         cap = job.get("timeout-minutes")
         if cap is None:
             bad.append(f"{name}:{job_id} has no timeout-minutes")
+        elif cap == "${{ matrix.timeout }}" and _planned_tier(name, job) is not None:
+            # Each entry's cap is its catalogue job's timeout_min, which the loader holds to a
+            # whole number of at least MIN_TIMEOUT_MIN.
+            continue
         elif isinstance(cap, bool) or not isinstance(cap, int) or cap <= 0:
             bad.append(f"{name}:{job_id} has timeout-minutes {cap!r}, not a positive integer")
     return bad
@@ -3224,6 +3258,18 @@ ROWS: tuple[Row, ...] = (
                 'python: ["3.13.15"]',
             ),
             _plant(".python-version a minor", ".python-version", "3.13.16", "3.13"),
+            # A tier workflow's stage job sets up the Python its entry's catalogue job names.
+            _plant(
+                "a planned stage job whose tier names a minor",
+                catalogue.CATALOGUE,
+                'id = "client"\ntiers = ["change", "merge"]\ninputs = [":(glob)**"]\n'
+                'external_inputs = ["package-index"]\ntoolchain = ["uv"]\ncache = ["uv"]\n'
+                'security = "ordinary"\npython = "3.12.15"\n',
+                'id = "client"\ntiers = ["change", "merge"]\ninputs = [":(glob)**"]\n'
+                'external_inputs = ["package-index"]\ntoolchain = ["uv"]\ncache = ["uv"]\n'
+                'security = "ordinary"\npython = "3.12"\n',
+                expect="pr.yml:test (matrix): Python '3.12' is not an exact X.Y.Z",
+            ),
             _plant(
                 "setup-python on a Mac names a 3.12 security release",
                 ".github/workflows/clean-machine-walkthroughs.yml",
@@ -4849,6 +4895,20 @@ ROWS: tuple[Row, ...] = (
         "every job that runs steps has its own timeout-minutes",
         job_timeout_violations,
         (
+            _plant(
+                "a planned stage job's cap read from another key",
+                _PR_YML,
+                "    timeout-minutes: ${{ matrix.timeout }}\n",
+                "    timeout-minutes: ${{ matrix.cap }}\n",
+                expect="pr.yml:test has timeout-minutes '${{ matrix.cap }}'",
+            ),
+            _plant(
+                "a matrix.timeout cap in a job whose matrix is not the plan's",
+                _MERGE_YML,
+                "      matrix: ${{ fromJSON(needs.changes.outputs.test-3) }}\n",
+                "      matrix: ${{ fromJSON(needs.other.outputs.test-3) }}\n",
+                expect="merge.yml:test-3 has timeout-minutes '${{ matrix.timeout }}'",
+            ),
             _plant(
                 "a job in a cancelling group without one",
                 _CI,
@@ -11159,6 +11219,928 @@ MAKE_TARGETS_RUN_THEIR_STATIC_STEP = Row(
 )
 
 ROWS = (*ROWS, MAKE_TARGETS_RUN_THEIR_STATIC_STEP)
+
+
+# ── The tier workflows: pr.yml and merge.yml (#3915) ─────────────────────────────────────────
+#
+# pr.yml runs the change tier and merge.yml the merge tier, each in one shape: `changes` plans the
+# tier with main's planner as a job matrix (tools/ci/plan.py), a stage job per part of the matrix
+# runs each entry as one run-job line after the setup action, and `results` judges the plan's
+# keys against the records the entries uploaded, with main's verdict.py. Both run on dispatch
+# only, beside ci.yml, until the change that retires ci.yml gives them its triggers. The rows:
+#
+# 1. Each job is a stage job or orchestration (`changes`, `shard-plan`, `results`). An
+#    orchestration job runs a closed list of lines, each spelled exactly, its indentation too (a
+#    blank line or a comment aside): a line its list does not hold fails, and so does a listed
+#    line no job of either workflow runs any more. A stage job runs the runner's identity and the
+#    one run-job line, and nothing else, and every stage job of both workflows has the same steps.
+# 2. Each runs its tier's matrix: the plan step plans the workflow's tier, there is a stage job
+#    for each part the tier's whole plan splits into (plan.stage_jobs) and no other, each reading
+#    its own part after the stage before, and each entry's record is uploaded under the name
+#    verdict.record_artifact gives its key, run and attempt, kept 30 days; an entry that reads the
+#    shard plan waits for the run's `shard-plan`. `results` runs always, after every other job,
+#    over the records and `needs`, and its last step, the verdict, runs unless the run is
+#    cancelled, whatever `changes` answered. A run in flight is never cancelled: one group per
+#    workflow and commit, and no job's group of its own. No job is `merge-verdict`, by its id or
+#    by any key its matrix can give it, and no expensive job is in both tiers' plans.
+# 3. Main's catalogue check stands in front of merge.yml's verdict: it is the last step of the
+#    job the merge decision requires (merge_decision.CATALOGUE_CHECK), unconditional, and
+#    `results` reads that job.
+# 4. pr.yml carries no push stage: no push trigger, no job or step that runs only on a push or on
+#    main, no workflow, job or step env that reads one, no tree check. What a push to main runs
+#    whatever its tree is merge.yml's to hold.
+# 5. Neither takes a trusted trigger (`pull_request_target`, `workflow_run`), holds a write or
+#    reads a secret: the verdict needs none. Each runs on `workflow_dispatch` alone for now, so
+#    nothing about today's checks moves.
+#
+# Their actions are pinned by the supply-chain contract's action row, which reads every workflow.
+
+#: How long a record artifact is kept: the controller and the push replay read the records at
+#: merge, after the run. No default was given, so 30 days.
+_RECORD_RETENTION_DAYS = 30
+#: Where run-job leaves an entry's record, and so what the record upload uploads.
+_RECORDS_PATH = "${{ runner.temp }}/run-job/records/"
+_PLAN_JOB, _SHARD_PLAN_JOB, _RESULTS_JOB = merge_decision.CATALOGUE_CHECK, "shard-plan", "results"
+#: The external input of an entry that reads the run's one shard plan, which `shard-plan` makes.
+_SHARD_HISTORY = "shard-history"
+#: The expensive tier, which runs once per candidate (#3915): the suite's shards, the browser
+#: run and the package. The image joins it when it is a catalogue job.
+_EXPENSIVE = frozenset(
+    {"python-suite", "python-suite-macos", "e2e", "e2e-shard", "e2e-stateful", "package"}
+)
+
+_RUNNER_IDENTITY_LINE = (
+    'echo "runner image ${ImageOS:?not a GitHub-hosted runner image}'
+    ' ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"'
+)
+#: The one line a stage job runs besides its runner's identity.
+_RUN_JOB_LINE = (
+    'python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job"'
+)
+
+#: Each orchestration job's run: lines, by job and by what they do, as both workflows' jobs of
+#: that id may run them.
+_TIER_LINES: dict[str, dict[str, str]] = {
+    _PLAN_JOB: {
+        "the runner's identity": _RUNNER_IDENTITY_LINE,
+        "the changed paths, against main's tip": r"""
+set -uo pipefail
+listed="$RUNNER_TEMP/changed.json"
+changed="$RUNNER_TEMP/changed.txt"
+gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/main...${HEAD_SHA}" \
+  --jq '.files[].filename | @json' > "$listed" || : > "$listed"
+python3 -c 'import json, sys; names = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]; assert all(isinstance(n, str) and "\0" not in n for n in names); sys.stdout.write("".join(n + "\0" for n in names))' "$listed" > "$changed" || : > "$changed"
+echo "enumerated $(tr -cd '\000' < "$changed" | wc -c) changed path(s)"
+""",  # noqa: E501
+        "main's tools/ci, archived beside the checkout, or no plan": r"""
+judge="$RUNNER_TEMP/judge"
+if ! { rm -rf "$judge" && mkdir -p "$judge" \
+       && git fetch --no-tags --depth=1 origin refs/heads/main \
+       && git archive FETCH_HEAD tools/ci | tar -x -C "$judge"; }; then
+  echo "::error title=no plan::main's tools/ci could not be fetched, so nothing is planned and the verdict is red. Re-run the job."
+  exit 1
+fi
+""",  # noqa: E501
+        "main's planner, over this checkout's catalogue, as a matrix": r"""
+: > "$RUNNER_TEMP/plan.err"
+answer=$(cd "$judge" && python3 -m tools.ci plan "$TIER" \
+           --catalogue "$GITHUB_WORKSPACE/tools/ci/catalogue.toml" \
+           --trusted-areas "$judge/tools/ci/areas.toml" \
+           --root "$GITHUB_WORKSPACE" --paths "$changed" -z \
+           --repo "$GITHUB_REPOSITORY" --outputs --matrix \
+           2> "$RUNNER_TEMP/plan.err") || answer=""
+cat "$RUNNER_TEMP/plan.err" >> "$GITHUB_STEP_SUMMARY"
+sed -n '/^::warning[ :]/p' "$RUNNER_TEMP/plan.err"
+printf '%s\n' "$answer" > "$RUNNER_TEMP/answer.txt"
+""",
+        "the keys and the stage jobs' matrices, read back before they are published": r"""
+if ! python3 -I - "$RUNNER_TEMP/answer.txt" "$STAGE_JOBS" > "$RUNNER_TEMP/published.txt" <<'EOF'
+import json, re, sys
+lines = {}
+for line in open(sys.argv[1], encoding="utf-8").read().splitlines():
+    name, sep, value = line.partition("=")
+    if not sep or name in lines:
+        sys.exit(f"not one line per output: {line[:80]!r}")
+    lines[name] = value
+keys = json.loads(lines.pop("keys", "null"))
+if not isinstance(keys, list) or not keys or not all(isinstance(k, str) and k for k in keys):
+    sys.exit("no plan: the keys are not a list of job keys")
+runs = sys.argv[2].split()
+extra = sorted(set(lines) - {"full", "jobs", "matrix"} - {f"matrix-{job}" for job in runs})
+if extra:
+    sys.exit(f"the plan has stage jobs this workflow does not run: {extra}")
+ran = []
+for job in runs:
+    if f"matrix-{job}" not in lines:
+        continue
+    grid = json.loads(lines[f"matrix-{job}"])
+    if not isinstance(grid, dict) or list(grid) != ["include"] or not grid["include"]:
+        sys.exit(f"{job}: not a matrix of entries")
+    for entry in grid["include"]:
+        if entry["container"] or not re.fullmatch("[a-z0-9-]+", entry["slug"]):
+            sys.exit(f"{job}: an entry this workflow cannot run: {entry['key']!r}")
+        ran.append(entry["key"])
+    print(f"{job}={json.dumps(grid, separators=(',', ':'), sort_keys=True)}")
+if sorted(ran) != sorted(keys):
+    sys.exit("the stage jobs run other entries than the plan's keys")
+print(f"keys={json.dumps(keys, separators=(',', ':'))}")
+EOF
+then
+  echo "::error title=no plan::the planner answered no plan this workflow can run, so nothing runs and the verdict is red. The lines above, and the summary, say why."
+  exit 1
+fi
+tee -a "$GITHUB_OUTPUT" < "$RUNNER_TEMP/published.txt"
+""",  # noqa: E501
+        "main's check of this run's catalogue (merge.yml's)": r"""
+set -uo pipefail
+judge="$RUNNER_TEMP/judge"
+if [ "${GITHUB_REF:-}" = "refs/heads/main" ]; then
+  echo "a run of main: the catalogue under test is main's own"
+  exit 0
+fi
+rc=0
+(cd "$judge" && python3 -m tools.ci catalogue-check \
+   --catalogue "$GITHUB_WORKSPACE/tools/ci/catalogue.toml" \
+   --against "$judge/tools/ci/catalogue.toml") || rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "::error title=catalogue refused::main's tools/ci refuses this run's catalogue (exit $rc); the lines above say why."
+  exit 1
+fi
+""",  # noqa: E501
+    },
+    _SHARD_PLAN_JOB: {
+        "the runner's identity": _RUNNER_IDENTITY_LINE,
+        "one shard plan for the run, as ci.yml's": r"""
+python3 -m tools.ci shards plan --repo "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --leg test-shard:ci.yml:junit-test-shard-:4 --leg test-macos:ci.yml:junit-test-macos-:4 --out "$RUNNER_TEMP/shard-plan/plan.json"
+python3 -m tools.ci shards check --plan "$RUNNER_TEMP/shard-plan/plan.json"
+""",  # noqa: E501
+    },
+    _RESULTS_JOB: {
+        "the runner's identity": _RUNNER_IDENTITY_LINE,
+        "main's verdict.py, over the plan's keys, needs and the run's records": r"""
+set -u
+judge="$RUNNER_TEMP/verdict.py"
+if ! gh api -H "Accept: application/vnd.github.raw" \
+     "repos/${GITHUB_REPOSITORY}/contents/tools/ci/verdict.py?ref=main" > "$judge"; then
+  echo "::error title=no verdict::main's tools/ci/verdict.py could not be read, so nothing judged this run. Re-run the job."
+  exit 1
+fi
+printf '%s' "$NEEDS" > "$RUNNER_TEMP/needs.json"
+printf '%s' "${KEYS:-[]}" > "$RUNNER_TEMP/keys.json"
+mkdir -p "$RUNNER_TEMP/records"
+python3 -I "$judge" --plan "$RUNNER_TEMP/keys.json" --needs "$RUNNER_TEMP/needs.json" \
+  --head "$HEAD_SHA" --run-head "$HEAD_SHA" --records "$RUNNER_TEMP/records" \
+  --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+""",  # noqa: E501
+    },
+}
+
+
+def _spelled(run: str) -> list[str]:
+    """A run: block's lines as they are spelled, indentation included (a heredoc's Python reads
+    it), less trailing blanks and blank and comment lines."""
+    out = []
+    for line in run.splitlines():
+        text = line.strip()
+        if text and not text.startswith("#"):
+            out.append(line.rstrip())
+    return out
+
+
+_TIER_ALLOWED: dict[str, frozenset[str]] = {
+    job: frozenset(line for block in blocks.values() for line in _spelled(block))
+    for job, blocks in _TIER_LINES.items()
+}
+_STAGE_ALLOWED = (_RUNNER_IDENTITY_LINE, _RUN_JOB_LINE)
+#: The actions a stage job's steps use besides its two lines: the checkouts, the setup action,
+#: and the artifacts the entry reads and writes.
+_STAGE_ACTIONS = frozenset(
+    {
+        "actions/checkout",
+        "./.github/actions/setup",
+        "actions/download-artifact",
+        "actions/upload-artifact",
+    }
+)
+
+
+def _tier_workflows(root: Path) -> dict[str, dict[str, Any]]:
+    """Each tier workflow as YAML reads it, or an empty mapping when the tree lacks it."""
+    out: dict[str, dict[str, Any]] = {}
+    for name in _TIER_WORKFLOWS:
+        path = root / _WORKFLOWS / name
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else None
+        out[name] = data if isinstance(data, dict) else {}
+    return out
+
+
+def _stage_matrix(job_id: str) -> str:
+    return f"${{{{ fromJSON(needs.{_PLAN_JOB}.outputs.{job_id}) }}}}"
+
+
+def _is_stage_job(job_id: str, job: dict[str, Any]) -> bool:
+    """A job whose matrix is its own part of the plan's matrix."""
+    return (job.get("strategy") or {}).get("matrix") == _stage_matrix(job_id)
+
+
+def _run_steps(job: dict[str, Any]) -> list[tuple[str, str]]:
+    return [
+        (str(s.get("name") or f"step {n}"), str(s["run"]))
+        for n, s in enumerate(_trust_steps(job), 1)
+        if "run" in s
+    ]
+
+
+def tier_lines_violations(root: Path) -> list[str]:
+    """Each tier workflow's jobs are stage jobs or orchestration, each runs only its closed list,
+    every listed line is run, and every stage job runs the same steps."""
+    workflows = _tier_workflows(root)
+    bad: list[str] = []
+    ran: dict[str, set[str]] = {job: set() for job in _TIER_LINES}
+    stage_steps: list[tuple[str, list[Any]]] = []
+    for name, workflow in workflows.items():
+        if not workflow:
+            bad.append(f"{_WORKFLOWS}/{name} is missing")
+            continue
+        for job_id, job in _trust_jobs(workflow).items():
+            where = f"{name} job {job_id}"
+            if _is_stage_job(job_id, job):
+                stage_steps.append((where, job.get("steps")))
+                lines = [line for _step, run in _run_steps(job) for line in _spelled(run)]
+                if sorted(lines) != sorted(_STAGE_ALLOWED):
+                    bad.append(
+                        f"{where} is a stage job and runs {lines}: a stage job runs its runner's"
+                        " identity and the one run-job line, and nothing else"
+                    )
+                for step in _trust_steps(job):
+                    if "uses" in step and _action(step) not in _STAGE_ACTIONS:
+                        bad.append(
+                            f"{where} is a stage job and uses {step['uses']!r}: its other steps"
+                            " are the checkouts, the setup action and the entry's artifacts"
+                        )
+                continue
+            allowed = _TIER_ALLOWED.get(job_id)
+            if allowed is None:
+                bad.append(f"{where} is neither a stage job nor orchestration this row lists")
+                continue
+            for step, run in _run_steps(job):
+                for line in _spelled(run):
+                    ran[job_id].add(line)
+                    if line not in allowed:
+                        bad.append(
+                            f"{where} runs {line!r} ({step!r}), which its closed list of lines"
+                            " does not hold"
+                        )
+    for job_id, allowed in _TIER_ALLOWED.items():
+        for line in sorted(allowed - ran[job_id]):
+            bad.append(
+                f"this row lists {line!r} for the {job_id} job, and no tier workflow's"
+                f" {job_id} runs it"
+            )
+    if stage_steps:
+        first_where, first = stage_steps[0]
+        for where, steps in stage_steps[1:]:
+            if steps != first:
+                bad.append(
+                    f"{where} runs other steps than {first_where}: every stage job's are one"
+                )
+    return bad
+
+
+def _tier_scaffold(root: Path) -> None:
+    """The tree's own tier workflows and the setup action they call, the catalogue and its
+    overrides the plan reads."""
+    for rel in (_PR_YML, _MERGE_YML, _SETUP_ACTION, catalogue.CATALOGUE, catalogue.AREAS):
+        _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
+
+
+def _cut(rel: str, start: str, end: str) -> Callable[[Path], None]:
+    """A plant that removes ``rel``'s text from ``start`` up to, not including, ``end``."""
+
+    def plant(root: Path) -> None:
+        text = (root / rel).read_text(encoding="utf-8")
+        at = text.index(start)
+        _write(root, rel, text[:at] + text[text.index(end, at) :])
+
+    return plant
+
+
+#: The plan step's text one plant extends, in both workflows.
+_PLAN_TAIL = '          tee -a "$GITHUB_OUTPUT" < "$RUNNER_TEMP/published.txt"\n'
+_RUN_JOB_STEP = f"        run: {_RUN_JOB_LINE}\n"
+
+THE_TIER_WORKFLOWS_RUN_ONLY_THEIR_CLOSED_LISTS = Row(
+    name="the-tier-workflows-run-only-their-closed-lists-of-lines",
+    check=tier_lines_violations,
+    scaffold=_tier_scaffold,
+    controls=(
+        _plant("an extra line in the plan step", _PR_YML, _PLAN_TAIL,
+               _PLAN_TAIL + "          echo planned\n",
+               expect="pr.yml job changes runs 'echo planned'"),
+        _plant("a test run in the verdict step", _MERGE_YML,
+               '            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"\n',
+               '            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"\n'
+               "          uv run pytest tests\n",
+               expect="merge.yml job results runs 'uv run pytest tests'"),
+        _plant_in_job("a second line in a stage job's run-job step", _MERGE_YML, "test-2",
+                      _RUN_JOB_STEP,
+                      f"        run: |\n          {_RUN_JOB_LINE}\n          npm test\n",
+                      expect="merge.yml job test-2 is a stage job and runs"),
+        _plant_in_job("a stage job with a run step of its own", _PR_YML, "test",
+                      "      - name: Upload the entry's record\n",
+                      "      - run: uv sync --locked --extra dev\n"
+                      "      - name: Upload the entry's record\n",
+                      expect="pr.yml job test is a stage job and runs"),
+        Control("a listed line no job runs any more: the catalogue check removed",
+                _cut(_MERGE_YML, "      - name: main's tools/ci checks this run's catalogue\n",
+                     "\n  shard-plan:\n"),
+                expect="for the changes job, and no tier workflow's changes runs it"),
+        _plant("a job that is neither", _PR_YML, "\n  results:\n",
+               "\n  extra:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n"
+               "      - run: echo hi\n\n  results:\n",
+               expect="pr.yml job extra is neither a stage job nor orchestration"),
+        _plant_in_job("a stage job using an action of its own", _PR_YML, "test",
+                      "      - name: the entry's catalogue job, through run-job\n",
+                      f"      - uses: actions/cache@{'a' * 40} # v4.3.0\n"
+                      "        with:\n          path: ~/.cache\n          key: k\n"
+                      "      - name: the entry's catalogue job, through run-job\n",
+                      expect="pr.yml job test is a stage job and uses 'actions/cache@"),
+        _plant_in_job("a stage job whose steps differ from the others'", _MERGE_YML, "build",
+                      "          retention-days: 30\n", "          retention-days: 31\n",
+                      expect="merge.yml job build runs other steps than"),
+        Control("the workflows removed", _both(_remove(_PR_YML), _remove(_MERGE_YML)),
+                expect="pr.yml is missing"),
+        _plant("a refusal nested under a copy of another listed line", _PR_YML,
+               "                  sys.exit(f\"{job}: not a matrix of entries\")\n",
+               "                  if extra:\n"
+               "                      sys.exit(f\"{job}: not a matrix of entries\")\n",
+               expect="pr.yml job changes runs '        if extra:'"),
+        _plant("a comment line in the plan step passes", _PR_YML, _PLAN_TAIL,
+               _PLAN_TAIL + "          # the end\n", fails=False),
+    ),
+)  # fmt: skip
+
+
+def _tier_plan(root: Path, tier: str) -> dict[str, Any]:
+    """The tier's whole plan as a matrix, from the tree's catalogue."""
+    cat = catalogue.read(root)
+    return ci_plan.matrix(cat, ci_plan.plan(cat, tier, None, overrides=()))
+
+
+def _record_name(template: str, entry: dict[str, Any], run_id: int, attempt: int) -> str:
+    values = {"matrix.slug": entry["slug"], "github.run_id": run_id, "github.run_attempt": attempt}
+    return re.sub(r"\$\{\{\s*([\w.]+)\s*\}\}", lambda m: str(values.get(m[1], m[0])), template)
+
+
+def _step_using(job: dict[str, Any], action: str, **with_: str) -> list[dict[str, Any]]:
+    return [
+        s
+        for s in _trust_steps(job)
+        if _action(s) == action
+        and all(str((s.get("with") or {}).get(k)) == v for k, v in with_.items())
+    ]
+
+
+def tier_shape_violations(root: Path) -> list[str]:
+    """Each tier workflow plans its tier, runs each part of the matrix in a stage job of its
+    own after the stage before, uploads each record under record_artifact's name and judges
+    them all in `results`, and no job is merge-verdict."""
+    bad: list[str] = []
+    for name, workflow in _tier_workflows(root).items():
+        if not workflow:
+            bad.append(f"{_WORKFLOWS}/{name} is missing")
+            continue
+        tier = _TIER_WORKFLOWS[name]
+        jobs = _trust_jobs(workflow)
+        bad += _tier_concurrency_violations(name, workflow, jobs)
+        grid = _tier_plan(root, tier)
+        parts = ci_plan.stage_jobs(grid)
+        stages = {job_id: job for job_id, job in jobs.items() if _is_stage_job(job_id, job)}
+        if list(stages) != list(parts):
+            bad.append(
+                f"{name} runs the stage jobs {list(stages)}, and the {tier} tier's whole plan"
+                f" splits into {list(parts)}: each part is a stage job's, and no stage job is idle"
+            )
+        plan_job = jobs.get(_PLAN_JOB, {})
+        plan_steps = [s for s in _trust_steps(plan_job) if s.get("id") == "plan"]
+        env = (plan_steps[0].get("env") or {}) if plan_steps else {}
+        if env.get("TIER") != tier or env.get("STAGE_JOBS") != " ".join(stages):
+            bad.append(
+                f"{name}'s plan step plans TIER={env.get('TIER')!r} for STAGE_JOBS="
+                f"{env.get('STAGE_JOBS')!r}, not the {tier} tier for {' '.join(stages)!r}"
+            )
+        outputs = plan_job.get("outputs") or {}
+        for job_id in ("keys", *stages):
+            if outputs.get(job_id) != f"${{{{ steps.plan.outputs.{job_id} }}}}":
+                bad.append(f"{name}'s {_PLAN_JOB} job does not publish the plan step's {job_id}")
+        before: str | None = None
+        for job_id, job in stages.items():
+            where = f"{name} job {job_id}"
+            needs = job.get("needs") or []
+            needs = [needs] if isinstance(needs, str) else list(needs)
+            wanted = [_PLAN_JOB] + ([before] if before and job_id != ci_plan.TEST_JOB else [])
+            if not set(wanted) <= set(needs):
+                bad.append(f"{where} needs {needs}, not the plan and the stage before it")
+            sharded = [e["key"] for e in parts.get(job_id, []) if _SHARD_HISTORY in e["external"]]
+            if sharded and _SHARD_PLAN_JOB not in jobs:
+                bad.append(
+                    f"{where} runs {sharded[0]!r}, which reads the run's shard plan, and {name}"
+                    f" has no {_SHARD_PLAN_JOB} job"
+                )
+            elif sharded and _SHARD_PLAN_JOB not in needs:
+                bad.append(
+                    f"{where} runs {sharded[0]!r}, which reads the run's shard plan, and does not"
+                    f" need {_SHARD_PLAN_JOB}"
+                )
+            if job_id != ci_plan.TEST_JOB:
+                before = job_id
+            want = {
+                "if": f"${{{{ !cancelled() && needs.{_PLAN_JOB}.outputs.{job_id} != '' }}}}",
+                "runs-on": "${{ matrix.runs-on }}",
+                "timeout-minutes": "${{ matrix.timeout }}",
+                "name": "${{ matrix.key }}",
+            }
+            for key, value in want.items():
+                if job.get(key) != value:
+                    bad.append(f"{where}: {key} is {job.get(key)!r}, not {value!r}")
+            if (job.get("strategy") or {}).get("fail-fast") is not False:
+                bad.append(
+                    f"{where} does not set fail-fast: false, so one red entry cancels the rest"
+                )
+            uploads = _step_using(job, "actions/upload-artifact", path=_RECORDS_PATH)
+            if len(uploads) != 1:
+                bad.append(f"{where} uploads its record {len(uploads)} times, not once")
+                continue
+            upload = uploads[0]
+            if upload.get("if") != "${{ always() }}":
+                bad.append(f"{where} uploads its record only {upload.get('if')!r}, not always()")
+            given = upload.get("with") or {}
+            if given.get("retention-days") != _RECORD_RETENTION_DAYS:
+                bad.append(
+                    f"{where} keeps its record {given.get('retention-days')!r} days, not"
+                    f" {_RECORD_RETENTION_DAYS}"
+                )
+            template = str(given.get("name", ""))
+            for entry in parts.get(job_id, []):
+                for run_id, attempt in ((1, 1), (40123456789, 3)):
+                    got = _record_name(template, entry, run_id, attempt)
+                    want_name = verdict.record_artifact(
+                        entry["key"], run_id=run_id, attempt=attempt
+                    )
+                    if got != want_name:
+                        bad.append(
+                            f"{where} uploads {entry['key']!r}'s record as {got!r}, and the verdict"
+                            f" reads it only as {want_name!r}"
+                        )
+                        break
+        results = jobs.get(_RESULTS_JOB)
+        if results is None:
+            bad.append(f"{name} has no {_RESULTS_JOB} job")
+        else:
+            where = f"{name} job {_RESULTS_JOB}"
+            if results.get("if") != "${{ always() }}":
+                bad.append(f"{where} runs {results.get('if')!r}, not always()")
+            needs = results.get("needs") or []
+            needs = [needs] if isinstance(needs, str) else list(needs)
+            if set(needs) != set(jobs) - {_RESULTS_JOB}:
+                bad.append(f"{where} needs {sorted(needs)}, not every other job of the run")
+            bad += _tier_verdict_violations(where, results)
+        for job_id, job in jobs.items():
+            labels = [job_id, str(job.get("name", ""))]
+            if job_id in stages:
+                labels += [e["key"] for e in parts.get(job_id, [])]
+            elif "${{" in str(job.get("name", "")):
+                bad.append(f"{name} job {job_id} has a name the row cannot read")
+            if any(_MERGE_VERDICT_WORD.fullmatch(label.strip()) for label in labels):
+                bad.append(f"{name} job {job_id} runs under the check name {MERGE_VERDICT}")
+    # The expensive tier runs once per candidate: none of its jobs is planned in both.
+    both = {e["id"] for e in _tier_plan(root, "change")["include"]} & {
+        e["id"] for e in _tier_plan(root, "merge")["include"]
+    }
+    for job_id in sorted(both & _EXPENSIVE):
+        bad.append(
+            f"{job_id} is planned in both pr.yml's tier and merge.yml's: an expensive job runs"
+            " once per candidate"
+        )
+    return bad
+
+
+#: The verdict step's head, which a plant conditions, and its last line, which one extends.
+_VERDICT_HEAD = (
+    "      - name: the verdict over the plan's keys and the run's records\n"
+    "        if: ${{ !cancelled() }}\n"
+)
+_VERDICT_TAIL = '            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"\n'
+
+
+def _tier_concurrency_violations(
+    name: str, workflow: dict[str, Any], jobs: dict[str, dict[str, Any]]
+) -> list[str]:
+    """One group per workflow and commit, a run in flight never cancelled, and no job's group of
+    its own: a later dispatch of the commit waits, and never waits on the other tier's run."""
+    bad: list[str] = []
+    concurrency = workflow.get("concurrency")
+    concurrency = concurrency if isinstance(concurrency, dict) else {"group": concurrency}
+    group = f"{name.removesuffix('.yml')}-${{{{ github.sha }}}}"
+    if concurrency.get("group") != group:
+        bad.append(
+            f"{name} groups its runs as {concurrency.get('group')!r}, not {group!r}: one group"
+            " per workflow and commit"
+        )
+    if concurrency.get("cancel-in-progress") is not False:
+        bad.append(
+            f"{name} sets cancel-in-progress {concurrency.get('cancel-in-progress')!r}, not"
+            " false: a run in flight is never cancelled"
+        )
+    for job_id, job in jobs.items():
+        if "concurrency" in job:
+            bad.append(f"{name} job {job_id} has a concurrency group of its own")
+    return bad
+
+
+def _tier_verdict_violations(where: str, results: dict[str, Any]) -> list[str]:
+    """`results` downloads the run's records unconditionally, then judges them in its last step,
+    which runs unless the run is cancelled: a condition on it would leave `results` green with
+    nothing judged when `changes` published no plan."""
+    bad: list[str] = []
+    steps = _trust_steps(results)
+    pattern = f"{verdict.RECORD_ARTIFACT_PREFIX}*"
+    downloads = _step_using(results, "actions/download-artifact", pattern=pattern)
+    if not downloads:
+        bad.append(f"{where} does not download the run's records ({pattern})")
+    for step in downloads:
+        for key in ("if", "continue-on-error"):
+            if key in step:
+                bad.append(f"{where} holds back the records' download by {key}: {step[key]!r}")
+    judged = [n for n, s in enumerate(steps) if "--records" in str(s.get("run", ""))]
+    if len(judged) != 1:
+        return [*bad, f"{where} runs {len(judged)} verdict steps over the records, not one"]
+    step = steps[judged[0]]
+    env = step.get("env") or {}
+    if env.get("NEEDS") != "${{ toJSON(needs) }}" or env.get("KEYS") != (
+        f"${{{{ needs.{_PLAN_JOB}.outputs.keys }}}}"
+    ):
+        bad.append(f"{where} judges no toJSON(needs) against the plan's keys")
+    if step.get("if") != "${{ !cancelled() }}":
+        bad.append(
+            f"{where} runs its verdict {step.get('if')!r}, not !cancelled(): a run whose"
+            f" {_PLAN_JOB} published no plan must read red, never skip the verdict"
+        )
+    if "continue-on-error" in step or "continue-on-error" in results:
+        bad.append(f"{where} lets its verdict fail green (continue-on-error)")
+    if judged[0] != len(steps) - 1:
+        bad.append(f"{where}: the verdict is not its last step")
+    if any(steps.index(d) > judged[0] for d in downloads):
+        bad.append(f"{where} downloads the run's records after the verdict reads them")
+    return bad
+
+
+THE_TIER_WORKFLOWS_RUN_THEIR_TIERS_MATRIX = Row(
+    name="the-tier-workflows-run-their-tiers-matrix-and-judge-its-records",
+    check=tier_shape_violations,
+    scaffold=_tier_scaffold,
+    controls=(
+        _plant("pr.yml planning the merge tier", _PR_YML, "          TIER: change\n",
+               "          TIER: merge\n", expect="pr.yml's plan step plans TIER='merge'"),
+        _plant("merge.yml without its last stage job", _MERGE_YML,
+               "      matrix: ${{ fromJSON(needs.changes.outputs.test-3) }}\n",
+               "      matrix: ${{ fromJSON(needs.changes.outputs.test-2) }}\n",
+               expect="splits into ['build', 'test', 'test-2', 'test-3']"),
+        _plant_in_job("a stage job that does not wait for the stage before it", _MERGE_YML,
+                      "test-3", "    needs: [changes, build, test-2]\n",
+                      "    needs: [changes, build]\n",
+                      expect="merge.yml job test-3 needs ['changes', 'build']"),
+        _plant_in_job("a stage job reading another job's part", _MERGE_YML, "test-2",
+                      "    if: ${{ !cancelled() && needs.changes.outputs.test-2 != '' }}\n",
+                      "    if: ${{ !cancelled() && needs.changes.outputs.build != '' }}\n",
+                      expect="merge.yml job test-2: if is"),
+        _plant_in_job("a stage job's timeout of its own", _PR_YML, "test",
+                      "    timeout-minutes: ${{ matrix.timeout }}\n",
+                      "    timeout-minutes: 60\n", expect="pr.yml job test: timeout-minutes"),
+        _plant_in_job("one red entry cancelling the rest", _MERGE_YML, "build",
+                      "      fail-fast: false\n", "      fail-fast: true\n",
+                      expect="does not set fail-fast: false"),
+        _plant_in_job("the record named without the attempt", _PR_YML, "test",
+                      "-${{ github.run_id }}-${{ github.run_attempt }}\n",
+                      "-${{ github.run_id }}\n", expect="and the verdict reads it only as"),
+        _plant_in_job("the record named by key, not slug", _PR_YML, "test",
+                      "name: ci-record-${{ matrix.slug }}-", "name: ci-record-${{ matrix.key }}-",
+                      expect="and the verdict reads it only as"),
+        _plant_in_job("the record kept a week", _MERGE_YML, "test",
+                      "          retention-days: 30\n", "          retention-days: 7\n",
+                      expect="keeps its record 7 days, not 30"),
+        _plant_in_job("the record uploaded only on a green", _MERGE_YML, "test-2",
+                      "      - name: Upload the entry's record\n        if: ${{ always() }}\n",
+                      "      - name: Upload the entry's record\n",
+                      expect="uploads its record only None"),
+        _plant("results only when everything passed", _PR_YML,
+               "    needs: [changes, test]\n    if: ${{ always() }}\n",
+               "    needs: [changes, test]\n", expect="pr.yml job results runs None"),
+        _plant("results not reading the last stage", _MERGE_YML,
+               "    needs: [changes, shard-plan, build, test, test-2, test-3]\n",
+               "    needs: [changes, shard-plan, build, test, test-2]\n",
+               expect="not every other job of the run"),
+        _plant("results not reading the run's records", _MERGE_YML,
+               "          pattern: ci-record-*\n", "          pattern: ci-records-*\n",
+               expect="does not download the run's records"),
+        _plant("the verdict without needs", _PR_YML, "          NEEDS: ${{ toJSON(needs) }}\n",
+               "          NEEDS: '{}'\n", expect="judges no toJSON(needs)"),
+        _plant("the verdict held back until a plan is published", _PR_YML, _VERDICT_HEAD,
+               _VERDICT_HEAD.replace("!cancelled() }}",
+                                     "!cancelled() && needs.changes.outputs.keys != '' }}"),
+               expect="pr.yml job results runs its verdict"),
+        _plant("the verdict skipped when the plan is red", _MERGE_YML, _VERDICT_HEAD,
+               _VERDICT_HEAD.replace("!cancelled()", "needs.changes.result == 'success'"),
+               expect="merge.yml job results runs its verdict"),
+        _plant("a step after the verdict", _MERGE_YML, _VERDICT_TAIL,
+               _VERDICT_TAIL + "      - run: echo judged\n",
+               expect="merge.yml job results: the verdict is not its last step"),
+        _plant("the records downloaded only on a green plan", _PR_YML,
+               "      - name: every entry's record\n",
+               "      - name: every entry's record\n"
+               "        if: ${{ needs.changes.result == 'success' }}\n",
+               expect="pr.yml job results holds back the records' download by if"),
+        _plant("a run in flight cancelled by a later dispatch", _MERGE_YML,
+               "  cancel-in-progress: false\n", "  cancel-in-progress: true\n",
+               expect="merge.yml sets cancel-in-progress True"),
+        _plant("one group for every commit", _PR_YML, "  group: pr-${{ github.sha }}\n",
+               "  group: pr\n", expect="pr.yml groups its runs as 'pr'"),
+        _plant("pr.yml in merge.yml's group", _PR_YML, "  group: pr-${{ github.sha }}\n",
+               "  group: merge-${{ github.sha }}\n",
+               expect="pr.yml groups its runs as 'merge-${{ github.sha }}'"),
+        _plant_in_job("a job with a group of its own that cancels", _PR_YML, "results",
+                      "    if: ${{ always() }}\n",
+                      "    if: ${{ always() }}\n    concurrency:\n      group: verdict\n"
+                      "      cancel-in-progress: true\n",
+                      expect="pr.yml job results has a concurrency group of its own"),
+        _plant_in_job("the suite's shards not waiting for the shard plan", _MERGE_YML, "test",
+                      "    needs: [changes, shard-plan]\n", "    needs: [changes]\n",
+                      expect="and does not need shard-plan"),
+        Control("no shard plan for the suite's shards",
+                _cut(_MERGE_YML, "\n  shard-plan:\n", "\n  build:\n"),
+                expect="and merge.yml has no shard-plan job"),
+        _plant("a stage job named merge-verdict", _PR_YML, "    name: ${{ matrix.key }}\n",
+               "    name: merge-verdict\n", expect="pr.yml job test: name is 'merge-verdict'"),
+        _plant("results renamed merge-verdict", _MERGE_YML, "\n  results:\n",
+               "\n  merge-verdict:\n", expect="runs under the check name merge-verdict"),
+        _plant("the suite's shards in the change tier too", catalogue.CATALOGUE,
+               'id = "python-suite"\ntiers = ["merge"]\n',
+               'id = "python-suite"\ntiers = ["change", "merge"]\n',
+               expect="python-suite is planned in both pr.yml's tier and merge.yml's"),
+        Control("a catalogue job named merge-verdict, which a stage job's name would read",
+                _both(
+                    _plant("", catalogue.CATALOGUE, 'id = "client"\n',
+                           'id = "merge-verdict"\n').plant,
+                    _plant("", catalogue.CATALOGUE, '  "client",\n', '  "merge-verdict",\n').plant,
+                ),
+                expect="pr.yml job test runs under the check name merge-verdict"),
+    ),
+)  # fmt: skip
+
+
+def tier_catalogue_check_violations(root: Path) -> list[str]:
+    """merge.yml's verdict reads the job whose last step is main's catalogue check."""
+    workflow = _tier_workflows(root)["merge.yml"]
+    if not workflow:
+        return [f"{_MERGE_YML} is missing"]
+    jobs = _trust_jobs(workflow)
+    job = jobs.get(_PLAN_JOB)
+    if job is None:
+        return [f"merge.yml has no {_PLAN_JOB} job, the one the merge decision requires"]
+    bad: list[str] = []
+    steps = _trust_steps(job)
+    ids = [s.get("id") for s in steps]
+    if "catalogue-check" not in ids:
+        bad.append(f"merge.yml's {_PLAN_JOB} job runs no catalogue-check step")
+    else:
+        check = steps[ids.index("catalogue-check")]
+        if ids[-1] != "catalogue-check" or ids.index("plan") > ids.index("catalogue-check"):
+            bad.append(f"merge.yml's catalogue check is not the last step after the plan: {ids}")
+        for key in ("if", "continue-on-error"):
+            if key in check:
+                bad.append(f"merge.yml's catalogue check is held back by {key}: {check[key]!r}")
+    if "continue-on-error" in job:
+        bad.append(f"merge.yml's {_PLAN_JOB} job carries continue-on-error, so a refusal is green")
+    results = jobs.get(_RESULTS_JOB) or {}
+    needs = results.get("needs") or []
+    if _PLAN_JOB not in ([needs] if isinstance(needs, str) else needs):
+        bad.append(f"merge.yml's {_RESULTS_JOB} does not read the {_PLAN_JOB} job")
+    return bad
+
+
+_CHECK_STEP_HEAD = (
+    "      - name: main's tools/ci checks this run's catalogue\n        id: catalogue-check\n"
+)
+
+THE_CATALOGUE_CHECK_STANDS_IN_FRONT_OF_MERGE_YMLS_VERDICT = Row(
+    name="main's catalogue check stands in front of merge.yml's verdict",
+    check=tier_catalogue_check_violations,
+    scaffold=_tier_scaffold,
+    controls=(
+        _plant("the check's step id dropped", _MERGE_YML, _CHECK_STEP_HEAD,
+               "      - name: main's tools/ci checks this run's catalogue\n",
+               expect="runs no catalogue-check step"),
+        _plant("the check held back by a condition", _MERGE_YML, _CHECK_STEP_HEAD,
+               _CHECK_STEP_HEAD + "        if: ${{ github.event_name == 'pull_request' }}\n",
+               expect="held back by if"),
+        _plant("the check allowed to fail", _MERGE_YML, _CHECK_STEP_HEAD,
+               _CHECK_STEP_HEAD + "        continue-on-error: true\n",
+               expect="held back by continue-on-error"),
+        _plant("the job allowed to fail", _MERGE_YML,
+               "    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    permissions:\n"
+               "      contents: read\n      actions: read",
+               "    continue-on-error: true\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n"
+               "    permissions:\n      contents: read\n      actions: read",
+               expect="carries continue-on-error"),
+        _plant("a step after the check", _MERGE_YML, "\n  shard-plan:\n",
+               "      - run: echo after\n\n  shard-plan:\n",
+               expect="is not the last step after the plan"),
+        _plant("results not reading the job", _MERGE_YML,
+               "    needs: [changes, shard-plan, build, test, test-2, test-3]\n",
+               "    needs: [shard-plan, build, test, test-2, test-3]\n",
+               expect="does not read the changes job"),
+    ),
+)  # fmt: skip
+
+
+#: A condition, job or step, that runs only on a push, on main, or against the commit a push
+#: replaced.
+_PUSH_ONLY = re.compile(r"\bpush\b|refs/heads/main|event\.before|\bBEFORE\b")
+
+
+def _env_values(env: object) -> list[object]:
+    """An env block's values, or the block itself when it is one expression."""
+    if env is None:
+        return []
+    return list(env.values()) if isinstance(env, dict) else [env]
+
+
+def pr_push_stage_violations(root: Path) -> list[str]:
+    """pr.yml has no push trigger, no job or step that runs only on a push or on main, no
+    workflow, job or step env that reads one, and no tree check."""
+    workflow = _tier_workflows(root)["pr.yml"]
+    if not workflow:
+        return [f"{_PR_YML} is missing"]
+    bad: list[str] = []
+    if "push" in _triggers(workflow):
+        bad.append("pr.yml runs on push: the feedback tier has no push stage")
+    for value in _env_values(workflow.get("env")):
+        if _PUSH_ONLY.search(str(value)):
+            bad.append(f"pr.yml's env reads {value!r}, a push stage's condition, in every job")
+    for job_id, job in _trust_jobs(workflow).items():
+        if job_id == "tree-check" or "tree_tested" in json.dumps(job):
+            bad.append(f"pr.yml job {job_id} is a tree check, which is merge.yml's push stage")
+        conditions = [("the job", job.get("if"))]
+        conditions += [("the job's env", v) for v in _env_values(job.get("env"))]
+        conditions += [(repr(s.get("name") or "a step"), s.get("if")) for s in _trust_steps(job)]
+        conditions += [
+            (repr(s.get("name") or "a step"), v)
+            for s in _trust_steps(job)
+            for v in _env_values(s.get("env"))
+        ]
+        for what, condition in conditions:
+            if condition is not None and _PUSH_ONLY.search(str(condition)):
+                bad.append(
+                    f"pr.yml job {job_id}: {what} reads {condition!r}, a push stage's condition"
+                )
+    return bad
+
+
+PR_YML_CARRIES_NO_PUSH_STAGE = Row(
+    name="pr.yml carries no push stage",
+    check=pr_push_stage_violations,
+    scaffold=_tier_scaffold,
+    controls=(
+        _plant("a push trigger", _PR_YML, "on:\n  workflow_dispatch: {}\n",
+               "on:\n  workflow_dispatch: {}\n  push:\n    branches: [main]\n",
+               expect="pr.yml runs on push"),
+        _plant("a job that runs only on a push", _PR_YML,
+               "    if: ${{ !cancelled() && needs.changes.outputs.test != '' }}\n",
+               "    if: ${{ github.event_name == 'push' && needs.changes.outputs.test != '' }}\n",
+               expect="pr.yml job test: the job reads"),
+        _plant("a step that runs only on main", _PR_YML,
+               "      - name: Upload the entry's record\n        if: ${{ always() }}\n",
+               "      - name: Upload the entry's record\n"
+               "        if: ${{ github.ref == 'refs/heads/main' }}\n",
+               expect="reads \"${{ github.ref == 'refs/heads/main' }}\""),
+        _plant("a step reading the commit a push replaced", _PR_YML,
+               "          HEAD_SHA: ${{ github.sha }}\n",
+               "          HEAD_SHA: ${{ github.sha }}\n"
+               "          BEFORE: ${{ github.event.before }}\n",
+               expect="a push stage's condition"),
+        _plant_in_job("a job env reading the commit a push replaced", _PR_YML, "test",
+                      "    needs: [changes]\n",
+                      "    needs: [changes]\n    env:\n      BEFORE: ${{ github.event.before }}\n",
+                      expect="pr.yml job test: the job's env reads"),
+        _plant("a workflow env reading main's ref", _PR_YML,
+               "  UV_PYTHON_PREFERENCE: only-managed\n",
+               "  UV_PYTHON_PREFERENCE: only-managed\n  BASE: refs/heads/main\n",
+               expect="pr.yml's env reads 'refs/heads/main'"),
+        _plant("a tree check", _PR_YML, "\n  results:\n",
+               "\n  tree-check:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n"
+               "    steps:\n      - run: python3 tree_tested.py\n\n  results:\n",
+               expect="pr.yml job tree-check is a tree check"),
+        _plant("merge.yml's own push trigger is not pr.yml's", _MERGE_YML,
+               "on:\n  workflow_dispatch: {}\n",
+               "on:\n  workflow_dispatch: {}\n  push:\n    branches: [main]\n", fails=False),
+    ),
+)  # fmt: skip
+
+
+_TRUSTED_OR_CALLED = {"pull_request_target", "workflow_run", "workflow_call"}
+
+
+def _permission_writes(where: str, value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [] if value in ("{}",) else [f"{where} grants {value!r}"]
+    if not isinstance(value, dict):
+        return [f"{where} grants {value!r}, which the row cannot read"]
+    return [
+        f"{where} grants {scope}: {grant}"
+        for scope, grant in value.items()
+        if str(grant) not in ("read", "none")
+    ]
+
+
+def tier_trust_violations(root: Path) -> list[str]:
+    """Neither tier workflow takes a trusted trigger, holds a write or reads a secret, and each
+    runs on dispatch alone for now."""
+    bad: list[str] = []
+    for name, workflow in _tier_workflows(root).items():
+        if not workflow:
+            bad.append(f"{_WORKFLOWS}/{name} is missing")
+            continue
+        triggers = set(_triggers(workflow))
+        for trigger in sorted(triggers & _TRUSTED_OR_CALLED):
+            bad.append(f"{name} runs on {trigger}, a trusted or called run of candidate code")
+        if triggers != {"workflow_dispatch"}:
+            bad.append(
+                f"{name} runs on {sorted(triggers)}: workflow_dispatch alone until ci.yml is"
+                " retired, so no check a pull request reports moves"
+            )
+        if "permissions" not in workflow:
+            bad.append(f"{name} declares no permissions, so its token is the repository's default")
+        bad += _permission_writes(name, workflow.get("permissions"))
+        for job_id, job in _trust_jobs(workflow).items():
+            bad += _permission_writes(f"{name} job {job_id}", job.get("permissions"))
+        # The secrets context in any spelling GitHub reads (`secrets.X`, `secrets['X']`,
+        # `toJSON(secrets)`, any case) or a call's `secrets:`; comments are not read.
+        if re.search(r"\bsecrets\b", json.dumps(workflow, default=str), flags=re.I):
+            bad.append(f"{name} reads a secret: the verdict needs none")
+    return bad
+
+
+THE_TIER_WORKFLOWS_TAKE_NO_TRUST = Row(
+    name="the tier workflows take no trusted trigger and hold no write",
+    check=tier_trust_violations,
+    scaffold=_tier_scaffold,
+    controls=(
+        _plant("pull_request_target", _MERGE_YML, "on:\n  workflow_dispatch: {}\n",
+               "on:\n  workflow_dispatch: {}\n  pull_request_target:\n",
+               expect="merge.yml runs on pull_request_target"),
+        _plant("workflow_run", _PR_YML, "on:\n  workflow_dispatch: {}\n",
+               'on:\n  workflow_dispatch: {}\n  workflow_run:\n    workflows: ["CI"]\n',
+               expect="pr.yml runs on workflow_run"),
+        _plant("a pull_request trigger before ci.yml is retired", _PR_YML,
+               "on:\n  workflow_dispatch: {}\n", "on:\n  workflow_dispatch: {}\n  pull_request:\n",
+               expect="workflow_dispatch alone until ci.yml is retired"),
+        _plant("a write for the verdict", _MERGE_YML,
+               "    permissions:\n      contents: read   # main's tools/ci/verdict.py",
+               "    permissions:\n      checks: write\n"
+               "      contents: read   # main's tools/ci/verdict.py",
+               expect="merge.yml job results grants checks: write"),
+        _plant("write-all on the workflow", _PR_YML, "permissions:\n  contents: read\n",
+               "permissions: write-all\n", expect="pr.yml grants 'write-all'"),
+        _plant("no permissions declared", _PR_YML, "permissions:\n  contents: read\n", "",
+               expect="pr.yml declares no permissions"),
+        _plant("a secret in a step", _MERGE_YML, "          GH_TOKEN: ${{ github.token }}\n",
+               "          GH_TOKEN: ${{ secrets.ADMIN_TOKEN }}\n",
+               expect="merge.yml reads a secret"),
+        *(
+            _plant_in_job(f"a secret in a stage job's step as {spelling}", _MERGE_YML, "test-2",
+                          "          SHARD: ${{ matrix.shard }}\n",
+                          "          SHARD: ${{ matrix.shard }}\n"
+                          f"          TOKEN: ${{{{ {spelling} }}}}\n",
+                          expect="merge.yml reads a secret")
+            for spelling in ("secrets['ADMIN_TOKEN']", "toJSON(secrets)", "SECRETS.ADMIN_TOKEN")
+        ),
+        _plant("a comment naming secrets passes", _PR_YML, "permissions:\n  contents: read\n",
+               "permissions:\n  contents: read   # no secrets\n", fails=False),
+        _plant("contents: none passes", _PR_YML, "permissions:\n  contents: read\n",
+               "permissions:\n  contents: read\n  issues: none\n", fails=False),
+    ),
+)  # fmt: skip
+
+ROWS = (
+    *ROWS,
+    THE_TIER_WORKFLOWS_RUN_ONLY_THEIR_CLOSED_LISTS,
+    THE_TIER_WORKFLOWS_RUN_THEIR_TIERS_MATRIX,
+    THE_CATALOGUE_CHECK_STANDS_IN_FRONT_OF_MERGE_YMLS_VERDICT,
+    PR_YML_CARRIES_NO_PUSH_STAGE,
+    THE_TIER_WORKFLOWS_TAKE_NO_TRUST,
+)
 
 
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
