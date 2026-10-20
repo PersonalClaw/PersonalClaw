@@ -101,10 +101,13 @@ Regenerate in place (ONLY on a legitimate shrink) with::
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import json
 import os
 import re
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -150,9 +153,26 @@ _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 # Plans whose headers this census holds to the stale-shape heuristic.
 _PLANS_PREFIX = "docs/roadmap/plans/"
 
+# A render may be pointed at another git work tree (a test's fixture) for one call. With no
+# override, every reader below sees this checkout exactly as before.
+_ROOT_OVERRIDE: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
+    "_ROOT_OVERRIDE", default=None
+)
+
+
+@contextlib.contextmanager
+def _rooted(root: Path | None) -> Iterator[None]:
+    """Render against *root* for the length of the block; ``None`` keeps this checkout."""
+    previous = _ROOT_OVERRIDE.set(None if root is None else Path(root).resolve())
+    try:
+        yield
+    finally:
+        _ROOT_OVERRIDE.reset(previous)
+
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    override = _ROOT_OVERRIDE.get()
+    return override if override is not None else Path(__file__).resolve().parents[1]
 
 
 def _tracked_files() -> list[str]:
@@ -269,8 +289,11 @@ def _findings_for(rel_md: str, text: str, tracked: set[str]) -> list[str]:
     )
 
 
-def build_inventory() -> dict[str, Any]:
+def build_inventory(root: Path | None = None) -> dict[str, Any]:
     """Render the full docs-lint inventory as a deterministic, JSON-safe dict.
+
+    *root* points the render at another git work tree (a test fixture); with no *root* it
+    reads this checkout.
 
     Shape::
 
@@ -280,9 +303,10 @@ def build_inventory() -> dict[str, Any]:
           "totals": {"total": T, "by_kind": {"dead_link": N, ...}}
         }
     """
-    tracked_list = _tracked_files()
+    with _rooted(root):
+        tracked_list = _tracked_files()
+        base = _repo_root()
     tracked = set(tracked_list)
-    root = _repo_root()
     per_file: dict[str, dict[str, Any]] = {}
     by_kind: dict[str, int] = {
         KIND_DEAD_LINK: 0,
@@ -290,7 +314,7 @@ def build_inventory() -> dict[str, Any]:
         KIND_STALE_HEADER: 0,
     }
     for rel_md in _tracked_md(tracked_list):
-        text = (root / rel_md).read_text(encoding="utf-8", errors="replace")
+        text = (base / rel_md).read_text(encoding="utf-8", errors="replace")
         findings = _findings_for(rel_md, text, tracked)
         if not findings:
             continue
@@ -305,9 +329,9 @@ def build_inventory() -> dict[str, Any]:
     }
 
 
-def build_baseline() -> str:
+def build_baseline(root: Path | None = None) -> str:
     """Render the inventory as a deterministic JSON string (sorted, trailing newline)."""
-    return json.dumps(build_inventory(), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    return json.dumps(build_inventory(root), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
 
 def regressions(baseline_per_file: dict[str, Any], current_per_file: dict[str, Any]) -> list[str]:

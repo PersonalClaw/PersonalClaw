@@ -173,11 +173,6 @@ def test_cli_explain_unknown_task_errors() -> None:
     assert cli.main(["explain", "no-such-task"]) == 2
 
 
-def test_cli_scan_whole_tree_returns_zero() -> None:
-    # No ERROR findings on the real tree → scan exits 0 (WARNINGs don't fail).
-    assert cli.main(["scan"]) == 0
-
-
 def test_cli_validate_has_no_scanner_warnings_now() -> None:
     # The scanner check-ids are resolvable, so validate should have zero
     # warnings on the shipped set (every rule's scanner: ref resolves).

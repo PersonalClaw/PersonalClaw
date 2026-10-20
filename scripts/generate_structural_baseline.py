@@ -107,8 +107,11 @@ edit above it). A second run is byte-identical to the first.
 from __future__ import annotations
 
 import ast
+import contextlib
+import contextvars
 import json
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -144,12 +147,29 @@ RATCHET_IMPORT_DIRECTION = "structural-import-direction"
 RATCHET_DUPLICATION = "structural-duplication"
 RATCHETS = (RATCHET_SIZE, RATCHET_IMPORT_DIRECTION, RATCHET_DUPLICATION)
 
+# A render may be pointed at another tree (a test's fixture) for one call. With no override,
+# every reader below sees this checkout exactly as before.
+_ROOT_OVERRIDE: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
+    "_ROOT_OVERRIDE", default=None
+)
+
+
+@contextlib.contextmanager
+def _rooted(root: Path | None) -> Iterator[None]:
+    """Render against *root* for the length of the block; ``None`` keeps this checkout."""
+    previous = _ROOT_OVERRIDE.set(None if root is None else Path(root).resolve())
+    try:
+        yield
+    finally:
+        _ROOT_OVERRIDE.reset(previous)
+
 
 def _repo_root() -> Path:
     # Returns the constant resolved at import, NOT a fresh ``Path(__file__).resolve()``. This
     # is called once per file per scan (~2,700 times); re-resolving each time made the cold
     # census three times slower for nothing.
-    return _REPO_ROOT
+    override = _ROOT_OVERRIDE.get()
+    return override if override is not None else _REPO_ROOT
 
 
 def _src_root() -> Path:
@@ -939,8 +959,11 @@ def regressions_duplication(baseline: dict[str, Any], current: dict[str, Any]) -
 # ── Inventory, vacuity, ratchet dispatch ─────────────────────────────────────
 
 
-def build_inventory() -> dict[str, Any]:
+def build_inventory(root: Path | None = None) -> dict[str, Any]:
     """Render all three structural ratchet baselines as a deterministic, JSON-safe dict.
+
+    *root* points the census at another tree (a test fixture); with no *root* it reads this
+    checkout.
 
     The live census count is deliberately NOT stored here. It changes whenever any module is
     added or deleted, so pinning it would make the byte-compare test demand a regeneration on
@@ -948,21 +971,22 @@ def build_inventory() -> dict[str, Any]:
     Vacuity is enforced at RUN time instead (``vacuity_failures``), against
     ``MIN_CENSUS_PY_FILES`` and against the census the run itself performed.
     """
-    return {
-        "generated_from": "scripts/generate_structural_baseline.py",
-        "ratchets": list(RATCHETS),
-        RATCHET_SIZE: _size_block(),
-        RATCHET_IMPORT_DIRECTION: _import_direction_block(),
-        RATCHET_DUPLICATION: _duplication_block(),
-    }
+    with _rooted(root):
+        return {
+            "generated_from": "scripts/generate_structural_baseline.py",
+            "ratchets": list(RATCHETS),
+            RATCHET_SIZE: _size_block(),
+            RATCHET_IMPORT_DIRECTION: _import_direction_block(),
+            RATCHET_DUPLICATION: _duplication_block(),
+        }
 
 
-def build_baseline() -> str:
+def build_baseline(root: Path | None = None) -> str:
     """Render the inventory as a deterministic JSON string (sorted, trailing newline)."""
-    return json.dumps(build_inventory(), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    return json.dumps(build_inventory(root), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
 
-_SCAN_CACHE: dict[str, tuple[tuple[object, object], Scan]] = {}
+_SCAN_CACHE: dict[str, tuple[tuple[object, object, Path], Scan]] = {}
 
 
 def scan(ratchet: str) -> Scan:
@@ -972,9 +996,10 @@ def scan(ratchet: str) -> Scan:
     re-walk the tree a dozen times (three ratchets x inventory + vacuity). The tree does not
     change while a gate runs, so memoizing is safe — but the cache KEY carries the two
     functions a falsification test monkeypatches (``_parse`` and ``_src_py_files``), so a
-    narrowed walk invalidates the cache instead of quietly serving a stale clean result. A
-    cache that outlived its inputs would be its own vacuity bug, which is the last thing this
-    file should ship.
+    narrowed walk invalidates the cache instead of quietly serving a stale clean result. The
+    key carries the root as well, so a fixture render never serves this checkout's scan, and
+    is never served it. A cache that outlived its inputs would be its own vacuity bug, which
+    is the last thing this file should ship.
     """
     builders = {
         RATCHET_SIZE: scan_sizes,
@@ -983,7 +1008,7 @@ def scan(ratchet: str) -> Scan:
     }
     if ratchet not in builders:
         raise ValueError(f"unknown structural ratchet {ratchet!r}; known: {list(RATCHETS)}")
-    key = (_parse, _src_py_files)
+    key = (_parse, _src_py_files, _repo_root())
     cached = _SCAN_CACHE.get(ratchet)
     if cached is not None and cached[0] == key:
         return cached[1]

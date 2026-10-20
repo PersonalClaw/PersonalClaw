@@ -108,11 +108,6 @@ cap = 300
 reason = "renders the inert-surface census of the whole tree"
 
 [[mark]]
-site = "tests/test_inert_surface_baseline.py::test_render_is_deterministic"
-cap = 300
-reason = "renders the inert-surface census of the whole tree twice"
-
-[[mark]]
 site = "tests/test_inert_surface_baseline.py::test_the_real_config_reader_census_fires_and_clears_an_accessor"
 cap = 300
 reason = "builds the inert-surface census of the whole tree"
