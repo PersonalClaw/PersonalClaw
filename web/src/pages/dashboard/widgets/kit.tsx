@@ -57,8 +57,8 @@ export function SlotAction({ icon: Icon, children, onClick }: { icon: LucideIcon
   )
 }
 
-/** A row in a widget list — a tappable surface with spring press feedback + a
- *  hover lift, matching the app's pressable idiom. Optional trailing actions. */
+/** A row in a widget list — a tappable surface whose hover shows by colour, at once, with
+ *  no lift: Home is the first screen and is read all day. Optional trailing actions. */
 export function WidgetRow({
   onClick, label, children, actions, className,
 }: {
@@ -76,7 +76,6 @@ export function WidgetRow({
     <motion.div
       layout
       transition={spring.spatialDefault}
-      whileHover={onClick ? { y: -1 } : undefined}
       // 🔴 OPENING A WIDGET ROW WAS POINTER-ONLY, on the app's FIRST screen. Measured on
       // `#/dashboard` at 1440×1000: **20** clickable rows across four widgets (Action Center,
       // Tasks, Schedule, Pinned Artifacts), `tabindex` **null** and `role` **null** on every one,
@@ -138,12 +137,10 @@ export function RowAction({
     danger: 'text-danger hover:bg-danger/15',
   }[tone]
   return (
-    <motion.button
+    <button
       type="button"
       title={title}
       aria-label={ariaLabel}
-      whileTap={{ scale: 0.92 }}
-      transition={spring.spatialFast}
       onClick={onClick}
       // 24px HIT BOX, 22px painted. Measured on `#/dashboard`: `px-m py-xs` rendered **38×22**, and
       // sibling actions sit `gap-xs` (4px) apart — so SC 2.5.8's undersized-target exception cannot
@@ -154,7 +151,7 @@ export function RowAction({
       data-type="label-m"
     >
       {children}
-    </motion.button>
+    </button>
   )
 }
 

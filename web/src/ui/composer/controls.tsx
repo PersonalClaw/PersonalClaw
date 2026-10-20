@@ -4,7 +4,7 @@ import { motion } from 'framer-motion'
 import { Bot, Cpu, ShieldCheck, Gauge, ChevronDown, Plus, Search, Paperclip, BookText, Feather, RotateCcw } from 'lucide-react'
 import { Popover, MenuRow } from '../Popover'
 import { Button } from '../Button'
-import { spring, physics, expr } from '../../design/motion'
+import { physics } from '../../design/motion'
 import { cx } from '../cx'
 import type { ComposerData } from './types'
 import type { ApprovalMode, ReasoningEffort } from '../../lib/api'
@@ -22,9 +22,9 @@ const NATIVE_EFFORTS: { value: string; label: string }[] = [
 ]
 
 // Shared trigger for every composer pill (Agent/Model/Approval/Reasoning/Plus).
-// v2: a spring press (whileTap, expr-scaled), an active tint while its popover is
-// open, and a spring chevron flip — one physical touch across all pills. The
-// popover itself opens via the (already-v2) Popover.
+// An active tint while its popover is open and a spring chevron flip; a press shows by
+// colour, at once, with no scale — these pills are pressed many times an hour. The
+// popover itself opens via Popover.
 /** The composer's value-selector trigger: an icon, the CURRENT VALUE, a chevron.
  *
  *  `dimension` is what the pill controls ("Model", "Agent"), and it exists because the visible
@@ -47,15 +47,14 @@ export function PillButton({ icon, label, dimension, open, toggle, wide = false,
   title?: string
 }) {
   return (
-    <motion.button
+    <button
       type="button" onClick={toggle} aria-expanded={open} title={title}
       // A pill whose value IS its dimension ("Agent" when no specific agent is bound) would
       // otherwise announce "Agent: Agent".
       aria-label={label === dimension ? dimension : `${dimension}: ${label}`}
-      whileTap={{ scale: 1 - expr(0.04, 0.3) }} transition={spring.spatialFast}
       data-type="label-s"
       className={cx('flex items-center gap-1.5 h-9 rounded-pill px-m transition-colors', wide ? 'max-w-[16rem]' : 'max-w-[160px]',
-        open ? 'bg-surface-high text-on-surface' : 'text-on-surface-var hover:bg-surface-high')}
+        open ? 'bg-surface-high text-on-surface' : 'text-on-surface-var hover:bg-surface-high active:bg-surface-high')}
       style={fvs(470)}
     >
       {icon}
@@ -63,7 +62,7 @@ export function PillButton({ icon, label, dimension, open, toggle, wide = false,
       <motion.span className="shrink-0" animate={{ rotate: open ? 180 : 0 }} transition={physics.snappy}>
         <ChevronDown size={15} strokeWidth={2} />
       </motion.span>
-    </motion.button>
+    </button>
   )
 }
 

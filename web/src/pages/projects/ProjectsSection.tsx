@@ -3,7 +3,7 @@ import { MoreRow } from '../../ui/MoreRow'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
-import { spring } from '../../design/motion'
+import { fadeEnter } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
 import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, OctagonAlert, CircleStop, TriangleAlert, RefreshCw, Square, Download, BookMarked, Users, UserRound, Archive, ArchiveRestore, Upload, KeyRound, type LucideIcon } from 'lucide-react'
 import { statusMeta, TERMINAL } from '../tasks/taskMeta'
@@ -233,7 +233,7 @@ function ProjectListPage({ onOpen, onOpenLoops, query, setQuery }: { onOpen: (id
                   action={{ label: 'New project', onClick: () => setCreating(true), icon: Plus }} />
           ) : (
             <div className="flex flex-col gap-2">
-              {shown.map((p, index) => {
+              {shown.map((p) => {
                 // Scoped right-click actions — reuse the SAME handlers the click /
                 // hover-button paths call (open, and Delete for non-default projects).
                 // Clicking the already-peeked row CLOSES the panel (toggle, not re-open).
@@ -245,13 +245,13 @@ function ProjectListPage({ onOpen, onOpenLoops, query, setQuery }: { onOpen: (id
                 ]
                 return (
                 <ContextMenu key={p.id} items={menuItems}>
-                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
+                <motion.div variants={fadeEnter} initial="initial" animate="animate"
                   // No role/tabIndex/onKeyDown here: the row carries its own Delete control,
                   // so a role="button" wrapper is `nested-interactive` (axe, serious). The tab
                   // stop is the empty overlay below — same resolution ui/ListScaffold's ListRow
                   // took, and the same reason: an overlay owning no descendants needs no
-                  // per-control pointer-events scheme. `whileTap` still marks the wrapper
-                  // focusable, hence tabIndex={-1} rather than dropping the attribute.
+                  // per-control pointer-events scheme. tabIndex={-1} keeps the wrapper out of the
+                  // tab order explicitly, as it did when a framer gesture marked it focusable.
                   tabIndex={-1}
                   onClick={togglePeek}
                   className="group relative flex cursor-pointer items-center gap-3 rounded-xl border border-outline-variant/50 bg-surface-container/60 px-4 py-3 text-left transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary">

@@ -5,7 +5,7 @@ import { motion } from 'framer-motion'
 import { FileText, Link2, ExternalLink, MessagesSquare, ArrowUp, Loader2, Bot, Check, AlertTriangle, OctagonX, Ban } from 'lucide-react'
 import { Markdown } from '../../ui/Markdown'
 import { Button } from '../../ui/Button'
-import { spring } from '../../design/motion'
+import { fadeEnter } from '../../design/motion'
 import { SlotEmptyState } from '../dashboard/widgets/kit'
 import type { ChatActivity, SubagentCard } from './chatTypes'
 import { tabListKeys } from '../../lib/tabListKeys'
@@ -99,9 +99,9 @@ export function ChatActivityPanel({ activity, onOpenFile, subagents = [], onKill
           activity.files.length === 0
             ? <Empty icon={FileText} text="No files referenced yet." />
             : <div className="flex flex-col gap-px">
-                {activity.files.map((f, i) => (
+                {activity.files.map((f) => (
                   <motion.button key={f.path} type="button" onClick={() => onOpenFile(f.path)} title={f.path}
-                    initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(i * 0.03, 0.3) }}
+                    variants={fadeEnter} initial="initial" animate="animate"
                     className="group flex items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-surface-high">
                     <FileText size={14} className="shrink-0 text-on-surface-low" />
                     <span className="min-w-0 flex-1">
@@ -116,9 +116,9 @@ export function ChatActivityPanel({ activity, onOpenFile, subagents = [], onKill
           activity.links.length === 0
             ? <Empty icon={Link2} text="No links surfaced yet." />
             : <div className="flex flex-col gap-px">
-                {activity.links.map((l, i) => (
+                {activity.links.map((l) => (
                   <motion.a key={l.url} href={l.url} target="_blank" rel="noreferrer" title={l.url}
-                    initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(i * 0.03, 0.3) }}
+                    variants={fadeEnter} initial="initial" animate="animate"
                     className="group flex items-center gap-2 rounded-md px-2.5 py-2 transition-colors hover:bg-surface-high">
                     <Link2 size={14} className="shrink-0 text-on-surface-low" />
                     <span className="min-w-0 flex-1">
@@ -142,7 +142,7 @@ export function ChatActivityPanel({ activity, onOpenFile, subagents = [], onKill
                     <OctagonX size={13} /> Stop fan-out ({subagents.filter((s) => !s.done && !s.run).length})
                   </Button>
                 )}
-                {subagents.map((s, i) => <SubagentRow key={s.id} sub={s} index={i} />)}
+                {subagents.map((s) => <SubagentRow key={s.id} sub={s} />)}
               </div>
         )}
       </div>
@@ -166,7 +166,7 @@ function Empty({ icon: Icon, text }: { icon: typeof FileText; text: string }) {
  *  events; the report of one that ran also starts its turn in the chat. One that never ran (her
  *  Deny of its start, a start nobody allowed in time) is "declined" or "not started", not failed,
  *  and says why. */
-function SubagentRow({ sub, index = 0 }: { sub: SubagentCard; index?: number }) {
+function SubagentRow({ sub }: { sub: SubagentCard }) {
   const [open, setOpen] = useState(false)
   const unrun = sub.done && !!sub.neverRan
   const failed = sub.done && !!sub.error && !unrun
@@ -174,7 +174,7 @@ function SubagentRow({ sub, index = 0 }: { sub: SubagentCard; index?: number }) 
   const tone = failed ? 'var(--color-danger)' : sub.done && !unrun ? 'var(--color-primary)' : 'var(--color-on-surface-low)'
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
+      variants={fadeEnter} initial="initial" animate="animate"
       className="rounded-lg border border-outline-variant/50 bg-surface-high/40 px-2.5 py-2">
       <div className="flex items-center gap-2">
         <span className="shrink-0" style={{ color: tone }}>

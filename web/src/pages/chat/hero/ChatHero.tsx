@@ -4,7 +4,7 @@ import { AgentOrb } from '../../../ui/AgentOrb'
 import { Skeleton, LoadingStatus } from '../../../ui/ListScaffold'
 import { NeedsModelNote } from '../NoModelSetupState'
 import { firstNameOf } from '../../../app/identity'
-import { spring } from '../../../design/motion'
+import { fadeEnter, spring } from '../../../design/motion'
 import { api, type SessionTemplate } from '../../../lib/api'
 import { refreshKinds, useChatSocket } from '../../../lib/useChatSocket'
 import { useQuery, invalidateKeys } from '../../../lib/data'
@@ -75,7 +75,7 @@ function SuggestionChips({ onPick }: { onPick: (s: string) => void }) {
       <div className="flex flex-wrap justify-center gap-2" style={{ maxWidth: 720 }}>
         {items.map((s, i) => (
           <motion.button key={i} type="button" onClick={() => onPick(s)}
-            initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: 0.04 * i }}
+            variants={fadeEnter} initial="initial" animate="animate"
             className="rounded-pill border border-outline-variant/60 bg-surface-container px-3.5 py-2 text-left text-[0.8125rem] text-on-surface-var transition-colors hover:border-primary/40 hover:bg-surface-high hover:text-on-surface">
             {s}
           </motion.button>
@@ -123,10 +123,10 @@ function StarterChips({ onPick }: { onPick: (t: SessionTemplate) => void }) {
     <div className="flex w-full flex-col items-center gap-2">
       <p className="text-[0.75rem] text-on-surface-low">Your starters</p>
       <div className="flex flex-wrap justify-center gap-2" style={{ maxWidth: 720 }}>
-        {items.map((t, i) => (
+        {items.map((t) => (
           <motion.button key={t.id} type="button" onClick={() => onPick(t)}
             title={t.first_prompt || t.name}
-            initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: 0.04 * i }}
+            variants={fadeEnter} initial="initial" animate="animate"
             className="flex items-center gap-2 rounded-pill border border-primary/30 bg-primary-container/30 px-3.5 py-2 text-left text-[0.8125rem] text-on-surface-var transition-colors hover:border-primary/60 hover:bg-primary-container/50 hover:text-on-surface">
             <Sparkles size={13} className="shrink-0 text-primary" />
             {t.name}

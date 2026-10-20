@@ -148,7 +148,7 @@ components:
 
 PersonalClaw's dashboard is a capable engine with a soft shell, working in a studio after hours. The room is dark and calm — near-black canvas (#0f0f0f), tonal surface layers instead of hard borders — and the machine's warmth shows through one coral voice (#ff6b5b) that glows, blooms, and sweeps through gradient accents wherever the agent is alive: the composer focus ring, the agent orb, the spark. Two influences are deliberately blended: a **neural-expressive** signature (fractional variable-font weights like `wght 280` display, ambient glow, gradient energy that reads as live intelligence) and **Google's playful expressive element language** (pill shapes, tonal containers, springy overshoot on press) — both re-tinted through PersonalClaw's own coral/terracotta identity rather than copied.
 
-Controls are physical and friendly: pills by default, squircles for large sheets, spring-driven press/hover with earned overshoot. Personality is *budgeted and tunable* — a global expressiveness knob and bounciness slider scale every playful moment, and `prefers-reduced-motion` makes all of it instant. Each identity spends that budget its own way (§7). The default look draws no ambient light: the wave field, the halo and the sheen are Claw Arcade's. This system explicitly rejects hacker-terminal cosplay: no green-on-black, no scanlines, no readability sacrificed to look "technical." The optional `data-ui="cli"` density mode tightens spacing and squares corners as a utilitarian layout choice; it is not a costume.
+Controls are physical and friendly: pills by default, squircles for large sheets, press and hover shown by colour at once, and springs kept for what changes space (a panel opening, a card moving). Personality is *budgeted and tunable* — a global expressiveness knob and bounciness slider scale every playful moment, and `prefers-reduced-motion` makes all of it instant. Each identity spends that budget its own way (§7). The default look draws no ambient light: the wave field, the halo and the sheen are Claw Arcade's. This system explicitly rejects hacker-terminal cosplay: no green-on-black, no scanlines, no readability sacrificed to look "technical." The optional `data-ui="cli"` density mode tightens spacing and squares corners as a utilitarian layout choice; it is not a costume.
 
 **Key Characteristics:**
 - Dark-first tonal layering (canvas → surface → container → high → highest); light mode is an override, dark is home.
@@ -239,12 +239,12 @@ A hybrid model: tonal layering does the everyday work (the surface ramp IS eleva
 
 ## 5. Components
 
-Controls are pill-shaped, tonal, and springy; every interactive component has default, hover, focus-visible, active/pressed, disabled, and (where async) loading states.
+Controls are pill-shaped and tonal; every interactive component has default, hover, focus-visible, active/pressed, disabled, and (where async) loading states.
 
 ### Buttons
 - **Shape:** pill (9999px); `squircle` (34px) opt-in for large-sheet contexts.
 - **Primary:** coral fill (#ff6b5b), deep-ember ink, 40px height, 20px side padding, label at wght 470.
-- **Hover / Press:** hover lifts to #ff9a86 with a subtle spring scale-up (~1.025); press springs in (~0.95). In Claw Arcade, solid buttons also carry a pointer-tracking radial sheen (§7).
+- **Hover / Press:** hover and press both lift the fill to #ff9a86, at once, with no scale: a button is pressed many times an hour, and one that shrinks and grows under the pointer only wobbles. In Claw Arcade, solid buttons also carry a pointer-tracking radial sheen (§7).
 - **Secondary:** tonal fill (#282a2c → #333537 on hover). **Ghost:** transparent → tonal hover. **Danger:** #f55e57 with white ink.
 - **Loading:** label cross-fades out, centered spinner in; width preserved.
 - **Disabled:** 40% opacity, pointer-events off.

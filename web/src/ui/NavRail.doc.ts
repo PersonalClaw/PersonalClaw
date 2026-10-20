@@ -10,7 +10,7 @@ const doc: UiDoc = {
     "The app's primary side navigation — a drag-resizable, width-persisted rail. Collapse is CONTROLLED by the shell (the collapse/expand toggle lives in the main area's top-left ShellCornerLeft, not on the rail); collapsed becomes an icon-only 64px rail. On mobile it can render as a fixed overlay drawer instead of an in-flow column.",
   props: [
     { name: 'items', description: 'The NavItem list, rendered top→bottom; items flagged pinBottom (e.g. Settings) are pushed to the bottom past a flex spacer.' },
-    { name: 'activeId', description: 'The currently-selected item id — drives the shared-layout active pill.' },
+    { name: 'activeId', description: 'The currently-selected item id — drives the active pill, which moves to the new item at once.' },
     { name: 'onSelect', description: 'Fires with the item id when a nav item is clicked.' },
     { name: 'collapsed', description: 'Controlled collapse: true → icon-only 64px rail (drag-resize disabled). Own this state in the shell and drive it from ShellCornerLeft.' },
     { name: 'overlay', description: 'Mobile: render the rail as a fixed OVERLAY drawer (out of layout flow) instead of an in-flow column, so an expanded rail never squeezes the page. Always shows full labels.' },
@@ -20,7 +20,7 @@ const doc: UiDoc = {
     { name: 'disclosure', description: 'Progressive disclosure: {expanded, moreCount, onToggle}. Renders an "Everything / Show fewer" row at the end of scroll order, with aria-expanded and the count in its accessible name. Omit it (or pass moreCount 0) and no expander renders. The rail is handed already-FILTERED items — which surfaces are starter, which are pinned and how pins persist all live in app/navDisclosure.ts.' },
   ],
   bestPractices: [
-    { guidance: true, description: 'Reach for NavRail for the app-level side navigation rather than hand-rolling — drag-resize, width persistence, the collapsed icon rail, and the sliding active pill come built in.' },
+    { guidance: true, description: 'Reach for NavRail for the app-level side navigation rather than hand-rolling — drag-resize, width persistence, the collapsed icon rail, and the active pill come built in.' },
     { guidance: true, description: 'Collapse is CONTROLLED — own the collapsed state in the shell and drive it from ShellCornerLeft; do not add a second collapse control on the rail itself.' },
     { guidance: true, description: 'On mobile, pass overlay + overlayOpen + onScrimClick so the rail becomes a drawer over a scrim that does not steal layout width.' },
     { guidance: true, description: 'Set pinBottom on a NavItem (e.g. Settings) to pin it to the bottom of the rail instead of inline scroll order.' },
@@ -28,7 +28,7 @@ const doc: UiDoc = {
     { guidance: false, description: 'Do not use disclosure to make a surface unreachable. It hides rail ROWS only: deep links, the CommandPalette and in-app links must still render a hidden surface, and visiting one pins it.' },
     { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens.' },
   ],
-  anatomy: ['nav column (background var(--color-rail); clear over the desktop window material)', 'header (Wordmark expanded / Spark collapsed)', 'scroll-order items (with section headers + badges)', 'disclosure row ("Everything +N" / "Show fewer") when disclosure is passed', 'flex spacer', 'bottom-pinned items', 'shared-layout active pill (layoutId slide)', 'right-edge drag-resize handle (expanded)', 'mobile: scrim + fixed overlay drawer'],
+  anatomy: ['nav column (background var(--color-rail); clear over the desktop window material)', 'header (Wordmark expanded / Spark collapsed)', 'scroll-order items (with section headers + badges)', 'disclosure row ("Everything +N" / "Show fewer") when disclosure is passed', 'flex spacer', 'bottom-pinned items', 'active pill (instant, by colour)', 'right-edge drag-resize handle (expanded)', 'mobile: scrim + fixed overlay drawer'],
 }
 
 export default doc

@@ -5,7 +5,7 @@ import { api } from '../../../lib/api'
 import { refreshKinds, useChatSocket } from '../../../lib/useChatSocket'
 import { SlotEmptyState } from './kit'
 import { InlineLoadError } from '../../../ui/ListScaffold'
-import { spring } from '../../../design/motion'
+import { fadeEnter } from '../../../design/motion'
 import type { RouteProps } from '../../../app/useQueryState'
 import { NeedsModelNote } from '../../chat/NoModelSetupState'
 
@@ -70,14 +70,12 @@ export function Suggestions({ navigate }: RouteProps) {
 
   return (
     <div className="flex flex-col gap-xs pt-xs">
-      {items.slice(0, 6).map((s, i) => (
+      {items.slice(0, 6).map((s) => (
         <motion.button
           key={s}
           type="button"
           layout
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0, transition: { ...spring.spatialDefault, delay: i * 0.04 } }}
-          whileHover={{ y: -1 }}
+          variants={fadeEnter} initial="initial" animate="animate"
           onClick={() => navigate(`chat/new?seed=${encodeURIComponent(s)}`)}
           className="group flex items-center gap-s rounded-lg bg-surface-low px-m py-s text-left transition-colors hover:bg-surface-high"
         >

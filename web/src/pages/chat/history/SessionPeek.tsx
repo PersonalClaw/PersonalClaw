@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { unavailableWhen } from '../../../ui/unavailable'
-import { motion } from 'framer-motion'
 import { Loader2, ArrowRight, ArrowUp } from 'lucide-react'
 import { Button } from '../../../ui/Button'
 import { ListSkeleton } from '../../../ui/ListScaffold'
@@ -8,7 +7,6 @@ import { Markdown } from '../../../ui/Markdown'
 import { parseOptions, parseSwitchToAgent } from '../parseAssistant'
 import { TurnHead, type TurnEnding } from '../transcript/TurnHead'
 import { notify } from '../../../app/appSdk'
-import { spring } from '../../../design/motion'
 import { api, type ChatHistoryMsg, type RunState } from '../../../lib/api'
 import { livePhaseOf, workPhaseOf, type WorkPhase } from '../../../lib/workPhase'
 import { useChatSocket } from '../../../lib/useChatSocket'
@@ -173,13 +171,12 @@ export function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; on
             className="gap-1 text-on-surface-low hover:text-on-surface">
             Continue in full chat <ArrowRight size={11} className="shrink-0" />
           </Button>
-          <motion.button type="button" onClick={send}
+          <button type="button" onClick={send}
             {...unavailableWhen(!input.trim(), 'Type a message first', { busy })}
-            whileTap={{ scale: 0.92 }} transition={spring.spatialFast}
             aria-label="Send"
-            className="ml-auto inline-flex size-8 shrink-0 items-center justify-center rounded-pill bg-primary text-on-primary transition-colors hover:bg-primary-emphasis disabled:opacity-40 disabled:pointer-events-none aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
+            className="ml-auto inline-flex size-8 shrink-0 items-center justify-center rounded-pill bg-primary text-on-primary transition-colors hover:bg-primary-emphasis active:bg-primary-emphasis disabled:opacity-40 disabled:pointer-events-none aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
             {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={14} />}
-          </motion.button>
+          </button>
         </div>
       </div>
     </div>

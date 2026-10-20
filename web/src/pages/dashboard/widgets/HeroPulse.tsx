@@ -1,9 +1,7 @@
 import { useMemo } from 'react'
-import { motion } from 'framer-motion'
 import { Inbox, ListTodo, ShieldAlert, ShieldCheck } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useDashboardLive } from '../DashboardLive'
-import { physics } from '../../../design/motion'
 import { toneChipSkin } from '../../../design/accent'
 import type { RouteProps } from '../../../app/useQueryState'
 import { mirroredApprovalId } from '../../../lib/attentionLanes'
@@ -11,8 +9,9 @@ import { mirroredApprovalId } from '../../../lib/attentionLanes'
 
 /** Hero Pulse Strip — WS-live counts of what waits on the owner (approvals, tasks ready,
  *  inbox), each a click-through into its section, and only the ones above zero, plus a
- *  "YOLO active" warning while every tool call is auto-approved. Counts bounce on change
- *  (the count is the motion `key`, so it re-mounts + pops when it ticks). Gateway connectivity and
+ *  "YOLO active" warning while every tool call is auto-approved. A count swaps its number in
+ *  place: it used to re-mount and pop on every tick, and what waits on the owner changes too
+ *  often for each tick to be an event. Gateway connectivity and
  *  version are NOT here — the shell's top-right SystemWidget owns both (a live
  *  dot on every page + the version in its expanded card).
  *
@@ -114,18 +113,14 @@ export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { varian
           className={`group flex items-center rounded-pill bg-surface-low transition-colors hover:bg-surface-high ${header ? 'gap-xs px-m py-xs' : 'gap-s px-l py-s'}`}
         >
           <p.icon size={header ? 14 : 16} style={{ color: p.tone }} className="shrink-0" />
-          <motion.span
-            key={`${p.key}-${p.n}`}
-            initial={{ scale: 0.6, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={physics.playful}
+          <span
             data-type="title-m"
             // The dash is dimmer than a real count, which is the whole visual message: this is
             // an absence of information, not a measured value. Still not danger-toned.
             className={`tabular-nums ${p.n === null ? 'text-on-surface-low' : 'text-on-surface'}`}
           >
             {p.n === null ? '—' : p.n}
-          </motion.span>
+          </span>
           {/* In the header the reading sheds below 2xl (icon + count stay, the
               tooltip carries the words); the body strip always keeps it. */}
           <span data-type="body-m" className={`text-on-surface-low group-hover:text-on-surface-var ${header ? 'hidden 2xl:inline' : ''}`}>{p.label}</span>

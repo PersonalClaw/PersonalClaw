@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Check, ChevronDown, MoreHorizontal, type LucideIcon } from 'lucide-react'
 import { cx } from './cx'
-import { spring } from '../design/motion'
+import { overlayEnter, spring } from '../design/motion'
 import { fvs, withWeight } from '../design/fontWeight'
 import { Popover, MenuRow } from './Popover'
 import { Segmented, type SegOption } from './Segmented'
@@ -521,14 +521,14 @@ function HeaderOverflow({ actions }: { actions: { id: number; label: string; ico
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
 const variants: Record<Variant, string> = {
-  primary: 'bg-primary text-on-primary hover:bg-primary-emphasis',
-  secondary: 'bg-surface-high text-on-surface hover:bg-surface-highest',
-  ghost: 'bg-transparent text-on-surface hover:bg-surface-high',
+  primary: 'bg-primary text-on-primary hover:bg-primary-emphasis active:bg-primary-emphasis',
+  secondary: 'bg-surface-high text-on-surface hover:bg-surface-highest active:bg-surface-highest',
+  ghost: 'bg-transparent text-on-surface hover:bg-surface-high active:bg-surface-high',
   // `text-on-danger`, not `text-white` — same as Button's danger variant. Hardcoding white
   // pinned one ink across both themes, and the two themes need OPPOSITE inks: dark's danger is
   // a light red (#f66c66) where white is 2.89:1, light's is a deep red (#af2f29) where white is
   // 6.44:1. This was the only site that bypassed the token, and the only one that failed.
-  danger: 'bg-danger text-on-danger hover:opacity-90',
+  danger: 'bg-danger text-on-danger hover:opacity-90 active:opacity-90',
 }
 
 /** One responsive header control. Declares an `icon` + `label` (+ optional
@@ -589,7 +589,7 @@ export function HeaderControl({
   const showIcon = !!Icon // icon shows in full/text/icon (never dropped while visible)
   const eff: Variant = danger ? 'danger' : variant
   return (
-    <motion.button
+    <button
       type="button" onClick={disabled ? undefined : onClick}
       disabled={softOff ? undefined : disabled}
       aria-disabled={softOff || undefined}
@@ -604,8 +604,6 @@ export function HeaderControl({
       // `active` is not passed, so a plain header action gains no misleading state.
       aria-pressed={ariaExpanded === undefined ? active : undefined}
       aria-expanded={ariaExpanded}
-      whileTap={disabled ? undefined : { scale: 0.96 }}
-      transition={spring.spatialFast}
       data-type="label-s"
       className={cx(
         'inline-flex items-center justify-center gap-1.5 rounded-pill select-none shrink-0',
@@ -620,7 +618,7 @@ export function HeaderControl({
     >
       {showIcon && <Icon size={16} />}
       {showLabel && <span className="whitespace-nowrap">{label}</span>}
-    </motion.button>
+    </button>
   )
 }
 
@@ -816,9 +814,7 @@ export function HeaderModePill({ options, value, onChange, ariaLabel, disabled, 
         <AnimatePresence>
           {open && !disabled && rect && (
             <motion.div ref={menuRef}
-              initial={{ opacity: 0, scale: 0.97, y: -4 }}
-              animate={{ opacity: 1, scale: 1, y: 0, transition: spring.spatialFast }}
-              exit={{ opacity: 0, scale: 0.98, transition: spring.effects }}
+              variants={overlayEnter} initial="initial" animate="animate" exit="exit"
               style={{ position: 'fixed', top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right), transformOrigin: 'top right' }}
               role="menu" aria-label={ariaLabel}
               className="z-[var(--z-menu)]"

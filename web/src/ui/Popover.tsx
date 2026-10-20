@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { fvs } from '../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { overlayEnter, spring } from '../design/motion'
+import { overlayEnter } from '../design/motion'
 
 /** Vertical room a menu needs before a side is considered viable. Matches the
  *  composer SlashMenu/MentionMenu flip threshold (`roomAbove < 160`) so every
@@ -15,8 +15,9 @@ const MENU_ROOM = 160
 const FOCUSABLE = 'button:not([disabled]),[href],input:not([disabled]),select:not([disabled])'
   + ',textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
 
-/** Anchored flyout — opaque NE surface, 20px radius, soft ambient shadow, spring
- *  entrance. Opens above the trigger by default (composer sits low); pass
+/** Anchored flyout — opaque NE surface, 20px radius, soft ambient shadow, an
+ *  opacity-only entrance (`overlayEnter`: a menu is opened too often to drop or scale
+ *  in). Opens above the trigger by default (composer sits low); pass
  *  ``placement="bottom"`` for a top-anchored trigger (e.g. a top-bar control).
  *  Pass ``portal`` when the trigger lives inside an overflow-clipping container
  *  (e.g. a scrolling kanban column): the flyout renders into document.body with
@@ -150,8 +151,9 @@ export function Popover({
    *  records the other half of. Centring needs the flyout's REAL height, which only exists after it
    *  mounts, so `portalPos` cannot compute it; running the correction in `useEffect` would place the
    *  flyout at its anchor's top for one painted frame and then jump it. And `getBoundingClientRect`
-   *  is measured THROUGH `overlayEnter`'s scale, so on the entrance frame it reports a height the
-   *  flyout is animating out of — `offsetHeight` ignores transforms and reports the laid-out one.
+   *  is measured THROUGH any transform on the flyout (`overlayEnter` scaled it in until menus went to
+   *  opacity alone), so on an entrance frame it can report a height the flyout is animating out of —
+   *  `offsetHeight` ignores transforms and reports the laid-out one.
    *
    *  Separate from the clamp above rather than folded into it: that effect governs 30 call sites, and
    *  promoting it to a layout effect to serve one new placement would change when all of them run. */
@@ -304,9 +306,9 @@ function portalPos(anchor: DOMRect, placement: 'top' | 'bottom' | 'right', align
   return pos
 }
 
-/** A row inside a popover menu/list. Redesign-v2: the icon nudges in and the row
- *  presses on tap (spring) — a light physical touch on a high-frequency surface,
- *  kept restrained (menus are dense). The `group` lets the icon shift on hover. */
+/** A row inside a popover menu/list. Hover and press show by colour, at once: a menu
+ *  is a high-frequency surface, and the icon nudge and press squish it used to have only
+ *  made a dense list wobble under the pointer. */
 export function MenuRow({
   icon, label, hint, selected, onClick, role, tabIndex, disabled,
 }: {
@@ -333,7 +335,7 @@ export function MenuRow({
   disabled?: boolean
 }) {
   return (
-    <motion.button
+    <button
       onClick={onClick}
       role={role}
       tabIndex={tabIndex}
@@ -343,16 +345,14 @@ export function MenuRow({
       // correct for an action row (Peek / Open / Pin) — nothing there is "on".
       aria-selected={role === 'option' ? !!selected : undefined}
       aria-checked={role === 'menuitemradio' ? !!selected : undefined}
-      whileTap={{ scale: 0.97 }}
-      transition={spring.spatialFast}
-      className="group flex items-center gap-s w-full rounded-md px-m py-s text-left text-on-surface hover:bg-surface-high transition-colors aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
+      className="group flex items-center gap-s w-full rounded-md px-m py-s text-left text-on-surface hover:bg-surface-high active:bg-surface-high transition-colors aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
     >
-      {icon && <span className="shrink-0 text-on-surface-var transition-transform duration-150 group-hover:translate-x-0.5">{icon}</span>}
+      {icon && <span className="shrink-0 text-on-surface-var">{icon}</span>}
       <span className="flex-1 min-w-0">
         <span data-type="label-s" className="block truncate" style={fvs(selected ? 500 : 400)}>{label}</span>
         {hint && <span data-type="caption" className="block text-on-surface-low truncate">{hint}</span>}
       </span>
       {selected && <span className="size-1.5 shrink-0 rounded-pill bg-primary" />}
-    </motion.button>
+    </button>
   )
 }

@@ -40,7 +40,6 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
   const [active, setActive] = useState(0)
   // Per-instance layoutId so two open Comboboxes don't share (and fling) one
   // active-row indicator between them.
-  const activeLayoutId = `combo-active-${useId()}`
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -184,13 +183,11 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
                       <button key={o.value} id={optId(idx)} role="option" aria-selected={sel} tabIndex={-1}
                         type="button" onMouseMove={() => setActive(idx)} onClick={() => pick(o.value)}
                         className="relative flex w-full items-center gap-s px-3 py-1.5 text-left">
-                        {/* liquid active-row highlight — a single shared element that
-                            SLIDES between rows via layoutId (the Segmented pattern
-                            applied to a list), so keyboard/hover navigation glides
-                            instead of blink-swapping the background. */}
+                        {/* The active-row highlight. It moves with the cursor at once: arrowing
+                            through a list is many presses a second, and a highlight that glides
+                            after each one trails the cursor it is meant to show. */}
                         {isActive && (
-                          <motion.span layoutId={activeLayoutId} transition={spring.spatialFast}
-                            className="absolute inset-x-1 inset-y-0.5 rounded-md bg-primary/15" />
+                          <span className="absolute inset-x-1 inset-y-0.5 rounded-md bg-primary/15" />
                         )}
                         <span className="relative flex-1 min-w-0">
                           <span data-type="body-s" className="block truncate text-on-surface">{o.label}</span>

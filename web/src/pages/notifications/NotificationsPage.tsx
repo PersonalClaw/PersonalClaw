@@ -15,7 +15,7 @@ import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { RowHitTarget } from '../../ui/RowHitTarget'
 import { UnreadRail } from './UnreadRail'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
-import { spring } from '../../design/motion'
+import { fadeEnter } from '../../design/motion'
 import { confirm, confirmDelete } from '../../ui/dialog'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { rowSubject } from '../../lib/rowSubject'
@@ -284,7 +284,7 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
                   <div key={b}>
                     <div className="mb-s text-on-surface-low text-[0.75rem] uppercase tracking-wide">{b}</div>
                     <div className="flex flex-col gap-s">
-                      {groups[b].map((n, i) => <Row key={n.ts} n={n} index={i} now={now} onOpen={() => setOpenTs(n.ts)} onAck={() => ack(n)} onUnack={() => unack(n)} onDelete={() => remove(n)} />)}
+                      {groups[b].map((n) => <Row key={n.ts} n={n} now={now} onOpen={() => setOpenTs(n.ts)} onAck={() => ack(n)} onUnack={() => unack(n)} onDelete={() => remove(n)} />)}
                     </div>
                   </div>
                 ))}
@@ -323,7 +323,7 @@ function SenderAnswer({ n, answering, onAnswer }: { n: NotificationItem; answeri
   )
 }
 
-function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: NotificationItem; index: number; now: number; onOpen: () => void; onAck: () => void; onUnack: () => void; onDelete: () => void }) {
+function Row({ n, now, onOpen, onAck, onUnack, onDelete }: { n: NotificationItem; now: number; onOpen: () => void; onAck: () => void; onUnack: () => void; onDelete: () => void }) {
   const km = noteMeta(n)
   // What this row IS, bound once: the row's own hit target and all three actions must
   // announce the same subject, and it was being recomputed per control.
@@ -340,7 +340,7 @@ function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: Notificat
   ]
   return (
     <ContextMenu items={menuItems}>
-    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
+    <motion.div variants={fadeEnter} initial="initial" animate="animate"
       // 🔴 OPENING A NOTIFICATION WAS POINTER-ONLY. Driven with the keyboard across all 83 rows on
       // this surface: no row is ever a tab stop (measured `tabindex` = null on every one), so the
       // only keyboard route to `Open` was Shift+F10 on one of the hover actions — and those are

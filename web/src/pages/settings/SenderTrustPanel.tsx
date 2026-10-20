@@ -360,7 +360,7 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
         ) : (
           <>
             <RowGroup>
-              {senders.map((s, i) => {
+              {senders.map((s) => {
                 const { name: who, detail } = channelPerson(label, s.sender_id, s.name)
                 const tag = `${p.provider}:${s.sender_id}`
                 return (
@@ -369,7 +369,7 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
                   // pinned at its three remaining sites — a fourth copy is how that shape creeps
                   // back. The `label` is what keeps the row's accessible name the sender rather
                   // than its whole subtree.
-                  <ListRow key={s.sender_id} index={i} label={who}>
+                  <ListRow key={s.sender_id} label={who}>
                     <div className="flex items-start justify-between gap-l py-2">
                     <div className="flex min-w-0 items-start gap-3">
                       <UserCheck size={18} className="mt-0.5 shrink-0 text-on-surface-low" aria-hidden="true" />
@@ -431,10 +431,10 @@ function UnpairedSenders({ p, label }: { p: ChannelTrustProvider; label: string 
     <div role="group" aria-label={`People who messaged your agent on ${label} and aren't paired`} className="space-y-xs">
       <div data-type="label-m" className="text-on-surface-var">People who messaged your agent and aren't paired</div>
       <RowGroup>
-        {people.map((s, i) => {
+        {people.map((s) => {
           const { name: who, detail } = channelPerson(label, s.sender_id, s.name)
           return (
-            <ListRow key={s.sender_id} index={i} label={who}>
+            <ListRow key={s.sender_id} label={who}>
               <div className="flex min-w-0 items-start gap-m py-s">
                 <UserX size={18} className="mt-0.5 shrink-0 text-on-surface-low" aria-hidden="true" />
                 <div className="min-w-0">
@@ -528,8 +528,8 @@ function GroupsBlock({ p, label, onChanged, onSaid }: {
         <div role="group" aria-label={`Tracked groups on ${label}`} className="space-y-xs">
           <div data-type="label-m" className="text-on-surface-var">Tracked groups</div>
           <RowGroup>
-            {tracked.map((g, i) => (
-              <ListRow key={g.channel_id} index={i} label={g.name || g.channel_id}>
+            {tracked.map((g) => (
+              <ListRow key={g.channel_id} label={g.name || g.channel_id}>
                 <div className="flex items-center justify-between gap-l py-2">
                   <div className="min-w-0">
                     <div data-type="body-s" className="truncate text-on-surface">{g.name || g.channel_id}</div>
@@ -551,8 +551,8 @@ function GroupsBlock({ p, label, onChanged, onSaid }: {
         <div role="group" aria-label={`Groups that messaged your agent on ${label}`} className="space-y-xs">
           <div data-type="label-m" className="text-on-surface-var">Groups that messaged your agent</div>
           <RowGroup>
-            {seen.map((g, i) => (
-              <ListRow key={g.channel_id} index={i} label={g.name || g.channel_id}>
+            {seen.map((g) => (
+              <ListRow key={g.channel_id} label={g.name || g.channel_id}>
                 <div className="flex items-center justify-between gap-l py-2">
                   <div className="min-w-0">
                     <div data-type="body-s" className="truncate text-on-surface">{g.name || g.channel_id}</div>

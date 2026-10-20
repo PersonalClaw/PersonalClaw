@@ -18,10 +18,10 @@ const doc: UiDoc = {
     { guidance: true, description: "Pass className='self-start' inside a flex column so the button hugs its content instead of stretching full width." },
     { guidance: false, description: 'Do not use Button (the pill CTA) for adding list rows — this understated rectangular fill deliberately matches the rounded-md surface-container rows it sits beneath.' },
     { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens (the token-lint ratchet fails the build otherwise).' },
-    { guidance: false, description: 'Do not add your own whileTap/scale press animation at the call site: the primitive already springs in on press (expressiveness-scaled, dropped under reduced motion), which is the only feedback between the click and the appended row arriving.' },
+    { guidance: false, description: 'Do not add a whileTap/scale press animation at the call site: a press shows by colour, at once (the active: fill is the hover’s), which is the only feedback between the click and the appended row arriving, and no tier in the button family scales on press.' },
   ],
   anatomy: [
-    'motion.button (surface-container fill, rounded-md, 36px tall, expressiveness-scaled press spring on the fast spatial preset)',
+    'button (surface-container fill, rounded-md, 36px tall, hover and press to surface-high)',
     'children (leading icon + label)',
   ],
 }

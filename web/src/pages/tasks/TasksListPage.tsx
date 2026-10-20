@@ -17,7 +17,7 @@ import { confirm, confirmDelete } from '../../ui/dialog'
 import { SidePanel } from '../../ui/SidePanel'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
-import { spring, expr } from '../../design/motion'
+import { fadeEnter } from '../../design/motion'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type TaskItem, type ProjectItem, type TaskListItem, type Loop } from '../../lib/api'
 import { notify } from '../../app/appSdk'
@@ -635,15 +635,15 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
               )
             ) : view === 'list' ? (
               <div className="flex flex-col gap-s pb-16">
-                {filtered.map((t, i) => (
-                  <TaskRow key={t.id} t={t} index={i} onOpen={() => setOpenId(t.id)} onProject={chooseScope} onTag={setTag}
+                {filtered.map((t) => (
+                  <TaskRow key={t.id} t={t} onOpen={() => setOpenId(t.id)} onProject={chooseScope} onTag={setTag}
                     selected={selected.has(t.id)} selecting={selected.size > 0} onToggleSelect={() => toggleSelect(t.id)}
                     onComplete={() => moveTask(t.id, 'done')} />
                 ))}
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-s">
-                {filtered.map((t, i) => <TaskCard key={t.id} t={t} index={i} onOpen={() => setOpenId(t.id)} onProject={chooseScope} onTag={setTag} />)}
+                {filtered.map((t) => <TaskCard key={t.id} t={t} onOpen={() => setOpenId(t.id)} onProject={chooseScope} onTag={setTag} />)}
               </div>
             )}
           </div>
@@ -774,8 +774,8 @@ function MetaLine({ t, onProject }: { t: TaskItem; onProject?: (p: string) => vo
   )
 }
 
-function TaskRow({ t, index, onOpen, onProject, onTag, selected, selecting, onToggleSelect, onComplete }: {
-  t: TaskItem; index: number; onOpen: () => void; onProject?: (p: string) => void; onTag?: (tag: string) => void
+function TaskRow({ t, onOpen, onProject, onTag, selected, selecting, onToggleSelect, onComplete }: {
+  t: TaskItem; onOpen: () => void; onProject?: (p: string) => void; onTag?: (tag: string) => void
   selected?: boolean; selecting?: boolean; onToggleSelect?: () => void
   onComplete?: () => void
 }) {
@@ -790,7 +790,7 @@ function TaskRow({ t, index, onOpen, onProject, onTag, selected, selecting, onTo
   ]
   return (
     <ContextMenu items={menuItems}>
-    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
+    <motion.div variants={fadeEnter} initial="initial" animate="animate"
       onClick={onOpen}
       // 🔴 OPENING A TASK WAS POINTER-ONLY. This row handled `onClick` on a bare `div`, so the surface's
       // primary action had no keyboard equivalent (WCAG 2.1.1). Measured with the keyboard alone across
@@ -856,7 +856,7 @@ function TaskRow({ t, index, onOpen, onProject, onTag, selected, selecting, onTo
   )
 }
 
-function TaskCard({ t, index, onOpen, onProject, onTag }: { t: TaskItem; index: number; onOpen: () => void; onProject?: (p: string) => void; onTag?: (tag: string) => void }) {
+function TaskCard({ t, onOpen, onProject, onTag }: { t: TaskItem; onOpen: () => void; onProject?: (p: string) => void; onTag?: (tag: string) => void }) {
   const sm = statusMeta(t.status)
   const pm = signalPriority(t.priority)
   const due = dueMeta(t.due)
@@ -864,11 +864,10 @@ function TaskCard({ t, index, onOpen, onProject, onTag }: { t: TaskItem; index: 
   const exit = t.exit_criteria ?? []
   const exitDone = exitDoneCount(exit)
   return (
-    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
-      // physical liftable card: rises toward the viewer + gains shadow on hover,
-      // press-settles on tap (depth via expr) — consistent with ListRow/Surface.
-      whileHover={{ y: -expr(4, 0.3), boxShadow: 'var(--shadow-lift)' }}
-      whileTap={{ scale: 1 - expr(0.012, 0.3) }}
+    <motion.div variants={fadeEnter} initial="initial" animate="animate"
+      // Hover and press show by colour (`hover:bg-surface-high`), with no lift and no press
+      // squish: the tasks list is opened many times a day, and a card that rises under the pointer
+      // only wobbles — consistent with ListRow.
       onClick={onOpen}
       // Same defect, same fix, in the Cards view: 30 cards, each openable by pointer only.
       tabIndex={-1}

@@ -1,24 +1,8 @@
 import { useId, useState, type ReactNode } from 'react'
 import { fvs, withWeight } from '../../design/fontWeight'
-import { motion } from 'framer-motion'
 import { Sparkles, ChevronRight, ChevronDown, FileText, CornerDownLeft } from 'lucide-react'
-import { messageEnter, spring } from '../../design/motion'
 import { MessageBody, type TurnPaste } from '../../pages/chat/PasteChip'
 import type { RanPrompt } from '../../pages/chat/chatTypes'
-
-/** Entrance for the JUST-SENT bubble: it travels UP from near the composer into
- *  its transcript slot (rise + slight grow), so the message visibly leaves the
- *  composer it was typed in. A spring gives it weight + a soft settle. Older user
- *  bubbles use the quiet default `messageEnter`. */
-/*  A FUNCTION, not an object literal, because `spring.spatialSlow` is a getter that reads
- *  `prefers-reduced-motion` at access time. Held as a module-scope literal it would
- *  resolve the gate ONCE at import and freeze that answer for the session, so a user who
- *  turns reduced motion on mid-session would keep the 120px spring travel — the same trap
- *  `overlayEnter.exit` carried in `design/motion.ts` until this change made it a function. */
-const travelEnter = () => ({
-  initial: { opacity: 0, y: 120, scale: 0.94 },
-  animate: { opacity: 1, y: 0, scale: 1, transition: spring.spatialSlow },
-})
 
 /** A user message past either bound opens COLLAPSED behind "Show full message".
  *
@@ -39,13 +23,14 @@ export function isLongUserMessage(text: string): boolean {
 /** User turn — right-aligned contained bubble (40px radius, surface-container,
  *  max-width 452px). The ONLY bubbled side in NE chat. Content renders as
  *  markdown (same renderer as assistant turns), with first/last-child margins
- *  collapsed so a one-line message sits snug. `fromComposer` makes the newest
- *  sent bubble travel up from the composer. `ranPrompt` is the saved prompt the message ran:
- *  the bubble keeps what she typed, and the prompt's text sits folded under it, labelled as the
+ *  collapsed so a one-line message sits snug. The bubble arrives with no entrance: it
+ *  used to travel 120px up from the composer on a spring (the newest) or rise and fade in
+ *  (the rest), and a message the owner just sent is not news to her, so it is simply there.
+ *  `ranPrompt` is the saved prompt the message ran: the bubble keeps what she typed, and the prompt's text sits folded under it, labelled as the
  *  prompt's. `steered` says she sent it into the answer while it was being written, which took it
  *  as it went: the answer above it goes on below it. */
-export function MessageUser({ children, fromComposer = false, onFileClick, pastes, optimized, ranPrompt, steered = false, onExpand }: {
-  children: string; fromComposer?: boolean; onFileClick?: (path: string) => void; pastes?: TurnPaste[]; optimized?: string
+export function MessageUser({ children, onFileClick, pastes, optimized, ranPrompt, steered = false, onExpand }: {
+  children: string; onFileClick?: (path: string) => void; pastes?: TurnPaste[]; optimized?: string
   ranPrompt?: RanPrompt
   steered?: boolean
   /** Called when the reader unfolds a long message — a decision to read it, which the host
@@ -58,7 +43,7 @@ export function MessageUser({ children, fromComposer = false, onFileClick, paste
   const folded = long && !expanded
   const lines = children.split('\n').length
   return (
-    <motion.div variants={fromComposer ? travelEnter() : messageEnter} initial="initial" animate="animate" className="flex justify-end">
+    <div className="flex justify-end">
       <div
         className="bg-surface-container text-on-surface [&_>div>*:first-child]:mt-0 [&_>div>*:last-child]:mb-0"
         style={withWeight({
@@ -106,7 +91,7 @@ export function MessageUser({ children, fromComposer = false, onFileClick, paste
             openLabel="Optimized prompt sent to the model" />
         )}
       </div>
-    </motion.div>
+    </div>
   )
 }
 

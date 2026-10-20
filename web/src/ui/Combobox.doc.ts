@@ -22,7 +22,7 @@ const doc: UiDoc = {
     { guidance: false, description: 'Do not hardcode colors or px in any wrapping className — everything routes through design tokens (the token-lint ratchet fails the build otherwise).' },
     { guidance: false, description: 'Do not reach for Combobox for a short fixed set of mutually-exclusive options — use Segmented (inline) or Select (native) instead.' },
   ],
-  anatomy: ['root div (outside-click / focus-leave boundary)', 'THE morphing surface (motion.div layout, field↔menu)', 'collapsed field row (value • clear X • chevron)', 'expanded search header (magnifier + input)', 'grouped option list (liquid layoutId active-row indicator)'],
+  anatomy: ['root div (outside-click / focus-leave boundary)', 'THE morphing surface (motion.div layout, field↔menu)', 'collapsed field row (value • clear X • chevron)', 'expanded search header (magnifier + input)', 'grouped option list (active-row highlight, moves with the cursor at once)'],
 }
 
 export default doc

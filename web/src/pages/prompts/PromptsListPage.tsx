@@ -219,7 +219,7 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
             {/* The Bundled tab says what it holds, since its rows are not the reader's own and the
                 tab name alone does not say why they are kept apart. */}
             {tab === 'bundled' && <p data-type="body-s" className="mb-xs text-on-surface-low">{BUNDLED_HINT}</p>}
-            {rows!.map((r, i) => {
+            {rows!.map((r) => {
               const Icon = isSnips ? Puzzle : FileText
               const vars = promptVars(r)
               // Right-click / long-press → scoped actions (the shared ContextMenu
@@ -233,7 +233,7 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
               return (
                 <Disintegrate key={r.name} active={deletingName === r.name} onDone={finishDelete}>
                 <ContextMenu items={menuItems}>
-                <ListRow index={i} accent={sourceTone(r.source)} onClick={() => setQuery({ open: r.name, edit: null })} label={r.name}>
+                <ListRow accent={sourceTone(r.source)} onClick={() => setQuery({ open: r.name, edit: null })} label={r.name}>
                   <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${sourceTone(r.source)} 16%, transparent)` }}><Icon size={19} style={{ color: sourceTone(r.source) }} /></span>
                   <div className="flex-1 min-w-0">
                     <span data-type="label-m" className="truncate text-on-surface font-mono" style={fvs(500)}>{r.name}</span>

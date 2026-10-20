@@ -4,7 +4,7 @@ import { AlertTriangle, Plus, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
-import { spring, physics } from '../../design/motion'
+import { physics } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
 import { Toggle } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
@@ -241,7 +241,6 @@ export function SegPills<T extends string>({ value, onChange, options, ariaLabel
   value: T; onChange: (v: T) => void; options: { key: T; label: string }[]; ariaLabel: string
 }) {
   // Per-instance layoutId so the sliding pill in one SegPills can't fly to another.
-  const indicatorId = `segpills-${useId()}`
   return (
     <div className="inline-flex rounded-pill bg-surface-container p-0.5">
       {options.map((o) => {
@@ -251,10 +250,9 @@ export function SegPills<T extends string>({ value, onChange, options, ariaLabel
             aria-label={`${ariaLabel}: ${o.label}`} aria-pressed={on}
             data-type="body-s" className="relative rounded-pill px-3 h-7 transition-colors"
             style={{ color: on ? 'var(--color-on-surface)' : 'var(--color-on-surface-low)' }}>
-            {/* liquid active pill — slides between options via layoutId instead of
-                the highlight blink-jumping (the Segmented pattern, on a settings pill). */}
-            {on && <motion.span layoutId={indicatorId} transition={spring.spatialFast}
-              className="absolute inset-0 rounded-pill" style={{ background: 'var(--color-surface-highest)' }} />}
+            {/* The active option's fill. It moves to the new option at once: an option change is
+                a high-frequency action, and a pill sliding over says nothing the fill does not. */}
+            {on && <span className="absolute inset-0 rounded-pill" style={{ background: 'var(--color-surface-highest)' }} />}
             <span className="relative">{o.label}</span>
           </button>
         )

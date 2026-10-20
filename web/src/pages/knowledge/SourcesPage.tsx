@@ -148,9 +148,8 @@ function Remediation({ source, onChanged }: { source: WatchedSource; onChanged: 
 /** One watched source. NOT a clickable row: it carries real controls (a switch, a
  *  remediation button, a URL field), and wrapping those in a button would nest interactive
  *  elements — the row would swallow their names and keyboard activation. */
-export function SourceRow({ source, index, kinds, onChanged }: {
+export function SourceRow({ source, kinds, onChanged }: {
   source: WatchedSource
-  index?: number
   kinds: KindIndex
   onChanged: () => void
 }) {
@@ -174,7 +173,7 @@ export function SourceRow({ source, index, kinds, onChanged }: {
   }
 
   return (
-    <ListRow index={index}>
+    <ListRow>
       <div className="flex min-w-0 items-start gap-m">
         <span className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-surface-high">
           <Icon size={16} className="text-on-surface-var" aria-hidden />
@@ -303,8 +302,8 @@ export function SourcesPage({ onBack, onCreate }: { onBack: () => void; onCreate
               action={{ label: 'Watch something', onClick: onCreate, icon: Plus }} />
           ) : (
             <div className="flex flex-col gap-m">
-              {sources.map((s, i) => (
-                <SourceRow key={s.id} source={s} index={i} kinds={kinds} onChanged={reload} />
+              {sources.map((s) => (
+                <SourceRow key={s.id} source={s} kinds={kinds} onChanged={reload} />
               ))}
             </div>
           )}

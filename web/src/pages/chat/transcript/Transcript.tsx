@@ -126,7 +126,7 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
                       failure={editFailure} onSubmit={(v) => editResend(i, v)} />
                   ) : (
                     <div className="group/msg">
-                      <MessageUser fromComposer={isLast} onFileClick={setOpenFile} pastes={turn.pastes} optimized={turn.optimized} ranPrompt={turn.ranPrompt} steered={turn.steered}
+                      <MessageUser onFileClick={setOpenFile} pastes={turn.pastes} optimized={turn.optimized} ranPrompt={turn.ranPrompt} steered={turn.steered}
                         onExpand={() => { followTurnRef.current = false }}>{turnTextOf(turn)}</MessageUser>
                       {turn.files && turn.files.length > 0 && <TurnAttachments paths={turn.files} delivery={turn.imageDelivery} onOpenFile={setOpenFile} />}
                       {turn.rewound && turn.rewound.length > 0 && (

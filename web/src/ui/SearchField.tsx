@@ -74,7 +74,9 @@ const INPUT_CHROME = 'text-on-surface placeholder:text-on-surface-low outline-no
 const OVERLAY_FOCUS = 'focus:ring-2 focus:ring-inset focus:ring-primary'
 
 /** A spring-pop clear-X (the owner-chosen canonical affordance): a soft circle that
- *  scale-pops in on the first keystroke and out on clear, with a whileTap squish.
+ *  scale-pops in on the first keystroke and out on clear. A press shows by colour, at
+ *  once (the `active:` tint is the hover's): it used to squish on press too, and nothing
+ *  in the button family scales on press any more.
  *  Rendered only while there's a value to clear. Shared by both variants; `dense`
  *  shrinks the hit area to sit inside a compact inline palette row. */
 function ClearButton({ show, onClear, label, dense }: { show: boolean; onClear: () => void; label: string; dense?: boolean }) {
@@ -83,8 +85,8 @@ function ClearButton({ show, onClear, label, dense }: { show: boolean; onClear: 
       {show && (
         <motion.button type="button" onClick={onClear} aria-label={label}
           initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }}
-          transition={physics.snappy} whileTap={{ scale: 0.88 }}
-          className={cx('inline-flex shrink-0 items-center justify-center rounded-full text-on-surface-low hover:bg-surface-highest hover:text-on-surface', dense ? 'size-5' : 'size-6')}>
+          transition={physics.snappy}
+          className={cx('inline-flex shrink-0 items-center justify-center rounded-full text-on-surface-low hover:bg-surface-highest hover:text-on-surface active:bg-surface-highest active:text-on-surface', dense ? 'size-5' : 'size-6')}>
           <X size={dense ? 13 : 14} />
         </motion.button>
       )}

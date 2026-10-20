@@ -12,9 +12,9 @@ const doc: UiDoc = {
   bestPractices: [
     { guidance: true, description: 'Drop WidthPill into the top-right shell corner cluster as-is — it is self-contained (state lives in the appearance store) and needs no wiring.' },
     { guidance: false, description: 'Do not pass or lift the width state — WidthPill owns it via useAppearance; duplicating it would desync the corner glyph from the applied preset.' },
-    { guidance: false, description: 'Do not hardcode the highlight/menu colors — the sliding active indicator and menu surface use design tokens.' },
+    { guidance: false, description: 'Do not hardcode the highlight/menu colors — the active fill and menu surface use design tokens.' },
   ],
-  anatomy: ['relative hover container', 'collapsed trigger (active preset icon, key-swap morph)', 'AnimatePresence menu (rounded-pill surface) with 4 option buttons', 'shared layoutId active indicator that slides between options'],
+  anatomy: ['relative hover container', 'collapsed trigger (active preset icon, key-swap morph)', 'AnimatePresence menu (rounded-pill surface, opacity-only overlayEnter) with 4 option buttons', 'active fill that moves to the picked option at once'],
 }
 
 export default doc

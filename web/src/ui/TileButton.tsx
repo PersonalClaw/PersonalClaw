@@ -1,7 +1,5 @@
 import type { ReactNode } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
 import { cx } from './cx'
-import { spring, expr } from '../design/motion'
 
 /** A block-level clickable CARD/TILE — the kit's home for "the whole card is one
  *  click target" (library grids, gallery tiles). Distinct from {@link Button}
@@ -10,10 +8,10 @@ import { spring, expr } from '../design/motion'
  *  title rows); it owns only the card chrome — border, radius, hover, the
  *  active ring — and the accessible button semantics. `active` marks selection.
  *
- *  Press springs in (expressiveness-scaled, yielding to reduced motion) — the
- *  same spring the rest of the button family uses. The tile was the LARGEST
- *  target in the kit with no press feedback at all: a click on a card that only
- *  changes colour on hover gives no acknowledgement that the press landed. */
+ *  A press shows by colour, at once: the `active:` border is the hover's, so a tap
+ *  on a touch screen, where no hover precedes it, still acknowledges the press. It
+ *  used to spring in like the rest of the button family; nothing in the family
+ *  scales any more. */
 export function TileButton({ children, onClick, active, title, ariaLabel, className }: {
   children: ReactNode
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
@@ -29,16 +27,12 @@ export function TileButton({ children, onClick, active, title, ariaLabel, classN
   ariaLabel?: string
   className?: string
 }) {
-  const reduce = useReducedMotion()
-  const pressScale = reduce ? 1 : 1 - expr(0.05, 0.4)
   return (
-    <motion.button
+    <button
       type="button"
       onClick={onClick}
       title={title}
       aria-label={ariaLabel}
-      whileTap={{ scale: pressScale }}
-      transition={spring.spatialFast}
       // `active` is the selection, and until now it was PAINT ONLY: a border colour. Measured in the
       // AX tree on `#/settings/design`, 3 of 89 buttons exposed any state — the Mode row — while the
       // selected personality card announced exactly like the other two. `aria-pressed` is this app's
@@ -47,12 +41,12 @@ export function TileButton({ children, onClick, active, title, ariaLabel, classN
       aria-pressed={active}
       className={cx(
         'group flex flex-col overflow-hidden rounded-xl border text-left transition-colors',
-        active ? 'border-primary/60' : 'border-outline-variant/40 hover:border-outline-variant',
+        active ? 'border-primary/60' : 'border-outline-variant/40 hover:border-outline-variant active:border-outline-variant',
         'bg-surface-container focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary',
         className,
       )}
     >
       {children}
-    </motion.button>
+    </button>
   )
 }

@@ -397,7 +397,8 @@ describe('the control converges on the rail\'s own motion, so reduced-motion is 
     const at = src.indexOf('aria-expanded={disclosure.expanded}')
     expect(at, 'the disclosure control must still be in NavRail').toBeGreaterThan(-1)
     const block = src.slice(at - 400, at + 1600)
-    expect(block, 'same tap spring as every nav item').toContain('transition={spring.spatialFast}')
+    // No tap spring, the same as every nav item: a rail click is instant (`ui/navRailIsInstant.test.tsx`).
+    expect(block, 'the disclosure row scales on press while the nav items do not').not.toMatch(/whileTap|whileHover|layoutId/)
     expect(block, 'the chevron rotates through the shared CSS transition').toContain("'transition-transform'")
     expect(block, 'no hand-rolled keyframe or duration').not.toMatch(/duration:|animate=\{\{|keyframes/)
   })

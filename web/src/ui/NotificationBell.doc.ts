@@ -14,7 +14,7 @@ const doc: UiDoc = {
     { guidance: true, description: 'Reach for it in the shell corner cluster (ShellCornerRight) rather than building a bespoke bell — it owns its own polling + WS refresh; do not wrap it in another poller.' },
     { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens.' },
   ],
-  anatomy: ['bell trigger button (unread badge, bounce re-pop on count change)', 'AnimatePresence popover shade (top-right anchored)', 'header (title + count + Mark all read)', 'scrollable recent list (ShadeRow: mark read / dismiss / open)', 'footer (View all notifications)'],
+  anatomy: ['bell trigger button (unread badge; the number swaps in place, no pop)', 'AnimatePresence popover shade (top-right anchored, opacity-only overlayEnter)', 'header (title + count + Mark all read)', 'scrollable recent list (ShadeRow: mark read / dismiss / open)', 'footer (View all notifications)'],
 }
 
 export default doc

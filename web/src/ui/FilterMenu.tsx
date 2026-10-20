@@ -1,12 +1,10 @@
-import { useId, useMemo, type ReactNode } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { useMemo, type ReactNode } from 'react'
 import { SlidersHorizontal, Check, type LucideIcon } from 'lucide-react'
 import { Popover } from './Popover'
 import { FilterRow } from './FilterRow'
 import { Button } from './Button'
 import { TextLink } from './TextLink'
 import { fvs } from '../design/fontWeight'
-import { physics } from './../design/motion'
 import { accentChip } from '../design/accent'
 
 /** One selectable choice within a filter section. */
@@ -48,11 +46,6 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right' }: {
     () => sections.reduce((n, s) => n + (s.value !== s.defaultKey ? 1 : 0), 0),
     [sections],
   )
-  // Per-FilterMenu base id — the sliding selected-row indicator is namespaced per
-  // section (`${baseId}-${section}`) so each section owns one indicator that
-  // glides between its rows, without interfering across sections or instances.
-  const baseId = useId()
-
   return (
     <Popover align={align} width={264} placement="bottom"
       // 🔴 PORTAL for the same reason as the apps card menu, measured at 430×900 on
@@ -71,17 +64,12 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right' }: {
           style={activeCount > 0 || open ? accentChip : undefined}>
           <SlidersHorizontal size={14} />
           <span className="hidden sm:inline">{label}</span>
-          {/* active-filter count badge pops in on a playful spring (and out) so a
-              filter engaging/clearing reads as a little event, not a silent swap */}
-          <AnimatePresence>
-            {activeCount > 0 && (
-              <motion.span
-                initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }}
-                transition={physics.playful}
-                data-type="caption"
-                className="inline-flex items-center justify-center min-w-[1.05rem] h-[1.05rem] px-1 rounded-pill bg-primary text-on-primary tabular-nums" style={fvs(600)}>{activeCount}</motion.span>
-            )}
-          </AnimatePresence>
+          {/* The active-filter count. It swaps its number in place: filters are set and cleared
+              many times an hour, so the badge does not pop in, out or on each change. */}
+          {activeCount > 0 && (
+            <span data-type="caption"
+              className="inline-flex items-center justify-center min-w-[1.05rem] h-[1.05rem] px-1 rounded-pill bg-primary text-on-primary tabular-nums" style={fvs(600)}>{activeCount}</span>
+          )}
         </button>
       )}>
       {(close) => (
@@ -90,7 +78,7 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right' }: {
             <Section key={s.title} title={s.title}
               onClear={s.value !== s.defaultKey ? () => s.onChange(s.defaultKey) : undefined}>
               {s.options.map((o) => (
-                <Row key={o.key} option={o} selected={s.value === o.key} onClick={() => s.onChange(o.key)} indicatorId={`${baseId}-${s.title}`} />
+                <Row key={o.key} option={o} selected={s.value === o.key} onClick={() => s.onChange(o.key)} />
               ))}
             </Section>
           ))}
@@ -113,18 +101,16 @@ function Section({ title, onClear, children }: { title: string; onClear?: () => 
   )
 }
 
-function Row({ option, selected, onClick, indicatorId }: { option: FilterOption; selected: boolean; onClick: () => void; indicatorId: string }) {
+function Row({ option, selected, onClick }: { option: FilterOption; selected: boolean; onClick: () => void }) {
   const Icon = option.icon
   return (
     <>
       {option.groupLabel && <div data-type="caption" className="mt-1 px-2 pt-1.5 text-on-surface-low uppercase tracking-wide border-t border-on-surface/8">{option.groupLabel}</div>}
       {/* The row itself is `ui/FilterRow` — the App Store's persistent
           category/source rail renders the same one, because it and this dropdown are one
-          control at two viewport widths. The liquid selected-row indicator (one shared
-          element per section, SLIDING between rows via layoutId rather than the tint
-          blink-swapping) lives there. */}
+          control at two viewport widths. The selected-row tint lives there. */}
       <FilterRow label={option.label} count={option.count} icon={Icon} selected={selected}
-        indicatorId={indicatorId} onClick={onClick}
+        onClick={onClick}
         trailing={selected ? <Check size={14} className="relative shrink-0 text-primary" /> : undefined} />
     </>
   )

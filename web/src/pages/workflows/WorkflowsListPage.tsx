@@ -303,8 +303,8 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
                   distinct rows as one and the delete button can act on the wrong record. New
                   shadows are refused now; the ones already on disk still have to render, and be
                   deletable, or they would be stranded. */}
-              {filteredDefs.map((d, i) => (
-                <ListRow key={`${d.source}:${d.name}`} index={i} onClick={() => navigate(`workflows/defs/${d.name}`)} label={d.name}>
+              {filteredDefs.map((d) => (
+                <ListRow key={`${d.source}:${d.name}`} onClick={() => navigate(`workflows/defs/${d.name}`)} label={d.name}>
                   <div className="flex min-w-0 flex-1 items-center gap-m">
                     <Workflow size={15} className="shrink-0 text-on-surface-low" />
                     <div className="min-w-0 flex-1">
@@ -427,7 +427,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
             findHint="use the Search runs and definitions field above."
             className="flex flex-col gap-xs"
           >
-            {(r, i, listCtx) => {
+            {(r) => {
               const look = runLook(r.status, r.held, stoppedAtBudget(r.status, r.attention))
               const Icon = look.icon
               const elapsed = fmtElapsed(r.elapsed_seconds)
@@ -435,7 +435,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
               const mark = chatRunMark(r.chat)
               // index=0 while windowed — see ui/WindowedList's ctx.windowed doc.
               return (
-                <ListRow key={r.id} index={listCtx.windowed ? 0 : i} onClick={() => navigate(`workflows/runs/${r.id}`)} label={`${r.workflow_name} — run ${r.id}`}>
+                <ListRow key={r.id} onClick={() => navigate(`workflows/runs/${r.id}`)} label={`${r.workflow_name} — run ${r.id}`}>
                   <div className="flex min-w-0 flex-1 items-center gap-m">
                     <Icon size={15} className={`shrink-0 ${look.tone}${look.spin ? ' animate-spin' : ''}`} />
                     <div className="min-w-0 flex-1">

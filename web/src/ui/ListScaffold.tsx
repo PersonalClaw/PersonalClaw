@@ -4,7 +4,7 @@ import { AlertTriangle, RotateCcw, type LucideIcon } from 'lucide-react'
 import { TopBar } from './TopBar'
 import { Spark } from './Spark'
 import { Button } from './Button'
-import { spring, expr } from '../design/motion'
+import { fadeEnter, spring } from '../design/motion'
 import { failedStatus, readableErrText, serverAnswered } from '../lib/errText'
 import { ApiError } from '../lib/api'
 import { PageTitle } from './PageTitle'
@@ -172,12 +172,10 @@ export function InlineLoadError({ what, error, onRetry }: {
   )
 }
 
-/** Animated row wrapper — staggered rise+fade in, and (when clickable) a physical
- *  hover-lift + press so rows feel like liftable cards, not flat strips. Lift/press
- *  depth scale through the expressiveness knob; exit collapses so removals animate.
+/** List row wrapper — rows fade in together, and (when clickable) hover and press show
+ *  by colour, at once. Exit collapses the row's height so a removal closes its gap.
  *  Consistent across every list page. */
-export function ListRow({ index = 0, onClick, children, accent, label }: {
-  index?: number
+export function ListRow({ onClick, children, accent, label }: {
   onClick?: () => void
   children: ReactNode
   accent?: string
@@ -198,14 +196,12 @@ export function ListRow({ index = 0, onClick, children, accent, label }: {
   const interactive = !!onClick
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+      // Rows fade in together, with no rise and no cascade, and hover and press show by colour
+      // alone (`hover:bg-surface-high`): a list is opened many times a day, and rows that climb in
+      // one after another or lift under the pointer only stand between the owner and the row.
+      // Leaving still collapses the row's height, because that is space changing.
+      variants={fadeEnter} initial="initial" animate="animate"
       exit={{ opacity: 0, height: 0, marginTop: 0, transition: spring.spatialFast }}
-      transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
-      // hover lifts the row toward the viewer + a hair of shadow; press settles it
-      // back. Depth scales via expr() (bold lifts more, refined barely). Only for
-      // clickable rows — static rows stay put.
-      whileHover={interactive ? { y: -expr(3, 0.3), boxShadow: 'var(--shadow-lift)' } : undefined}
-      whileTap={interactive ? { scale: 1 - expr(0.01, 0.3) } : undefined}
       // The row still HANDLES the click, because every nested control already calls
       // stopPropagation for itself (`ui/forms.tsx`'s Checkbox does it on both onClick and
       // onChange; the tag/run/delete buttons do it inline). Keeping the handler here is
@@ -217,10 +213,10 @@ export function ListRow({ index = 0, onClick, children, accent, label }: {
       // and then finds a checkbox and three tag filters inside it. 60 nodes across
       // knowledge (26) and workflows (34).
       //
-      // tabIndex={-1} is REQUIRED, not leftover: `whileTap` makes Framer Motion set
-      // tabindex="0" on the wrapper itself, so dropping the attribute entirely left TWO tab
-      // stops per row (measured — Tab went bare-div, then overlay button). -1 keeps the
-      // wrapper clickable and hoverable while the overlay owns the single tab stop.
+      // tabIndex={-1} pins the wrapper out of the tab order. It was REQUIRED while the row
+      // carried `whileTap`, which made Framer Motion set tabindex="0" on the wrapper itself
+      // (measured — Tab went bare-div, then overlay button), and it stays so that a gesture added
+      // later cannot bring the second, nameless stop back. The overlay owns the single tab stop.
       tabIndex={interactive ? -1 : undefined}
       //
       // The RING IS DRAWN ON THE ROW, keyed off the overlay's focus via `:has()`. Two
@@ -230,7 +226,7 @@ export function ListRow({ index = 0, onClick, children, accent, label }: {
       // `:has(> button:focus-visible)` is deliberately narrower than `focus-within`, which
       // would also light the row when the checkbox or a tag filter inside it takes focus
       // and double-ring with that control's own indicator.
-      className={`group relative flex items-center gap-l overflow-hidden rounded-lg bg-surface-container px-l py-l text-left transition-colors hover:bg-surface-high ${interactive ? 'cursor-pointer has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary' : ''}`}
+      className={`group relative isolate flex items-center gap-l overflow-hidden rounded-lg bg-surface-container px-l py-l text-left transition-colors hover:bg-surface-high ${interactive ? 'cursor-pointer has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary' : ''}`}
     >
       {accent && <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: accent }} />}
       {/* The row's tab stop and accessible name, as a real <button> SIBLING of the
@@ -244,10 +240,11 @@ export function ListRow({ index = 0, onClick, children, accent, label }: {
           knowledge's tag filters are `hidden md:flex` and gated on `tags?.length`).
           Enumerating descendants is the part that breaks; owning none is the fix.
 
-          `-z-10` puts it UNDER the row's content in paint order (the motion wrapper's
-          transform makes it a stacking context, so a negative z-index child still paints
-          above the row's own background). It therefore never covers the checkbox or the
-          tag filters, and needs no z-index on any child. It does not have to receive the
+          `-z-10` puts it UNDER the row's content in paint order (`isolate` makes the row a
+          stacking context, so a negative z-index child still paints above the row's own
+          background; the entrance's transform used to do that, and the row no longer moves).
+          It therefore never covers the checkbox or the tag filters, and needs no z-index on
+          any child. It does not have to receive the
           click either: Enter/Space on a real <button> fires a click that BUBBLES to the
           wrapper's onClick, and a pointer click anywhere in the row bubbles the same way. */}
       {interactive && (

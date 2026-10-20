@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { CornerDownLeft } from 'lucide-react'
-import { spring } from '../../design/motion'
+import { fadeEnter } from '../../design/motion'
 import { QuietButton } from '../../ui/QuietButton'
 import { IconButton } from '../../ui/IconButton'
 
@@ -45,7 +45,7 @@ export function FollowupChips({ items, onPick, onSend }: {
     <div role="group" className="mt-m flex flex-wrap items-center gap-1.5" aria-label="Suggested follow-ups">
       {items.map((s, i) => (
         <motion.span key={`${i}-${s}`}
-          initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialFast, delay: 0.04 * i }}
+          variants={fadeEnter} initial="initial" animate="animate"
           className="inline-flex items-center overflow-hidden rounded-pill border border-outline-variant/50 bg-surface-container hover:border-primary/40">
           <QuietButton onClick={() => onPick(s)}
             title="Click to edit it before you send it" className="max-w-[22rem] truncate rounded-none hover:bg-surface-high">

@@ -61,21 +61,19 @@ const docs: UiDoc[] = [
     name: 'ListRow',
     keywords: ['list', 'row', 'card', 'item', 'clickable', 'hover', 'accent', 'motion'],
     description:
-      'The animated row wrapper used inside a list body — staggered rise+fade in, and, when clickable, a physical hover-lift + press so rows feel like liftable cards rather than flat strips. Exit collapses its height so removals animate. Consistent across every list page.',
+      'The row wrapper used inside a list body — rows fade in together, with no cascade and no rise, and, when clickable, hover and press show by colour, at once, with no lift. A list is opened many times a day, so its rows do not move under the pointer. Exit collapses its height so a removal closes its gap. Consistent across every list page.',
     props: [
       { name: 'accent', description: 'Optional left-edge accent color bar (a 3px rule); pass a token-backed color.' },
       { name: 'children', description: 'The row content (leading icon, title, meta, trailing controls).' },
-      { name: 'index', description: 'Row position — staggers the enter animation (capped) so a list cascades in.' },
       { name: 'label', description: "What the row IS, for assistive tech — normally the entity's title. A clickable row is a button, and without this its accessible name is computed from the whole subtree (measured up to 2001 characters for one inbox row). Required in practice for every clickable row; ignored on a static one, which is not a button." },
-      { name: 'onClick', description: 'Makes the row interactive — enables the hover-lift + press-scale and a pointer cursor. Omit for a static row.' },
+      { name: 'onClick', description: 'Makes the row interactive — a hover and press tint, the row-wide hit target and a pointer cursor. Omit for a static row.' },
     ],
     bestPractices: [
       { guidance: true, description: 'Pass `label` whenever you pass `onClick` — the row announces that one short name instead of reading its entire content as the button name. The body stays readable underneath as ordinary text.' },
-      { guidance: true, description: 'Pass `index` from the list map so rows cascade in on a staggered spring rather than popping in together.' },
       { guidance: true, description: 'Wrap the list in AnimatePresence so a removed ListRow plays its height-collapse exit instead of vanishing.' },
-      { guidance: false, description: "Do not add hover/press styling by hand — pass onClick and the lift/press springs (expr-scaled) are applied automatically only for clickable rows." },
+      { guidance: false, description: "Do not add hover/press styling or a cascade by hand — pass onClick and the hover tint is applied for clickable rows only, and rows of a list the owner reopens all day render together." },
     ],
-    anatomy: ['motion.div (staggered enter, hover-lift + press when clickable, height-collapse exit)', 'optional left accent bar', 'row content'],
+    anatomy: ['motion.div (fade-in together, hover tint when clickable, height-collapse exit)', 'optional left accent bar', 'row content'],
   },
   {
     name: 'ListSkeleton',

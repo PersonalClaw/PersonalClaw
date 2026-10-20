@@ -19,7 +19,7 @@ import { Markdown } from '../../ui/Markdown'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { ProgressRing } from '../../ui/ProgressRing'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
-import { spring, expr } from '../../design/motion'
+import { fadeEnter } from '../../design/motion'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { api, type GoalLoop } from '../../lib/api'
@@ -220,7 +220,7 @@ export function LoopsListPage({ onOpen, onCreate, onOpenCode, query, setQuery }:
             <div className="flex flex-col gap-s">
               {loops
                 .filter(matches)
-                .map((c, i) => {
+                .map((c) => {
                 // A 'complete' loop whose stop_reason names a ceiling rather than 'done' ended
                 // early (budget exhausted, DoD unmet) → the synthetic 'ended_early' meta, so it
                 // doesn't read as a genuine completion. Mirrors effectiveLoopStatus on the Code
@@ -273,12 +273,10 @@ export function LoopsListPage({ onOpen, onCreate, onOpenCode, query, setQuery }:
                 return (
                   <ContextMenu key={c.id} items={menuItems}>
                   <motion.div
-                    initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: i * 0.03 }}
-                    whileHover={{ y: -expr(3, 0.3), boxShadow: 'var(--shadow-lift)' }}
-                    whileTap={{ scale: 1 - expr(0.008, 0.3) }}
+                    variants={fadeEnter} initial="initial" animate="animate"
                     onClick={() => setPeekId(c.id)}
                     // 🔴 THIS ROW WAS A FOCUSABLE THAT DID NOTHING — the worse half of the tasks-list
-                    // defect. `whileHover`/`whileTap` make Motion add its own `tabindex="0"`, so the
+                    // defect. `whileHover`/`whileTap` made Motion add its own `tabindex="0"`, so the
                     // keyboard DID land here (measured: a 2px outline on a `div` with no role), and
                     // then Enter and Space were both dead — driven on `#/loops/history`, body text
                     // frozen at 533 chars for each, while a mouse click opened the peek panel (864).

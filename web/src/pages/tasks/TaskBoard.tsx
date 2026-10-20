@@ -75,9 +75,9 @@ export function TaskBoard({ tasks, onOpen, onMove }: {
             <div className="mb-2 flex items-center gap-s px-1 pt-1 shrink-0">
               <s.icon size={15} style={{ color: s.tone }} />
               <span data-type="label-s" className="text-on-surface" style={fvs(550)}>{s.label}</span>
-              {/* count pops on change (a card arriving/leaving reads as an event) */}
-              <motion.span key={items.length} initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={physics.playful}
-                data-type="caption" className="flex-1 text-on-surface-low tabular-nums">{items.length}</motion.span>
+              {/* The count swaps its number in place. It used to re-mount and pop on every change,
+                  and a board's counts change too often for each change to be an event. */}
+              <span data-type="caption" className="flex-1 text-on-surface-low tabular-nums">{items.length}</span>
               <CollapseColumnButton onCollapse={() => collapse.toggle(s.key, items.length)} />
             </div>
             {/* A scroll container whose cards are divs (drag-and-drop, not buttons) has NOTHING
@@ -164,7 +164,6 @@ function BoardCard({ t, tone, onOpen, onDragStart, onDragEnd, dragging }: {
       }}
       exit={{ opacity: 0, scale: 0.9, transition: spring.spatialFast }}
       transition={spring.spatialDefault}
-      whileHover={readOnly ? undefined : { y: -expr(2, 0.3) }}
       className="group relative overflow-hidden rounded-lg bg-surface-container px-m py-2.5 transition-[background-color] hover:bg-surface-high">
       <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: tone }} />
       {/* pointer-events-none: the grip is a pure affordance — an SVG that eats

@@ -4,7 +4,7 @@ import { MessageSquare, ArrowRight } from 'lucide-react'
 import { StartedByApp } from '../StartedByApp'
 import { Button } from '../../../ui/Button'
 import { LoadError } from '../../../ui/ListScaffold'
-import { spring, stagger, listItemEnter, expr } from '../../../design/motion'
+import { fadeEnter } from '../../../design/motion'
 import { api, type ChatSessionSummary } from '../../../lib/api'
 import { useQuery } from '../../../lib/data'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../../../lib/epoch'
@@ -58,10 +58,11 @@ export function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: s
       ) : recent.length === 0 ? (
         <div className="px-2 py-6 text-center text-on-surface-low text-[0.8125rem]">No chats yet.</div>
       ) : (
-        <motion.div variants={{ animate: { transition: stagger(0.03) } }} initial="initial" animate="animate" className="flex flex-col gap-0.5">
+        // The rows arrive together and stay put under the pointer: the owner opens this list many
+        // times an hour, so a cascade and a hover nudge would only stand between her and the chat.
+        <motion.div initial="initial" animate="animate" className="flex flex-col gap-0.5">
           {recent.map((s) => (
-            <motion.button key={s.key} type="button" variants={listItemEnter} onClick={() => onOpen(s.key)}
-              whileHover={{ x: expr(3, 0.3) }} transition={spring.spatialFast}
+            <motion.button key={s.key} type="button" variants={fadeEnter} onClick={() => onOpen(s.key)}
               className="group flex items-center gap-s rounded-md px-2 py-2 text-left transition-colors hover:bg-surface-high">
               <MessageSquare size={14} className="shrink-0 text-on-surface-low group-hover:text-primary transition-colors" />
               <span className="min-w-0 flex-1 truncate text-on-surface-var text-[0.8125rem] group-hover:text-on-surface">{sessionTitle(s)}</span>

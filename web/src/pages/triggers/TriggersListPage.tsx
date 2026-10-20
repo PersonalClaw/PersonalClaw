@@ -308,7 +308,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
               )
             ) : (
               <div className="flex flex-col gap-s">
-                {triggers.map((t, i) => {
+                {triggers.map((t) => {
                   // ONE call for every kind. The per-kind ternary that used to live here was the
                   // defect: each branch chose a MAPPER, so adding a kind meant picking a vocabulary
                   // again — and the event branch picked the run-outcome mapper for a row that has no
@@ -345,7 +345,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                   ]
                   return (
                     <ContextMenu key={t.id} items={menuItems}>
-                    <ListRow index={i} accent={t.enabled ? t.whenTone : undefined} onClick={() => setQuery({ open: t.id, edit: null })} label={t.name}>
+                    <ListRow accent={t.enabled ? t.whenTone : undefined} onClick={() => setQuery({ open: t.id, edit: null })} label={t.name}>
                       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${t.whenTone} 16%, transparent)` }}><t.whenIcon size={19} style={{ color: t.whenTone }} /></span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-s">

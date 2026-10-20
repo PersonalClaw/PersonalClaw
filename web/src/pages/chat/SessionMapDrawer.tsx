@@ -5,7 +5,7 @@ import { SESSION_MAP_MIN_MARKS } from './sessionMap'
 import { sessionMapMarkName } from './SessionMapCard'
 import { EmptyState } from '../../ui/ListScaffold'
 import { clockTime, fullStamp, isoStamp } from '../../lib/epoch'
-import { spring } from '../../design/motion'
+import { fadeEnter } from '../../design/motion'
 
 /** SESSION MAP — THE COARSE-POINTER FORM.
  *
@@ -61,9 +61,7 @@ export function SessionMapDrawer({ entries, onJumpTo }: SessionMapDrawerProps) {
               // computed from all of that would read the answer as part of the question.
               aria-label={sessionMapMarkName(entries, i)}
               onClick={() => onJumpTo(entry.visibleIndex)}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ ...spring.spatialDefault, delay: Math.min(i * 0.03, 0.3) }}
+              variants={fadeEnter} initial="initial" animate="animate"
               // `min-h-11` is 44px — the touch floor this form exists for, and the reason the
               // rail's pointer-sized row is not reused: a thumb is a bigger target than a cursor.
               className="flex min-h-11 w-full items-start gap-s rounded-md px-2.5 py-2 text-left transition-colors hover:bg-surface-high"

@@ -7,7 +7,7 @@ const doc: UiDoc = {
   name: 'Segmented',
   keywords: ['segmented', 'toggle', 'single-select', 'tabs', 'switch', 'filter', 'mode', 'view', 'pill', 'group'],
   description:
-    'The ONE canonical segmented single-select for the whole app — a slider-style pill group for every "pick one of N" choice (filters, view switches, mode toggles, tab strips) so they look identical everywhere. The active fill is a shared-layout pill that SLIDES + squishes between options (liquid indicator) rather than each button toggling its own background. Inner height h-8 lines up with Button size="sm"; iconOnly renders square icon buttons. Controlled via value + onChange.',
+    'The ONE canonical segmented single-select for the whole app — a slider-style pill group for every "pick one of N" choice (filters, view switches, mode toggles, tab strips) so they look identical everywhere. The active fill moves to the picked option at once, by colour: a tab or option change is frequent, so it neither slides between options nor scales on press. Inner height h-8 lines up with Button size="sm"; iconOnly renders square icon buttons. Controlled via value + onChange.',
   props: [
     { name: 'options', description: 'The choices ({ key, label?, tone?, icon?, title? }). A `tone` colors the selected fill semantically (e.g. task status); an `icon` shows a leading glyph.' },
     { name: 'value', description: 'The selected option key (controlled).' },
@@ -27,7 +27,7 @@ const doc: UiDoc = {
     { guidance: true, description: "Give options a `tone` only for semantic coloring (e.g. status); otherwise the default solid primary fill is the high-contrast choice." },
     { guidance: false, description: 'Do not hardcode colors or px — tones use color-mix over tokens and sizes route through the scale (the token-lint ratchet fails the build otherwise).' },
   ],
-  anatomy: ['role="radiogroup" strip (rounded-pill track)', 'per-option motion.button (role="radio" + aria-checked, press-scale)', 'liquid active fill (shared layoutId, slides + squishes)', 'off-flow probe + CollapsedSegmented pill → Popover of MenuRows (collapse="menu")', 'flex-wrap track with a one-row radius (collapse="wrap")'],
+  anatomy: ['role="radiogroup" strip (rounded-pill track)', 'per-option button (role="radio" + aria-checked)', 'active fill (instant, by colour)', 'off-flow probe + CollapsedSegmented pill → Popover of MenuRows (collapse="menu")', 'flex-wrap track with a one-row radius (collapse="wrap")'],
 }
 
 export default doc

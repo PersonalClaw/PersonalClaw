@@ -6,7 +6,7 @@ import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
-import { spring } from '../../design/motion'
+import { fadeEnter, spring } from '../../design/motion'
 import { EntranceGroup, EntranceRegion } from '../../ui/motion'
 import { useQuery } from '../../lib/data'
 import { api, type DiscoverTip, type DiscoverTryIt } from '../../lib/api'
@@ -184,11 +184,10 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
                     <span className="h-px flex-1 bg-outline-variant/40" />
                   </div>
                   <div className="flex flex-col gap-s">
-                    {group.tips.map((tip, i) => (
+                    {group.tips.map((tip) => (
                       <TipRow
                         key={tip.id}
                         tip={tip}
-                        index={i}
                         onGo={() => navigate(tryItPath(tip.try_it))}
                         onDismiss={() => dismiss(tip.id)}
                       />
@@ -238,14 +237,12 @@ function ReplayTourCard() {
 /** One hub row — icon + title + one-line lesson, a "try it" deep link, and a
  *  dismiss X. Mirrors the dashboard TipCard so the spotlight and the hub read the
  *  same; laid out wider here since the hub has the full page column. */
-function TipRow({ tip, index, onGo, onDismiss }: { tip: DiscoverTip; index: number; onGo: () => void; onDismiss: () => void }) {
+function TipRow({ tip, onGo, onDismiss }: { tip: DiscoverTip; onGo: () => void; onDismiss: () => void }) {
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
+      variants={fadeEnter} initial="initial" animate="animate"
       exit={{ opacity: 0, height: 0, marginTop: 0, transition: spring.spatialFast }}
-      transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
       className="group flex items-center gap-m rounded-lg bg-surface-container px-l py-m transition-colors hover:bg-surface-high"
     >
       <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>

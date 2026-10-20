@@ -1,7 +1,5 @@
 import type { ReactNode } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
 import { cx } from './cx'
-import { spring, expr } from '../design/motion'
 
 /** The quiet compact inline action in a content-viewer toolbar — a dimmed
  *  ink-low label + leading glyph, medium radius, 28px tall; hover fills to
@@ -18,9 +16,9 @@ import { spring, expr } from '../design/motion'
  *  `disabled`/`disabledReason` are the SAME treatment {@link SquareIconButton}
  *  ships — `aria-disabled` (never the native attribute) so the tab stop
  *  survives, the reason riding `title`, the click suppressed in the handler —
- *  not a fourth spelling of the idea. Press springs in
- *  (expressiveness-scaled, yielding to reduced motion), matching the rest of
- *  the button family. */
+ *  not a fourth spelling of the idea. A press shows by colour, at once (the
+ *  `active:` tint is the hover's), with no scale, matching the rest of the
+ *  button family. */
 export function QuietButton({
   children, onClick, title, ariaExpanded, disabled, disabledReason, className,
 }: {
@@ -64,27 +62,23 @@ export function QuietButton({
   disabledReason?: string
   className?: string
 }) {
-  const reduce = useReducedMotion()
-  const pressScale = reduce || disabled ? 1 : 1 - expr(0.05, 0.4)
   return (
-    <motion.button
+    <button
       type="button"
       onClick={disabled ? undefined : onClick}
       title={disabled && disabledReason ? [title, disabledReason].filter(Boolean).join(' — ') : title}
       aria-disabled={disabled || undefined}
       aria-expanded={ariaExpanded}
-      whileTap={disabled ? undefined : { scale: pressScale }}
-      transition={spring.spatialFast}
       data-type="caption"
       className={cx(
         'inline-flex items-center gap-xs rounded-md px-s h-7',
         disabled
           ? 'text-on-surface-low opacity-40 cursor-not-allowed'
-          : 'text-on-surface-low hover:bg-surface-high hover:text-on-surface',
+          : 'text-on-surface-low hover:bg-surface-high hover:text-on-surface active:bg-surface-high active:text-on-surface',
         className,
       )}
     >
       {children}
-    </motion.button>
+    </button>
   )
 }
