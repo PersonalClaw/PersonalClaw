@@ -361,20 +361,14 @@ def test_an_unparseable_spec_still_discloses_and_does_not_claim_core_ownership()
 def test_the_catalog_carries_the_disclosure_to_every_scanned_card() -> None:
     """The three scan paths (git, local, native) build a `CatalogEntry` from a manifest, and
     all three splat the consent facts from ONE projection (`disclosure.describe`, which the
-    install dialog reads too). That each scan path's card carries the packages is driven in
+    install dialog reads too). That each scan path's card carries the packages, classified as
+    the projection classifies them, is driven in
     `tests/test_app_catalog.py::test_every_scan_path_puts_the_package_disclosure_on_its_card`;
     this keeps the registry pointer's half."""
-    import inspect
-
     from personalclaw.apps import catalog
 
-    src = inspect.getsource(catalog)
-    # No scan site hand-builds a consent field beside the projection.
-    assert "pythonDependencies=" not in src
     # A registry POINTER must NOT get one: its manifest is unread, and `consentKnown=False`
     # is what the frontend reads to say "unknown" rather than "none".
-    pointer = inspect.getsource(catalog._pointer_to_entry)
-    assert "pythonDependencies" not in pointer
     assert (
         catalog._pointer_to_entry(
             "https://example.invalid/r.git",

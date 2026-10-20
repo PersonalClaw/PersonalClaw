@@ -13,7 +13,6 @@ never an import-time probe — carrying a vacuity floor so it cannot pass by sca
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
 from workflows_validator_supervisor_shared import _count_policy_callers
 
@@ -61,11 +60,10 @@ def test_the_census_can_actually_find_a_caller():
 
 def test_DIRECTION_2_the_wired_module_declares_itself_wired():
     """RED if the module goes back to claiming it is inert while a caller exists — the original
-    lie, in the other direction. (Falsification probe: flip the constant back to ``True``.)"""
-    src = Path(sp.__file__).read_text()
-    assert (
-        "zero production callers" not in src
-    ), "the module still claims zero production callers, but one is wired"
+    lie, in the other direction. (Falsification probe: flip the constant back to ``True``.) The
+    claim is the constant, which the census in
+    ``tests/rails/test_workflows_validator_supervisor_tree.py`` holds to the callers it finds;
+    what the module's prose says is not the subject of a test."""
     assert sp.HAS_ZERO_PRODUCTION_CALLERS is False
 
 
