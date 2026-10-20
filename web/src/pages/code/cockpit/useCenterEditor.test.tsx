@@ -49,6 +49,21 @@ describe('useCenterEditor', () => {
     expect(result.current.tabs.map((t) => t.path)).toEqual([`${WS}/app.ts`])
   })
 
+  it('saves the open file on ⌘S while a diff is open beside it, and not under a commit', () => {
+    // The diff opens in the pane host beside the editor, so the editor is still the one on screen;
+    // a commit is shown in the editor's place.
+    const { result } = mount()
+    fire('ne:code-open-file', file('app.ts'))
+    const save = vi.fn()
+    result.current.viewerRef.current = { save } as unknown as NonNullable<typeof result.current.viewerRef.current>
+    fire('ne:code-open-diff', { path: `${WS}/feed.ts`, name: 'feed.ts' })
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', metaKey: true })) })
+    expect(save).toHaveBeenCalledTimes(1)
+    fire('ne:code-open-commit', { hash: 'abc1234', subject: 'Add the feed' })
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', metaKey: true })) })
+    expect(save).toHaveBeenCalledTimes(1)
+  })
+
   it('plays a file the worker writes as it lands, and an edit of it as a diff', async () => {
     const { result } = mount()
     h.fileRead.mockResolvedValueOnce({ content: 'one\n' })

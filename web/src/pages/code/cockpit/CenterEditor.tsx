@@ -2,6 +2,7 @@ import { Code2, Loader2, X, Activity, GitBranch, PanelLeftOpen, PanelRightOpen }
 import { Button } from '../../../ui/Button'
 import { IconButton } from '../../../ui/IconButton'
 import { Centered } from '../../../ui/Centered'
+import { PaneHost } from '../../../ui/PaneHost'
 import { type FsEntry } from '../../../lib/api'
 import { DiffView } from '../DiffView'
 import { FileViewer } from '../../files/browse/FileViewer'
@@ -15,8 +16,9 @@ import type { RouteProps } from '../../../app/useQueryState'
 // ── The cockpit editor ─────────────────────────────────────────────────────────────────────────
 //
 // The center of the code cockpit: the file tabs with a re-open chip for a collapsed side panel, and
-// under them the open file in the editor, or a file the worker is writing as it lands, a diff, or a
-// commit, with the terminal drawer beneath. `useCenterEditor` keeps what it shows and does.
+// under them the open file in the editor, or a file the worker is writing as it lands, or a commit,
+// with the diff under review in the pane host beside it and the terminal drawer beneath.
+// `useCenterEditor` keeps what it shows and does.
 
 export function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd, query, setQuery }: {
   ws: string; showTerm: boolean; onCloseTerm: () => void; running: boolean; runCmd?: { cmd: string; n: number } | null
@@ -45,11 +47,11 @@ export function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd, query
           {tabs.map((t) => (
             // Middle-click closes the tab (standard editor/browser-tab gesture) —
             // routed through requestClose so a dirty tab gets the themed confirm.
-            <div key={t.path} ref={(!diff && !commit && t.path === activePath) ? activeTabRef : undefined}
+            <div key={t.path} ref={(!commit && t.path === activePath) ? activeTabRef : undefined}
               onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); requestClose(t.path, t.name) } }}
-              data-type="body-s" className={`group flex shrink-0 items-center gap-1.5 rounded-t-md px-2.5 py-1.5 ${!diff && !commit && t.path === activePath ? 'bg-surface text-on-surface' : 'text-on-surface-low hover:text-on-surface'}`}>
-              {/* Selecting a tab shows that file — clear BOTH the working-diff and the
-                  commit-patch overlays (either would otherwise keep covering the editor). */}
+              data-type="body-s" className={`group flex shrink-0 items-center gap-1.5 rounded-t-md px-2.5 py-1.5 ${!commit && t.path === activePath ? 'bg-surface text-on-surface' : 'text-on-surface-low hover:text-on-surface'}`}>
+              {/* Selecting a tab shows that file, as the one thing the center shows: it closes the
+                  commit patch over the editor, and the diff under review beside it. */}
               {/* Raw: a tab in the editor's tab strip, which no primitive draws. */}
               <button type="button" onClick={() => { setDiff(null); setCommit(null); setActivePath(t.path) }} title={t.path} className="max-w-[180px] truncate">{tabLabels[t.path]}</button>
               {/* VSCode-style: a dirty tab shows a dot where the close-X sits, swapped
@@ -77,7 +79,15 @@ export function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd, query
           ))}
         </div>
       )}
-      <div className="min-h-0 flex-1">
+      {/* The diff under review docks beside the editor in the shared pane host, at the width the
+          cockpit last left it; its close gives focus back to the row it was opened from. Whether
+          it is open is the address's `diff` (see `reviewState`), as before. */}
+      <div className="flex min-h-0 flex-1">
+        <PaneHost surface="code"
+          pane={diff ? {
+            id: diff.path, title: `Diff — ${diff.name}`, label: 'diff', icon: GitBranch, onClose: () => setDiff(null),
+            body: <DiffView path={diff.path} name={diff.name} ws={ws} deleted={diff.deleted} />,
+          } : null}>
         {reveal ? (
           <div className="flex h-full flex-col">
             <div data-type="caption" className="flex shrink-0 items-center gap-1.5 border-b border-outline-variant/40 bg-surface-low/40 px-2 py-1 text-on-surface-low">
@@ -102,14 +112,6 @@ export function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd, query
           </div>
         ) : commit ? (
           <CommitView ws={ws} hash={commit.hash} subject={commit.subject} onClose={() => setCommit(null)} />
-        ) : diff ? (
-          <div className="flex h-full flex-col">
-            <div className="flex shrink-0 items-center justify-between border-b border-outline-variant/40 bg-surface-low/40 px-2 py-1">
-              <span data-type="caption" className="inline-flex items-center gap-1.5 text-on-surface-low"><GitBranch size={12} /> Diff — {diff.name}</span>
-              <IconButton icon={X} label="Close diff" onClick={() => setDiff(null)} size={24} iconSize={13} />
-            </div>
-            <div className="min-h-0 flex-1"><DiffView path={diff.path} name={diff.name} ws={ws} deleted={diff.deleted} /></div>
-          </div>
         ) : active ? (
           <FileViewer key={active.path} ref={viewerRef} entry={{ name: active.name, path: active.path, is_dir: false }} draftStore={draftStore}
             onSaved={(content) => window.dispatchEvent(new CustomEvent('ne:code-file-saved', { detail: { path: active.path, content } }))} onSaveAsArtifact={saveFileAsArtifact}
@@ -132,6 +134,7 @@ export function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd, query
             </div>
           </Centered>
         )}
+        </PaneHost>
       </div>
       {/* Keep the terminal MOUNTED once first opened, toggling it with CSS (hidden
           prop) instead of mount/unmount — so hiding the panel preserves the PTY, any

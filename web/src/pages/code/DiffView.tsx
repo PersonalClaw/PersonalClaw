@@ -95,8 +95,8 @@ export function DiffView({ path, name, ws, deleted = false }: { path: string; na
             // (reformatting, nesting changes, Python especially). For an honest
             // review of what the agent did, always show whitespace diffs.
             // renderSideBySideInlineBreakpoint: below this panel width Monaco collapses
-            // the two columns into a single inline diff — the cockpit center panel is
-            // narrow (file tree + tasks flank it), where side-by-side is unreadable.
+            // the two columns into a single inline diff — the cockpit's diff pane is
+            // narrow (it docks beside the editor), where side-by-side is unreadable.
             options={{ readOnly: true, renderSideBySide: true, renderSideBySideInlineBreakpoint: 700, automaticLayout: true, fontSize: 13, minimap: { enabled: false }, ignoreTrimWhitespace: false }}
           />
         </Suspense>

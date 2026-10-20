@@ -16,8 +16,9 @@ const centerKey = (c: Center | null | 'invalid'): string =>
 //
 // What the center of the code cockpit keeps and does: the workspace's file tabs and their unsaved
 // drafts, ⌘S, closing a dirty tab only once asked, the re-open chips for a collapsed side panel,
-// the terminal drawer's latch, saving a file as an artifact, and the file the worker is writing, the
-// diff or the commit the center shows in place of the editor. `CenterEditor.tsx` draws it.
+// the terminal drawer's latch, saving a file as an artifact, the file the worker is writing or the
+// commit the center shows in place of the editor, and the diff under review beside it.
+// `CenterEditor.tsx` draws it.
 
 // Above this content length the worker-driven write/erase reveal animation is
 // skipped (the editor opens directly): char-by-char animating hundreds of KB mounts
@@ -175,10 +176,11 @@ export function useCenterEditor({ ws, showTerm, onCloseTerm, query, setQuery }: 
   // Last content we've shown per path, so a re-edit can diff old→new.
   const lastContentRef = useRef<Map<string, string>>(new Map())
   // The editor (FileViewer) is the visible center surface only when nothing overlays
-  // it — a diff/commit/reveal view replaces it. Mirrors the body render guard below.
-  const editorShowing = !reveal && !commit && !diff && !!active
+  // it — a commit/reveal view replaces it; a diff opens in the pane beside it, with the
+  // editor still on screen. Mirrors the body render guard in `CenterEditor`.
+  const editorShowing = !reveal && !commit && !!active
   // ⌘S / Ctrl-S saves the active file — but ONLY while the editor is showing, so a
-  // diff/commit/reveal view doesn't swallow the browser save + call a stale viewer ref.
+  // commit/reveal view doesn't swallow the browser save + call a stale viewer ref.
   // ⌘W / Ctrl-W closes the active tab (the universal IDE shortcut, expected in a mini-
   // IDE) — routed through requestClose so a dirty tab still gets the discard confirm.
   useEffect(() => {
