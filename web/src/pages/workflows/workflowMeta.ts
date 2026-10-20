@@ -1,5 +1,10 @@
 import { CircleCheck, CircleDashed, CircleSlash, Clock, Gauge, Hand, Loader2, OctagonAlert, Pause, TriangleAlert, type LucideIcon } from 'lucide-react'
 import type { WorkflowRunStatus } from '../../lib/api'
+import { fmtElapsed } from '../../lib/duration'
+
+// The app's one duration format lives in `lib/duration`, so every surface reads one helper; the
+// workflow pages keep importing it from here.
+export { fmtElapsed }
 
 /** Presentation for one run status. Centralized so the list, the run view and any future
  *  card render the SAME icon and tone for a given state — three components each picking
@@ -149,24 +154,6 @@ export function itemProgress(node: {
  *  structural separators the engine's path grammar uses (`root.children[0].body`). */
 export function nodeDepth(instancePath: string): number {
   return Math.max(0, (instancePath.match(/\.(children\[\d+\]|body|cases\[[^\]]*\]|default)/g) ?? []).length - 1)
-}
-
-/** An elapsed time for an INLINE chip, where nothing is a legitimate rendering.
- *
- *  The empty string is the contract, not an oversight: every caller here guards on it to decide
- *  whether the chip appears at all (`{elapsed && <span…>}` in `WorkflowsListPage`,
- *  `run.elapsed_secs ? … : null` in `WorkflowRunDetail`, and the two equivalents in
- *  `WorkflowProgressCard`/`IntrospectPanel`'s timeline). A run that has not started has no elapsed
- *  time to show, and putting "0s" beside its name would read as a finished instant run.
- *
- *  🪤 It is therefore the WRONG formatter for a `<Stat>` cell or a rail cell, which render their
- *  label unconditionally — use `elapsedStat`. */
-export function fmtElapsed(secs: number | undefined): string {
-  if (!secs || secs <= 0) return ''
-  if (secs < 60) return `${Math.round(secs)}s`
-  const m = Math.floor(secs / 60)
-  if (m < 60) return `${m}m ${Math.round(secs % 60)}s`
-  return `${Math.floor(m / 60)}h ${m % 60}m`
 }
 
 /** The same measurement for a LABELLED cell — a `<Stat>` or a rail `<dd>`, where the label is
