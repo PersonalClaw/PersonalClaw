@@ -27,7 +27,11 @@ Every other variation is a **row in one table-driven test per property**, using 
   so a row cannot pass on what the row before it left.
 
 A test that pins source text becomes a behaviour assertion, or an AST rail with a stated reason
-when the property is structural.
+when the property is structural. No new `inspect.getsource` call lands in a test outside
+`tests/rails`: the calls still there are listed in `tests/rails/baselines/getsource.sites.jsonl`,
+a site baseline that only shrinks, and the CI contract row "no new inspect.getsource call lands
+outside tests/rails" fails on a call it does not list (the rule is in `tests/getsource_census.py`).
+When you convert one, delete its line.
 
 ## A parametrized test, converted
 
