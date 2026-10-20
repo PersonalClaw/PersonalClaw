@@ -60,9 +60,49 @@ const FIXED_CHANGELOG = [
 /** Settings › updates' fixed release notes, long enough that the Release notes box scrolls too. */
 const FIXED_RELEASE_NOTES = Array.from({ length: 24 }, (_, i) => `- **A change in this release, ${i + 1}.**`).join('\n')
 
+/** Triggers › week's fixed projection: four triggers in the week its fixed clock draws, with a cell
+ *  in each state the legend names. Each fire is a local time on a day of that week (day 0 is the
+ *  clock's day, the grid's first column), read in the runner's zone, which is the zone the browser
+ *  draws the grid in; the projection names that zone as the gateway's, as a gateway on the same
+ *  machine does, so no zone caption appears on one machine and not another. */
+function fixedWeek(clock: string) {
+  const first = new Date(clock)
+  first.setHours(0, 0, 0, 0)
+  const on = (day: number, hour: number, minute = 0) => {
+    const d = new Date(first)
+    d.setDate(d.getDate() + day)
+    d.setHours(hour, minute)
+    return d
+  }
+  const date = (d: Date) => [d.getFullYear(), d.getMonth() + 1, d.getDate()].map((n) => String(n).padStart(2, '0')).join('-')
+  const fire = (trigger: string, name: string, at: Date, suppressed_by = '', reason = '') =>
+    ({ trigger_id: `schedule:e2e-${trigger}`, trigger_name: name, at: at.getTime() / 1000, suppressed_by, reason })
+  const quiet = 'quiet hours 22:00–07:00'
+  return {
+    start: first.toISOString(),
+    end: on(7, 0).toISOString(),
+    server_tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    occurrences: [
+      // Weekdays at 08:00, the fourth a skip date: four cells that run and one struck.
+      ...[0, 1, 2, 3, 4].map((day) =>
+        day === 3
+          ? fire('briefing', 'Morning briefing', on(day, 8), 'skipped', `skip date ${date(on(day, 8))}`)
+          : fire('briefing', 'Morning briefing', on(day, 8))),
+      fire('review', 'Weekly review', on(4, 17)),
+      // Inside its quiet hours, both times: one cell all quiet, and one it shares with the backup.
+      fire('digest', 'Evening digest', on(1, 22, 30), 'quiet', quiet),
+      fire('digest', 'Evening digest', on(5, 22, 30), 'quiet', quiet),
+      // The same hour as the second digest, and not quiet: that cell is partly suppressed.
+      fire('backup', 'Weekly backup', on(5, 22)),
+    ],
+    truncated: [],
+  }
+}
+
 /** Reads a surface's row answers with a fixed body, and why. Only for a read whose answer depends on
- *  what other specs did first in the shared home, so the surface would hold one of several states
- *  on any run. Each state the stub hides is held by a unit test instead, named here. */
+ *  what other specs did first in the shared home or on state outside the run, so the surface would
+ *  hold one of several states on any run, or one the run's home can only answer empty. Each state
+ *  the stub hides is held by a unit test instead, named here. */
 const STUBBED_READS: Record<string, { url: RegExp; json: unknown; why: string }[]> = {
   settings: [{
     url: /\/api\/usage\/totals(\?.*)?$/,
@@ -132,6 +172,17 @@ const STUBBED_READS: Record<string, { url: RegExp; json: unknown; why: string }[
     // `updatesPanelScrollRegions.test.tsx`.
     json: { content: FIXED_CHANGELOG },
     why: "the changelog is the checkout's CHANGELOG.md, which almost every change adds a line to",
+  }],
+  'triggers?view=week': [{
+    url: /\/api\/triggers\/week(\?.*)?$/,
+    // A fixed week under the row's fixed clock (`fixedWeek`). The run's home has every trigger
+    // switched off (`e2e/fixtures/home/`), so the real projection has no fire and the view drew only
+    // its empty state: the grid, its cells as controls and the shaded cells whose contrast axe
+    // reads, went unchecked. `src/pages/triggers/weekGridInTheUiCheck.test.ts` holds this row's tree
+    // to the grid. The empty week is held by `src/pages/loadErrorSurfaces.test.tsx` (an empty
+    // answer is "No fires this week") and its copy by `weekGridEmptyStateCopy.test.ts`.
+    json: fixedWeek(FIXED_CLOCK['triggers?view=week']),
+    why: "the run's home has every trigger switched off, so the real week has no fire to draw",
   }],
 }
 

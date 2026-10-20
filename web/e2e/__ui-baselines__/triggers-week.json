@@ -12,7 +12,15 @@
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"List\"",
-        "button[role=radio] \"Week\""
+        "button[role=radio] \"Week\"",
+        "td[role=button] \"Fri, Nov 6 08:00\"",
+        "td[role=button] \"Fri, Nov 6 17:00\"",
+        "td[role=button] \"Mon, Nov 2 08:00\"",
+        "td[role=button] \"Sat, Nov 7 22:00\"",
+        "td[role=button] \"Thu, Nov 5 08:00\"",
+        "td[role=button] \"Tue, Nov 3 08:00\"",
+        "td[role=button] \"Tue, Nov 3 22:00\"",
+        "td[role=button] \"Wed, Nov 4 08:00\""
       ],
       "390": [
         "button \"Choose a model\"",
@@ -25,7 +33,13 @@
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"List\"",
-        "button[role=radio] \"Week\""
+        "button[role=radio] \"Week\"",
+        "td[role=button] \"Fri, Nov 6 08:00\"",
+        "td[role=button] \"Fri, Nov 6 17:00\"",
+        "td[role=button] \"Sat, Nov 7 22:00\"",
+        "td[role=button] \"Thu, Nov 5 08:00\"",
+        "td[role=button] \"Tue, Nov 3 08:00\"",
+        "td[role=button] \"Tue, Nov 3 22:00\""
       ],
       "412": [
         "button \"Choose a model\"",
@@ -38,7 +52,10 @@
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"List\"",
-        "button[role=radio] \"Week\""
+        "button[role=radio] \"Week\"",
+        "td[role=button] \"Fri, Nov 6 08:00\"",
+        "td[role=button] \"Fri, Nov 6 17:00\"",
+        "td[role=button] \"Sat, Nov 7 22:00\""
       ],
       "768": [
         "button \"Choose a model\"",
@@ -74,7 +91,15 @@
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
         "button[role=radio] \"List\"",
-        "button[role=radio] \"Week\""
+        "button[role=radio] \"Week\"",
+        "td[role=button] \"Fri, Nov 6 08:00\"",
+        "td[role=button] \"Fri, Nov 6 17:00\"",
+        "td[role=button] \"Mon, Nov 2 08:00\"",
+        "td[role=button] \"Sat, Nov 7 22:00\"",
+        "td[role=button] \"Thu, Nov 5 08:00\"",
+        "td[role=button] \"Tue, Nov 3 08:00\"",
+        "td[role=button] \"Tue, Nov 3 22:00\"",
+        "td[role=button] \"Wed, Nov 4 08:00\""
       ],
       "390": [
         "button \"Choose a model\"",
@@ -87,7 +112,13 @@
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
         "button[role=radio] \"List\"",
-        "button[role=radio] \"Week\""
+        "button[role=radio] \"Week\"",
+        "td[role=button] \"Fri, Nov 6 08:00\"",
+        "td[role=button] \"Fri, Nov 6 17:00\"",
+        "td[role=button] \"Sat, Nov 7 22:00\"",
+        "td[role=button] \"Thu, Nov 5 08:00\"",
+        "td[role=button] \"Tue, Nov 3 08:00\"",
+        "td[role=button] \"Tue, Nov 3 22:00\""
       ],
       "412": [
         "button \"Choose a model\"",
@@ -100,7 +131,10 @@
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
         "button[role=radio] \"List\"",
-        "button[role=radio] \"Week\""
+        "button[role=radio] \"Week\"",
+        "td[role=button] \"Fri, Nov 6 08:00\"",
+        "td[role=button] \"Fri, Nov 6 17:00\"",
+        "td[role=button] \"Sat, Nov 7 22:00\""
       ],
       "768": [
         "button \"Choose a model\"",
