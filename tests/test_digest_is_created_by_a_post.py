@@ -37,14 +37,17 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def test_the_digest_route_is_registered_as_post_not_get():
-    """🔑 The defect. Asserted against the router registration rather than a mounted app so
-    the test names the one thing that changed and cannot pass for an unrelated reason."""
-    src = (REPO / "src" / "personalclaw" / "dashboard" / "routes.py").read_text(encoding="utf-8")
-    code = "\n".join(line for line in src.splitlines() if not line.lstrip().startswith("#"))
-    assert 'add_post("/api/inbox/digest"' in code
-    assert (
-        'add_get("/api/inbox/digest"' not in code
-    ), "the digest endpoint is a GET again — a prefetch or retry manufactures items"
+    """🔑 The defect. The gateway's route table runs the digest for a POST, and for no GET or
+    HEAD, so a prefetch or a retry of a read makes no digest."""
+    from gateway_routes_shared import handler_for
+
+    from personalclaw.dashboard import handlers_inbox
+
+    assert handler_for("POST", "/api/inbox/digest") is handlers_inbox.api_inbox_digest
+    for method in ("GET", "HEAD"):
+        assert (
+            handler_for(method, "/api/inbox/digest") is not handlers_inbox.api_inbox_digest
+        ), f"the digest endpoint answers a {method} — a prefetch or retry manufactures items"
 
 
 def test_no_route_that_creates_an_inbox_item_is_a_get():
@@ -52,12 +55,20 @@ def test_no_route_that_creates_an_inbox_item_is_a_get():
 
     Every inbox route that CREATES something is a POST. `digest` was the one exception, and it
     was the expensive one. A future author adding a generate-shaped endpoint has to break this
-    to register it as a GET.
+    to register it as a GET. Read off the gateway's route table: the GET routes it holds under
+    `/api/inbox`.
     """
-    src = (REPO / "src" / "personalclaw" / "dashboard" / "routes.py").read_text(encoding="utf-8")
+    from gateway_routes_shared import gateway_app
+
     creating = ("digest", "draft", "apply", "restore", "send", "notes")
-    gets = set(re.findall(r'add_get\("(/api/inbox[^"]*)"', src))
-    assert "/api/inbox" in gets, "the route table was read and its inbox routes found"
+    gets = {
+        route.resource.canonical
+        for route in gateway_app().router.routes()
+        if route.method == "GET"
+        and route.resource is not None
+        and route.resource.canonical.startswith("/api/inbox")
+    }
+    assert {"/api/inbox", "/api/inbox/kinds"} <= gets, "the route table's inbox reads were found"
     offenders = sorted(p for p in gets if any(seg in p for seg in creating))
     assert offenders == [], f"these inbox routes create state behind a GET: {offenders}"
 

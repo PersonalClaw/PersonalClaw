@@ -588,15 +588,26 @@ class TestClientOnlyMechanicsAreCorrectlySilent:
             assert "fetch(" not in src, f"{name} gained a fetch — it now needs SEL cover"
 
     def test_no_find_endpoint_exists_to_audit(self):
-        dashboard = _ROOT / "src" / "personalclaw" / "dashboard"
-        server = "".join(
-            (dashboard / name).read_text(encoding="utf-8") for name in ("server.py", "routes.py")
-        )
-        assert '"/api/chat/sessions/{session}"' in server, "the route table was read"
-        # Session management owns CROSS-session search; in-conversation find is a
-        # client-side scan of already-hydrated turns and adds no route.
-        assert "find-in-conversation" not in server
-        assert "/api/chat/sessions/{session}/find" not in server
+        """The gateway's route table serves a conversation, and nothing that finds inside one.
+        Session management owns CROSS-session search; in-conversation find is a client-side
+        scan of already-hydrated turns and adds no route."""
+        from gateway_routes_shared import gateway_app, handler_for
+
+        from personalclaw.dashboard import chat
+
+        assert handler_for("GET", "/api/chat/sessions/s-1") is chat.api_chat_session_detail
+        for method in ("GET", "POST"):
+            assert handler_for(method, "/api/chat/sessions/s-1/find") is None, method
+        finds = [
+            f"{route.method} {route.resource.canonical}"
+            for route in gateway_app().router.routes()
+            if route.resource is not None
+            and any(
+                part == "find" or part.startswith("find-")
+                for part in route.resource.canonical.split("/")
+            )
+        ]
+        assert finds == [], finds
 
     def test_the_streaming_reveal_only_paces_text_already_delivered(self):
         src = (_WEB / "pages" / "chat" / "useStreamCoalescer.ts").read_text(encoding="utf-8")
