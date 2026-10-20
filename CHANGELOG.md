@@ -23,6 +23,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **Focus mode hides the status line too, so the work keeps the window; while the gateway isn't answering, the line shows anyway.**
 - **The gateway connection sits in a thin status line at the bottom of the window instead of the top-right corner: a still dot while connected, and while not, the state in words with when the gateway was last reached; a banner over the page follows once the connection has stayed lost for 2 seconds, and System status opens from the line.**
 - **The composer has one pill for the agent and the model; it offers a reasoning effort, under the chosen model, only for a model that declares its levels, and a switch to a model without the chat's level sets it back to Default and says so.**
 - **CI: `make gate` reuses a job's earlier clean pass on the same tree, inputs and machine, for the jobs whose class allows it, and says which job it reused and from which commit; `--no-reuse` runs every job.**

@@ -3,9 +3,10 @@ import { createContext, useContext, useEffect, useState, type Dispatch, type Set
 /** Focus mode and reading mode: two ways to give the window to the work (`web/REDESIGN.md` §4 and
  *  §5 convention 11).
  *
- *  - **Focus mode** hides the sidebar and closes the side pane, so the work surface takes the
- *    window. Something that needs a pane opens only that pane. It lasts until the owner leaves it,
- *    across reloads, as the collapsed sidebar does.
+ *  - **Focus mode** hides the sidebar and the status line and closes the side pane, so the work
+ *    surface takes the window. The status line shows anyway while the gateway isn't answering.
+ *    Something that needs a pane opens only that pane. It lasts until the owner leaves it, across
+ *    reloads, as the collapsed sidebar does.
  *  - **Reading mode** folds a chat's composer while the owner reads a long answer. It comes back on
  *    the key, on focus and on typing, with its draft. It belongs to the chat on screen, so a move to
  *    another page ends it.

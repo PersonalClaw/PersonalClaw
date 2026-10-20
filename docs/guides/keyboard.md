@@ -14,7 +14,7 @@ Keys are written for macOS. Elsewhere ⌘ is Ctrl and ⌥ is Alt. Shortcuts can'
 | ⌘B | shows or hides the sidebar |
 | ⌘J or ⌘\` | shows or hides the terminal drawer |
 | ⌘⇧E | shows or hides a chat's working folder beside the conversation: a click on a file opens it |
-| ⌘\\ | turns focus mode on or off: it hides the sidebar and the side pane |
+| ⌘\\ | turns focus mode on or off: it hides the sidebar, the side pane and the status line |
 | ⌘⇧. | turns reading mode on or off in a chat: it folds the composer while you read |
 | ⌘⌥A | goes to the oldest chat that needs you: approvals first, then the chats waiting on your reply, in the order Home lists them |
 | ⌘N | starts a new chat |

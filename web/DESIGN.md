@@ -267,7 +267,7 @@ Controls are pill-shaped and tonal; every interactive component has default, hov
 - **NavRail:** drag-resizable side rail (196px default, 64px icon-only collapsed) on rail tone (#1f1f1f); active item carries a tonal fill + coral accent; mobile becomes a 264px overlay drawer with scrim.
 
 ### Status line
-- **The strip:** 24px along the window's bottom edge, under the rail and the work surface, on the canvas with a hairline above; caption type in Ink Low. No accent, no glow, nothing that moves.
+- **The strip:** 24px along the window's bottom edge, under the rail and the work surface, on the canvas with a hairline above; caption type in Ink Low. No accent, no glow, nothing that moves. Focus mode hides it, except while the gateway isn't answering.
 - **The connection:** a still 8px dot in its state's semantic tone (OK Green connected, Warn Orange connecting, Danger Red disconnected), alone while connected, with the state in words beside it otherwise. It never pulses: a resting animation says nothing the colour does not.
 - **Its banner:** a lost connection that lasts escalates to a glass-sky notice over the page, below the shell corners, with a Danger Red glyph and body ink, so nothing moves under the owner when it comes and goes.
 
