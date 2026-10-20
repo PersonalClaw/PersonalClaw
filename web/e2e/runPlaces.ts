@@ -90,14 +90,62 @@ export const GATEWAY_UNSET = [
   'PERSONALCLAW_LOCAL_MODEL_APPS_DIR',
 ] as const
 
+/** What makes a variable's name credential-shaped to the gateway's secrets read
+ *  (`secrets_vault._host_secret_names`, through `workflows.secrets.matches_secret_hint`): any of
+ *  these anywhere in the lowercased name. Every variable so named is taken out of the gateway's
+ *  environment (`gatewayEnvPrefix`), so Settings › Secrets lists nothing inherited from whoever
+ *  started the run, and reads the same on every machine.
+ *  `tests/rails/test_e2e_gateway_home_is_the_runs_tree.py` holds these lists to the read's own. */
+export const GATEWAY_CREDENTIAL_HINTS = [
+  'api_key', 'apikey', 'token', 'secret', 'password', 'passwd', 'credential', 'private_key',
+  'privatekey', 'auth', 'bearer', 'session_key', 'access_key', 'refresh', 'signing', 'webhook',
+] as const
+
+/** Hints that match a whole word of the lowercased name (split at anything not a letter or digit),
+ *  with an optional index: `PAT` and `PAT2`, never `PATH`. */
+export const GATEWAY_CREDENTIAL_WORD_HINTS = ['pat'] as const
+
+/** Taken out by name too, whatever the hints become: the agent socket that signs as whoever
+ *  started the run. */
+export const GATEWAY_CREDENTIAL_NAMES = ['SSH_AUTH_SOCK'] as const
+
+/** An awk program that prints, on one line, every name in its environment the secrets read calls a
+ *  credential. It reads the names from `ENVIRON`, never by parsing `env`'s output, so a value that
+ *  spans lines cannot pass for a name. A credential-shaped name the shell cannot unset (one with a
+ *  character no shell name has) fails the run, named: some shells hand such a variable on to the
+ *  gateway, and quietly keeping it would list it in Settings › Secrets again. */
+function credentialNamesAwk(): string {
+  return [
+    'BEGIN {',
+    `nh = split("${GATEWAY_CREDENTIAL_HINTS.join(' ')}", hint, " ");`,
+    `nw = split("${GATEWAY_CREDENTIAL_WORD_HINTS.join(' ')}", word, " ");`,
+    'for (name in ENVIRON) {',
+    'low = tolower(name); hit = 0;',
+    'for (i = 1; i <= nh; i++) if (index(low, hint[i])) hit = 1;',
+    'np = split(low, part, /[^a-z0-9]+/);',
+    'for (j = 1; j <= np; j++) for (i = 1; i <= nw; i++) if (part[j] ~ ("^" word[i] "[0-9]*$")) hit = 1;',
+    'if (!hit) continue;',
+    'if (name ~ /^[A-Za-z_][A-Za-z0-9_]*$/) { out = out " " name } else { odd = odd " [" name "]" }',
+    '}',
+    'if (odd != "") {',
+    'print "PERSONALCLAW_E2E_FATAL: credential-shaped variables no shell can unset would reach the gateway, unset them before the run:" odd > "/dev/stderr";',
+    'exit 1',
+    '}',
+    'print out',
+    '}',
+  ].join(' ')
+}
+
 /** The shell lines the gateway command runs before it starts the gateway, with `$D` already the
  *  run's home: they find the run's `HOME` folder beside it (refused, loudly, when it is not there),
- *  take every `GATEWAY_UNSET` variable out of the environment and export `HOME`. */
+ *  take every `GATEWAY_UNSET` variable and every credential-shaped one (`GATEWAY_CREDENTIAL_*`) out
+ *  of the environment, and export `HOME`. */
 export function gatewayEnvPrefix(): string {
   return [
     'U="$(dirname "$D")/user-home-for-$(basename "$D")";',
     '[ -d "$U" ] || { echo "PERSONALCLAW_E2E_FATAL: the run\'s HOME folder is not there ($U)" >&2; exit 1; };',
-    `unset ${GATEWAY_UNSET.join(' ')};`,
+    `K="$(awk '${credentialNamesAwk()}')" || exit 1;`,
+    `unset ${GATEWAY_UNSET.join(' ')} ${GATEWAY_CREDENTIAL_NAMES.join(' ')} $K K;`,
     'HOME="$U"; export HOME;',
   ].join(' ')
 }

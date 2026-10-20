@@ -182,7 +182,10 @@ const GATEWAY_COMMAND = [
   // the home is taken out (`gatewayEnvPrefix`, `GATEWAY_UNSET` in e2e/runPlaces.ts). Without it the
   // gateway found the machine's own folders through the home folder: the shared skills folder it
   // lists at every start, other tools' setups and the Hugging Face folder, which Settings named.
-  // `tests/rails/test_e2e_gateway_home_is_the_runs_tree.py` holds every such folder to the run.
+  // So is every credential-shaped variable (`GATEWAY_CREDENTIAL_*`), which Settings › Secrets
+  // listed as inherited from whoever started the run.
+  // `tests/rails/test_e2e_gateway_home_is_the_runs_tree.py` holds every such folder to the run, and
+  // holds the secrets read to none of the credentials it plants.
   `${gatewayEnvPrefix()} PERSONALCLAW_HOME="$D" PERSONALCLAW_WORKSPACE="$D/workspace" ${SCRIPTED.scriptEnvVar}="$S" exec "$PC" gateway --port ${GATEWAY_PORT} --no-open --json-ready`,
 ].join('\n')
 

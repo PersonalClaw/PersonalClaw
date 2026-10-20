@@ -15,6 +15,13 @@ prefix (``gatewayEnvPrefix``) with a probe in the gateway's place, from an outer
 points every one of those variables somewhere else, and holds every folder the probe resolves to
 the run's places. A rail rather than a suite test because only the rails job has both Node and the
 repo's Python.
+
+The gateway also inherited every credential-shaped variable of whoever started the run, so
+Settings > Secrets listed the developer's own tokens and sockets as inherited from the host, and
+the surface read differently on every machine. The prefix now takes out every variable the secrets
+read would list (``secrets_vault._host_secret_names``: a name ``workflows.secrets`` reads as a
+credential), plus ``SSH_AUTH_SOCK`` by name. The checks below plant such variables in the outer
+environment and hold the probe's own secrets read to none of them.
 """
 
 from __future__ import annotations
@@ -29,6 +36,8 @@ from pathlib import Path
 
 import pytest
 
+from personalclaw.workflows.secrets import SECRET_KEY_HINTS, SECRET_KEY_WORD_HINTS
+from personalclaw.workflows.workspace import looks_secret
 from tests.rails.rails_repo import REPO
 
 WEB = REPO / "web"
@@ -89,10 +98,13 @@ folders["Claude Code"] = str(claude_code.resolve_root())
 folders["Codex"] = str(codex.resolve_root())
 for path, _is_dir, kind in owner_only.owners_own():
     folders[f"owner's {kind} file {Path(path).name}"] = path
+from personalclaw import secrets_vault
 print(json.dumps({
     "folders": folders,
     "set": sorted(n for n in names if n in os.environ),
     "personalclaw_home": os.environ.get("PERSONALCLAW_HOME", ""),
+    "host_secrets": secrets_vault._host_secret_names(),
+    "env_names": sorted(os.environ),
 }))
 """
 
@@ -124,10 +136,30 @@ def _harness(tmp: Path) -> dict:
     return json.loads(done.stdout.strip().splitlines()[-1])
 
 
-def _as_the_gateway(prefix: str, home: str, elsewhere: Path) -> dict:
+def _as_the_gateway(
+    prefix: str,
+    home: str,
+    elsewhere: Path,
+    planted: dict[str, str] | None = None,
+    shell: str = "/bin/sh",
+) -> dict:
     """Run the probe through the harness's prefix, as GATEWAY_COMMAND runs the gateway, from an
-    outer environment where HOME and every folder variable point at ``elsewhere``."""
+    outer environment where HOME and every folder variable point at ``elsewhere``, and every
+    ``planted`` variable is set."""
+    done = _run_as_the_gateway(prefix, home, elsewhere, planted, shell)
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout.strip().splitlines()[-1])
+
+
+def _run_as_the_gateway(
+    prefix: str,
+    home: str,
+    elsewhere: Path,
+    planted: dict[str, str] | None = None,
+    shell: str = "/bin/sh",
+) -> subprocess.CompletedProcess:
     outer = dict(os.environ)
+    outer.update(planted or {})
     outer["HOME"] = str(elsewhere / "home")
     for name in FOLDER_VARIABLES:
         outer[name] = str(elsewhere / name.lower())
@@ -139,16 +171,14 @@ def _as_the_gateway(prefix: str, home: str, elsewhere: Path) -> dict:
     outer["PY"] = sys.executable
     outer["PROBE"] = PY_PROBE
     outer["NAMES"] = json.dumps(list(FOLDER_VARIABLES))
-    done = subprocess.run(
-        ["/bin/sh", "-c", script],
+    return subprocess.run(
+        [shell, "-c", script],
         capture_output=True,
         text=True,
         timeout=120,
         env=outer,
         cwd=WEB,
     )
-    assert done.returncode == 0, done.stderr
-    return json.loads(done.stdout.strip().splitlines()[-1])
 
 
 def _inside(path: str, roots: list[Path]) -> bool:
@@ -240,3 +270,99 @@ def test_the_users_home_folder_goes_with_the_run(tmp_path):
     assert user.is_dir() and p["madeUserHome"] is True
     assert home not in user.parents, "inside the home it is a path no snapshot claims"
     assert user.parent == home.parent, "the home folder sits beside the run's home"
+
+
+# ── No credential reaches the gateway ─────────────────────────────────────────────────────────────
+
+
+def _planted_credentials() -> dict[str, str]:
+    """A variable for every hint the secrets read matches, in three spellings of its case, a word
+    hint alone and with an index, the agent socket, and a value that spans lines and holds what
+    looks like another variable."""
+    names = ["SSH_AUTH_SOCK"]
+    for hint in SECRET_KEY_HINTS:
+        names += [f"E2E_PLANTED_{hint.upper()}", f"e2e_planted_{hint}", f"E2e_{hint.title()}_X"]
+    for word in SECRET_KEY_WORD_HINTS:
+        names += [f"E2E_PLANTED_{word.upper()}", f"E2E_PLANTED_{word.upper()}2", word.upper()]
+    planted = {name: f"planted-{i}" for i, name in enumerate(names)}
+    planted["E2E_PLANTED_MULTILINE_TOKEN"] = "first line\nE2E_PLANTED_NOT_A_NAME=1\nlast line"
+    return planted
+
+
+#: Names the secrets read does NOT call credentials, the word hint inside a longer word among them:
+#: the prefix must leave each where it was, so it removes the rule's names and no others.
+PLANTED_PLAIN = {
+    "E2E_PLANTED_LIBRARY_PATH": "/nowhere/lib",
+    "E2E_PLANTED_PATTERN": "plain",
+    "E2E_PLANTED_COMPAT_MODE": "plain",
+    "E2E_PLANTED_PLAIN": "plain",
+}
+
+
+def test_the_plants_are_what_the_secrets_read_calls_credentials():
+    # The premise of the checks below, held to the read itself.
+    assert all(looks_secret(n) for n in _planted_credentials())
+    assert not any(looks_secret(n) for n in PLANTED_PLAIN)
+
+
+def test_no_credential_shaped_variable_reaches_the_gateway(tmp_path):
+    h = _harness(tmp_path)
+    planted = {**_planted_credentials(), **PLANTED_PLAIN}
+    seen = _as_the_gateway(h["prefix"], h["places"]["home"], tmp_path / "elsewhere", planted)
+
+    assert seen["host_secrets"] == [], (
+        "Settings > Secrets would list these, inherited from whoever started the run: "
+        f"{seen['host_secrets']}"
+    )
+    reached = sorted(set(_planted_credentials()) & set(seen["env_names"]))
+    assert reached == [], f"credential-shaped variables that reached the gateway: {reached}"
+    kept = sorted(set(PLANTED_PLAIN) & set(seen["env_names"]))
+    assert kept == sorted(PLANTED_PLAIN), "the prefix took out a variable the rule does not name"
+
+
+def test_the_control_without_the_prefix_lists_every_plant(tmp_path):
+    # The control: without the prefix the probe's secrets read lists every plant, so the check
+    # above cannot pass because the probe reads nothing.
+    h = _harness(tmp_path)
+    seen = _as_the_gateway("", h["places"]["home"], tmp_path / "elsewhere", _planted_credentials())
+    missing = sorted(set(_planted_credentials()) - set(seen["host_secrets"]))
+    assert missing == [], f"the probe's secrets read did not see: {missing}"
+
+
+#: Credential-shaped, and no name a shell can unset.
+ODD_NAME = "e2e-planted.token"
+
+
+@pytest.mark.parametrize(
+    "shell", [s for s in ("/bin/sh", "/bin/bash", "/bin/dash") if Path(s).exists()]
+)
+def test_a_credential_the_shell_cannot_unset_never_reaches_the_gateway(tmp_path, shell):
+    # Some shells hand a child a variable whose name they cannot unset, some drop it. The first
+    # must refuse the run by the name, the second gives the gateway none.
+    h = _harness(tmp_path)
+    planted = {ODD_NAME: "planted"}
+    elsewhere = tmp_path / "elsewhere"
+    control = _as_the_gateway("", h["places"]["home"], elsewhere, planted, shell)
+    done = _run_as_the_gateway(h["prefix"], h["places"]["home"], elsewhere, planted, shell)
+    if ODD_NAME in control["env_names"]:
+        assert done.returncode != 0, f"{shell} ran the gateway with {ODD_NAME} in its environment"
+        assert "PERSONALCLAW_E2E_FATAL" in done.stderr and ODD_NAME in done.stderr, done.stderr
+    else:
+        assert done.returncode == 0, done.stderr
+        seen = json.loads(done.stdout.strip().splitlines()[-1])
+        assert ODD_NAME not in seen["env_names"]
+
+
+def _ts_list(name: str) -> list[str]:
+    src = RUN_PLACES.read_text(encoding="utf-8")
+    m = re.search(rf"export const {name} = \[(.*?)\] as const", src, re.S)
+    assert m, f"web/e2e/runPlaces.ts declares no {name} list"
+    return re.findall(r"'([^']+)'", m.group(1))
+
+
+def test_the_harness_reads_credentials_by_the_secrets_reads_rule():
+    # The harness holds a copy of the hints (it runs before any Python does); the copy is the
+    # secrets read's, entry for entry, so neither can drift from the other.
+    assert _ts_list("GATEWAY_CREDENTIAL_HINTS") == list(SECRET_KEY_HINTS)
+    assert _ts_list("GATEWAY_CREDENTIAL_WORD_HINTS") == list(SECRET_KEY_WORD_HINTS)
+    assert _ts_list("GATEWAY_CREDENTIAL_NAMES") == ["SSH_AUTH_SOCK"]
