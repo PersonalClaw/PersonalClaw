@@ -23,8 +23,14 @@ against a hand-built object, plus the four MACHINE-facing sites that deliberatel
 
 from __future__ import annotations
 
+import asyncio
+import json
+import types
+from typing import Any
+
 import pytest
 
+from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
 from personalclaw.guardrails import autonomy as au
 from personalclaw.guardrails import ladder as ld
 from personalclaw.guardrails import policy as pol
@@ -33,8 +39,9 @@ from personalclaw.guardrails import rungs as rg
 
 @pytest.fixture(autouse=True)
 def _isolated_home(tmp_path, monkeypatch):
-    """A throwaway home for the rung store. `PERSONALCLAW_HOME` as well as the patched
-    `config_dir`, because several stores bind `config_dir` at import."""
+    """A throwaway home for the rung store, the SEL and the inbox. `PERSONALCLAW_HOME` as well
+    as the patched `config_dir`, because several stores bind `config_dir` at import, and the
+    SEL singleton is reset so its rows land in this home."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
@@ -42,8 +49,69 @@ def _isolated_home(tmp_path, monkeypatch):
     cfg = home / "config.json"
     cfg.write_text("{}", encoding="utf-8")
     monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: cfg)
+    from personalclaw import sel as sel_mod
+
+    sel_mod.SecurityEventLog._instance = None
+    sel_mod.SecurityEventLog._initialized = False
     rg.ensure_core_action_types()
-    return home
+    yield home
+    sel_mod.SecurityEventLog._instance = None
+    sel_mod.SecurityEventLog._initialized = False
+
+
+#: A declared action type the ladder holds: its floor drafts only, so every fire is withheld.
+_HELD = "action.vocabulary_probe"
+_PROVIDER = "vocabulary-probe"
+
+
+class _Probe(ActionProvider):
+    """An action provider that records every execution, so a held fire is provable."""
+
+    def __init__(self) -> None:
+        self.calls: list[ActionContext] = []
+
+    @property
+    def name(self) -> str:
+        return _PROVIDER
+
+    @property
+    def display_name(self) -> str:
+        return "Vocabulary probe"
+
+    async def execute(
+        self, action_config: dict[str, Any], ctx: ActionContext, timeout: int = 30
+    ) -> ActionResult:
+        self.calls.append(ctx)
+        return ActionResult(success=True, stdout="ran")
+
+
+@pytest.fixture
+def held_action():
+    """`_PROVIDER` registered, and `_HELD` declared for it at the bottom rung."""
+    from personalclaw.action_providers.registry import _providers, register_action_provider
+
+    probe = _Probe()
+    register_action_provider(probe)
+    au.register_action_type(
+        au.ActionTypeSpec(
+            key=_HELD,
+            floor=rg.RUNG_DRAFT_ONLY,
+            ceiling=rg.RUNG_ONE_TAP,
+            providers=(_PROVIDER,),
+        )
+    )
+    yield probe
+    au.unregister_action_type(_HELD)
+    _providers.pop(_PROVIDER, None)
+
+
+def _inbox_rows(home) -> list[dict]:
+    path = home / "inbox.json"
+    if not path.exists():
+        return []
+    data = json.loads(path.read_text(encoding="utf-8"))
+    items = data.get("items", data)
+    return list(items.values()) if isinstance(items, dict) else list(items)
 
 
 def _keys_in(sentence: str) -> list[str]:
@@ -89,47 +157,88 @@ def test_the_reason_does_not_RENAME_the_action_the_sentence_already_named() -> N
     assert seen >= 4
 
 
-def test_the_key_is_still_carried_where_a_MACHINE_needs_it() -> None:
+def test_the_key_is_still_carried_where_a_MACHINE_needs_it(_isolated_home, held_action) -> None:
     """Dropping the key from the prose must not drop it from the record. It stays on the route for
     any caller, on the inbox row's `refs["action_type"]`, and in the dedup key."""
-    import inspect
+    route = rg.route_action_type(_HELD)
+    assert route.key == _HELD and not route.executes, route
+    rg.announce_withheld(route, title="held")
+    rg.announce_withheld(route, title="held again")  # the same standing request
 
-    spec = rg.CORE_ACTION_TYPES[0]
-    assert rg.route_action_type(spec.key).key == spec.key
-    src = inspect.getsource(rg.announce_withheld)
-    assert '"action_type": route.key' in src, "the row must still be findable by type"
-    assert 'dedup_key or f"autonomy_hold:{route.key}"' in src
+    rows = _inbox_rows(_isolated_home)
+    assert len(rows) == 1, "a second hold of one type stacked a second row"
+    assert rows[0]["refs"]["action_type"] == _HELD, "the row must still be findable by type"
+    assert rows[0]["refs"]["dedup_key"] == f"autonomy_hold:{_HELD}"
+
+    rg.announce_withheld(route, title="from a trigger", dedup_key="autonomy_hold:own")
+    assert {r["refs"]["dedup_key"] for r in _inbox_rows(_isolated_home)} == {
+        f"autonomy_hold:{_HELD}",
+        "autonomy_hold:own",
+    }, "a caller's own dedup key is kept"
 
 
-def test_every_call_site_still_EMBEDS_the_reason_rather_than_showing_it_alone() -> None:
+def _held_hook_run() -> str:
+    """A hook on the held action, run through `hooks.run_script_hook`; its result's error."""
+    from personalclaw.hooks import ScriptHook, run_script_hook
+
+    hook = ScriptHook(
+        id="h-probe",
+        name="Probe on stop",
+        event="Stop",
+        provider=_PROVIDER,
+        provider_config={},
+        capabilities={"providers": [_PROVIDER]},
+    )
+    return asyncio.run(run_script_hook(hook)).error
+
+
+def _held_trigger_run(home) -> str:
+    """A clock trigger on the held action, fired through the gateway's store dispatch; the error
+    its run-history row records."""
+    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.schedule_history import ScheduleRunStore
+
+    trigger = types.SimpleNamespace(
+        id="clock:probe",
+        kind="clock",
+        workflow={"inline": {"provider": _PROVIDER, "config": {}}},
+        capabilities={"providers": [_PROVIDER]},
+    )
+    asyncio.run(object.__new__(GatewayOrchestrator)._fire_store_trigger(trigger, {"kind": "clock"}))
+    runs, total = asyncio.run(ScheduleRunStore(home).list_for_job(trigger.id, 0, 20))
+    assert total == 1, "a held fire left no run-history row"
+    return runs[0]["error"]
+
+
+def test_every_call_site_still_EMBEDS_the_reason_rather_than_showing_it_alone(
+    _isolated_home, held_action
+) -> None:
     """The warrant for a subject-less-of-the-key sentence: each of the four consumers supplies the
-    context. If a new call site ever surfaced `reason` on its own, "this action …" would have no
-    referent and the key would need to come back — so the shape is pinned here.
+    context. If a call site ever surfaced `reason` on its own, "this action …" would have no
+    referent and the key would need to come back.
 
-    Four, not six: the retired data-event engine carried two of its own, and a data-event fire now
-    takes the store dispatch in `gateway`, whose two call sites are counted here."""
-    import inspect
+    Four: the inbox row and the recorded error, for a hook's action and for a store trigger's
+    (every clock, file, webhook, chained and data-event fire takes that dispatch). Each is driven,
+    and what the user reads is checked: the row names the action and says it did not run, and the
+    error says it is held for your approval, before the reason."""
+    reason = rg.route_action_type(_HELD).reason
+    assert reason.startswith("this action "), reason
 
-    from personalclaw import gateway, hooks
+    hook_error = _held_hook_run()
+    trigger_error = _held_trigger_run(_isolated_home)
+    assert held_action.calls == [], "a held action ran"
+    assert hook_error == f"held for your approval: {reason}"
+    assert trigger_error == f"held for your approval: {reason}"
 
-    embedded = 0
-    for mod in (gateway, hooks):
-        src = inspect.getsource(mod)
-        assert "{route.reason}" in src, f"{mod.__name__} should compose the reason"
-        # 🪤 Scan a WINDOW, not the line. The inbox body is a two-line implicit concatenation, so
-        # the line holding `{route.reason}` is just `f"{route.reason}."` and its framing sits above.
-        # A per-line rule failed on the very call site it was written for.
-        at = 0
-        while (at := src.find("{route.reason}", at)) != -1:
-            window = src[max(0, at - 220) : at]
-            # Either wrapped in a sentence that names the action, or prefixed by "held for your
-            # approval" — both establish what "this action" refers to.
-            assert (
-                "did not run" in window or "held for your approval" in window
-            ), f"{mod.__name__}: unframed reason near offset {at}"
-            embedded += 1
-            at += 1
-    assert embedded >= 4, f"expected the four known call sites, found {embedded}"
+    bodies = sorted(r["message"] for r in _inbox_rows(_isolated_home))
+    assert len(bodies) == 2, bodies
+    assert any(
+        f"The {_PROVIDER!r} action on the Stop event did not run: {reason}." in b for b in bodies
+    ), bodies
+    assert any(
+        f"The {_PROVIDER!r} action on trigger clock:probe did not run: {reason}." in b
+        for b in bodies
+    ), bodies
 
 
 def test_the_NARROWED_branch_names_both_rungs_in_user_words(monkeypatch) -> None:
@@ -203,26 +312,53 @@ def test_a_BAD_DECLARATION_raises_with_the_key_and_the_whole_ladder() -> None:
     assert "nonsense" in str(e.value) and "ceiling" in str(e.value)
 
 
-def test_the_MACHINE_strings_still_carry_the_key() -> None:
+def test_the_MACHINE_strings_still_carry_the_key(_isolated_home, held_action) -> None:
     """Two strings that must stay machine-readable, pinned so a later pass does not "finish the
-    job": the audit detail (an SEL row is worth its exact value) and the proposal dedup key."""
-    import inspect
+    job": the audit detail (an SEL row is worth its exact value) and the proposal dedup key. A
+    real grant writes the audit row, and a real proposal files the inbox row."""
+    from personalclaw.sel import sel
 
-    grant_src = inspect.getsource(au.grant_rung)
-    assert 'detail=f"rung={rung}' in grant_src, "the audit row must keep the rung KEY"
-    file_src = inspect.getsource(ld._file_proposal)
-    assert 'dedup_key=f"autonomy_promotion:{key}:{next_rung}"' in file_src, "a dedup key is machine"
+    assert au.grant_rung(_HELD, rg.RUNG_ONE_TAP, evidence_window="w") == rg.RUNG_ONE_TAP
+    rows = [e for e in sel().recent(50) if e.get("operation") == "guardrails.autonomy_granted"]
+    assert rows, "the grant wrote no audit row"
+    assert rows[0]["resources"].startswith(f"{_HELD} rung={rg.RUNG_ONE_TAP} "), rows[0]
+    assert rg.rung_label(rg.RUNG_ONE_TAP) not in rows[0]["resources"], "the audit row took prose"
+
+    assert ld._file_proposal(_HELD, rg.RUNG_ONE_TAP, "Ran cleanly.") is True
+    proposals = [r for r in _inbox_rows(_isolated_home) if r["item_kind"] == "proposal"]
+    assert [r["refs"]["dedup_key"] for r in proposals] == [
+        f"autonomy_promotion:{_HELD}:{rg.RUNG_ONE_TAP}"
+    ], "a dedup key is machine"
 
 
-def test_there_is_ONE_label_accessor_now() -> None:
+def test_there_is_ONE_label_accessor_now(monkeypatch) -> None:
     """Three copies of `RUNG_LABELS.get(x, x)` had grown up in as many modules. Prose composers
-    call `rung_label`; the only other reader is the handler that ships the whole vocabulary to the
-    frontend, which needs the dict itself."""
-    import inspect
+    call `rung_label`, so a label changed there reaches every sentence a person reads: the ladder
+    panel's record line, a refused grant's message and the panel's authority sentence. The only
+    other reader is the handler that ships the whole vocabulary to the frontend, which needs the
+    dict itself."""
+    from aiohttp.test_utils import make_mocked_request
 
-    for mod in (au, ld):
-        src = inspect.getsource(mod)
-        assert "RUNG_LABELS.get(" not in src, f"{mod.__name__} should call rung_label()"
     from personalclaw.dashboard.handlers import autonomy as handler
 
-    assert "RUNG_LABELS.get(" in inspect.getsource(handler), "the wire vocabulary is the exception"
+    real = rg.rung_label
+    monkeypatch.setattr(rg, "rung_label", lambda rung: f"<{real(rung)}>")
+
+    at_ceiling = next(s for s in rg.CORE_ACTION_TYPES if s.floor == s.ceiling)
+    record = au.promotion_eligibility(at_ceiling.key).reason
+    assert f"<{real(at_ceiling.ceiling)}>" in record, record
+    low = next(
+        s
+        for s in rg.CORE_ACTION_TYPES
+        if rg.rung_rank(s.ceiling) < rg.rung_rank(rg.RUNG_AUTONOMOUS)
+    )
+    refused = ld.explain_refused_grant(low.key, rg.RUNG_AUTONOMOUS)
+    assert f"<{real(low.ceiling)}>" in refused, refused
+    row = next(t for t in ld.ladder_view()["types"] if t["key"] == at_ceiling.key)
+    assert f"<{real(row['resolved_rung'])}>" in row["authority"], row["authority"]
+
+    resp = asyncio.run(handler.api_autonomy(make_mocked_request("GET", "/api/autonomy")))
+    meta = json.loads(resp.body.decode())["rung_meta"]
+    assert {m["key"]: m["label"] for m in meta} == {
+        r: rg.RUNG_LABELS[r] for r in rg.RUNGS
+    }, "the wire vocabulary ships the labels themselves"
