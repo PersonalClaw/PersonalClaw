@@ -4,7 +4,7 @@ import { runState } from '../../test/runState'
 
 // ── A failed step says so on the folded work, before anyone opens it ────────────────────────
 //
-// A finished turn folds its steps into "Worked through N steps · <tools>" so the answer leads.
+// A finished turn folds its steps into "Worked for Ns · N steps · <tools>" so the answer leads.
 // Measured before this: a turn whose one real step failed (`ok` false, the error in its result)
 // folded to "Worked through 2 steps · automation_create" above a reply saying the watch was set
 // up. The red mark was only on the card inside the fold, so the fold agreed with the reply.
@@ -93,7 +93,7 @@ async function openTurn(messages: unknown[]) {
     </AppearanceProvider>,
   )
   expect(await screen.findByText(ANSWER.content)).toBeTruthy()
-  const fold = await waitFor(() => screen.getByRole('button', { name: /Worked through 2 steps/ }))
+  const fold = await waitFor(() => screen.getByRole('button', { name: /Worked for \d+s · 2 steps/ }))
   expect(fold.getAttribute('aria-expanded')).toBe('false')
   return fold
 }
