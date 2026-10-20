@@ -72,9 +72,10 @@ the third row, and it is not negotiable.
 
 Under `prefers-reduced-motion: reduce`:
 
-1. **Every `physics` preset returns `instant`** (`{ type: 'tween', duration: 0 }`). The gate
-   lives in one place — `bouncy()` in `motion.ts` — so a preset cannot be added that escapes
-   it. `dragSpring()` and `swipeDismiss()`'s transitions collapse the same way.
+1. **Every `physics` preset and every `spring` tier returns `instant`**
+   (`{ type: 'tween', duration: 0 }`). The gate lives in one place — `gated()` in `motion.ts`,
+   which every transition the module hands out exits through — so a preset cannot be added that
+   escapes it. `dragSpring()` and `swipeDismiss()`'s transitions collapse the same way.
 2. **The app root already wraps everything** in Framer's `<MotionConfig reducedMotion="user">`,
    and `tokens.css` carries a global `*` rule that flattens CSS animations and transitions.
    You do not need to re-implement either. Do not disable a component's animation ad hoc.
@@ -599,6 +600,183 @@ presets, so the spring rail (`reducedMotionAppWide.test.ts`) stays green and the
 and reduced motion reach it the way they reach the presets. [`web/DESIGN.md`](../../web/DESIGN.md) records the follow as a
 sanctioned personality moment. Settled for play's return: the hit chain ends at annoyed, so
 `dizzyHold` goes when play lands, and after annoyed further hits only blink for `playCooldown`.
+
+---
+
+## 10. The motion audit
+
+Every animation in `web/src`, one row per kind of motion in a file, with a call:
+
+- **strip**: motion on a high-frequency action. It goes, and the change shows instantly.
+- **retokenize**: a literal duration. It moves onto a motion token.
+- **keep**: space changes, status, gestures, first-run moments and the rare earned ones.
+
+Taken on main `10854905`: 521 rows over 246 files, 79 strip,
+30 retokenize and 412 keep. A file counts when it carries a CSS or
+Tailwind transition or animation, a `@keyframes` rule, a framer-motion import or a frame loop that
+draws. A `requestAnimationFrame` that only schedules focus, a scroll or a read is not an
+animation, and 16 files have only that.
+
+**What counts as high-frequency.** Rail clicks, tab and option changes, message sends, count
+changes, list-row hover, press and entrance, menus and the command palette, and every press scale
+and hover scale on a button: a press shows by colour, at once. Toasts are not on the list, and
+neither are the cascades of first-run moments (onboarding, Try one) and of the planning
+walkthrough: they happen rarely, so they keep their motion.
+
+**Hover that changes size stays.** The send button's hover width and the side panel's resize
+handle change size, so they keep moving, on a `physics.*` preset, or on `spring.effects` where
+only a fill's visible width changes.
+
+### What is stripped
+
+| File | Motion | Why |
+|---|---|---|
+| `app/App.tsx` | entrance (rise) | every page rises 6px on each rail click; the crossfade stays |
+| `app/CommandPalette.tsx` | entrance (rise) | the palette or a menu drops and scales in |
+| `pages/apps/AppsSection.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `pages/apps/AppsSection.tsx` | hover movement | list-row and card hover movement |
+| `pages/chat/ChatActivityPanel.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `pages/chat/FollowupChips.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `pages/chat/SessionMapDrawer.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `pages/chat/SessionMapDrawer.tsx` | entrance (rise) | a list row rises in |
+| `pages/chat/hero/ChatHero.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `pages/chat/history/ChatHistorySidePanel.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `pages/chat/history/ChatHistorySidePanel.tsx` | hover movement | list-row and card hover movement |
+| `pages/chat/history/SessionPeek.tsx` | press scale (`whileTap`) | press scale on a rail item, tab, list row or menu item |
+| `pages/code/cockpit/tasks/StageTasks.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `pages/dashboard/widgets/Discover.tsx` | hover movement | list-row and card hover movement |
+| `pages/dashboard/widgets/HeroPulse.tsx` | `physics.playful` spring | a count pops on every change |
+| `pages/dashboard/widgets/HeroPulse.tsx` | pop on change (scale) | a count pops on every change |
+| `pages/dashboard/widgets/Suggestions.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `pages/dashboard/widgets/Suggestions.tsx` | entrance (rise) | a list row rises in |
+| `pages/dashboard/widgets/Suggestions.tsx` | hover movement | list-row and card hover movement |
+| `pages/dashboard/widgets/kit.tsx` | hover movement | list-row and card hover movement |
+| `pages/dashboard/widgets/kit.tsx` | press scale (`whileTap`) | press scale on a rail item, tab, list row or menu item |
+| `pages/discover/DiscoverPage.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `pages/discover/DiscoverPage.tsx` | entrance (rise) | a list row rises in |
+| `pages/loops/LoopsListPage.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `pages/loops/LoopsListPage.tsx` | hover movement | list-row and card hover movement |
+| `pages/loops/LoopsListPage.tsx` | press scale (`whileTap`) | press scale on a rail item, tab, list row or menu item |
+| `pages/notifications/NotificationsPage.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `pages/projects/ProjectsSection.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `pages/settings/bento.tsx` | entrance (rise) | a list row rises in |
+| `pages/settings/bento.tsx` | hover movement | list-row and card hover movement |
+| `pages/settings/settingsUI.tsx` | sliding selection indicator (`layoutId`) | selection indicator slides on every rail, tab or option change |
+| `pages/tasks/TaskBoard.tsx` | hover movement | list-row and card hover movement |
+| `pages/tasks/TaskBoard.tsx` | `physics.playful` spring | a count pops on every change |
+| `pages/tasks/TaskBoard.tsx` | pop on change (scale) | a count pops on every change |
+| `pages/tasks/TasksListPage.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `pages/tasks/TasksListPage.tsx` | hover movement | list-row and card hover movement |
+| `pages/tasks/TasksListPage.tsx` | press scale (`whileTap`) | press scale on a rail item, tab, list row or menu item |
+| `ui/AddItemButton.tsx` | press scale (`whileTap`) | press scale on a button; the pressed state shows by colour, instantly |
+| `ui/Button.tsx` | hover movement | hover scale on a button |
+| `ui/Button.tsx` | press scale (`whileTap`) | press scale on a button; the pressed state shows by colour, instantly |
+| `ui/Combobox.tsx` | sliding selection indicator (`layoutId`) | selection indicator slides on every rail, tab or option change |
+| `ui/FilterMenu.tsx` | `physics.playful` spring | a menu or its check springs with overshoot |
+| `ui/FilterRow.tsx` | press scale (`whileTap`) | press scale on a rail item, tab, list row or menu item |
+| `ui/FilterRow.tsx` | sliding selection indicator (`layoutId`) | selection indicator slides on every rail, tab or option change |
+| `ui/HeaderActions.tsx` | menu entrance (scale and rise) | the overflow menu scales and rises in |
+| `ui/HeaderActions.tsx` | press scale (`whileTap`) | press scale on a button; the pressed state shows by colour, instantly |
+| `ui/IconButton.tsx` | hover movement | hover scale on a button |
+| `ui/IconButton.tsx` | press scale (`whileTap`) | press scale on a button; the pressed state shows by colour, instantly |
+| `ui/ListScaffold.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `ui/ListScaffold.tsx` | entrance (rise) | a list row rises in |
+| `ui/ListScaffold.tsx` | hover movement | list-row and card hover movement |
+| `ui/ListScaffold.tsx` | press scale (`whileTap`) | press scale on a rail item, tab, list row or menu item |
+| `ui/NavRail.tsx` | press scale (`whileTap`) | press scale on a rail item, tab, list row or menu item |
+| `ui/NavRail.tsx` | sliding selection indicator (`layoutId`) | selection indicator slides on every rail, tab or option change |
+| `ui/NotificationBell.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `ui/NotificationBell.tsx` | count pop | the unread badge pops on every change |
+| `ui/NotificationBell.tsx` | menu entrance (scale and rise) | the bell's panel scales and rises in |
+| `ui/NotificationBell.tsx` | `physics.playful` spring | a count pops on every change |
+| `ui/Popover.tsx` | hover movement | list-row and card hover movement |
+| `ui/Popover.tsx` | `overlayEnter` (scale and rise) | a menu enters with scale and rise; becomes opacity only on the smooth curve |
+| `ui/Popover.tsx` | press scale (`whileTap`) | press scale on a rail item, tab, list row or menu item |
+| `ui/ProjectPicker.tsx` | `overlayEnter` (scale and rise) | a menu enters with scale and rise; becomes opacity only on the smooth curve |
+| `ui/QuietButton.tsx` | press scale (`whileTap`) | press scale on a button; the pressed state shows by colour, instantly |
+| `ui/SearchField.tsx` | press scale (`whileTap`) | press scale on a button; the pressed state shows by colour, instantly |
+| `ui/Segmented.tsx` | press scale (`whileTap`) | press scale on a rail item, tab, list row or menu item |
+| `ui/Segmented.tsx` | sliding selection indicator (`layoutId`) | selection indicator slides on every rail, tab or option change |
+| `ui/SquareIconButton.tsx` | press scale (`whileTap`) | press scale on a button; the pressed state shows by colour, instantly |
+| `ui/SystemWidget.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `ui/SystemWidget.tsx` | menu entrance (scale and rise) | the System popover drops and scales in |
+| `ui/TileButton.tsx` | press scale (`whileTap`) | press scale on a button; the pressed state shows by colour, instantly |
+| `ui/TokenControls.tsx` | sliding selection indicator (`layoutId`) | selection indicator slides on every rail, tab or option change |
+| `ui/WidthPill.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `ui/WidthPill.tsx` | menu entrance (scale and rise) | the width menu scales and rises in |
+| `ui/WidthPill.tsx` | press scale (`whileTap`) | press scale on a rail item, tab, list row or menu item |
+| `ui/WidthPill.tsx` | sliding selection indicator (`layoutId`) | selection indicator slides on every rail, tab or option change |
+| `ui/chat/MessageUser.tsx` | message entrance | the sent message's entrance (a message send) |
+| `ui/composer/controls.tsx` | press scale (`whileTap`) | press scale on a rail item, tab, list row or menu item |
+| `ui/content/ContentSurface.tsx` | sliding selection indicator (`layoutId`) | selection indicator slides on every rail, tab or option change |
+| `ui/motion/ContextMenu.tsx` | `overlayEnter` (scale and rise) | a menu enters with scale and rise; becomes opacity only on the smooth curve |
+
+### What moves onto a token
+
+| File | Motion | Why |
+|---|---|---|
+| `app/onboarding/StepStack.tsx` | a literal duration in a transition | a literal duration; every duration comes from a motion token |
+| `design/tokens.css` | a literal duration in CSS | a literal duration; every duration comes from a motion token |
+| `pages/apps/AppsSection.tsx` | a Tailwind `duration-*` class | a literal duration; every duration comes from a motion token |
+| `pages/chat/ChatActivityPanel.tsx` | a Tailwind `duration-*` class | a literal duration; every duration comes from a motion token |
+| `pages/chat/MessageActions.tsx` | a Tailwind `duration-*` class | a literal duration; every duration comes from a motion token |
+| `pages/chat/ToolCard.tsx` | a literal duration in a transition | a literal duration; every duration comes from a motion token |
+| `pages/chat/transcript/TurnHead.tsx` | a Tailwind `duration-*` class | a literal duration; every duration comes from a motion token |
+| `pages/knowledge/AudioRecorder.tsx` | a literal duration in CSS | a literal duration; every duration comes from a motion token |
+| `pages/knowledge/KnowledgeGraph.tsx` | a literal duration in CSS | a literal duration; every duration comes from a motion token |
+| `pages/loops/LoopCockpitPage.tsx` | a literal duration in a transition | a literal duration; every duration comes from a motion token |
+| `pages/loops/RunProgress.tsx` | a Tailwind `duration-*` class | a literal duration; every duration comes from a motion token |
+| `pages/schedule/ScheduleDetail.tsx` | a Tailwind `duration-*` class | a literal duration; every duration comes from a motion token |
+| `pages/settings/MemoryGraph.tsx` | a literal duration in CSS | a literal duration; every duration comes from a motion token |
+| `pages/settings/NotificationRulesMatrix.tsx` | a literal duration in CSS | a literal duration; every duration comes from a motion token |
+| `pages/tasks/DagView.tsx` | a literal duration in a transition | a literal duration; every duration comes from a motion token |
+| `ui/Button.tsx` | a Tailwind `duration-*` class | a literal duration; every duration comes from a motion token |
+| `ui/ClawMark.tsx` | a literal duration in a transition | a literal duration; every duration comes from a motion token |
+| `ui/Combobox.tsx` | a literal duration in a transition | a literal duration; every duration comes from a motion token |
+| `ui/Composer.tsx` | a literal duration in a transition | a literal duration; every duration comes from a motion token |
+| `ui/DotGlow.tsx` | a Tailwind `duration-*` class | a literal duration; every duration comes from a motion token |
+| `ui/HeaderActions.tsx` | a Tailwind `duration-*` class | a literal duration; every duration comes from a motion token |
+| `ui/IconButton.tsx` | a Tailwind `duration-*` class | a literal duration; every duration comes from a motion token |
+| `ui/NavRail.tsx` | a Tailwind `duration-*` class | a literal duration; every duration comes from a motion token |
+| `ui/Popover.tsx` | a Tailwind `duration-*` class | a literal duration; every duration comes from a motion token |
+| `ui/ProgressRing.tsx` | a literal duration in a transition | a literal duration; every duration comes from a motion token |
+| `ui/SpotlightTour.tsx` | a literal duration in a transition | a literal duration; every duration comes from a motion token |
+| `ui/WavyProgress.tsx` | a literal duration in a transition | a literal duration; every duration comes from a motion token |
+| `ui/dialog/DialogShell.tsx` | a literal duration in a transition | a literal duration; every duration comes from a motion token |
+| `ui/widget/BlueprintSkeleton.tsx` | a literal duration in CSS | a literal duration; every duration comes from a motion token |
+| `ui/widget/WidgetFrame.tsx` | a Tailwind `duration-*` class | a literal duration; every duration comes from a motion token |
+
+### What is kept
+
+| Motion | Rows | Why | Files |
+|---|---|---|---|
+| colour or opacity | 171 | colour or opacity only, no movement | 171 files across the app |
+| a spinner or pulse | 90 | a busy or loading indicator | 90 files across the app |
+| a size or place change | 56 | space changes: a panel opens, a card grows or moves | 56 files across the app |
+| pop on change (scale) | 28 | an icon or state swap tied to a rare change | 28 files across the app |
+| entrance (rise) | 13 | a panel, card or chip arriving in a new place | 13 files across the app |
+| a repeating loop | 9 | an ongoing status or ambient loop; reduced motion answers it | `design/tokens.css`, `pages/files/FilesSection.tsx`, `pages/loops/DesignCockpitPage.tsx`, `pages/loops/LoopCockpitPage.tsx`, `pages/tasks/DagView.tsx`, `ui/ClawMark.tsx`, `ui/Composer.tsx`, `ui/SpotlightTour.tsx`, `ui/WavyProgress.tsx` |
+| `physics.playful` spring | 9 | a rare earned moment (a success bloom, a sheet) | `pages/settings/settingsUI.tsx`, `ui/Composer.tsx`, `ui/IconButton.tsx`, `ui/Markdown.tsx`, `ui/Modal.tsx`, `ui/SnipOverlay.tsx`, `ui/TokenControls.tsx`, `ui/UpdateProgressOverlay.tsx`, `ui/dialog/DialogShell.tsx` |
+| message entrance | 7 | a reply or card arriving; a tween on the duration tokens | `pages/chat/QuestionCard.tsx`, `pages/chat/RoomPauseCard.tsx`, `pages/chat/SdlcProgressCard.tsx`, `pages/code/cockpit/header/CockpitNotices.tsx`, `pages/loops/LoopCockpitPage.tsx`, `ui/ApprovalPrompt.tsx`, `ui/chat/MessageAssistant.tsx` |
+| a drawn frame loop | 5 | a drawn frame loop (canvas, meter or reveal) | `pages/code/DiffReveal.tsx`, `pages/code/TypingReveal.tsx`, `pages/dashboard/world/AgentWorld.tsx`, `pages/knowledge/AudioRecorder.tsx`, `ui/DotGlow.tsx` |
+| row cascade (`stagger()` or a per-index delay) | 4 | first-run cascade, once per install (allowlisted) | `app/Onboarding.tsx`, `app/onboarding/EssentialsStep.tsx`, `app/onboarding/ImportStep.tsx`, `app/onboarding/TryOneStep.tsx` |
+| a drag or swipe | 2 | direct manipulation; never collapsed | `ui/Toaster.tsx`, `ui/motion/Reorderable.tsx` |
+| hover movement | 2 | a size change on hover (the send button, the resize handle); on a preset | `ui/Composer.tsx`, `ui/SidePanel.tsx` |
+| a `@keyframes` rule | 2 | a keyframe; its duration is judged where it is used | `design/tokens.css`, `pages/loops/DesignCockpitPage.tsx` |
+| sliding selection indicator (`layoutId`) | 2 | a shared element moves to a new place | `pages/dashboard/widgets/Discover.tsx`, `pages/tasks/TaskBoard.tsx` |
+| row cascade (`stagger()` or a per-index delay) | 1 | a cascade on a walkthrough opened rarely (allowlisted) | `ui/PlanningWalkthrough.tsx` |
+| row cascade (`stagger()` or a per-index delay) | 1 | the motion system's own definitions | `design/motion.ts` |
+| entrance (rise) | 1 | a status line revealed inside the open widget | `ui/SystemWidget.tsx` |
+| entrance (rise) | 1 | a toast's entrance | `ui/Toaster.tsx` |
+| entrance (rise) | 1 | first-run step entrance | `app/Onboarding.tsx` |
+| entrance (rise) | 1 | the empty chat's hero, once per new chat | `pages/chat/hero/ChatHero.tsx` |
+| a drag or swipe | 1 | the motion system's own definitions | `design/motion.ts` |
+| a literal duration in a transition | 1 | the motion system's own definitions | `design/motion.ts` |
+| a repeating loop | 1 | the motion system's own definitions | `design/motion.ts` |
+| `overlayEnter` (scale and rise) | 1 | a toast's entrance; gets its own variant before menus go opacity-only | `pages/code/CodeToast.tsx` |
+| `physics.playful` spring | 1 | the motion system's own definitions | `design/motion.ts` |
+| a size or place change | 1 | a card arrives on the board | `pages/tasks/TaskBoard.tsx` |
+
 
 [#3892]: https://github.com/PersonalClaw/PersonalClaw/issues/3892
 [#3894]: https://github.com/PersonalClaw/PersonalClaw/issues/3894

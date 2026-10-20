@@ -148,7 +148,7 @@ components:
 
 PersonalClaw's dashboard is a capable engine with a soft shell, working in a studio after hours. The room is dark and calm — near-black canvas (#0f0f0f), tonal surface layers instead of hard borders — and the machine's warmth shows through one coral voice (#ff6b5b) that glows, blooms, and sweeps through gradient accents wherever the agent is alive: the composer focus ring, the agent orb, the spark. Two influences are deliberately blended: a **neural-expressive** signature (fractional variable-font weights like `wght 280` display, ambient glow, gradient energy that reads as live intelligence) and **Google's playful expressive element language** (pill shapes, tonal containers, springy overshoot on press) — both re-tinted through PersonalClaw's own coral/terracotta identity rather than copied.
 
-Controls are physical and friendly: pills by default, squircles for large sheets, spring-driven press/hover with earned overshoot. Personality is *budgeted and tunable* — a global expressiveness knob and bounciness slider scale every playful moment, and `prefers-reduced-motion` collapses all of it to crossfades. Each identity spends that budget its own way (§7). The default look draws no ambient light: the wave field, the halo and the sheen are Claw Arcade's. This system explicitly rejects hacker-terminal cosplay: no green-on-black, no scanlines, no readability sacrificed to look "technical." The optional `data-ui="cli"` density mode tightens spacing and squares corners as a utilitarian layout choice; it is not a costume.
+Controls are physical and friendly: pills by default, squircles for large sheets, spring-driven press/hover with earned overshoot. Personality is *budgeted and tunable* — a global expressiveness knob and bounciness slider scale every playful moment, and `prefers-reduced-motion` makes all of it instant. Each identity spends that budget its own way (§7). The default look draws no ambient light: the wave field, the halo and the sheen are Claw Arcade's. This system explicitly rejects hacker-terminal cosplay: no green-on-black, no scanlines, no readability sacrificed to look "technical." The optional `data-ui="cli"` density mode tightens spacing and squares corners as a utilitarian layout choice; it is not a costume.
 
 **Key Characteristics:**
 - Dark-first tonal layering (canvas → surface → container → high → highest); light mode is an override, dark is home.
@@ -277,7 +277,7 @@ Controls are pill-shaped, tonal, and springy; every interactive component has de
 - **Do** route every color, radius, spacing, and shadow through the token system (`--color-*`, `--radius-*`, `--spacing-*`); the whole app must survive a scheme retint and the density/roundness sliders.
 - **Do** use the surface ramp for hierarchy: one tonal step per nesting level, hairline dividers at #444746.
 - **Do** keep body text at #e3e3e3 (≥4.5:1 on all surface tiers) and reserve #9a9b9c for metadata.
-- **Do** scale every playful moment through `expr()`/bounciness and provide a reduced-motion path — springs become crossfades, sheens and halos disappear.
+- **Do** scale every playful moment through `expr()`/bounciness and provide a reduced-motion path — springs become instant, sheens and halos disappear.
 - **Do** express emphasis with fractional variable weight (wght 470–500), and put the coral gradient only where the agent is alive.
 
 ### Don't:
