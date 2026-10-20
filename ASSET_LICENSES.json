@@ -472,6 +472,10 @@
       "ownership": "project-owned",
       "required_notice": "LICENSE",
       "files": [
+        "web/e2e/__screenshots__/visual.spec.ts/agent-orb-states-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/agent-orb-states-dark-reduced-motion-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/agent-orb-states-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/agent-orb-states-light-reduced-motion-darwin.png",
         "web/e2e/__screenshots__/visual.spec.ts/agents-dark-darwin.png",
         "web/e2e/__screenshots__/visual.spec.ts/agents-light-darwin.png",
         "web/e2e/__screenshots__/visual.spec.ts/apps-dark-darwin.png",
@@ -795,6 +799,25 @@
       "required_notice": "LICENSE",
       "files": [
         "tests/fixtures/planner_routing.json"
+      ]
+    },
+    {
+      "id": "reply-style-snapshots",
+      "source": "Project-authored: what a turn sends the model under each reply style, written by tests/reply_style_snapshots.py from a temporary home, for tests/test_reply_style_reaches_the_model.py; natural-voice-on-main.json is what natural voice sent before reply styles existed",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "tests/fixtures/reply_style/conversational+retro-terminal.json",
+        "tests/fixtures/reply_style/conversational.json",
+        "tests/fixtures/reply_style/default+retro-terminal.json",
+        "tests/fixtures/reply_style/default.json",
+        "tests/fixtures/reply_style/natural-voice-on-main.json",
+        "tests/fixtures/reply_style/plain+retro-terminal.json",
+        "tests/fixtures/reply_style/plain.json",
+        "tests/fixtures/reply_style/terse+retro-terminal.json",
+        "tests/fixtures/reply_style/terse.json"
       ]
     },
     {
