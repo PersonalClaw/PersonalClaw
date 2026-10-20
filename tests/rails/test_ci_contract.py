@@ -40,7 +40,7 @@ import timeout_marks
 import yaml
 from rails_repo import REPO
 
-from tools.ci import breadth_evidence, catalogue, rails_census
+from tools.ci import breadth_evidence, catalogue, rails_census, shards
 
 #: An exact release, ``X.Y.Z``.
 _EXACT = re.compile(r"\d+\.\d+\.\d+")
@@ -8412,6 +8412,205 @@ NO_WORKFLOW_JOB_OUTSIDE_THE_CATALOGUE_RUNS_A_TEST = _toolchain_row(
 )
 
 ROWS = (*ROWS, NO_WORKFLOW_JOB_OUTSIDE_THE_CATALOGUE_RUNS_A_TEST)
+
+
+# ── The harness's replay and exemplar gates run in the merge tier (#3909) ─────────────────────
+# `replay` and `exemplars` are harness profiles, not catalogue entries: the merge tier runs what
+# they gate already. python-suite collects the three test files that gate every replay scenario
+# against its baseline and run every exemplar's smoke script, and web-unit's vitest run includes
+# the replay fold's test. This row holds each link of that chain, so a gate that leaves the suite
+# or the web-unit set goes red here rather than running nowhere.
+
+#: The pytest files python-suite must collect, each with the test that is the gate.
+_HARNESS_GATES = {
+    "tests/test_harness_replay.py": "test_shipped_scenarios_pass_baseline",
+    "tests/test_harness_replay_scenarios.py": "test_workflow_scenarios_present_and_green",
+    "tests/test_harness_exemplars.py": (
+        "test_each_exemplar_smoke_script_runs_and_proves_its_mechanism"
+    ),
+}
+_REPLAY_FOLD = "web/src/harness/replayFold.test.ts"
+_VITEST_CONFIG = "web/vitest.config.ts"
+#: The vitest config's three lines that decide its file set, as this row reads them: the dom
+#: project's include, its exclude of the node files, and the node project's include of them.
+#: Any other shape is refused, so a narrowed set cannot pass unread.
+_VITEST_SET_LINES = (
+    "include: ['src/**/*.{test,spec}.{ts,tsx}'],",
+    "exclude: NODE_FILES,",
+    "include: NODE_FILES,",
+)
+_SLICES = re.compile(r"^_EXPECTED_SLICES = \{([^}]*)\}$", re.M)
+
+
+def harness_gates_violations(root: Path) -> list[str]:
+    """python-suite collects the replay and exemplar gates, the exemplars' pinned set is every
+    slice, and web-unit's vitest run includes the replay fold's test."""
+    bad: list[str] = []
+    collected = set(shards.universe(root))
+    for rel, gate in _HARNESS_GATES.items():
+        if rel not in collected:
+            bad.append(f"{rel} is not in the suite's universe, so python-suite runs no {gate}")
+            continue
+        text = (root / rel).read_text(encoding="utf-8")
+        if not re.search(rf"^def {gate}\(", text, re.M):
+            bad.append(f"{rel} has no {gate}: the gate the merge tier runs is gone")
+    exemplars = root / "tests/test_harness_exemplars.py"
+    if exemplars.is_file():
+        pinned = _SLICES.search(exemplars.read_text(encoding="utf-8"))
+        named = set(re.findall(r'"(slice_\d+)"', pinned.group(1))) if pinned else set()
+        present = {p.name for p in (root / "harness/exemplars").glob("slice_*") if p.is_dir()}
+        if not pinned:
+            bad.append("tests/test_harness_exemplars.py pins no _EXPECTED_SLICES set")
+        for name in sorted(present - named):
+            bad.append(f"harness/exemplars/{name} is not in _EXPECTED_SLICES, so it can vanish")
+    cat = tomllib.loads((root / catalogue.CATALOGUE).read_text(encoding="utf-8"))
+    entries = {str(j.get("id")): j for j in cat.get("job") or []}
+    web = entries.get("web-unit") or {}
+    at_root = [
+        list(step.get("argv") or []) for step in web.get("command") or [] if not step.get("workdir")
+    ]
+    if "merge" not in (web.get("tiers") or []):
+        bad.append("web-unit is not in the merge tier")
+    if ["npm", "run", "test:web"] not in at_root:
+        bad.append("web-unit's command runs no `npm run test:web` from the repository root")
+    root_scripts = json.loads((root / "package.json").read_text(encoding="utf-8"))["scripts"]
+    web_scripts = json.loads((root / "web/package.json").read_text(encoding="utf-8"))["scripts"]
+    if root_scripts.get("test:web") != "npm run test --workspace=web":
+        bad.append(f"package.json test:web is {root_scripts.get('test:web')!r}, not the web test")
+    if web_scripts.get("test") != "vitest run":
+        bad.append(f"web/package.json test is {web_scripts.get('test')!r}, not `vitest run`")
+    config = [line.strip() for line in (root / _VITEST_CONFIG).read_text().splitlines()]
+    shape = [line for line in config if re.match(r"(include|exclude):", line)]
+    if shape != list(_VITEST_SET_LINES):
+        bad.append(
+            f"{_VITEST_CONFIG}'s file set is {shape}, which this row does not read: it reads"
+            f" {list(_VITEST_SET_LINES)}"
+        )
+    # Under web/src and named *.test.ts, the fold's test is in the dom include's glob; the
+    # node project takes it from there when the census says it needs no DOM. Either project
+    # is web-unit's run.
+    if not (root / _REPLAY_FOLD).is_file():
+        bad.append(f"{_REPLAY_FOLD} is gone, so web-unit runs no replay fold test")
+    return bad
+
+
+def _harness_gates_scaffold(root: Path) -> None:
+    """The files the row reads, as the tree has them, and an empty folder per exemplar slice."""
+    for rel in (
+        *_HARNESS_GATES,
+        catalogue.CATALOGUE,
+        "pyproject.toml",
+        "package.json",
+        "web/package.json",
+        _VITEST_CONFIG,
+        _REPLAY_FOLD,
+    ):
+        _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
+    for slice_dir in sorted((REPO / "harness/exemplars").glob("slice_*")):
+        if slice_dir.is_dir():
+            (root / "harness/exemplars" / slice_dir.name).mkdir(parents=True, exist_ok=True)
+
+
+def _moved(name: str, old: str, new: str, expect: str) -> Control:
+    def plant(root: Path) -> None:
+        (root / new).parent.mkdir(parents=True, exist_ok=True)
+        (root / old).rename(root / new)
+
+    return Control(name, plant, True, expect)
+
+
+def _new_slice(root: Path) -> None:
+    (root / "harness/exemplars/slice_9").mkdir(parents=True)
+
+
+THE_HARNESS_GATES_RUN_IN_THE_MERGE_TIER = Row(
+    name="the-harness-replay-and-exemplar-gates-run-in-the-merge-tier",
+    check=harness_gates_violations,
+    scaffold=_harness_gates_scaffold,
+    controls=(
+        *(
+            _moved(
+                f"{rel} renamed out of pytest's python_files",
+                rel,
+                rel.replace("tests/test_", "tests/check_"),
+                f"{rel} is not in the suite's universe",
+            )
+            for rel in _HARNESS_GATES
+        ),
+        _moved(
+            "the replay gate moved under tests/rails, which the suite prunes",
+            "tests/test_harness_replay.py",
+            "tests/rails/test_harness_replay.py",
+            "tests/test_harness_replay.py is not in the suite's universe",
+        ),
+        *(
+            _plant(
+                f"{gate} renamed",
+                rel,
+                f"def {gate}(",
+                f"def _{gate}(",
+                expect=f"{rel} has no {gate}",
+            )
+            for rel, gate in _HARNESS_GATES.items()
+        ),
+        _plant(
+            "a slice dropped from _EXPECTED_SLICES",
+            "tests/test_harness_exemplars.py",
+            ', "slice_5"}',
+            "}",
+            expect="harness/exemplars/slice_5 is not in _EXPECTED_SLICES",
+        ),
+        Control(
+            "a new slice the pinned set does not name",
+            _new_slice,
+            True,
+            "harness/exemplars/slice_9 is not in _EXPECTED_SLICES",
+        ),
+        _plant(
+            "web-unit without npm run test:web",
+            catalogue.CATALOGUE,
+            '  { argv = ["npm", "run", "test:web"] },\n',
+            "",
+            expect="web-unit's command runs no `npm run test:web`",
+        ),
+        _plant(
+            "the root test:web script pointed elsewhere",
+            "package.json",
+            '"test:web": "npm run test --workspace=web"',
+            '"test:web": "npm run test --workspace=desktop"',
+            expect="package.json test:web is",
+        ),
+        _plant(
+            "the web test script narrowed to one folder",
+            "web/package.json",
+            '"test": "vitest run"',
+            '"test": "vitest run src/app"',
+            expect="web/package.json test is",
+        ),
+        _plant(
+            "the vitest include narrowed",
+            _VITEST_CONFIG,
+            "include: ['src/**/*.{test,spec}.{ts,tsx}'],",
+            "include: ['src/{app,pages}/**/*.{test,spec}.{ts,tsx}'],",
+            expect="which this row does not read",
+        ),
+        _plant(
+            "the harness folder excluded",
+            _VITEST_CONFIG,
+            "exclude: NODE_FILES,",
+            "exclude: [...NODE_FILES, 'src/harness/**'],",
+            expect="which this row does not read",
+        ),
+        _moved(
+            "replayFold.test.ts renamed out of the test glob",
+            _REPLAY_FOLD,
+            "web/src/harness/replayFold.check.ts",
+            f"{_REPLAY_FOLD} is gone",
+        ),
+    ),
+)
+
+ROWS = (*ROWS, THE_HARNESS_GATES_RUN_IN_THE_MERGE_TIER)
 
 
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
