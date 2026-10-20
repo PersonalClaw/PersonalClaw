@@ -79,6 +79,7 @@ _JS_TOOLS = (
     ("docs/screenshots/capture.mjs", []),
     ("docs/demo/capture_demo.mjs", []),
     ("scripts/motion_frame_budget.mjs", []),
+    ("docs/design/buddy/decisions/rig-measure.mjs", []),
 )
 
 _NOTHING_NAMED = "Name the scratch home this runs against"

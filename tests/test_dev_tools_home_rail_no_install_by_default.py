@@ -1,8 +1,8 @@
 """🪤 The rail: no committed dev tool can reach the install by default.
 
-The trees a developer runs tools from by hand — ``scripts/``, ``harness/`` and the docs capture
-tooling (the showcase, demo and brand-card scripts with the runbooks that say how to run them) —
-are held to three things:
+The trees a developer runs tools from by hand — ``scripts/``, ``harness/``, the docs capture
+tooling (the showcase, demo and brand-card scripts with the runbooks that say how to run them) and
+the buddy rig spike's measurement with its record — are held to three things:
 
 * **no literal real-home path.** Nothing spells the default home's folder, whether as a path
   (``~/.personalclaw``, ``$HOME/.personalclaw``), joined onto the user's home, or as the product's
@@ -34,7 +34,14 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 
 #: The trees held to the rule: directories, so a new tool in one is covered the day it lands.
-TREES = ("scripts/", "harness/", "docs/screenshots/", "docs/demo/", "docs/brand/")
+TREES = (
+    "scripts/",
+    "harness/",
+    "docs/screenshots/",
+    "docs/demo/",
+    "docs/brand/",
+    "docs/design/buddy/decisions/",
+)
 
 #: Files a check must see, so a scan that stopped reading a tree fails here instead of passing.
 KNOWN_TOOLS = (
@@ -50,6 +57,8 @@ KNOWN_TOOLS = (
     "docs/screenshots/CAPTURE.md",
     "docs/demo/capture_demo.mjs",
     "docs/brand/social_preview.mjs",
+    "docs/design/buddy/decisions/rig-measure.mjs",
+    "docs/design/buddy/decisions/rig-window.cjs",
 )
 
 _HOME_LITERAL = re.compile(r"(?<![\w\]\-.])\.personalclaw(?![\w-])|\bCONFIG_DIR_NAME\b")

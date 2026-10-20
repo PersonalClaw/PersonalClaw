@@ -66,7 +66,7 @@ export function orbLookOf(value: unknown): OrbLook | null {
 const BADGE_GLYPHS: Record<OrbBadge, string> = { approval: '!', input: '?', error: '×' }
 
 /** The instant a still frame is drawn at: the one `thinking-orbs` paints under reduced motion. */
-const STILL_AT = 0.6
+export const STILL_AT = 0.6
 const stills = new Map<OrbState, ModeFrame>()
 /** A drawing held at one instant, kept per drawing so the painter sees the same function each render. */
 function stillOf(drawing: OrbState): ModeFrame {
@@ -103,7 +103,7 @@ function onVisibilityChange(cb: () => void): () => void {
 /** The ink a token resolves to, in a form the painter takes (`#rgb`, `#rrggbb`, `rgb()`). A system
  *  colour or a colour function is resolved by painting it once; `undefined` leaves the painter's
  *  own grey. */
-function inkOf(name: string): string | undefined {
+export function inkOf(name: string): string | undefined {
   const value = name.startsWith('--') ? computedToken(name).trim() : name
   if (!value) return undefined
   if (/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(value) || /^rgba?\(/i.test(value)) return value
@@ -120,7 +120,7 @@ function inkOf(name: string): string | undefined {
 }
 
 /** The ink for `token`, read again whenever the scheme, the mode or an owner's colour moves it. */
-function useInk(token: string): string | undefined {
+export function useInk(token: string): string | undefined {
   const [ink, setInk] = useState(() => inkOf(token))
   useEffect(() => {
     setInk(inkOf(token))
