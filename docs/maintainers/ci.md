@@ -218,6 +218,15 @@ entry to the `ci.yml` and `breadth.yml` jobs it maps to, in both directions:
   is on a closed not-yet-mapped list, `install-smoke`, until its smokes move into scripts the
   supply-chain check and the installer rail read; the list only shrinks, and names only jobs
   that exist.
+- No job outside the catalogue runs a test, in any workflow file. The row
+  "no-workflow-job-outside-the-catalogue-runs-a-test" reads every job no entry is mapped to,
+  with the local actions it calls, and refuses a command whose word is a test runner:
+  `pytest`, `python -m pytest` (or `unittest`, `tox`, `nox`), `vitest`, `playwright`, `jest`,
+  `mocha`, `tox`, `nox`, `npm test`, `npm run test*`, and `make test`, `check`, `gate`,
+  `e2e*` or `test-*`. It reads the command behind `NAME=value`, `env`, `cd ... &&`, `uv run`,
+  `npx` and `npm exec`. A word that only names a runner (`echo pytest`, `pip install
+  pytest`) runs none. A new test goes in an entry, whose command the row above holds to its
+  job.
 - `breadth.yml` names each suite leg and its shard count as literals (`--leg ubuntu --shard
   ${{ matrix.shard }}/4`), as `ci.yml` does. Its steps that must not install the project first
   run the uv-managed interpreter of the job's Python, `"$(uv python find "$PY")"`, which the
