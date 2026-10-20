@@ -16,6 +16,12 @@
 # and CI's `lint` job is the first thing that notices. This re-checks the whole
 # tree under the same tools CI uses, so a lint break is caught before the push.
 #
+# The asset-licences gate runs `scripts/check_asset_licenses.py` (under a second)
+# when the outgoing commits add or rename a tracked file outside `src/`: a new
+# fixture, screenshot, font or binary must be recorded in ASSET_LICENSES.json, and
+# CI's checks and the release build fail on one that is not. Thirteen unrecorded
+# files once reached `main` that way and failed a release build.
+#
 # Scope: each half runs ONLY when the outgoing commits touch paths it owns, so a
 # backend-only push skips the frontend chain and vice versa. Ref ranges arrive on
 # stdin per githooks(5).
@@ -48,6 +54,7 @@ ZERO=0000000000000000000000000000000000000000
 
 needs_gate=0
 needs_lint=0
+needs_assets=0
 # Is any outgoing ref RELEASE-relevant (`main`, a release branch, or a tag)? Those keep the
 # full local render-smoke chain; ordinary topic branches let CI be the gate. The reasoning is
 # recorded above the gate block below.
@@ -59,6 +66,7 @@ if [ -t 0 ]; then
   # a manual run is a check of this tree, which is exactly what it claims to be.
   needs_gate=1
   needs_lint=1
+  needs_assets=1
   # A manual run is someone deliberately asking for the real gate, so it counts as
   # release-grade and is never downgraded to "CI will catch it".
   release_ref=1
@@ -110,6 +118,7 @@ while [ ! -t 0 ] && read -r local_ref local_sha _remote_ref remote_sha; do
     # A new branch AND no shared history: nothing to compare. Gate rather than skip blind.
     needs_gate=1
     needs_lint=1
+    needs_assets=1
     continue
   fi
   # shellcheck disable=SC2086 — FRONTEND_PATHS is a deliberate word list
@@ -119,6 +128,11 @@ while [ ! -t 0 ] && read -r local_ref local_sha _remote_ref remote_sha; do
   # shellcheck disable=SC2086 — PYTHON_PATHS is a deliberate word list
   if [ -n "$(git diff --name-only "$range" -- $PYTHON_PATHS 2>/dev/null || echo changed)" ]; then
     needs_lint=1
+  fi
+  # A file added or renamed outside src/ may be a fixture, a screenshot, a font or a binary the
+  # licence record must name. (src/ holds code; its fixture root is covered by CI's checks.)
+  if [ -n "$(git diff --name-only --diff-filter=AR "$range" -- . ':(exclude)src/' 2>/dev/null || echo changed)" ]; then
+    needs_assets=1
   fi
 done
 
@@ -260,6 +274,49 @@ if [ "$needs_lint" -eq 1 ]; then
   fi
 else
   skip_python_checks "no Python changes outgoing"
+fi
+
+# Every new fixture, screenshot, font or binary has a licence record (ASSET_LICENSES.json).
+# The check is standard-library Python and reads only the tracked tree, so it runs in under a
+# second on any Python 3. The interpreter is resolved as the lint gates resolve their tools:
+# the repo's venv first, then a `python3` on PATH. Each candidate must actually run
+# (`-c 'import sys'`): a version-manager shim with no version set is on PATH and exits
+# non-zero, and a check that cannot start says nothing about the assets. With no working
+# interpreter the gate is skipped, with the reason and what the probe printed; CI still checks.
+asset_python_probe="$report_dir/asset-python-probe.log"
+: >"$asset_python_probe"
+asset_python=""
+if [ "$needs_assets" -eq 1 ] && [ -f scripts/check_asset_licenses.py ]; then
+  for candidate in .venv/bin/python python3; do
+    case "$candidate" in
+      */*) [ -x "$candidate" ] || continue ;;
+      *) command -v "$candidate" >/dev/null 2>&1 || continue ;;
+    esac
+    if "$candidate" -c 'import sys' >>"$asset_python_probe" 2>&1; then
+      asset_python=$candidate
+      break
+    fi
+    echo "($candidate -c 'import sys' exited non-zero)" >>"$asset_python_probe"
+  done
+fi
+if [ "$needs_assets" -eq 1 ]; then
+  if [ ! -f scripts/check_asset_licenses.py ]; then
+    skip_check "asset-licenses" "this tree has no scripts/check_asset_licenses.py; CI still checks"
+  elif [ -n "$asset_python" ]; then
+    run_check "asset-licenses" "$asset_python" scripts/check_asset_licenses.py
+    if [ "$last_result" = "FAIL" ]; then
+      echo "" >&2
+      echo "pre-push: a tracked asset has no licence record — record it in ASSET_LICENSES.json" >&2
+      echo "          (see the asset-licenses detail below), commit, and push again." >&2
+    fi
+  else
+    echo "pre-push: no working Python for the asset licence check — skipping it (CI still checks)."
+    record_result "asset-licenses" "SKIP" \
+      "no working Python (.venv/bin/python or python3) runs here; CI still checks" \
+      "$asset_python_probe"
+  fi
+else
+  skip_check "asset-licenses" "no file added or renamed outside src/"
 fi
 
 if [ "$needs_gate" -eq 0 ]; then
