@@ -91,7 +91,9 @@ differ by glyph as well as tone, so no two waiting or failed states are told apa
 - **The send button:** while a turn runs, it is the Stop control, morphed from the send arrow with
   a thin sweep. It stays the Stop control. The sweep is a quarter arc in the button's own ink, just
   inside its rim, that turns once per Loading sweep (`sweep()` in `web/src/design/motion.ts`), and
-  it goes when the turn ends. Under reduced motion there is no sweep, and the button is not
+  it goes when the turn ends. It reads the turn's phase as the orb does: while the turn waits on
+  the owner (`approval` or `input`) the arc holds still where it is, and it turns on from there
+  once the turn runs again. Under reduced motion there is no sweep, and the button is not
   remounted when its kind changes, so keyboard focus stays on it.
 - **64 px, rarely:** only in empty states, voice mode and the buddy's expanded view. The empty chat
   opens on it, still and in the rest colour (`idle`), where the brand mark used to morph: nothing

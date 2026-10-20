@@ -3,9 +3,11 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUp, Square, CornerDownLeft, ListPlus, Sparkles, Mic, Ear, Loader2, Paperclip, Check, MonitorUp } from 'lucide-react'
 import { IconButton } from './IconButton'
 import { duration, spring, physics, expr, sweep } from '../design/motion'
+import { ORB_LOOKS } from './AgentOrb'
 import { AgentPill, ModelPill, ApprovalPill, ReasoningPill, ReplyStylePill, effortsForAgent, PlusMenu } from './composer/controls'
 import { MarkdownInput, type MarkdownInputHandle } from './composer/MarkdownInput'
 import { resolveSendButton } from './composer/sendButtonState'
+import { StopSweep } from './composer/StopSweep'
 import { DROP_GROW_PX, RISE_GROW_PX, riseScale } from './composer/rise'
 import { useMicRecorder } from './composer/useMicRecorder'
 import type { ComposerProps } from './composer/types'
@@ -33,7 +35,7 @@ const FOCUS_RING = { outlineWidth: '2px', outlineStyle: 'solid', outlineColor: '
  *  agent/model/mode options. Pill cluster: [+] agent · model · approval ·
  *  reasoning … [mic] [send]. Textarea auto-grows to a user-resizable max. */
 export function Composer({
-  value, onChange, onSend, streaming, processing, onStop, placeholder = 'Ask anything',
+  value, onChange, onSend, streaming, phase, processing, onStop, placeholder = 'Ask anything',
   controls = DEFAULT_CONTROLS, data, selection, onSelect, onAttach, onOpenPrompts, plusMenuExtra, onFocusChange,
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
   onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, servedModel, autoChain, minChars = 1,
@@ -190,8 +192,12 @@ export function Composer({
   const sendKind = resolveSendButton({ processing: !!processing, streaming: !!streaming, canSend, canQueue: !!canQueue, canSteer: !!canSteer, justSent, held: !!sendHeldReason })
   // While a turn runs the button is the Stop control: a stop square with a thin arc turning round
   // it (`docs/design/agent-orb.md`). The lap is `design/motion`'s `sweep()`, which is null under
-  // reduced motion, and then no arc is drawn: a loop has no shorter version.
-  const stopSweep = sendKind === 'stop' ? sweep() : null
+  // reduced motion, and then no arc is drawn: a loop has no shorter version. The arc reads the
+  // turn's phase as the agent orb does (`ORB_LOOKS[phase].moves`): it turns while the turn works and
+  // holds still while it waits on the owner (an approval or a question), so the card that needs her
+  // holds her attention. A turn the gateway has not described yet is waiting to start, which moves.
+  const stopSweep = sendKind === 'stop' && sweep() !== null
+  const turning = !phase || ORB_LOOKS[phase].moves
   const actions = (
     <div className="flex items-center gap-xs">
       {/* The reason rides `disabledReason`, NOT the label. Folding it into the label mutates the
@@ -253,8 +259,9 @@ export function Composer({
           (resolveSendButton) so it's unit-testable without mounting the composer. Every kind
           renders in this one box, so a change of kind updates the same button in place: a Send
           button with keyboard focus is the Stop control once the turn starts, still focused.
-          `data-stop-sweep` says which branch the Stop control took. */}
-      <span className="relative inline-flex" data-stop-sweep={sendKind === 'stop' ? (stopSweep ? 'animated' : 'instant') : undefined}>
+          `data-stop-sweep` says which branch the Stop control took: `animated` while its arc turns,
+          `still` while the turn waits on the owner, `instant` under reduced motion (no arc). */}
+      <span className="relative inline-flex" data-stop-sweep={sendKind === 'stop' ? (!stopSweep ? 'instant' : turning ? 'animated' : 'still') : undefined}>
         {(() => {
           switch (sendKind) {
             // one-shot pre-send processing (e.g. the goal analyze pass) → a spinning
@@ -286,17 +293,7 @@ export function Composer({
               return <IconButton icon={ArrowUp} label="Send message" filled disabled={false} size={40} onClick={fireSend} iconKey="send" />
           }
         })()}
-        {/* The sweep: a quarter arc in the button's own ink, just inside its rim, outside the
-            square. Decoration over the button, so it takes no pointer and no name. */}
-        {stopSweep && (
-          <motion.span aria-hidden data-stop-sweep-arc
-            className="pointer-events-none absolute inset-0 text-on-primary"
-            initial={{ rotate: 0 }} animate={{ rotate: 360 }} transition={stopSweep}>
-            <svg viewBox="0 0 40 40" fill="none" className="size-full">
-              <circle cx={20} cy={20} r={17} stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" pathLength={100} strokeDasharray="25 75" />
-            </svg>
-          </motion.span>
-        )}
+        {stopSweep && <StopSweep turning={turning} />}
       </span>
     </div>
   )

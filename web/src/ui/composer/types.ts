@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { AgentDef, AgentProvider, DiscoveredAgent, ModelItem, ApprovalMode, TaskMode, ReasoningEffort } from '../../lib/api'
+import type { WorkPhase } from '../../lib/workPhase'
 
 /** Which controls a composer instance surfaces. Chat enables most; the goal
  *  composer enables only the shared core (send + optimize) and supplies its own
@@ -46,6 +47,11 @@ export interface ComposerProps {
   onChange: (v: string) => void
   onSend: () => void
   streaming?: boolean
+  /** The running turn's phase (`lib/workPhase.ts`), `null` until the gateway has said one. The Stop
+   *  control reads it as the agent orb does: its sweep holds still while the turn waits on the
+   *  owner (an approval or a question) and turns again when the turn runs again. A host with no
+   *  phase to give leaves it out, and the sweep turns for as long as the turn streams. */
+  phase?: WorkPhase | null
   /** Send button shows a circular spinner (no stop/send) — for a one-shot
    *  pre-send processing step like the goal composer's analyze pass. */
   processing?: boolean

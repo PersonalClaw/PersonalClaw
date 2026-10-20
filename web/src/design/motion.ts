@@ -308,7 +308,8 @@ export function regionStagger(): Transition | null {
 }
 
 /** The sweep: one linear turn of a thin arc per Loading sweep (`duration.loading`), repeated for
- *  as long as the arc is shown. The composer's Stop control wears it while a turn runs.
+ *  as long as the arc turns. The composer's Stop control wears it while a turn runs, and holds it
+ *  still while the turn waits on the owner (`ui/composer/StopSweep`).
  *
  *  Returns `null` under `prefers-reduced-motion`, and `null` means NO SWEEP AT ALL: the caller
  *  draws no arc. A loop has no shorter version to fall back to, since a zero-length lap repeated

@@ -150,6 +150,24 @@ describe('a running turn has one orb, at the head of its reply', () => {
     expect(orbs()).toHaveLength(0)
   })
 
+  it('the Stop control’s sweep goes still with the orb while the turn waits on her, and turns again after', async () => {
+    await aTurnStarts()
+    const sweep = () => screen.getByRole('button', { name: 'Stop' }).closest('[data-stop-sweep]')?.getAttribute('data-stop-sweep')
+    pushFrame('work_phase', { ...runningState({ session: SESSION, phase: 'tool', line: 'Terminal git log', seq: 2 }) })
+    await waitFor(() => expect(line()).toBe('Terminal git log'))
+    // Positive control: a running step sweeps, so "still" below is the wait's and nothing else's.
+    expect(sweep()).toBe('animated')
+
+    pushFrame('work_phase', { ...runningState({ session: SESSION, phase: 'approval', line: 'Needs your OK: shell', seq: 3 }) })
+    await waitFor(() => expect(line()).toBe('Needs your OK: shell'))
+    expect((orbs()[0] as HTMLElement).dataset.agentOrb).toBe('still')
+    expect(sweep(), 'the Stop control kept sweeping while the turn waited on her OK').toBe('still')
+
+    pushFrame('work_phase', { ...runningState({ session: SESSION, phase: 'streaming', line: 'Writing', seq: 4 }) })
+    await waitFor(() => expect(line()).toBe('Writing'))
+    expect(sweep(), 'the sweep stayed still once the turn ran again').toBe('animated')
+  })
+
   it('never shows the old indicator’s guessed label beside it', async () => {
     await aTurnStarts()
     await waitFor(() => expect(orbs()).toHaveLength(1))

@@ -12,7 +12,9 @@ import type { ComposerProps } from './types'
 // reduced motion there is no sweep at all, never a faster one, and the Stop control is still
 // there and still stops the turn. The button's other kinds (send, steer, queue, processing) carry
 // no sweep, and the sweep never remounts the button: a Send button that had keyboard focus is the
-// Stop control once the turn starts, with the focus still on it.
+// Stop control once the turn starts, with the focus still on it. While the turn waits on her (an
+// approval or a question) the sweep holds still, as the agent orb does, and turns on once the turn
+// runs again.
 //
 // jsdom runs framer's animations on its timer frames, so the arc's turn is read from the
 // transform framer writes, against the frame clock framer drew it by.
@@ -48,6 +50,8 @@ vi.mock('../../lib/api', async (orig) => {
 
 const { Composer } = await import('../Composer')
 const { runtime } = await import('../../design/runtime')
+const { ORB_LOOKS } = await import('../AgentOrb')
+const { WORK_PHASES } = await import('../../lib/workPhase')
 
 const CONTROLS = { agent: false, model: false, approval: false, reasoning: false, attach: false, mic: false, optimize: false }
 const LOADING = runtime.durationLoading
@@ -64,6 +68,11 @@ function angleOf(el: HTMLElement): number {
   const m = /rotate\((-?[\d.]+)deg\)/.exec(el.style.transform)
   return m ? Number(m[1]) : 0
 }
+/** The same angle as a turn of the circle, in [0, 360). */
+const turnOf = (el: HTMLElement) => ((angleOf(el) % 360) + 360) % 360
+/** How far forward the arc went from `a` to `b`, in degrees, in [0, 360). */
+const forward = (a: number, b: number) => (((b - a) % 360) + 360) % 360
+const sweepOf = () => stopControl().closest('[data-stop-sweep]')?.getAttribute('data-stop-sweep')
 const wait = (ms: number) => act(async () => { await new Promise((r) => setTimeout(r, ms)) })
 /** Wait for the arc's first drawn frame, however late a loaded machine draws it. */
 async function untilTurning(arc: HTMLElement) {
@@ -196,5 +205,82 @@ describe('the sweep never remounts the button', () => {
     rerender(composer({ value: 'next', streaming: false }))
     expect(screen.getByRole('button', { name: 'Send message' })).toBe(send)
     expect(document.activeElement, 'the keyboard focus was lost when the turn ended').toBe(send)
+  })
+})
+
+// ── While the turn waits on her, the sweep holds still, as the orb does ──────────────────────────
+//
+// The agent orb goes still the moment the owner is needed: an approval or a question is a still
+// frame, so the card that needs her holds her attention (`docs/design/agent-orb.md`). The Stop
+// control reads the turn's phase the same way, from the orb's own table (`ORB_LOOKS`): its sweep
+// turns exactly while the orb moves, and while the turn waits on her the arc holds still where it
+// is, still drawn, and turns on from there once the turn runs again, so it never jumps to the top.
+describe('while the turn waits on her, the sweep holds still, as the orb does', () => {
+  it('an approval and a question are still frames of the orb', () => {
+    // Positive control for the rows below, which read the same table: both waits are in it, still.
+    expect(ORB_LOOKS.approval.moves).toBe(false)
+    expect(ORB_LOOKS.input.moves).toBe(false)
+    expect(ORB_LOOKS.tool.moves).toBe(true)
+  })
+
+  it.each([...WORK_PHASES])('%s: the sweep turns exactly when the orb moves, and the arc is drawn either way', (phase) => {
+    render(composer({ streaming: true, phase }))
+    expect(sweepOf()).toBe(ORB_LOOKS[phase].moves ? 'animated' : 'still')
+    expect(arcs(), 'holding still took the arc away').toHaveLength(1)
+  })
+
+  it('a turn the gateway has not described yet is waiting to start, and that moves', () => {
+    render(composer({ streaming: true, phase: null }))
+    expect(sweepOf()).toBe('animated')
+  })
+
+  it('under reduced motion a wait draws no arc either', () => {
+    REDUCE = true
+    render(composer({ streaming: true, phase: 'approval' }))
+    expect(arcs()).toHaveLength(0)
+    expect(sweepOf()).toBe('instant')
+  })
+
+  it.each(['approval', 'input'] as const)('%s: no frame turns the arc while the turn waits, and it turns on from where it held after', async (waiting) => {
+    const { rerender } = render(composer({ streaming: true, phase: 'tool' }))
+    const arc = arcs()[0]
+    await untilTurning(arc)
+    // Held well away from the top, so an arc that started again from the top cannot pass for one
+    // that went on from where it held.
+    for (let i = 0; i < 300 && (turnOf(arc) < 90 || turnOf(arc) > 270); i++) await wait(5)
+    const waitedAt = performance.now()
+    rerender(composer({ streaming: true, phase: waiting }))
+    // Read on a frame drawn after the wait began, however late a loaded machine draws it.
+    for (let i = 0; i < 150 && frameData.timestamp <= waitedAt; i++) await wait(10)
+    await wait(30)
+    const held = turnOf(arc)
+    expect(held, 'the arc was not held away from the top').toBeGreaterThan(60)
+    expect(held).toBeLessThan(300)
+    await wait(300)
+    expect(turnOf(arc), 'the arc turned while the turn waited on her').toBe(held)
+    expect(arcs()[0], 'holding still drew a new arc').toBe(arc)
+    expect(sweepOf()).toBe('still')
+    // The page renders again while she reads the card (the gateway says the wait again): the arc
+    // stays where it held.
+    rerender(composer({ streaming: true, phase: waiting, contextPct: 3 }))
+    await wait(100)
+    expect(turnOf(arc), 'a re-render moved the held arc').toBe(held)
+
+    // The turn runs again: the arc goes on from where it held, at one lap per Loading sweep. Read
+    // on a frame drawn after it, since a render's own write to the arc is not a drawn frame.
+    const before = performance.now()
+    rerender(composer({ streaming: true, phase: 'streaming' }))
+    for (let i = 0; i < 150 && (frameData.timestamp <= before || turnOf(arc) === held); i++) await wait(20)
+    const [t0, a0] = [frameData.timestamp, turnOf(arc)]
+    expect(a0, 'the arc never turned again').not.toBe(held)
+    expect(arcs()[0], 'turning again drew a new arc').toBe(arc)
+    expect(sweepOf()).toBe('animated')
+    const lap = runtime.durationLoading * 1000
+    const due = (360 * (t0 - before)) / lap
+    expect(forward(held, a0), `the arc went ${forward(held, a0).toFixed(0)}° on from where it held, more than the ${due.toFixed(0)}° the time since allows: it jumped`).toBeLessThan(due + 5)
+    await wait(250)
+    const [t1, a1] = [frameData.timestamp, turnOf(arc)]
+    const rate = (forward(a0, a1) / (t1 - t0)) * 1000
+    expect(Math.abs(rate - 360 / runtime.durationLoading) / (360 / runtime.durationLoading), `${rate.toFixed(1)}°/s is not one lap per Loading sweep`).toBeLessThan(0.05)
   })
 })

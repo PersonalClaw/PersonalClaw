@@ -57,7 +57,7 @@ export function ChatComposer({ composer, stream, sessionId, started, onOpenFile:
   speakingTurn: number | null
 }) {
   const { acpFor, activatePlanMode, applySelection, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerRef, data, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads, setRoutingSuggestion } = composer
-  const { sessionRef, turns, streaming, takesSteers, sessionSkillsEpoch, queued, setQueued, steered, followups, setFollowups, contextPct, contextWindow, autoChain, startedBy } = stream
+  const { sessionRef, turns, streaming, turnPhase, takesSteers, sessionSkillsEpoch, queued, setQueued, steered, followups, setFollowups, contextPct, contextWindow, autoChain, startedBy } = stream
   return (
     // `data-tour="chat"` — the product tour's chat stop points at the composer stage.
     // On the chat route this wrapper is the composer.
@@ -238,7 +238,7 @@ export function ChatComposer({ composer, stream, sessionId, started, onOpenFile:
             false on every home that has bound anything. */}
         <BundledFloorNotice />
         <ComposerStage ref={composerRef} value={input} onChange={(v) => { setInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
-          streaming={streaming} onStop={stop} controls={CHAT_CONTROLS} data={data}
+          streaming={streaming} phase={turnPhase} onStop={stop} controls={CHAT_CONTROLS} data={data}
           selection={selection} onSelect={applySelection} onAttach={attach} onFocusChange={setComposerFocused}
           replyStyle={{ ...replyStyle.pill, onSelect: (s) => void replyStyle.pill.onSelect(s) }}
           onOpenPrompts={() => setPromptPaletteOpen(true)}
