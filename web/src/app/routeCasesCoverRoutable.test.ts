@@ -83,8 +83,9 @@ describe('the routable set and the render switch agree', () => {
 
   it('🪤 vacuity floor — the scanner actually found the three lists', () => {
     // Every assertion here reads source. A regex that matched nothing would make the check above
-    // pass on an empty array, so the sizes are pinned as non-trivial.
-    expect(navIds().length).toBeGreaterThanOrEqual(15)
+    // pass on an empty array, so the sizes are pinned as non-trivial. The sidebar is meant to hold
+    // fewer rows as destinations merge (#3812), so its floor is set well under today's count.
+    expect(navIds().length).toBeGreaterThanOrEqual(10)
     expect(routableExtras().length).toBeGreaterThanOrEqual(5)
     expect(caseLabels().length).toBeGreaterThanOrEqual(20)
     // And that they overlap at all — a scanner reading two unrelated regions would also pass above.

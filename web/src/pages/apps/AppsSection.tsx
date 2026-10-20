@@ -6,7 +6,7 @@ import {
   Blocks, Plus, Download, Power, Trash2, Settings2, FolderOpen,
   ShieldCheck, LayoutGrid, RefreshCw, Plug, ChevronDown,
   MoreVertical, Database, Archive, HardDrive, MapPin, AlertTriangle,
-  Boxes, Package, Store, KeyRound, RotateCw, ShieldAlert, Wrench,
+  Boxes, Package, KeyRound, RotateCw, ShieldAlert, Wrench,
 } from 'lucide-react'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { fadeEnter } from '../../design/motion'
@@ -710,8 +710,12 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
                   Deliberately NOT in `PageTitle` itself: ~30 destinations render a title beside
                   header actions where truncating a long name IS the right answer, so a
                   primitive-wide `shrink-0` would trade this defect for thirty. */}
-              <PageTitle className="shrink-0">Apps</PageTitle>
-              {/* 🔴 THE ONLY HEADER-ROW `Segmented` IN THE APP WITH NO COLLAPSE STRATEGY, and it is the
+              <PageTitle className="shrink-0">{isStore ? 'Store' : 'Apps'}</PageTitle>
+              {/* The Store is a tab of Capabilities of its own (#3817), so this strip switches the Apps
+                  tab between Native and Library, and the Store tab draws none. The measurements below
+                  were taken with the Store as a third option here; two options are narrower still.
+
+                  🔴 THE ONLY HEADER-ROW `Segmented` IN THE APP WITH NO COLLAPSE STRATEGY, and it is the
                   widest thing in this row. Measured at 390px: the strip spans 86..276 (**190px**) inside a
                   ~199px slot (the header is 390 wide with 191px of shell-corner reservation), so it
                   overflowed and axe reported `target-size` **serious** — `Library` ∩ `Install from URL`
@@ -761,13 +765,14 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
                   that width used to crush its tabs rather than fold — folding is the improvement there too.
                   The ≥1180px margin is 12px, and running out of it folds to a named pill, which is the
                   designed rung rather than a clip. */}
-              <Segmented ariaLabel="Native, Library, or Store" collapse="menu" iconOnly={isMobile}
-                value={view} onChange={setView}
-                options={[
-                  { key: 'native', label: 'Native', icon: Boxes },
-                  { key: 'library', label: 'Library', icon: Package },
-                  { key: 'store', label: 'Store', icon: Store },
-                ]} />
+              {!isStore && (
+                <Segmented ariaLabel="Native or Library" collapse="menu" iconOnly={isMobile}
+                  value={view} onChange={setView}
+                  options={[
+                    { key: 'native', label: 'Native', icon: Boxes },
+                    { key: 'library', label: 'Library', icon: Package },
+                  ]} />
+              )}
             </div>
           }
           right={<HeaderActions>

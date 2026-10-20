@@ -3,7 +3,7 @@ import { MotionConfig, motion } from 'framer-motion'
 import { ease, duration } from '../design/motion'
 import { armCueAudio } from '../design/soundCues'
 import { installPushCuePlayback } from './pushCuePlayback'
-import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, Radar, Repeat, Settings, Smartphone, Sparkles, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
+import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, Plus, Puzzle, Radar, Repeat, Settings, Smartphone, Sparkles, Store, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellThreadRail } from './threadRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
@@ -52,6 +52,8 @@ import { getNavApps, onNavAppsChange } from '../pages/apps/navApps'
 import { isDisclosed, undisclosedCount, useNavDisclosure } from './navDisclosure'
 import { ViewModesProvider, useViewModeState } from './viewModes'
 import type { AppSummary } from '../lib/api'
+import { CapabilitiesSection } from '../pages/capabilities/CapabilitiesSection'
+import { isCapabilityRoute } from '../pages/capabilities/capabilityTabs'
 
 // Heavier / less-frequently-first-viewed pages are code-split so the initial
 // chat view loads lean (Monaco, graph SVG, settings panels, etc. load on demand).
@@ -95,19 +97,14 @@ const NAV: NavItem[] = [
   { id: 'files', label: 'Files', icon: Files, section: 'Platform' },
   { id: 'artifacts', label: 'Artifacts', icon: FileCode, section: 'Platform' },
   { id: 'terminal', label: 'Terminal', icon: Terminal, section: 'Platform' },
-  // Capabilities group (was "Build").
-  { id: 'agents', label: 'Agents', icon: Users, section: 'Capabilities' },
-  { id: 'tools', label: 'Tools', icon: Wrench, section: 'Capabilities' },
-  { id: 'skills', label: 'Skills', icon: Sparkles, section: 'Capabilities' },
+  // Capabilities group (was "Build"). Capabilities is one destination (#3817): Agents, Skills,
+  // Tools, Prompts, Apps and the Store are its tabs, each still at its own address (ROUTABLE
+  // below). Learning and Workflows keep their rows here until their own moves (#3815, #3816).
+  { id: 'capabilities', label: 'Capabilities', icon: Puzzle, section: 'Capabilities' },
   { id: 'learning', label: 'Learning', icon: Brain, section: 'Capabilities' },
-  { id: 'prompts', label: 'Prompts', icon: FileText, section: 'Capabilities' },
   { id: 'workflows', label: 'Workflows', icon: Workflow, section: 'Capabilities' },
-  // Apps group: the Apps page (library + Store view) + each installed app's contributed
-  // UI pages are injected here dynamically at render (see appNavItems).
-  // The label says what the click opens: the route lands on the LIBRARY view, whose h1 is
-  // "Apps" — the Store is its ?view=store sub-view. A nav item reading "Store" over a page
-  // titled "Apps" was the product's most-visible naming drift (the site says "Apps" too).
-  { id: 'apps', label: 'Apps', icon: Blocks, section: 'Apps' },
+  // The app pages the owner pinned (`navApps`) follow, under their own Apps header: an app's own
+  // page is a working surface, not configuration (see appNavItems).
   // Settings is pinned to the very bottom of the rail (NavRail honors pinBottom).
   { id: 'settings', label: 'Settings', icon: Settings, pinBottom: true },
 ]
@@ -121,7 +118,8 @@ const NAV: NavItem[] = [
 // until a rail is built from `/api/dashboard/views`, the command palette below is how a user
 // reaches it. That is the palette's stated job (see its comment: the always-open door to a
 // surface the rail is holding back), not a workaround.
-const ROUTABLE = new Set([...NAV.map((n) => n.id), 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control'])
+// The five pages that are Capabilities' tabs keep their own addresses (`capabilityTabs.ts`).
+const ROUTABLE = new Set([...NAV.map((n) => n.id), 'agents', 'skills', 'tools', 'prompts', 'apps', 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control'])
 /** The routes the shell renders ITSELF, full-screen, from an early return above the nav switch —
  *  `#/onboarding` and `#/companion`. Deliberately outside `NAV`/`ROUTABLE` (neither is a rail
  *  destination) and every bit as real as the ones inside it.
@@ -189,6 +187,9 @@ function renderPage(active: string, r: RouteProps) {
     case 'learning': return <LearningPage {...r} />
     case 'tools': return <ToolsPage {...r} />
     case 'agents': return <AgentsSection {...r} />
+    // Capabilities' own address opens its first tab. After the tab's own case, so the route tables
+    // the censuses read place each page on its tab's route.
+    case 'capabilities': return <AgentsSection {...r} />
     case 'apps': return <AppsSection {...r} />
     case 'app': return <AppHostPage {...r} />
     case 'settings': return <SettingsPage {...r} />
@@ -543,7 +544,11 @@ function AppInner() {
   // Highlight-only — must NOT change which page renders.
   const active = (rendered === 'loop' || rendered === 'loops' || rendered === 'code') ? 'projects'
     : rendered === 'app' ? `app/${(sub ?? '').split('/')[0]}`  // light the specific app tile
-      : rendered
+      : isCapabilityRoute(rendered) ? 'capabilities'  // each tab lights its destination
+        : rendered
+  // The destination drawn: a tab of Capabilities is Capabilities, so moving between its tabs keeps
+  // the strip (and the focus on it) where it is, and only the page under it changes.
+  const surface = isCapabilityRoute(rendered) ? 'capabilities' : rendered
   // Whether the sidebar lights a thread, the one the address opens (`threadRail.tsx`). While one is
   // lit, the destination its route belongs to (Chat, Projects) is not lit beside it: one row says
   // where you are. A hook, so it sits above the early returns (React #310).
@@ -757,14 +762,14 @@ function AppInner() {
   }
 
   // Ambient active-loop count badges the Projects tile (loops live under projects now).
-  // Installed apps with an available update badge the Store nav tile with a count,
-  // so an out-of-date app is visible from any page (computed from the same /api/apps
+  // Installed apps with an available update badge the Capabilities tile, where the Apps tab is, with
+  // a count, so an out-of-date app is visible from any page (computed from the same /api/apps
   // read the Library uses — no extra poll). Summed with any SDK-set per-app badges.
   const updatesCount = (installedApps ?? []).filter((a) => a.updateAvailable).length
   const appBadgeTotal = Object.values(appBadges).reduce((a, b) => a + b, 0) + updatesCount
-  // Build the rail: static NAV with badges, then splice the dynamic app UI tiles
-  // in right after the Store tile (so they sit contiguous under the Apps section
-  // header). A per-app badge (set via the SDK setNavBadge) lights its own tile.
+  // Build the rail: static NAV with badges, then splice the dynamic app UI tiles in after the
+  // destinations, above Settings (so they sit contiguous under their Apps section header). A
+  // per-app badge (set via the SDK setNavBadge) lights its own tile.
   const navItems: NavItem[] = []
   for (const n of NAV) {
     // `badgeLabel` says what the number counts. Supplied ONLY where this shell actually knows the
@@ -773,7 +778,7 @@ function AppInner() {
     // SDK-set per-app badge's unit is app-defined and the shell must not invent one for it.
     if (n.id === 'projects' && activeLoops > 0) {
       navItems.push({ ...n, badge: String(activeLoops), badgeLabel: `${activeLoops} active loop${activeLoops === 1 ? '' : 's'}` })
-    } else if (n.id === 'apps' && appBadgeTotal > 0) {
+    } else if (n.id === 'capabilities' && appBadgeTotal > 0) {
       navItems.push({
         ...n,
         badge: String(appBadgeTotal),
@@ -782,13 +787,12 @@ function AppInner() {
           : undefined,
       })
     } else navItems.push(n)
-    if (n.id === 'apps') {
-      for (const ai of appNavItems) {
-        const badge = appBadges[ai.id.slice('app/'.length)]
-        navItems.push(badge ? { ...ai, badge: String(badge) } : ai)
-      }
-    }
   }
+  const bottom = navItems.findIndex((n) => n.pinBottom)
+  navItems.splice(bottom < 0 ? navItems.length : bottom, 0, ...appNavItems.map((ai) => {
+    const badge = appBadges[ai.id.slice('app/'.length)]
+    return badge ? { ...ai, badge: String(badge) } : ai
+  }))
   // Which rail rows SHOW. Disclosure hides rows; it never removes a route (`rendered` above is
   // untouched by it) and never removes a command below.
   const disclosedItems = navItems.filter((n) => isDisclosed(n.id, navMode, navPinned))
@@ -811,6 +815,14 @@ function AppInner() {
     { id: 'go:mission-control', label: 'Mission Control', hint: 'Go to', icon: Radar, keywords: 'attention lanes approvals needs approval your turn working idle', run: () => navigate('mission-control') },
     { id: 'go:notifications', label: 'Notifications', hint: 'Go to', icon: Bell, keywords: 'alerts feed', run: () => navigate('notifications') },
     { id: 'go:discover', label: 'Discover', hint: 'Go to', icon: Compass, keywords: 'tips tour learn features guide', run: () => navigate('discover') },
+    // Capabilities' tabs, each a row of its own: they left the sidebar for the one Capabilities row.
+    { id: 'go:agents', label: 'Agents', hint: 'Go to', icon: Users, keywords: 'Capabilities', run: () => navigate('agents') },
+    { id: 'go:skills', label: 'Skills', hint: 'Go to', icon: Sparkles, keywords: 'Capabilities', run: () => navigate('skills') },
+    { id: 'go:tools', label: 'Tools', hint: 'Go to', icon: Wrench, keywords: 'Capabilities tool servers mcp', run: () => navigate('tools') },
+    { id: 'go:prompts', label: 'Prompts', hint: 'Go to', icon: FileText, keywords: 'Capabilities', run: () => navigate('prompts') },
+    { id: 'go:apps', label: 'Apps', hint: 'Go to', icon: Blocks, keywords: 'Capabilities library installed', run: () => navigate('apps') },
+    { id: 'go:store', label: 'Store', hint: 'Go to', icon: Store, keywords: 'Capabilities apps install browse', run: () => navigate('apps?view=store') },
+    { id: 'act:add-tool-server', label: 'Add a tool server', hint: 'Action', icon: Plus, keywords: 'Capabilities tools mcp server connect', run: () => navigate('tools?add=1') },
     // The loop composer has no rail tile (loops start from Projects), so this row is its way in.
     { id: 'act:start-loop', label: 'Start a loop', hint: 'Action', icon: Repeat, keywords: 'loop goal code design autonomous plan run new', run: () => navigate('loop') },
     { id: 'act:settings', label: 'Open Settings', hint: 'Action', icon: Settings, run: () => navigate('settings') },
@@ -864,7 +876,8 @@ function AppInner() {
             </div>
             <ErrorBoundary resetKey={rendered}>
               {/* Route cross-fade (global choreography): the new page fades in on
-                  each route change — keyed on `rendered` so switching sections reads
+                  each route change — keyed on the destination drawn (`surface`: a tab of
+                  Capabilities is Capabilities) so switching sections reads
                   as a continuous transition, not a hard cut. It no longer rises: a rail
                   click is the most frequent action in the app, and a page climbing 6px
                   each time is motion that explains nothing. Enter-only (no exit-wait)
@@ -880,14 +893,23 @@ function AppInner() {
                   while it still rose, translateY(6px)) until something re-rendered the shell: the blank Files page. In
                   here, a suspension hides only the page, and this element is never hidden at all. */}
               <motion.div
-                key={rendered}
+                key={surface}
                 className="h-full"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: duration.medium, ease: ease.emphasizedDecel }}
               >
                 <Suspense fallback={<PageFallback />}>
-                  <ViewModesProvider value={viewModes}>{renderPage(rendered, { sub, navigate, navEpoch, query, setQuery })}</ViewModesProvider>
+                  <ViewModesProvider value={viewModes}>
+                    {surface === 'capabilities'
+                      ? (
+                        // The destination's tab strip over the page the address names.
+                        <CapabilitiesSection route={rendered} query={query} navigate={navigate} fallback={<PageFallback />}>
+                          {renderPage(rendered, { sub, navigate, navEpoch, query, setQuery })}
+                        </CapabilitiesSection>
+                      )
+                      : renderPage(rendered, { sub, navigate, navEpoch, query, setQuery })}
+                  </ViewModesProvider>
                 </Suspense>
               </motion.div>
             </ErrorBoundary>

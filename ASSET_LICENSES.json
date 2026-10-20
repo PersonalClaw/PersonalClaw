@@ -482,6 +482,8 @@
         "web/e2e/__screenshots__/visual.spec.ts/apps-light-darwin.png",
         "web/e2e/__screenshots__/visual.spec.ts/artifacts-dark-darwin.png",
         "web/e2e/__screenshots__/visual.spec.ts/artifacts-light-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/capabilities-dark-darwin.png",
+        "web/e2e/__screenshots__/visual.spec.ts/capabilities-light-darwin.png",
         "web/e2e/__screenshots__/visual.spec.ts/chat-dark-darwin.png",
         "web/e2e/__screenshots__/visual.spec.ts/chat-light-darwin.png",
         "web/e2e/__screenshots__/visual.spec.ts/dashboard-dark-darwin.png",

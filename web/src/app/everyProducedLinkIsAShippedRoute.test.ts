@@ -26,7 +26,7 @@ import { chatRoute } from './globalKeys'
 import { chatFindPath } from '../pages/chat/searchDeepLink'
 import { DEFAULT_NOTIFICATION_ROUTE, NOTIFICATION_SOURCE_ROUTES } from '../lib/nativeNotifications'
 import type { ChatSessionSummary } from '../lib/api'
-import { RELEASES, SAMPLE, SHIPPED_ROUTES, type RouteSource, type ShippedRoute } from './shippedRoutes'
+import { RELEASES, SAMPLE, SHIPPED_ROUTES, UNRELEASED, type RouteSource, type ShippedRoute } from './shippedRoutes'
 
 const REPO = join(import.meta.dirname, '..', '..', '..')
 const desktop = createRequire(join(REPO, 'desktop', 'package.json'))
@@ -306,8 +306,9 @@ describe('the catalogue is well formed', () => {
     expect(SHIPPED_ROUTES.filter((e) => /^[#/]|\s/.test(e.route)).map((e) => e.route), 'written as the router writes an address').toEqual([])
   })
 
-  it('a landing is another address, and a release is one of the tags', () => {
+  it('a landing is another address, and a release is one of the tags, or not yet one', () => {
     expect(SHIPPED_ROUTES.filter((e) => e.lands !== undefined && normal(e.lands) === normal(e.route)).map((e) => e.route)).toEqual([])
-    expect(SHIPPED_ROUTES.filter((e) => e.since && !(RELEASES as readonly string[]).includes(e.since)).map((e) => e.route)).toEqual([])
+    const releases: readonly string[] = [...RELEASES, UNRELEASED]
+    expect(SHIPPED_ROUTES.filter((e) => e.since && !releases.includes(e.since)).map((e) => e.route)).toEqual([])
   })
 })

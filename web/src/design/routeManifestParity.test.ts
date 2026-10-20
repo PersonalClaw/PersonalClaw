@@ -89,9 +89,19 @@ function nonNavRoutes(): string[] {
   return [...block[1].matchAll(/route: '([^']+)'/g)].map((m) => m[1])
 }
 
+/** The `route` fields of `export const VIEW_ROUTES: RouteEntry[] = [...]` in e2e/routes.ts: a nav
+ *  page's other surfaces, among them a destination's tabs that keep their own addresses
+ *  (Capabilities' `agents`, `tools`, …, #3817). Scanned and photographed like a nav route. */
+function viewRoutes(): string[] {
+  const src = readFileSync(join(WEB, 'e2e/routes.ts'), 'utf8')
+  const block = src.match(/export const VIEW_ROUTES: RouteEntry\[\] = \[(.*?)\n\]/s)
+  if (!block) throw new Error('could not locate the VIEW_ROUTES literal in e2e/routes.ts')
+  return [...block[1].matchAll(/route: '([^']+)'/g)].map((m) => m[1])
+}
+
 /** Every route the harness actually scans, across all of its lists. */
 function scannedRoutes(): string[] {
-  return [...manifestRoutes(), ...nonNavRoutes()]
+  return [...manifestRoutes(), ...nonNavRoutes(), ...viewRoutes()]
 }
 
 /** The string literals in `ROUTABLE` that are NOT spread in from NAV — the non-nav routes. */

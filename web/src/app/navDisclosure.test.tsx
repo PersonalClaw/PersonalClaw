@@ -16,7 +16,7 @@ import {
 //     a deep link to a hidden surface RENDERS it, and visiting it PINS it.
 //
 // Both halves matter and each fails differently. If the shell ever routed through the disclosure
-// filter, `#/tools` under starter mode would blank or fall back to the dashboard — and a
+// filter, `#/triggers` under starter mode would blank or fall back to the dashboard — and a
 // route-string assertion would still pass, because a blank page and a rendered page both
 // "navigate". So the assertion is the page's own `h1`. If auto-pin regressed, the rail would
 // simply never grow and the product would quietly become a five-page app with thirteen secrets.
@@ -24,9 +24,9 @@ import {
 // Falsified (both mutations, measured):
 //   • `rendered` routed through `isDisclosed` (fall back to dashboard when hidden) →
 //     "deep-linking a hidden surface renders it" RED: `Unable to find an accessible element with
-//     the role "heading" and name "Tools"`.
+//     the role "heading" and name "Triggers"`.
 //   • auto-pin made a no-op (`return` before `pinNav`) → 3 RED, incl. "…and pins it into the
-//     rail": `expect(pinned).toContain('tools')` / `Unable to find … link "Tools"`.
+//     rail": `expect(pinned).toContain('triggers')` / `Unable to find … link "Triggers"`.
 //
 // jsdom notes: the WS liveness hook has no gateway to connect to and its reconnect backoff would
 // outlive the test, and every `api.*` read is stubbed to resolve empty — the pages under test
@@ -79,7 +79,7 @@ const { PersonalityProvider } = await import('./personality')
 // find below waits on the render it is actually asserting about. This changes no assertion.
 await Promise.all([
   import('../pages/settings/SettingsPage'),
-  import('../pages/tools/ToolsPage'),
+  import('../pages/triggers/TriggersSection'),
   import('../pages/dashboard/DashboardPage'),
 ])
 
@@ -93,6 +93,11 @@ const renderApp = () => render(
 /** The rail is the app's one `navigation` landmark. */
 const rail = () => screen.getByRole('navigation')
 const railLinks = () => within(rail()).getAllByRole('button').map((b) => b.getAttribute('aria-label'))
+/** The rail's section headers: NAV's section names, as text outside every control. */
+const sectionHeaders = () => [...rail().querySelectorAll('div')]
+  .filter((d) => d.children.length === 0 && !d.closest('button'))
+  .map((d) => d.textContent ?? '')
+  .filter((t) => ['Platform', 'Capabilities', 'Apps'].includes(t))
 
 /** Point `matchMedia('(max-width: 768px)')` at a fixed answer — jsdom has no layout, so the
  *  media query IS the viewport (the shape `ui/DegradedChip.test.tsx` established). */
@@ -142,34 +147,34 @@ describe('the disclosure store', () => {
 
   it('pinning is idempotent and survives a fresh read', () => {
     setNavMode('starter')
-    pinNavSurface('tools')
-    pinNavSurface('tools')
-    expect(readNavDisclosure().pinned).toEqual(['tools'])
+    pinNavSurface('triggers')
+    pinNavSurface('triggers')
+    expect(readNavDisclosure().pinned).toEqual(['triggers'])
   })
 
   it('pinning does not silently flip an expert install back to starter', () => {
     // `pinNavSurface` writes the WHOLE record, so it has to carry the mode it read — otherwise
     // the first pin on an install with no record would mint `{pinned:[…]}`, which reads back as
     // starter, and an upgraded user's rail would collapse behind them.
-    pinNavSurface('tools')
+    pinNavSurface('triggers')
     expect(readNavDisclosure().mode).toBe('expert')
   })
 
   it('isDisclosed: starter shows the starter set, pins, and app tiles — nothing else', () => {
     for (const id of STARTER_NAV_IDS) expect(isDisclosed(id, 'starter', [])).toBe(true)
-    expect(isDisclosed('tools', 'starter', [])).toBe(false)
-    expect(isDisclosed('tools', 'starter', ['tools'])).toBe(true)
+    expect(isDisclosed('triggers', 'starter', [])).toBe(false)
+    expect(isDisclosed('triggers', 'starter', ['triggers'])).toBe(true)
     // A contributed app's tile is already an explicit per-app pin (`nav-apps`); disclosure has
     // nothing to reveal for it and must not undo that choice.
     expect(isDisclosed('app/weather', 'starter', [])).toBe(true)
     // Expert shows everything, including a surface nobody pinned.
-    expect(isDisclosed('tools', 'expert', [])).toBe(true)
+    expect(isDisclosed('triggers', 'expert', [])).toBe(true)
   })
 
   it('undisclosedCount counts only what starter holds back', () => {
-    const ids = [...STARTER_NAV_IDS, 'tools', 'learning', 'app/weather']
+    const ids = [...STARTER_NAV_IDS, 'triggers', 'learning', 'app/weather']
     expect(undisclosedCount(ids, [])).toBe(2)
-    expect(undisclosedCount(ids, ['tools'])).toBe(1)
+    expect(undisclosedCount(ids, ['triggers'])).toBe(1)
   })
 })
 
@@ -184,21 +189,21 @@ describe('the rail a fresh install sees', () => {
       expect(n.length).toBeGreaterThan(3)
       return n
     })
-    for (const label of ['Home', 'Chat', 'Inbox', 'Apps', 'Settings']) expect(names).toContain(label)
+    for (const label of ['Home', 'Chat', 'Inbox', 'Capabilities', 'Settings']) expect(names).toContain(label)
     // The vacuity guard for every assertion below: something really is hidden.
-    for (const label of ['Learning', 'Tools', 'Terminal', 'Workflows']) expect(names).not.toContain(label)
+    for (const label of ['Learning', 'Triggers', 'Terminal', 'Workflows']) expect(names).not.toContain(label)
   })
 
   it('drops the section headers, which have nothing left to group', async () => {
     // Measured on the live starter rail before this: five rows under three headings, with
     // "PLATFORM" sitting over Inbox alone and "APPS" over the apps entry alone. A heading per
     // item is chrome, not structure — the starter rail is one curated group by construction.
-    // The apps ITEM is now labeled "Apps", the same word as its section, so the
-    // header sweep asserts on the two section names an item label cannot collide with; they
-    // exist in NAV, which keeps the assertion non-vacuous about headers being dropped.
+    // The Capabilities ITEM is labeled with the same word as its section (#3817), so the sweep
+    // asserts on text outside the rail's buttons: a header is the only such text. Both section
+    // names exist in NAV, which keeps the assertion non-vacuous about headers being dropped.
     renderApp()
-    await waitFor(() => expect(railLinks()).toContain('Apps'))
-    expect(rail().textContent).not.toMatch(/PLATFORM|CAPABILITIES/i)
+    await waitFor(() => expect(railLinks()).toContain('Capabilities'))
+    expect(sectionHeaders()).toEqual([])
   })
 
   it('says how many surfaces it is holding back, in the control\'s own name', async () => {
@@ -208,7 +213,7 @@ describe('the rail a fresh install sees', () => {
     // The count must ride the accessible NAME: an aria-label OVERRIDES the element's text, so a
     // number living only in the `+N` span is announced nowhere (the defect the badge above it
     // already carries a comment about).
-    expect(more.getAttribute('aria-label')).toMatch(/show 1[0-9] more surfaces/)
+    expect(more.getAttribute('aria-label')).toMatch(/show [1-9]\d* more surfaces/)
     // The global focus ring in this app is `:focus-visible { outline }`, which jsdom does not
     // compute — so what is assertable is that the control does not KILL it, and that it is
     // reachable and not nested inside another control.
@@ -228,7 +233,7 @@ describe('the rail a fresh install sees', () => {
     localStorage.setItem('nav-disclosure', JSON.stringify({
       mode: 'starter',
       pinned: ['projects', 'knowledge', 'tasks', 'triggers', 'files', 'artifacts', 'terminal',
-        'agents', 'tools', 'skills', 'learning', 'prompts', 'workflows'],
+        'learning', 'workflows'],
     }))
     renderApp()
     await waitFor(() => expect(railLinks()).toContain('Workflows'))
@@ -242,52 +247,52 @@ describe('a hidden surface is hidden from the RAIL, never from the app', () => {
   beforeEach(() => setNavMode('starter'))
 
   it('deep-linking a hidden surface renders it — and pins it into the rail', async () => {
-    // The clause the whole change rests on. `#/tools` is a Capabilities surface, so under
+    // The clause the whole change rests on. `#/triggers` is a Platform surface, so under
     // starter mode it has no rail row at all.
-    expect(isDisclosed('tools', 'starter', [])).toBe(false)
-    location.hash = '#/tools'
+    expect(isDisclosed('triggers', 'starter', [])).toBe(false)
+    location.hash = '#/triggers'
     renderApp()
 
     // 1. It RENDERED. Asserted on the page's own h1, not on the route string — a blank page and
     //    a rendered page both "navigate", and a disclosure filter applied to the route would
     //    produce the blank one (or a silent fall back to the dashboard).
-    expect(await screen.findByRole('heading', { name: 'Tools', level: 1 })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Triggers', level: 1 })).toBeInTheDocument()
 
     // 2. It PINNED. This is what makes hiding safe: the rail grows with use.
-    await waitFor(() => expect(readNavDisclosure().pinned).toContain('tools'))
+    await waitFor(() => expect(readNavDisclosure().pinned).toContain('triggers'))
 
     // 3. And the pin reached the rail, not just the store.
-    await waitFor(() => expect(railLinks()).toContain('Tools'))
+    await waitFor(() => expect(railLinks()).toContain('Triggers'))
   })
 
   it('the pin survives a reload', async () => {
-    location.hash = '#/tools'
+    location.hash = '#/triggers'
     renderApp()
-    await waitFor(() => expect(readNavDisclosure().pinned).toContain('tools'))
+    await waitFor(() => expect(readNavDisclosure().pinned).toContain('triggers'))
     cleanup()
 
     // A fresh mount at a DIFFERENT route — the row is there because it was persisted, not
     // because the surface happens to be on screen.
     location.hash = '#/dashboard'
     renderApp()
-    await waitFor(() => expect(railLinks()).toContain('Tools'))
+    await waitFor(() => expect(railLinks()).toContain('Triggers'))
   })
 
   it('the command palette offers every surface, including the hidden ones', async () => {
     const user = userEvent.setup()
     renderApp()
-    await waitFor(() => expect(railLinks()).not.toContain('Tools'))
+    await waitFor(() => expect(railLinks()).not.toContain('Triggers'))
 
     await user.keyboard('{Meta>}k{/Meta}')
     const search = await screen.findByLabelText('Search pages, actions and content')
-    await user.type(search, 'Tools')
+    await user.type(search, 'Triggers')
     // Present in the palette even though the rail has no row for it — the always-open door.
-    const hit = await screen.findByRole('option', { name: /^Tools/ })
+    const hit = await screen.findByRole('option', { name: /^Triggers/ })
     await user.click(hit)
 
     // Reached through the palette, the surface renders and pins exactly as a deep link does.
-    expect(await screen.findByRole('heading', { name: 'Tools', level: 1 })).toBeInTheDocument()
-    await waitFor(() => expect(railLinks()).toContain('Tools'))
+    expect(await screen.findByRole('heading', { name: 'Triggers', level: 1 })).toBeInTheDocument()
+    await waitFor(() => expect(railLinks()).toContain('Triggers'))
   })
 })
 
@@ -302,15 +307,14 @@ describe('expert mode', () => {
 
     await waitFor(() => {
       const names = railLinks()
-      for (const label of ['Learning', 'Tools', 'Terminal', 'Workflows', 'Prompts', 'Agents']) {
+      for (const label of ['Learning', 'Triggers', 'Terminal', 'Workflows', 'Projects', 'Knowledge']) {
         expect(names).toContain(label)
       }
     })
     // Persisted, so "permanently" is not just this render.
     expect(readNavDisclosure().mode).toBe('expert')
     // And the section headers come back with the surfaces they group.
-    expect(rail().textContent).toMatch(/Platform/i)
-    expect(rail().textContent).toMatch(/Capabilities/i)
+    expect(sectionHeaders()).toEqual(expect.arrayContaining(['Platform', 'Capabilities']))
     // And the same control collapses again — a disclosure that only opens leaves a user who
     // expanded out of curiosity with no local undo.
     expect(await screen.findByRole('button', { name: /^Show fewer, hide \d+ surfaces$/ }))
@@ -322,9 +326,9 @@ describe('expert mode', () => {
     // browsed while expanded would silently empty the starter rail's difference and turn the
     // toggle into a one-way door.
     setNavMode('expert')
-    location.hash = '#/tools'
+    location.hash = '#/triggers'
     renderApp()
-    expect(await screen.findByRole('heading', { name: 'Tools', level: 1 })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Triggers', level: 1 })).toBeInTheDocument()
     expect(readNavDisclosure().pinned).toEqual([])
   })
 
@@ -334,7 +338,7 @@ describe('expert mode', () => {
     renderApp()
     await waitFor(() => {
       const names = railLinks()
-      for (const label of ['Home', 'Chat', 'Learning', 'Tools', 'Terminal', 'Workflows', 'Settings']) {
+      for (const label of ['Home', 'Chat', 'Learning', 'Triggers', 'Terminal', 'Workflows', 'Settings']) {
         expect(names).toContain(label)
       }
     })
@@ -362,7 +366,7 @@ describe('at a mobile viewport', () => {
     await user.keyboard('{Enter}')
 
     await waitFor(() => expect(readNavDisclosure().mode).toBe('expert'))
-    await waitFor(() => expect(railLinks()).toContain('Tools'))
+    await waitFor(() => expect(railLinks()).toContain('Triggers'))
   })
 
   it('the drawer carries the phone companion, so a phone never has to type its address', async () => {
