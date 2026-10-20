@@ -90,6 +90,21 @@ If the app is signed out from another device (Settings → Devices), or its sign
 (`auth.session_ttl`, 30 days by default), the window says so. Quit PersonalClaw and open it again
 to sign it back in.
 
+## The window
+
+On macOS the window has no title bar of its own: the window controls (close, minimize, zoom) sit
+in the strip above the sidebar, and the sidebar takes the system's translucent material, so the
+desktop shows through it softly. Everything you read and type in, the page beside the sidebar,
+stays opaque.
+
+The window is opaque all over, with the controls in the same place, when:
+
+- **macOS asks for reduced transparency** (System Settings → Accessibility → Display → Reduce
+  transparency). Turning it on or off changes every open window at once, with no restart.
+- **The page asks for it**, through the browser's reduced-transparency preference.
+
+On Linux the window keeps its plain frameless look, with no material.
+
 ## Links that open the app
 
 A `personalclaw://` link opens the desktop app on one of its pages, from a browser, another app or

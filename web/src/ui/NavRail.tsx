@@ -74,9 +74,13 @@ const DEFAULT_W = 196
  *  the rail). When collapsed → icon-only 64px rail. Bottom: a live system
  *  health widget. No operator/identity footer (single-user; Settings is in nav). */
 export function NavRail({
-  items, activeId, onSelect, collapsed, overlay = false, overlayOpen = false, onScrimClick, disclosure,
+  items, activeId, onSelect, collapsed, overlay = false, overlayOpen = false, onScrimClick, disclosure, material = false,
 }: {
   items: NavItem[]
+  /** The desktop window's translucent material shows behind the rail (`app/windowMaterial.ts`):
+   *  the in-flow column is then clear so the material shows through it. The phone drawer floats
+   *  over the page, so it keeps its own surface either way. */
+  material?: boolean
   activeId: string
   onSelect: (id: string) => void
   collapsed: boolean
@@ -207,7 +211,7 @@ export function NavRail({
     // literal, not a prop: the rail is the shell's one navigation and the tour points at it
     // by name, so a prop would only let a second rail claim the same anchor.
     <nav data-tour="rail" className="flex h-full flex-col gap-1 overflow-y-auto overflow-x-hidden px-m py-l"
-      style={{ width: overlay ? OVERLAY_W : w, background: 'var(--color-rail)' }}>
+      style={{ width: overlay ? OVERLAY_W : w, background: material && !overlay ? 'transparent' : 'var(--color-rail)' }}>
       {/* header — logo (the collapse toggle lives in the main area, not here) */}
       <div className={cx('flex items-center pb-m', showFull ? 'px-s' : 'justify-center')}>
         {/* The wordmark tracks the active PERSONALITY's label (default: PersonalClaw). */}

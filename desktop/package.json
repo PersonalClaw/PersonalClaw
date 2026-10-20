@@ -59,6 +59,7 @@
       "trayPresence.js",
       "deepLinks.js",
       "goMenu.js",
+      "windowChrome.js",
       "loginItem.js",
       "nativeNotifications.js",
       "systemBrowser.js",
