@@ -20,10 +20,12 @@ budget would have compared against a permanent zero. A cap needs a meter.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
+from table_rows import row
 
-from personalclaw.triggers import claims
+from personalclaw.triggers import claims, firepath
 from personalclaw.triggers import service as svc
 from personalclaw.triggers.models import FIRE_OUTCOMES, INERT_OUTCOMES, Outcome, Trigger
 from personalclaw.triggers.service import _budget_remaining
@@ -88,19 +90,223 @@ def test_NO_cap_still_fires_every_slot(store, tmp_path):
     assert fires == 8
 
 
-def test_the_production_admission_SUPPLIES_the_budget():
-    """A source check, because the property is that the field is POPULATED. A behavioural test alone
-    would pass against a gate that happened to allow everything — the exact hole this closes.
+# ── the one admission supplies the budget, and both production callers reach it ──
+#
+# The gate context is built in `admit_fire`, the ONE admission the tick and the event router both
+# call. The property is that the field is POPULATED: a fire that merely passes would pass against a
+# gate that happened to allow everything, the exact hole this closes. So the context the fire path
+# is handed is watched (the real walk still decides), and each caller is driven with a stand-in
+# admission as well, to show the fire is decided there and nowhere else.
 
-    The gate context is built in `admit_fire`, the ONE admission the tick and the event router both
-    call, so the field is asserted there and each production caller is asserted to reach it."""
-    import inspect
+_STAND_IN = "refused by the stand-in admission"
 
-    from personalclaw.triggers import event_fire
 
-    assert "budget_remaining=" in inspect.getsource(svc.admit_fire)
-    assert "admit_fire(" in inspect.getsource(svc.tick)
-    assert "admit_fire(" in inspect.getsource(event_fire.EventRouter)
+def _watch_contexts(monkeypatch) -> list[firepath.FireContext]:
+    """Every context `firepath.evaluate` is handed, in order. The real walk still decides."""
+    real = firepath.evaluate
+    seen: list[firepath.FireContext] = []
+
+    async def watched(ctx):
+        seen.append(ctx)
+        return await real(ctx)
+
+    monkeypatch.setattr(firepath, "evaluate", watched)
+    return seen
+
+
+def _watch_admissions(monkeypatch) -> list[dict]:
+    """Every call made to `service.admit_fire`: its arguments and what it answered. The real
+    admission still decides."""
+    real = svc.admit_fire
+    calls: list[dict] = []
+
+    async def watched(store, trigger, **kw):
+        admission = await real(store, trigger, **kw)
+        calls.append({"trigger": trigger.id, **kw, "admission": admission})
+        return admission
+
+    monkeypatch.setattr(svc, "admit_fire", watched)
+    return calls
+
+
+async def _refuse_everything(store, trigger, **_kw) -> svc.Admission:
+    """A stand-in for `service.admit_fire` that refuses every fire, with a reason only it gives."""
+    decision = firepath.FireDecision(
+        allowed=False, outcome=Outcome.SKIPPED_GATE.value, gate="stand-in", reason=_STAND_IN
+    )
+    return svc.Admission(
+        decision=decision,
+        row={"trigger_id": trigger.id, "outcome": decision.outcome, "reason": _STAND_IN},
+    )
+
+
+def _counted(store, tid: str, gates: dict, used: int, **fields) -> None:
+    """Store trigger *tid* with *gates* and *used* fires already counted against them."""
+    trigger = Trigger(
+        id=tid,
+        name=tid,
+        enabled=True,
+        gates=gates,
+        workflow={"inline": {"provider": "notify", "config": {}}},
+        **fields,
+    )
+    trigger.run_count = used
+    store.upsert(trigger)
+
+
+def test_the_admission_hands_the_budget_gate_what_is_left(tmp_path, monkeypatch, subtests):
+    """`admit_fire` hands the budget gate the fires the trigger may still make: no cap declared is
+    no budget, a cap is the cap less the fires already counted, and a cap that does not parse is
+    nothing left. The gate decides on what it is handed: a fire with nothing left is refused as a
+    budget refusal and not counted, and a granted one is counted."""
+    seen = _watch_contexts(monkeypatch)
+    # case, the trigger's gates, the fires counted so far, the budget the gate is handed, granted
+    table = [
+        ("no cap", {}, 4, None, True),
+        ("a zero cap is no cap", {"max_fires": 0}, 4, None, True),
+        ("a cap with room", {"max_fires": 3}, 1, 2.0, True),
+        ("the last allowance", {"max_fires": 2}, 1, 1.0, True),
+        ("a spent cap", {"max_fires": 2}, 2, 0.0, False),
+        ("a cap lowered below the fires made", {"max_fires": 2}, 5, 0.0, False),
+        ("a cap that does not parse", {"max_fires": "lots"}, 0, 0.0, False),
+    ]
+    assert len(table) == 7
+    for i, (case, gates, used, budget, granted) in enumerate(table):
+        with row(subtests, case=case):
+            here = tmp_path / f"row-{i}"
+            here.mkdir()
+            store = TriggerStore(base_dir=here)
+            _counted(store, "clock:t", gates, used, kind="clock")
+            trigger = store.get("clock:t").trigger
+            seen.clear()
+
+            admission = asyncio.run(
+                svc.admit_fire(store, trigger, now=NOW, base_dir=here, holder="test")
+            )
+
+            assert [ctx.budget_remaining for ctx in seen] == [budget], case
+            assert admission.allowed is granted, f"{case}: {admission.row}"
+            want = Outcome.RAN.value if granted else Outcome.SKIPPED_BUDGET.value
+            assert admission.row["outcome"] == want, f"{case}: {admission.row}"
+            counted = store.get("clock:t").trigger.run_count
+            assert counted == used + granted, f"{case}: {counted} fires counted"
+
+
+def test_the_tick_decides_each_due_fire_by_the_one_admission(store, tmp_path, monkeypatch):
+    """The tick walks every trigger it finds due through `admit_fire`, once, as the tick's own
+    holder, so the budget gate is handed what each one has left; it fires exactly what that
+    admission granted and records the row it wrote, and a trigger not yet due is not walked. With a
+    stand-in admission that refuses everything, the tick fires nothing and records the stand-in's
+    rows: it holds no admission of its own."""
+    seen = _watch_contexts(monkeypatch)
+    calls = _watch_admissions(monkeypatch)
+    due = {"spec": {"kind": "interval", "interval_secs": 60}, "next_fire_at": svc.to_iso(NOW)}
+    _counted(store, "clock:room", {"max_fires": 3}, 1, kind="clock", **due)
+    _counted(store, "clock:spent", {"max_fires": 2}, 2, kind="clock", **due)
+    _counted(store, "clock:open", {}, 0, kind="clock", **due)
+    later = {**due, "next_fire_at": svc.to_iso(NOW + 3600)}
+    _counted(store, "clock:later", {}, 0, kind="clock", **later)
+
+    result = asyncio.run(svc.tick(store, now=NOW, base_dir=tmp_path, persist=True))
+
+    assert sorted(c["trigger"] for c in calls) == ["clock:open", "clock:room", "clock:spent"]
+    for call in calls:
+        assert call["holder"] == f"tick:{int(NOW)}", call
+        where = (call.get("now"), call.get("base_dir"), call.get("persist"))
+        assert where == (NOW, tmp_path, True), call
+    budgets = {ctx.trigger_id: ctx.budget_remaining for ctx in seen}
+    assert budgets == {"clock:room": 2.0, "clock:spent": 0.0, "clock:open": None}, budgets
+    granted = sorted(c["trigger"] for c in calls if c["admission"].allowed)
+    assert granted == ["clock:open", "clock:room"]
+    assert sorted(f.trigger.id for f in result.fires) == granted
+    rows = {r["trigger_id"]: r for r in result.ledger_rows}
+    assert sorted(rows) == sorted(c["trigger"] for c in calls)
+    for call in calls:
+        mine, its = rows[call["trigger"]], call["admission"].row
+        assert (mine["outcome"], mine["reason"]) == (its["outcome"], its["reason"]), call
+    assert rows["clock:spent"]["outcome"] == Outcome.SKIPPED_BUDGET.value
+
+    for tid in granted:
+        claims.release_claim(tid, base_dir=tmp_path)
+    monkeypatch.setattr(svc, "admit_fire", _refuse_everything)
+    result = asyncio.run(svc.tick(store, now=NOW + 120, base_dir=tmp_path, persist=True))
+    assert result.fires == []
+    assert sorted(r["trigger_id"] for r in result.ledger_rows) == [
+        "clock:open",
+        "clock:room",
+        "clock:spent",
+    ]
+    assert {r["reason"] for r in result.ledger_rows} == {_STAND_IN}
+
+
+def test_the_event_router_decides_each_match_by_the_one_admission(tmp_path, monkeypatch):
+    """The event router walks every event trigger an event matches through `admit_fire`, once, as
+    an event's holder, so the budget gate is handed what each one has left; it dispatches exactly
+    what that admission granted, retires the trigger whose last allowance it spent, and records the
+    refusal, and a trigger the event does not match is not walked. With a stand-in admission that
+    refuses everything, the router dispatches nothing."""
+    from personalclaw.event_triggers import (
+        MEMORY_KEY_PATTERN,
+        MEMORY_UPDATE,
+        SOURCE_MEMORY,
+        BusEvent,
+        event_spec,
+    )
+    from personalclaw.schedule_history import ScheduleRunStore
+    from personalclaw.triggers.event_fire import EventRouter
+
+    store = TriggerStore(base_dir=tmp_path)
+    on_update = {"kind": "event", "spec": event_spec(MEMORY_UPDATE)}
+    _counted(store, "event:room", {"max_fires": 3}, 1, **on_update)
+    _counted(store, "event:last", {"max_fires": 2}, 1, **on_update)
+    _counted(store, "event:spent", {"max_fires": 2}, 2, **on_update)
+    _counted(store, "event:open", {}, 0, **on_update)
+    other_key = {"kind": "event", "spec": event_spec(MEMORY_KEY_PATTERN, "project.*")}
+    _counted(store, "event:other", {}, 0, **other_key)
+    seen = _watch_contexts(monkeypatch)
+    calls = _watch_admissions(monkeypatch)
+    dispatched: list[str] = []
+
+    async def dispatch(trigger, _payload, **_kw) -> str:
+        dispatched.append(trigger.id)
+        return ""
+
+    def event() -> BusEvent:
+        return BusEvent(
+            source=SOURCE_MEMORY, event_type="update", key="notes.today", value="v", now=time.time()
+        )
+
+    async def deliver() -> list[str]:
+        router = EventRouter(dispatch=dispatch, loop=asyncio.get_running_loop(), base_dir=tmp_path)
+        fired = await router.deliver(event())
+        await router.settle()
+        return fired
+
+    fired = asyncio.run(deliver())
+
+    matched = ["event:last", "event:open", "event:room", "event:spent"]
+    assert sorted(c["trigger"] for c in calls) == matched
+    for call in calls:
+        assert call["holder"].startswith("event:") and call.get("base_dir") == tmp_path, call
+    budgets = {ctx.trigger_id: ctx.budget_remaining for ctx in seen}
+    assert budgets == {
+        "event:room": 2.0,
+        "event:last": 1.0,
+        "event:spent": 0.0,
+        "event:open": None,
+    }, budgets
+    granted = sorted(c["trigger"] for c in calls if c["admission"].allowed)
+    assert granted == ["event:last", "event:open", "event:room"]
+    assert sorted(fired) == sorted(dispatched) == granted
+    enabled = {t: store.get(t).trigger.enabled for t in matched}
+    assert enabled == {t: t != "event:last" for t in matched}, "only the spent allowance retires"
+    runs, total = asyncio.run(ScheduleRunStore(tmp_path).list_for_job("event:spent", 0, 5))
+    assert total == 1 and runs[0]["status"] == Outcome.SKIPPED_BUDGET.value, runs
+
+    dispatched.clear()
+    monkeypatch.setattr(svc, "admit_fire", _refuse_everything)
+    assert asyncio.run(deliver()) == []
+    assert dispatched == []
 
 
 def test_RUN_COUNT_is_incremented_and_PERSISTED(store, tmp_path):
