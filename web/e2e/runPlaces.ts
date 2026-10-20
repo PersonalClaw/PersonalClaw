@@ -26,6 +26,14 @@ export interface RunPlaces {
   authDir: string
   /** Whether THIS call made `authDir`, so this process removes it with the home. */
   madeAuthDir: boolean
+  /** The gateway's `HOME`: a folder of the run's own BESIDE its home (`userHomeFor`), so what the
+   *  gateway finds through the home folder (other tools' setups, the shared skills folder, the
+   *  Hugging Face folder) is this run's, never the machine's. Beside rather than in the home for
+   *  the jar's reason: the Doctor reads a folder in the home that no store claims as degraded.
+   *  '' for a run with no home. */
+  userHome: string
+  /** Whether THIS call made `userHome`, so this process removes it with the home. */
+  madeUserHome: boolean
   /** Where this run's specs write their output: a folder of its own under `test-results/`, which
    *  CI uploads. Playwright clears it when the run starts, so it clears only this run's. */
   outputDir: string
@@ -55,6 +63,54 @@ const set = (value: string | undefined): value is string => value !== undefined 
  *  the `personalclaw-e2e-` prefix, so nothing that counts homes counts it. */
 export function authDirFor(home: string): string {
   return join(dirname(home), `sign-in-for-${basename(home)}`)
+}
+
+/** The folder the gateway runs with as `HOME`: a sibling of the run's home, named for it, as the
+ *  jar's folder is. */
+export function userHomeFor(home: string): string {
+  return join(dirname(home), `user-home-for-${basename(home)}`)
+}
+
+/** Every variable the gateway reads to find a folder outside its home. Each is taken out of the
+ *  gateway's environment (`gatewayEnvPrefix`), so the gateway finds those folders under the run's
+ *  `HOME` or not at all, never where the machine's shell points them.
+ *  `tests/rails/test_e2e_gateway_home_is_the_runs_tree.py` holds this list to its own. */
+export const GATEWAY_UNSET = [
+  // other tools' setups and the Hugging Face folder (`outside_home`, `onboarding_import`)
+  'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'HF_HOME', 'HF_HUB_CACHE', 'HF_TOKEN_PATH',
+  // the XDG folders, and zsh's startup folder (`owner_only`, `sandbox`, `outside_home`)
+  'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_RUNTIME_DIR',
+  'ZDOTDIR',
+  // tmux's socket folder for a home whose own socket path is too long (`tmux_substrate`)
+  'TMUX_TMPDIR',
+  // PersonalClaw's own overrides that name a folder or file outside the home
+  'PERSONALCLAW_PROJECT_DIR', 'PERSONALCLAW_TRACE_DIR', 'PERSONALCLAW_EXTRA_BIN_PATHS',
+  'PERSONALCLAW_FIRST_PARTY_APPS_DIR', 'PERSONALCLAW_ARTIFACT_BUILD_ROOT',
+  'PERSONALCLAW_CEILING_FILE', 'PERSONALCLAW_COMPUTER_USE_ENABLE_FILE',
+  'PERSONALCLAW_LOCAL_MODEL_APPS_DIR',
+] as const
+
+/** The shell lines the gateway command runs before it starts the gateway, with `$D` already the
+ *  run's home: they find the run's `HOME` folder beside it (refused, loudly, when it is not there),
+ *  take every `GATEWAY_UNSET` variable out of the environment and export `HOME`. */
+export function gatewayEnvPrefix(): string {
+  return [
+    'U="$(dirname "$D")/user-home-for-$(basename "$D")";',
+    '[ -d "$U" ] || { echo "PERSONALCLAW_E2E_FATAL: the run\'s HOME folder is not there ($U)" >&2; exit 1; };',
+    `unset ${GATEWAY_UNSET.join(' ')};`,
+    'HOME="$U"; export HOME;',
+  ].join(' ')
+}
+
+/** Make a run-owned folder; one there already (a named home that did not end cleanly) is taken. */
+function makeFolder(dir: string): boolean {
+  try {
+    mkdirSync(dir, { mode: 0o700 })
+    return true
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST' && statSync(dir).isDirectory()) return false
+    throw err
+  }
 }
 
 /** Make the jar folder, 0700: it holds a live owner token for this run's gateway. A folder there
@@ -183,6 +239,18 @@ export async function choosePlaces(
   }
   const storageState = set(env.STORAGE_STATE) ? env.STORAGE_STATE : join(authDir, 'state.json')
   authDir = dirname(storageState)
+  // The gateway's HOME, beside the home. A worker finds the runner's there already and makes none.
+  const userHome = home ? userHomeFor(home) : ''
+  let madeUserHome = false
+  if (userHome) {
+    try {
+      madeUserHome = makeFolder(userHome)
+    } catch (err) {
+      if (madeHome) rmSync(home, { recursive: true, force: true })
+      if (madeAuthDir) rmSync(authDir, { recursive: true, force: true })
+      throw new Error(`could not make the folder this run's gateway uses as HOME (${userHome}): ${(err as Error).message}`)
+    }
+  }
   let outputDir = set(env.PW_OUTPUT_DIR) ? env.PW_OUTPUT_DIR : ''
   let madeOutputDir = false
   if (!outputDir) {
@@ -197,7 +265,7 @@ export async function choosePlaces(
   env.PW_GATEWAY_PORT = String(gatewayPort)
   env.STORAGE_STATE = storageState
   env.PW_OUTPUT_DIR = outputDir
-  return { home, port, gatewayPort, madeHome, storageState, authDir, madeAuthDir, outputDir, madeOutputDir }
+  return { home, port, gatewayPort, madeHome, storageState, authDir, madeAuthDir, userHome, madeUserHome, outputDir, madeOutputDir }
 }
 
 /** Remove what this process made for the run: the home, the cookie jar's folder beside it, and the
@@ -206,6 +274,7 @@ export async function choosePlaces(
 export function cleanUpRun(places: RunPlaces): void {
   if (places.madeHome && places.home) rmSync(places.home, { recursive: true, force: true })
   if (places.madeAuthDir && places.authDir) rmSync(places.authDir, { recursive: true, force: true })
+  if (places.madeUserHome && places.userHome) rmSync(places.userHome, { recursive: true, force: true })
   if (places.madeOutputDir && places.outputDir) {
     try { rmdirSync(places.outputDir) } catch { /* not empty: the run's output stays */ }
   }
@@ -213,6 +282,6 @@ export function cleanUpRun(places: RunPlaces): void {
 
 /** `cleanUpRun` when this process ends. */
 export function cleanUpRunAtExit(places: RunPlaces): void {
-  if (!places.madeHome && !places.madeAuthDir && !places.madeOutputDir) return
+  if (!places.madeHome && !places.madeAuthDir && !places.madeUserHome && !places.madeOutputDir) return
   process.once('exit', () => cleanUpRun(places))
 }

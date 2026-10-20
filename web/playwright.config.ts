@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 import { readdirSync } from 'node:fs'
 import { SPEC_ISOLATION, STATEFUL_SPECS, seededOrder, unclassified } from './e2e/isolation'
-import { choosePlaces, cleanUpRunAtExit } from './e2e/runPlaces'
+import { choosePlaces, cleanUpRunAtExit, gatewayEnvPrefix } from './e2e/runPlaces'
 
 // ── Playwright visual-regression + a11y harness ────────────────────────────
 // The SAFETY RAIL for design-system consistency work: every
@@ -169,7 +169,12 @@ const GATEWAY_COMMAND = [
   // provider does not exist there. In CI this is redundant (uv installs this repo) and
   // harmless; in a worktree it is the difference between a real result and a decoy.
   'export PYTHONPATH="$(cd .. && pwd)/src${PYTHONPATH:+:$PYTHONPATH}"',
-  `PERSONALCLAW_HOME="$D" PERSONALCLAW_WORKSPACE="$D/workspace" ${SCRIPTED.scriptEnvVar}="$S" exec "$PC" gateway --port ${GATEWAY_PORT} --no-open --json-ready`,
+  // HOME is the run's own folder beside its home, and every variable that names a folder outside
+  // the home is taken out (`gatewayEnvPrefix`, `GATEWAY_UNSET` in e2e/runPlaces.ts). Without it the
+  // gateway found the machine's own folders through the home folder: the shared skills folder it
+  // lists at every start, other tools' setups and the Hugging Face folder, which Settings named.
+  // `tests/rails/test_e2e_gateway_home_is_the_runs_tree.py` holds every such folder to the run.
+  `${gatewayEnvPrefix()} PERSONALCLAW_HOME="$D" PERSONALCLAW_WORKSPACE="$D/workspace" ${SCRIPTED.scriptEnvVar}="$S" exec "$PC" gateway --port ${GATEWAY_PORT} --no-open --json-ready`,
 ].join('\n')
 
 // ── One invocation, three ways to share the gateway ───────────────────────────────────────────

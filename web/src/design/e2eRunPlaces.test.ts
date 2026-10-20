@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
-import { INSTALL_PORT, authDirFor, choosePlaces, cleanUpRun } from '../../e2e/runPlaces'
+import { INSTALL_PORT, authDirFor, choosePlaces, cleanUpRun, userHomeFor } from '../../e2e/runPlaces'
 
 // ── Each browser run has a home and ports of its own ───────────────────────────────────────────
 //
@@ -68,7 +68,7 @@ describe('choosePlaces', () => {
     expect(env.PW_GATEWAY_PORT).toBe(String(first.gatewayPort))
 
     const again = await choosePlaces({ ...env }, { tmp: dir, testResults: join(dir, 'test-results') })
-    expect(again).toEqual({ ...first, madeHome: false, madeOutputDir: false, madeAuthDir: false })
+    expect(again).toEqual({ ...first, madeHome: false, madeOutputDir: false, madeAuthDir: false, madeUserHome: false })
     expect(homesIn(dir), 'one run, one home').toHaveLength(1)
   })
 
@@ -136,6 +136,22 @@ describe('choosePlaces', () => {
     writeFileSync(p.storageState, '{"cookies":[],"origins":[]}')
     cleanUpRun(p)
     expect([existsSync(p.home), existsSync(p.authDir)], 'the jar goes with the home').toEqual([false, false])
+  })
+
+  it("makes the gateway's HOME folder beside the home, and removes it with the home", async () => {
+    const dir = tmp()
+    const p = await choosePlaces({}, { tmp: dir, testResults: join(dir, 'test-results') })
+    expect(p.madeUserHome).toBe(true)
+    expect(p.userHome).toBe(userHomeFor(p.home))
+    expect(dirname(p.userHome), 'beside the home: in it, the Doctor reads a folder no store claims').toBe(dirname(p.home))
+    expect(existsSync(p.userHome), 'made before the gateway starts with it as HOME').toBe(true)
+    const worker = await choosePlaces({ PW_E2E_HOME: p.home, STORAGE_STATE: p.storageState, PW_OUTPUT_DIR: p.outputDir },
+      { tmp: dir, testResults: join(dir, 'test-results') })
+    expect([worker.userHome, worker.madeUserHome], "a worker takes the runner's folder and makes none").toEqual([p.userHome, false])
+    cleanUpRun(worker)
+    expect(existsSync(p.userHome), "a worker's exit leaves it").toBe(true)
+    cleanUpRun(p)
+    expect(existsSync(p.userHome), 'the HOME folder goes with the home').toBe(false)
   })
 
   it('fails loudly when it cannot make the jar folder, and makes no home it then leaves behind', async () => {
@@ -218,6 +234,7 @@ describe('the real config', () => {
       expect(m.storageState.startsWith(m.e2eHome + sep), `the jar is in the gateway home: ${m.storageState}`).toBe(false)
       expect(dirname(dirname(m.storageState)), 'the jar folder sits beside the home').toBe(dirname(m.e2eHome))
       expect(existsSync(dirname(m.storageState)), 'the jar folder is gone with the home').toBe(false)
+      expect(existsSync(userHomeFor(m.e2eHome)), "the gateway's HOME folder is gone with the home").toBe(false)
       expect(m.outputDir.startsWith(join(WEB, 'test-results') + sep), m.outputDir).toBe(true)
     }
     expect(runs[0].e2eHome).not.toBe(runs[1].e2eHome)
