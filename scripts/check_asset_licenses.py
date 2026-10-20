@@ -15,6 +15,13 @@ version, under which licence, who owns them, and which tracked notice travels wi
   or a swap fails here until the record is updated. The notice must carry every copyright
   line verbatim, so the record and the text that ships beside the files cannot drift.
 
+Every tracked font (``.woff2 .woff .ttf .otf .eot``) is an upstream copy: it must be in a
+third-party group that pins its sha256, and that group's notice must be under ``web/public/``,
+which Vite copies into ``web/dist`` verbatim (and the wheel carries ``web/dist``), so the notice
+ships wherever the font does. Every ``url()`` in ``web/src/design/fonts.css`` must be
+``/fonts/<name>``, where ``web/public/fonts/<name>`` is a tracked font recorded that way: a face
+served from anywhere else, or from a file without that record, fails.
+
 ``--built-web`` also checks what ``npm run build`` emitted into ``web/dist``, by content
 rather than by name, because Vite renames what it copies. Every font and binary there must
 be byte-identical to a recorded file: a tracked asset (Vite copies ``web/public`` verbatim)
@@ -145,6 +152,20 @@ _EXACT_STATIC_FILES = frozenset(
 
 #: The notice files themselves: policy text, not assets.
 _POLICY_FILES = frozenset({"web/public/THIRD_PARTY_NOTICES.txt"})
+
+_FONT_SUFFIXES = frozenset({".eot", ".otf", ".ttf", ".woff", ".woff2"})
+
+#: Vite copies this tree into web/dist verbatim, so a notice in it ships beside every font.
+_SHIPPED_NOTICE_ROOT = "web/public/"
+
+#: The stylesheet that declares the dashboard's faces, and where its ``/fonts/`` URLs resolve:
+#: Vite serves web/public at the site root.
+FONTS_CSS = "web/src/design/fonts.css"
+_SERVED_FONT_URL = "/fonts/"
+_SERVED_FONT_ROOT = "web/public/fonts/"
+
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+_CSS_URL = re.compile(r"""url\(\s*(["']?)(.*?)\1\s*\)""", re.I)
 
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 _OWNERSHIP = frozenset({"project-owned", "third-party"})
@@ -371,6 +392,56 @@ def _notice_errors(group: dict[str, Any], tracked: set[str], root: Path) -> list
         for line in lines
         if isinstance(line, str) and line.strip() and line not in text
     ]
+
+
+def _font_errors(
+    manifest: dict[str, Any],
+    mapped: dict[str, tuple[str | None, str]],
+    tracked: set[str],
+    root: Path,
+) -> list[str]:
+    """Each tracked font is pinned in a third-party group whose notice ships beside it, and
+    ``fonts.css`` serves only such fonts.
+
+    A group is found by its id; two groups that share one already fail as a duplicate id.
+    """
+    listed = manifest.get("groups")
+    groups = {
+        group["id"]: group
+        for group in (listed if isinstance(listed, list) else [])
+        if isinstance(group, dict) and isinstance(group.get("id"), str)
+    }
+    errors: list[str] = []
+    third_party_fonts: set[str] = set()
+    for path, (pinned, group_id) in sorted(mapped.items()):
+        if path not in tracked or PurePosixPath(path).suffix.lower() not in _FONT_SUFFIXES:
+            continue
+        group = groups.get(group_id, {})
+        if pinned is None or group.get("ownership") != "third-party":
+            errors.append(
+                f"font {path}: in {group_id}, which is not a third-party group pinning its sha256"
+            )
+            continue
+        third_party_fonts.add(path)
+        notice = group.get("required_notice")
+        if not isinstance(notice, str) or not notice.startswith(_SHIPPED_NOTICE_ROOT):
+            errors.append(
+                f"font {path}: its notice {notice} is not under {_SHIPPED_NOTICE_ROOT}, so it "
+                "does not ship beside the font"
+            )
+
+    if FONTS_CSS not in tracked:
+        return errors
+    css = _CSS_COMMENT.sub("", (root / FONTS_CSS).read_text(encoding="utf-8"))
+    for match in _CSS_URL.finditer(css):
+        url = match.group(2).strip()
+        served = re.split(r"[?#]", url, maxsplit=1)[0]
+        if not (
+            served.startswith(_SERVED_FONT_URL)
+            and _SERVED_FONT_ROOT + served.removeprefix(_SERVED_FONT_URL) in third_party_fonts
+        ):
+            errors.append(f"{FONTS_CSS}: serves {url}, which is not a recorded third-party font")
+    return errors
 
 
 def _check_file(label: str, full: Path, pinned: str | None) -> list[str]:
@@ -639,6 +710,7 @@ def violations(
         for group in manifest.get(group_field) or []:
             if isinstance(group, dict):
                 errors.extend(_notice_errors(group, tracked, root))
+    errors.extend(_font_errors(manifest, mapped, tracked, root))
 
     for path, (pinned, _group_id) in mapped.items():
         if path not in tracked:

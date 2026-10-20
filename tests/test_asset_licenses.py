@@ -1,18 +1,19 @@
 """The bundled-asset licence record: ``ASSET_LICENSES.json`` and its checker.
 
 Every font, image, binary and fixture the repository ships has a recorded source, version,
-licence and notice. The tree tests read the real record; the rest drive the checker over a
-throwaway git repository, so each rule is shown refusing the thing it exists to refuse.
+licence and notice. One test reads the real npm licence records; the rest drive the checker
+over a throwaway git repository, so each rule is shown refusing the thing it exists to refuse.
+The checker's run on the real tree is the rails-checks job's.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import re
 import subprocess
 from pathlib import Path
 
+import pytest
 from asset_licenses_shared import REPO_ROOT, _asset_checks
 
 from scripts import check_asset_licenses as assets
@@ -20,7 +21,9 @@ from scripts import check_asset_licenses as assets
 PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
 FONT = b"wOF2\0\1font-bytes"
 UPSTREAM = "Copyright 2020 The Upstream Project Authors"
-_FONT_SUFFIXES = (".woff2", ".woff", ".ttf", ".otf", ".eot")
+#: A planted third-party group's notice, at the real one's path: in web/public, so it ships
+#: beside the fonts, and as policy text outside the asset census.
+NOTICE = "web/public/THIRD_PARTY_NOTICES.txt"
 
 
 def _sha(blob: bytes) -> str:
@@ -46,7 +49,7 @@ def _third_party(files: dict[str, bytes], *, group_id: str = "upstream-font") ->
         "version": "1.0.0",
         "license": "OFL-1.1",
         "ownership": "third-party",
-        "required_notice": "NOTICES.txt",
+        "required_notice": NOTICE,
         "copyright": [UPSTREAM],
         "files": {path: _sha(blob) for path, blob in files.items()},
     }
@@ -62,7 +65,7 @@ def _manifest(*groups: dict, built: list[dict] | None = None) -> dict:
 def _seed_repo(root: Path, files: dict[str, bytes | str]) -> Path:
     base: dict[str, bytes | str] = {
         "LICENSE": "MIT test licence\n",
-        "NOTICES.txt": f"{UPSTREAM}\nThe upstream licence text.\n",
+        NOTICE: f"{UPSTREAM}\nThe upstream licence text.\n",
     }
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     for rel, content in {**base, **files}.items():
@@ -82,26 +85,6 @@ def _emit(root: Path, files: dict[str, bytes]) -> None:
         target = root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(blob)
-
-
-def _group_of(manifest: dict, path: str) -> dict:
-    for group in manifest["groups"]:
-        if path in group["files"]:
-            return group
-    raise AssertionError(f"{path} is in no group")
-
-
-# ── The real record ────────────────────────────────────────────────────────────────────────
-
-
-def test_fonts_css_serves_only_recorded_fonts():
-    css = (REPO_ROOT / "web/src/design/fonts.css").read_text(encoding="utf-8")
-    served = re.findall(r"""url\(["']?/fonts/([^"')]+)["']?\)""", css)
-    assert served, "fonts.css declares no bundled face; the pattern is broken"
-    manifest = assets.load_manifest()
-    for name in served:
-        group = _group_of(manifest, f"web/public/fonts/{name}")
-        assert group["ownership"] == "third-party", name
 
 
 # ── Coverage ───────────────────────────────────────────────────────────────────────────────
@@ -189,11 +172,11 @@ def test_a_third_party_record_needs_a_versioned_https_source_copyright_and_its_o
 def test_a_notice_that_drops_a_copyright_line_fails(tmp_path):
     root = _seed_repo(
         tmp_path / "repo",
-        {"web/public/fonts/face.woff2": FONT, "NOTICES.txt": "The upstream licence text.\n"},
+        {"web/public/fonts/face.woff2": FONT, NOTICE: "The upstream licence text.\n"},
     )
     found = assets.violations(root, _manifest(_third_party({"web/public/fonts/face.woff2": FONT})))
     assert found == [
-        f"group upstream-font: NOTICES.txt does not carry the copyright line {UPSTREAM!r}"
+        f"group upstream-font: {NOTICE} does not carry the copyright line {UPSTREAM!r}"
     ]
 
 
@@ -212,6 +195,84 @@ def test_a_misspelled_field_is_refused_rather_than_ignored(tmp_path):
     found = assets.violations(root, _manifest(group))
     assert "group artwork: unknown field 'licence'" in found
     assert "group artwork: license must be a non-empty string" in found
+
+
+# ── Fonts ──────────────────────────────────────────────────────────────────────────────────
+#
+# Every font the repository tracks is an upstream copy, so each is held to a pinned third-party
+# record whose notice ships beside it, and fonts.css may serve only such a font.
+
+FONTS_CSS = "web/src/design/fonts.css"
+NOT_A_RECORDED_FONT = "which is not a recorded third-party font"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "web/public/fonts/face.woff2",
+        "web/public/fonts/face.woff",
+        "tests/fixtures/face.ttf",
+        "mobile/assets/face.otf",
+        "desktop/Face.EOT",
+    ],
+)
+def test_a_font_in_a_project_owned_group_fails(tmp_path, path):
+    root = _seed_repo(tmp_path / "repo", {path: FONT})
+    assert assets.violations(root, _manifest(_project(path))) == [
+        f"font {path}: in artwork, which is not a third-party group pinning its sha256"
+    ]
+
+
+def test_a_font_in_a_third_party_group_that_pins_no_sha256_fails(tmp_path):
+    root = _seed_repo(tmp_path / "repo", {"web/public/fonts/face.woff2": FONT})
+    group = _third_party({})
+    group["files"] = ["web/public/fonts/face.woff2"]
+    found = assets.violations(root, _manifest(group))
+    assert (
+        "font web/public/fonts/face.woff2: in upstream-font, which is not a third-party group "
+        "pinning its sha256" in found
+    )
+
+
+def test_a_font_whose_notice_does_not_ship_beside_it_fails(tmp_path):
+    """Vite copies web/public into web/dist verbatim, and the wheel carries web/dist."""
+    root = _seed_repo(
+        tmp_path / "repo", {"web/public/fonts/face.woff2": FONT, "NOTICES.txt": f"{UPSTREAM}\n"}
+    )
+    group = _third_party({"web/public/fonts/face.woff2": FONT})
+    group["required_notice"] = "NOTICES.txt"
+    assert assets.violations(root, _manifest(group)) == [
+        "font web/public/fonts/face.woff2: its notice NOTICES.txt is not under web/public/, so it "
+        "does not ship beside the font"
+    ]
+
+
+def test_fonts_css_serves_only_recorded_third_party_fonts(tmp_path):
+    face, logo = "web/public/fonts/face.woff2", "web/public/fonts/logo.svg"
+    files = {face: FONT, logo: "<svg/>\n"}
+    manifest = _manifest(_third_party({face: FONT}), _project(logo))
+    served = (
+        '@font-face { src: url("/fonts/face.woff2?v=1#x") format("woff2"); }\n'
+        "/* A comment is not served: url(/fonts/gone.woff2) */\n"
+    )
+    ok = _seed_repo(tmp_path / "ok", {**files, FONTS_CSS: served})
+    assert assets.violations(ok, manifest) == []
+
+    broken = _seed_repo(
+        tmp_path / "broken",
+        {
+            **files,
+            FONTS_CSS: served
+            + "@font-face { src: url(/fonts/gone.woff2); }\n"
+            + "@font-face { src: URL( '/fonts/logo.svg' ); }\n"
+            + '@font-face { src: url("https://fonts.example.com/face.woff2"); }\n',
+        },
+    )
+    assert assets.violations(broken, manifest) == [
+        f"{FONTS_CSS}: serves /fonts/gone.woff2, {NOT_A_RECORDED_FONT}",
+        f"{FONTS_CSS}: serves /fonts/logo.svg, {NOT_A_RECORDED_FONT}",
+        f"{FONTS_CSS}: serves https://fonts.example.com/face.woff2, {NOT_A_RECORDED_FONT}",
+    ]
 
 
 # ── The web build ──────────────────────────────────────────────────────────────────────────
