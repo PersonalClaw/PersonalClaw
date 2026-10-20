@@ -5,10 +5,12 @@ import { runState, runningState } from '../../test/runState'
 // ── A finished turn's work folds into one line that says how long the turn worked ──────────────
 //
 // The fold read "Worked through 6 steps · Terminal, Read File" and nothing said how long the turn
-// took. It now reads "Worked for 12s · 6 steps". The time is the turn's own: from when the gateway
-// started it to when it said it ended (the `run_state` its `work_phase` frames carry), and where a
-// page never heard that, as after a reload, from the turn's first row to its last. While the turn
-// runs its steps stay open; once it has ended they fold, and a click opens them again.
+// took. It now reads "Worked for 12s · 6 steps", and names no tool. The time is the turn's own: from
+// when the gateway started it to when it said it ended (the `run_state` its `work_phase` frames
+// carry), and where a page never heard that, as after a reload, the time the gateway measured and
+// stored with the turn's answer (`turn_telemetry.duration_ms`). Only a turn stored without one is
+// timed from its first row to its last. While the turn runs its steps stay open; once it has ended
+// they fold, and a click opens them again.
 
 const SESSION = 'chat-1-export'
 const ASKED = { role: 'user', content: 'Find why the nightly export is slow and fix it.', ts: '2026-10-04T09:00:00.100000+00:00' }
@@ -28,6 +30,9 @@ const CALLS: Call[] = [
 ]
 /** The settled answer's row: the last the turn wrote. Its rows run from 09:00:02 to here, 10.25 s. */
 const ANSWERED_AT = '2026-10-04T09:00:12.250000+00:00'
+/** What the gateway measured for the turn and stored with its answer row: 14.2 s, said "14s", so a
+ *  line that reads it is told apart from the run state's 12 s and the rows' 10 s. */
+const STORED_MS = 14_200
 
 const h = vi.hoisted(() => ({ detail: null as unknown, chatSessionDetail: vi.fn() }))
 
@@ -91,8 +96,9 @@ beforeEach(async () => {
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
-/** The rows the gateway persisted for the turn, each with the time it was written. */
-function persisted(timed = true): unknown[] {
+/** The rows the gateway persisted for the turn, each with the time it was written, and the answer's
+ *  row with the time the gateway measured for the turn (`stored`), as it writes it. */
+function persisted({ timed = true, stored }: { timed?: boolean; stored?: number } = {}): unknown[] {
   const at = (ts: string) => (timed ? { ts } : {})
   const rows: unknown[] = [ASKED]
   for (const c of CALLS) {
@@ -101,7 +107,10 @@ function persisted(timed = true): unknown[] {
       meta: { tool_call_id: c.id, purpose: '', input: '{}', kind: c.kind, detail: c.detail, done: true, output: 'ok' },
     })
   }
-  rows.push({ role: 'assistant', content: ANSWER, ...at(ANSWERED_AT) })
+  const telemetry = stored === undefined ? {} : {
+    meta: { turn_telemetry: { duration_ms: stored, line: 'Turn complete: 13 events, 6 tool calls', model: '', chosen: '' } },
+  }
+  rows.push({ role: 'assistant', content: ANSWER, ...at(ANSWERED_AT), ...telemetry })
   return rows
 }
 
@@ -141,18 +150,19 @@ describe('a finished turn says how long it worked on its folded line', () => {
     expect(toolCards()).toHaveLength(6)
     expect(screen.queryByRole('button', { name: /Worked/ })).toBeNull()
 
-    // The turn's last frame says it ended, then `chat_done`; the rows read after it say 10 s, and
-    // the gateway's own start and end (12.1 s) are what the line says.
+    // The turn's last frame says it ended, then `chat_done`; the rows read after it say 10 s and
+    // the time stored with them 14 s, and the gateway's own start and end on this page (12.1 s) are
+    // what the line says: the live page's time is as it was.
     pushFrame('work_phase', { ...running, phase: 'done', line: 'Done in 12 seconds', since: ENDED, turn: null, last_outcome: 'complete', seq: 2 })
-    h.detail = detail(persisted(), false)
+    h.detail = detail(persisted({ stored: STORED_MS }), false)
     pushFrame('chat_done', { outcome: 'complete' })
 
     const fold = await waitFor(() => screen.getByRole('button', { name: /Worked for 12s · 6 steps/ }))
     expect(fold.getAttribute('aria-expanded')).toBe('false')
     expect(toolCards()).toHaveLength(0)
-    // Folded, it is one line: the time and the step count, and the tools it used.
-    expect(fold.textContent).toMatch(/^Worked for 12s · 6 steps/)
-    expect(fold.textContent).toContain('Read File, Terminal, Edit File')
+    // Folded, it is one line: the time and the step count, and no tool's name.
+    expect(fold.textContent).toBe('Worked for 12s · 6 steps')
+    for (const c of CALLS) expect(fold.textContent).not.toContain(c.tool)
 
     fireEvent.click(fold)
     expect(fold.getAttribute('aria-expanded')).toBe('true')
@@ -162,21 +172,42 @@ describe('a finished turn says how long it worked on its folded line', () => {
     await waitFor(() => expect(h.chatSessionDetail).toHaveBeenCalledTimes(2))
     await act(async () => { await h.chatSessionDetail.mock.results[1].value })
     fireEvent.click(fold)
-    expect(fold.textContent).toMatch(/^Worked for 12s · 6 steps/)
+    expect(fold.textContent).toBe('Worked for 12s · 6 steps')
   })
 
-  it('times a turn from its rows when the page never heard it end', async () => {
+  it('reads the stored time when the page never heard the turn end', async () => {
     h.detail = detail([ASKED], true)
     openChat()
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeNull())
     runTheTurn()
     // No closing `work_phase` frame reached this page: the read after `chat_done` times the turn.
+    h.detail = detail(persisted({ stored: STORED_MS }), false)
+    pushFrame('chat_done', { outcome: 'complete' })
+    const fold = await screen.findByRole('button', { name: /Worked for 14s · 6 steps/ })
+    expect(fold.textContent).toBe('Worked for 14s · 6 steps')
+  })
+
+  it('times a turn from its rows when the page never heard it end and nothing was stored', async () => {
+    h.detail = detail([ASKED], true)
+    openChat()
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeNull())
+    runTheTurn()
     h.detail = detail(persisted(), false)
     pushFrame('chat_done', { outcome: 'complete' })
     expect(await screen.findByRole('button', { name: /Worked for 10s · 6 steps/ })).toBeTruthy()
   })
 
-  it('after a reload, times the turn from its first row to its last', async () => {
+  it('after a reload, says the time the gateway stored for the turn, not its rows\' span', async () => {
+    h.detail = detail(persisted({ stored: STORED_MS }), false)
+    openChat()
+    await screen.findByText(ANSWER)
+    const fold = await waitFor(() => screen.getByRole('button', { name: /Worked for 14s · 6 steps/ }))
+    expect(fold.getAttribute('aria-expanded')).toBe('false')
+    expect(fold.textContent).toBe('Worked for 14s · 6 steps')
+    expect(toolCards()).toHaveLength(0)
+  })
+
+  it('after a reload, times a turn stored without its time from its first row to its last', async () => {
     h.detail = detail(persisted(), false)
     openChat()
     await screen.findByText(ANSWER)
@@ -186,10 +217,10 @@ describe('a finished turn says how long it worked on its folded line', () => {
   })
 
   it('says no time for a turn whose rows carry none, rather than a made-up one', async () => {
-    h.detail = detail(persisted(false), false)
+    h.detail = detail(persisted({ timed: false }), false)
     openChat()
     await screen.findByText(ANSWER)
     const fold = await waitFor(() => screen.getByRole('button', { name: /Worked through 6 steps/ }))
-    expect(fold.textContent).not.toMatch(/Worked for/)
+    expect(fold.textContent).toBe('Worked through 6 steps')
   })
 })

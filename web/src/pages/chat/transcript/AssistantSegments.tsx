@@ -188,9 +188,6 @@ export function AssistantSegments({ segments, liveCards, isLast, messageTs, stre
   const processIdxs = segments.flatMap((s, i) => (isProcess(s) ? [i] : []))
   const lastProcessIdx = processIdxs.length ? processIdxs[processIdxs.length - 1] : -1
   const stepCount = processIdxs.length
-  const toolNames = [...new Set(
-    segments.filter((s, i) => i <= lastProcessIdx && s.kind === 'tool').map((s) => (s as ToolSegment).tool),
-  )]
   const workSegs = lastProcessIdx >= 0 ? segments.slice(0, lastProcessIdx + 1) : []
   const failedCount = failedStepCount(workSegs)
   const unaskedCount = unaskedStepCount(workSegs)
@@ -223,7 +220,7 @@ export function AssistantSegments({ segments, liveCards, isLast, messageTs, stre
     <>
       {workNodes.length > 0 && (
         collapseWork
-          ? <AgentWork stepCount={stepCount} took={workedFor(workedMs)} toolNames={toolNames} failedCount={failedCount} unaskedCount={unaskedCount}>{workNodes}</AgentWork>
+          ? <AgentWork stepCount={stepCount} took={workedFor(workedMs)} failedCount={failedCount} unaskedCount={unaskedCount}>{workNodes}</AgentWork>
           : <div className="flex flex-col gap-1">{workNodes}</div>
       )}
       {/* Live SDLC progress cards stay at the top level, always visible — never
@@ -260,23 +257,20 @@ export function AssistantSegments({ segments, liveCards, isLast, messageTs, stre
 
 /** The agent's intermediate work for a completed turn, folded into one compact
  *  disclosure so the FINAL ANSWER leads and the steps that produced it open only
- *  on demand. Summarizes as "Worked for 12s · N steps" + how many of them failed +
- *  the distinct tools used. The time is how long the turn worked (`turnRuns`); a turn nothing
- *  timed says "Worked through N steps", with no time made up. Collapsed by default; expanding
- *  reveals the original tool/approval/activity cards unchanged. (Replaces the old dot+rail
- *  timeline, whose connector added little once every step was followed by prose and whose dot ✓
- *  duplicated each card's own status glyph.)
+ *  on demand. Summarizes as "Worked for 12s · N steps" + how many of them failed, and names no
+ *  tool: the cards inside say what each step was. The time is how long the turn worked
+ *  (`turnRuns`); a turn nothing timed says "Worked through N steps", with no time made up.
+ *  Collapsed by default; expanding reveals the original tool/approval/activity cards unchanged.
+ *  (Replaces the old dot+rail timeline, whose connector added little once every step was followed
+ *  by prose and whose dot ✓ duplicated each card's own status glyph.)
  *
- *  The failure count sits before the tool names and never truncates: the reply below
- *  can say the work succeeded when a step did not, and the fold is where that shows. The count
- *  of steps the agent CLI ran without asking her sits beside it for the same reason: folded, the
- *  cards that say so are out of sight. */
-function AgentWork({ stepCount, took, toolNames, failedCount, unaskedCount, children }: { stepCount: number; took: string; toolNames: string[]; failedCount: number; unaskedCount: number; children: React.ReactNode }) {
+ *  The failure count is on the line and never truncates: the reply below can say the work
+ *  succeeded when a step did not, and the fold is where that shows. The count of steps the agent
+ *  CLI ran without asking her sits beside it for the same reason: folded, the cards that say so
+ *  are out of sight. */
+function AgentWork({ stepCount, took, failedCount, unaskedCount, children }: { stepCount: number; took: string; failedCount: number; unaskedCount: number; children: React.ReactNode }) {
   const [open, setOpen] = useState(false)
   const steps = `${stepCount} ${stepCount === 1 ? 'step' : 'steps'}`
-  const summary = toolNames.length
-    ? `${toolNames.slice(0, 3).join(', ')}${toolNames.length > 3 ? ` +${toolNames.length - 3} more` : ''}`
-    : ''
   return (
     <div className="mb-1.5">
       {/* Raw: a full-row disclosure, which no primitive draws. */}
@@ -299,7 +293,6 @@ function AgentWork({ stepCount, took, toolNames, failedCount, unaskedCount, chil
             · <ShieldAlert size={12} aria-hidden /> {unaskedCount} ran without asking you
           </span>
         )}
-        {!open && summary && <span className="min-w-0 truncate text-on-surface-low/60">· {summary}</span>}
       </button>
       <AnimatePresence initial={false}>
         {open && (

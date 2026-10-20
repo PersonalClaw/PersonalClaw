@@ -134,8 +134,8 @@ describe('every list whose label states a total discloses its cap', () => {
       for (const line of src.split('\n')) {
         const at = line.search(/\.length\s*-\s*\d+\}?\s*more/)
         if (at < 0) continue
-        // 🪤 A residue inside a TEMPLATE STRING is a different thing: `ChatPage` composes
-        // `"a, b, c +4 more"` as one sentence for a summary line. It already discloses, a JSX
+        // 🪤 A residue inside a TEMPLATE STRING is a different thing: `DurabilityPanel` composes
+        // `"a, b, c and 4 more"` as one sentence for a summary line. It already discloses, a JSX
         // component cannot live in a template literal, and "… 4 more" reads wrong appended to a
         // comma-joined list. Convergence stops where the grammar changes.
         //
@@ -277,13 +277,12 @@ describe('every list whose label states a total discloses its cap', () => {
     expect(src, 'its own copy says it is a feed, which is why').toMatch(/they build from your activity/)
   })
 
-  it('a string SUMMARY keeps its own grammar', () => {
-    // Pinned so the exclusion above is a judgement on record rather than a hole: this one already
-    // tells the user what it omits, in the only form that reads correctly inline.
-    // The folded work's summary, in the chat transcript's assistant turn.
+  it('the folded work caps no list of tools', () => {
+    // The chat's folded work once ended in a capped tool-name summary, "a, b, c +2 more", which
+    // disclosed its own residue in a template string. The line now names no tool at all, so it
+    // caps nothing and there is no residue to say.
     const src = strip(readSource(join(SRC, 'pages/chat/transcript/AssistantSegments.tsx')))
-    expect(src, 'the tool-name summary still discloses its own residue').toMatch(
-      /toolNames\.slice\(0, 3\)\.join\(', '\)[\s\S]{0,60}toolNames\.length - 3\} more/,
-    )
+    expect(src, 'the scan reached the fold').toContain('function AgentWork(')
+    expect(src, 'no tool-name summary on the folded line').not.toMatch(/toolNames/)
   })
 })
