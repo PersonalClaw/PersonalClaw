@@ -74,6 +74,7 @@ tests/rails/test_header_controls_doctrine_tree.py
 tests/rails/test_hook_advisory_status_tree.py
 tests/rails/test_identity_tree.py
 tests/rails/test_inbox_open_status_is_one_owner_tree.py
+tests/rails/test_inert_surface_baseline_tree.py
 tests/rails/test_installer_resolution_tree.py
 tests/rails/test_knowledge_contradiction_tree.py
 tests/rails/test_learning_flywheel_wiring.py
@@ -118,6 +119,7 @@ tests/rails/test_stale_write_refusals_read_right_tree.py
 tests/rails/test_stats_tree.py
 tests/rails/test_stored_times_carry_their_offset_tree.py
 tests/rails/test_stored_upload_scan_census.py
+tests/rails/test_structural_baseline_tree.py
 tests/rails/test_supply_chain_tree.py
 tests/rails/test_task_collection_completeness_tree.py
 tests/rails/test_terminal_persist_capability_tree.py
