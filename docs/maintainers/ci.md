@@ -227,6 +227,16 @@ entry to the `ci.yml` and `breadth.yml` jobs it maps to, in both directions:
   `npx` and `npm exec`. A word that only names a runner (`echo pytest`, `pip install
   pytest`) runs none. A new test goes in an entry, whose command the row above holds to its
   job.
+- The harness's `replay` and `exemplars` profiles are local shortcuts, not catalogue
+  entries: the merge tier already runs what they gate. `python-suite` collects
+  `tests/test_harness_replay.py` (every replay scenario against its baseline),
+  `tests/test_harness_replay_scenarios.py` (the two required scenarios and their fold) and
+  `tests/test_harness_exemplars.py` (each exemplar's smoke script, over a pinned set of
+  slices), and `web-unit`'s `npm run test:web` includes `web/src/harness/replayFold.test.ts`.
+  The row "the-harness-replay-and-exemplar-gates-run-in-the-merge-tier" holds each link: a
+  gate file out of the suite's universe, a gate test renamed, a slice the pinned set does not
+  name, or a change to `web-unit`'s command, the two test scripts or the vitest file set
+  fails it.
 - `breadth.yml` names each suite leg and its shard count as literals (`--leg ubuntu --shard
   ${{ matrix.shard }}/4`), as `ci.yml` does. Its steps that must not install the project first
   run the uv-managed interpreter of the job's Python, `"$(uv python find "$PY")"`, which the
