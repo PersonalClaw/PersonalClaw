@@ -20,7 +20,6 @@ project NOTHING:
 """
 
 import asyncio
-import pathlib
 
 import pytest
 
@@ -239,60 +238,90 @@ def test_the_step_is_still_JOURNALED_when_projection_fails(monkeypatch):
 # ── the measured API contract ──
 
 
-def test_the_hook_passes_the_keys_materialize_actually_READS():
+def _spied(monkeypatch, module, name: str) -> list:
+    """Every call a real run makes to `module.name`, recorded and passed through."""
+    real = getattr(module, name)
+    calls: list = []
+
+    def spy(*args, **kwargs):
+        calls.append((args, kwargs))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(module, name, spy)
+    return calls
+
+
+def test_the_hook_passes_the_keys_materialize_actually_READS(monkeypatch):
     """`should_materialize` reads `id`, not `node_id`. Passing the binding's name would
     make every node fail the has-an-id refusal and project nothing — silently, because the hook
-    swallows."""
-    import inspect
+    swallows. A real run hands it the node under the keys it reads, and the node projects."""
+    from personalclaw.workflows import materialize
 
-    source = inspect.getsource(task_projection.project_task)
-    assert '"id": item.node.id' in source
-    assert '"node_id": item.node.id' not in source
+    calls = _spied(monkeypatch, materialize, "should_materialize")
+    _run(_spec([{**_action("impl"), "label": "Implement it"}]))
+    # Asked twice for one node: by the hook, and again inside `plan_materialization`.
+    nodes = [args[0] for args, _kw in calls]
+    assert nodes, "the hook never asked materialize about the node"
+    for node in nodes:
+        assert node["id"] == "impl" and "node_id" not in node, node
+        assert node["kind"] == "action" and node["label"] == "Implement it", node
+    assert [r["node_id"] for r in _materialized()] == ["impl"]
 
 
 def test_the_hook_reads_TaskSpec_attributes_not_dict_keys():
     """`plan.create` holds `TaskSpec` objects. `entry.get(...)` would raise inside the
-    hook's own `except`, so the projection would fail invisibly on every node.
+    hook's own `except`, so the projection would fail invisibly on every node. The task a real
+    run writes carries the plan's binding: its run, its node, its fingerprint, managed."""
+    from personalclaw.tasks.registry import collect_tasks
 
-    Read across the projection path rather than one method: the emission is split out into
-    `task_projection._schedule_task_write`, and pinning a single function name would make this test
-    a rename detector instead of a contract check.
-    """
-    import inspect
+    _run(_spec([_action("impl")]))
+    (row,) = _materialized()
+    tasks, _ = asyncio.run(collect_tasks())
+    bound = [t for t in tasks if t.workflow_binding is not None]
+    assert len(bound) == 1, [t.title for t in tasks]
+    binding = bound[0].workflow_binding
+    assert (binding.run_id, binding.node_id) == ("r-1", "impl")
+    assert binding.fingerprint and binding.fingerprint == row["fingerprint"]
+    assert binding.managed is True
+    assert row["task_id"] == bound[0].id, "the event names a task other than the one written"
 
-    source = "".join(
-        inspect.getsource(fn)
-        for fn in (
-            task_projection.project_task,
-            task_projection._schedule_task_write,
-            task_projection._write_projected_task,
+
+def test_the_projection_hook_runs_on_the_SUCCESS_branch_only(monkeypatch):
+    """The call sits on the success branch of a settled node, so failed work makes no task. Two
+    siblings, one that succeeds and one that fails: the hook is called for the one that
+    succeeded, and only it."""
+    calls = _spied(monkeypatch, task_projection, "project_task")
+    _run(
+        _spec(
+            [
+                {
+                    "kind": "parallel",
+                    "id": "fan",
+                    "children": [
+                        _action("ok"),
+                        {
+                            "kind": "action",
+                            "id": "boom",
+                            "config": {"provider": "bash", "with": {"command": "exit 3"}},
+                        },
+                    ],
+                }
+            ]
         )
     )
-    assert "spec.binding.fingerprint" in source
-    assert "spec.binding.run_id" in source
+    reached = sorted(args[1].node.id for args, _kw in calls)
+    assert reached == ["ok"], reached
+    assert [r["node_id"] for r in _materialized()] == ["ok"]
 
 
-def test_the_projection_hook_runs_on_the_SUCCESS_branch_only():
-    """Pinned structurally: the call sits inside the `result.state in SUCCESS_STATES` block, so a
-    future edit that moves it out shows up here rather than as tasks for failed work."""
-    import inspect
+def test_materialize_now_HAS_a_caller(monkeypatch):
+    """The inverse of the grep that motivated the call site: a real run reaches the task
+    projection from the controller, and it asks `materialize` for its plan. A module with no
+    caller is a module whose rules are decoration."""
+    from personalclaw.workflows import materialize
 
-    from personalclaw.workflows.controller import RunController
-
-    source = inspect.getsource(RunController)
-    success_at = source.index("if result.state in SUCCESS_STATES:")
-    else_at = source.index("        else:", success_at)
-    assert "task_projection.project_task(self, " in source[success_at:else_at]
-
-
-def test_materialize_now_HAS_a_caller():
-    """The inverse of the grep that motivated the call site: `materialize` is imported by the
-    controller's task projection. A module with no caller is a module whose rules are decoration."""
-    source = pathlib.Path("src/personalclaw/workflows/task_projection.py").read_text(
-        encoding="utf-8"
-    )
-    assert "from personalclaw.workflows import materialize" in source
-    controller = pathlib.Path("src/personalclaw/workflows/controller.py").read_text(
-        encoding="utf-8"
-    )
-    assert "task_projection.project_task(" in controller
+    hooked = _spied(monkeypatch, task_projection, "project_task")
+    planned = _spied(monkeypatch, materialize, "plan_materialization")
+    _run(_spec([_action("impl")]))
+    assert len(hooked) == 1, "the controller did not reach the task projection"
+    assert [args[0] for args, _kw in planned] == ["r-1"], "materialize was not asked for a plan"
