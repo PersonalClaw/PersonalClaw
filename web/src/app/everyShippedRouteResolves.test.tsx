@@ -7,8 +7,8 @@
  *  · **Where it settles.** The address the bar holds once the shell is done with it is the entry's
  *    `lands`, or the entry itself. An address the router does not know is replaced with
  *    `#/dashboard` (the URL corrector, #306), so this is what catches a link that stopped opening;
- *    a section's own redirect (`#/files/<slug>` to its artifact) is caught too, unless the entry
- *    names where it goes.
+ *    a redirect (`#/files/<slug>` to its artifact, a row of `routeRedirects.ts`) is caught too,
+ *    unless the entry names where it goes.
  *  · **What it shows.** A page: not the shell's loading fallback left in place, not the switch's
  *    "This view isn't available", not the error boundary, and not nothing. On Settings, the page
  *    the address names and not the Settings home, which is what an id Settings does not know opens,

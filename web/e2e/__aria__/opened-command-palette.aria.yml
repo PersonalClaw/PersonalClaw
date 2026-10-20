@@ -81,6 +81,7 @@
   - option "Mission Control Go to"
   - option "Notifications Go to"
   - option "Discover Go to"
+  - option "Start a loop Action"
   - option "Open Settings Action"
   - option "Command palette Not available here Action · ⌘K or ⌘⇧P" [disabled]
   - option "Show or hide the sidebar Action · ⌘B"

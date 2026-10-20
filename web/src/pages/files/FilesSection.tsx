@@ -34,19 +34,14 @@ const TAB_KEY = 'files-tab'
 /** Files page — the raw file roots (Workspace/Home/Outbox): explorer + a rich
  *  multi-tab editor/preview. Artifacts moved to their OWN top-level surface
  *  (`#/artifacts`) — they were a tab here for navigational
- *  similarity only. Old `#/files/<slug>` deep-links redirect there. */
-export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: RouteProps) {
+ *  similarity only. Old `#/files/<slug>` deep-links open there: the router's redirect table
+ *  (`app/routeRedirects.ts`) sends them before this page draws. */
+export function FilesSection({ navigate, query: routeQuery, setQuery }: RouteProps) {
   // 🔴 `rootsErr` used to be discarded in `useFileRoots`, so an unreachable `/api/files/roots`
   // rendered the explorer with an EMPTY root strip and no tabs — a file browser that says the
   // gateway exposes nothing, which is also what a correctly-locked-down gateway looks like. The
   // error branch below is tested before the workbench so the failure cannot read as a config.
   const { roots, loading: rootsLoading, error: rootsErr, refresh: refreshRoots } = useFileRoots()
-  // Legacy deep-link `#/files/<slug>` (the pre-split artifact link, persisted in
-  // old chat transcripts/events) → redirect to the artifact's new home.
-  const deepSlug = (sub || '').split('/')[0] || ''
-  useEffect(() => {
-    if (deepSlug) navigate(`artifacts/${deepSlug}`, { replace: true })
-  }, [deepSlug, navigate])
   // The explorer's current directory rides the URL (?dir=<abspath>, push → Back =
   // up a dir; deep-link/refresh restores it). It is the SINGLE source of truth for
   // where the explorer is pointing — a bare ?dir-less route means "the root tab".
