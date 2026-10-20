@@ -1,10 +1,11 @@
 import { AnimatePresence } from 'framer-motion'
-import { History, Activity, Loader2, ListTree } from 'lucide-react'
+import { History, Activity, Loader2, ListTree, FolderTree } from 'lucide-react'
 import { SidePanel } from '../../../ui/SidePanel'
 import { withoutFence } from '../../../lib/untrustedFence'
 import { ChatFilePanel } from '../ChatFilePanel'
 import { sameSessionTarget, type CommentTarget } from '../../../ui/content/commentTarget'
 import { ChatActivityPanel } from '../ChatActivityPanel'
+import { WorkingFolderTree } from './WorkingFolderTree'
 import { Modal } from '../../../ui/Modal'
 import type { useTranscript } from '../transcript/useTranscript'
 import { SessionMapDrawer } from '../SessionMapDrawer'
@@ -16,8 +17,9 @@ import type { ChatPanesState } from './useChatPanes'
 // ── The chat's docked panes ────────────────────────────────────────────────────────────────────
 //
 // The panels docked beside the chat column, each a flex sibling that pushes the chat narrower:
-// the open file, the Session Map's drawer on the mobile form, the Activity rail and the new chat's
-// history. And a tool's full result, in a modal over the page. `useChatPanes` keeps their state.
+// the open file, the Session Map's drawer on the mobile form, the Activity rail, the chat's working
+// folder and the new chat's history. And a tool's full result, in a modal over the page.
+// `useChatPanes` keeps their state.
 
 /** File panel wrapper (kept out of the big return for clarity). No `key={path}`:
  *  switching from one file to another while the panel is open swaps content IN
@@ -33,15 +35,15 @@ function AnimatePresenceFilePanel({ path, onClose, commentTarget }: { path: stri
 
 export function ChatPanes({ panes, stream, transcript, started, setQuery, navigate, send }: {
   panes: ChatPanesState
-  stream: Pick<ChatStream, 'subagents' | 'sideMsgs' | 'sideBusy'>
+  stream: Pick<ChatStream, 'subagents' | 'sideMsgs' | 'sideBusy' | 'workingDir' | 'streaming'>
   transcript: Pick<ReturnType<typeof useTranscript>, 'mapOpen' | 'isMobile' | 'setMapOpen' | 'sessionEntries' | 'pendingMapJump' | 'runPendingMapJump'>
   started: boolean
   setQuery: RouteProps['setQuery']
   navigate: (p: string, opts?: { replace?: boolean }) => void
   send: (text: string) => unknown
 }) {
-  const { openFile, setOpenFile, activityOpen, setActivityOpen, historyOpen, setHistoryOpen, activity, killFanout, openSide, askSide } = panes
-  const { subagents, sideMsgs, sideBusy } = stream
+  const { openFile, setOpenFile, activityOpen, setActivityOpen, treeOpen, setTreeOpen, historyOpen, setHistoryOpen, activity, killFanout, openSide, askSide } = panes
+  const { subagents, sideMsgs, sideBusy, workingDir, streaming } = stream
   const { mapOpen, isMobile, setMapOpen, sessionEntries, pendingMapJump, runPendingMapJump } = transcript
   return (
     <>
@@ -91,6 +93,16 @@ export function ChatPanes({ panes, stream, transcript, started, setQuery, naviga
             <ChatActivityPanel activity={activity} onOpenFile={setOpenFile} subagents={subagents}
               onKillFanout={killFanout}
               side={{ msgs: sideMsgs, busy: sideBusy, onAsk: askSide, onOpen: openSide }} />
+          </SidePanel>
+        )}
+      </AnimatePresence>
+      {/* The chat's working folder (⌘⇧E): its files beside the conversation, a click opening one in
+          the file peek. Docked like the Activity rail, and URL-bound the same way (?tree=1). */}
+      <AnimatePresence>
+        {treeOpen && started && (
+          <SidePanel title="Working folder" icon={<FolderTree size={18} className="text-primary" />} storeKey="chat-tree-w"
+            fillHeight urlKey={{ key: 'tree', setQuery }} onClose={() => setTreeOpen(false)}>
+            <WorkingFolderTree dir={workingDir} openFile={openFile} onOpenFile={setOpenFile} streaming={streaming} />
           </SidePanel>
         )}
       </AnimatePresence>

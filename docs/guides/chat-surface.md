@@ -6,8 +6,8 @@ beyond typing a message: taking a wrong turn back, spinning the same conversatio
 directions, having a plan approved before anything runs, letting a queued message cut in,
 finding something you said hours ago, quoting it, following a suggestion, controlling how
 text appears, and putting a piece of your screen into the conversation. It ends with how
-replies are written, giving the window to what you are reading, which model answers a turn, and
-what gets recorded.
+replies are written, giving the window to what you are reading, the chat's working folder, which
+model answers a turn, and what gets recorded.
 
 Everything here works in a browser tab. Where a mechanic needs a platform capability that
 your browser does not have, the control is **hidden** rather than shown and made to fail —
@@ -554,6 +554,21 @@ start typing, and what you type lands at the end of your draft. Nothing in the c
 while it is folded. Moving to another chat or page unfolds it.
 
 With both on, the conversation takes about 90% of the window.
+
+---
+
+## The chat's working folder
+
+**Where:** `⌘⇧E` (`Ctrl+Shift+E` on Windows/Linux), or the command palette (`⌘K`), where it is
+**Show or hide the chat's working folder**.
+
+The files of the folder the chat works in open beside the conversation, and the same key hides
+them. A click on a folder opens it in place, and a click on a file opens it beside the chat, as a
+file named in an answer does. The list is the Files page's: it shows only what that page may
+browse, and a folder it may not is refused here with the same reason. Nothing in it renames,
+deletes or uploads. It lists the folder again when you open it and when a turn ends, since the
+agent may have written there. A chat with no working folder says so; the chat header's **Working
+directory** sets one.
 
 ---
 

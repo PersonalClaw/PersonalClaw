@@ -5,15 +5,16 @@ import { deriveActivity } from '../chatTypes'
 import { api } from '../../../lib/api'
 import { useQueryParam, type RouteProps } from '../../../app/useQueryState'
 import { useIsMobile } from '../../../app/useIsMobile'
+import { useKeyBinding } from '../../../app/keymap'
 import type { ChatStream } from '../useChatStream'
 
 // ── The chat's docked panes ────────────────────────────────────────────────────────────────────
 //
 // What the panels beside the chat keep: the Activity rail (`?activity`) with the files and links
 // the transcript touched, the subagents a fan-out started and the side chat; the open file
-// (`?file`); the new chat's history panel (`?history`); and a tool's full result (`?result`),
-// fetched when a card asks for it. Each rides the URL, so Back closes it and a reload reopens it.
-// `ChatPanes.tsx` draws them.
+// (`?file`); the chat's working folder (`?tree`, ⌘⇧E); the new chat's history panel (`?history`);
+// and a tool's full result (`?result`), fetched when a card asks for it. Each rides the URL, so
+// Back closes it and a reload reopens it. `ChatPanes.tsx` draws them.
 //
 // Focus mode (`app/viewModes.tsx`) gives the window to the transcript: entering it closes the docked
 // panes, and leaving it opens again the ones it closed. While it is on, a pane opens only when
@@ -21,7 +22,7 @@ import type { ChatStream } from '../useChatStream'
 // in focus mode keeps the pane its address names: the address is an ask too.
 
 /** The panes docked beside the chat on every form, by their URL key. */
-const DOCKED_PANES = ['activity', 'history', 'file']
+const DOCKED_PANES = ['activity', 'history', 'file', 'tree']
 
 export function useChatPanes({ query, setQuery, stream, focus = false }: {
   query: Record<string, string>
@@ -73,6 +74,13 @@ export function useChatPanes({ query, setQuery, stream, focus = false }: {
   // refresh/deep-link reopens the same file beside the transcript).
   const openFile = query.file || null
   const setOpenFile = (p: string | null) => setQuery({ ...(p ? alone('file') : {}), file: p || null })
+
+  // The chat's working folder, beside the conversation (`WorkingFolderTree`). URL-backed (?tree=1,
+  // push → Back closes it; refresh restores it). ⌘⇧E shows and hides it once the chat has started,
+  // as the Activity rail is there once it has; before that the key is left to the browser.
+  const treeOpen = query.tree === '1'
+  const setTreeOpen = (on: boolean) => setQuery({ ...(on ? alone('tree') : {}), tree: on ? '1' : null })
+  useKeyBinding('workspace-tree', turns.length > 0 ? () => setTreeOpen(!treeOpen) : undefined)
 
   // "Show full result": a tool card asked to reveal the
   // full raw of a projected result → the modal is URL-backed (?result=<rawRef>,
@@ -148,7 +156,7 @@ export function useChatPanes({ query, setQuery, stream, focus = false }: {
     }
   }
   return {
-    activityOpen, setActivityOpen, historyOpen, setHistoryOpen, openFile, setOpenFile,
+    activityOpen, setActivityOpen, historyOpen, setHistoryOpen, openFile, setOpenFile, treeOpen, setTreeOpen,
     resultRef, setResultRef, resultToolRef, resultBody, activity, killFanout, openSide, askSide,
   }
 }

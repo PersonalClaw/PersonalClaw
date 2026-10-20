@@ -15,12 +15,14 @@ interface TreeProps {
   onOpenFile: (entry: FsEntry) => void
   /** slugs of file paths that back an artifact — gets a small dot. */
   artifactPaths: Set<string>
-  /** Rename an entry: prompts inline, computes dest in the same parent dir. */
-  onRename: (entry: FsEntry, nextName: string) => void
+  /** Rename an entry: prompts inline, computes dest in the same parent dir. The three actions are
+   *  each optional: a row offers only the ones its host wires, and a host that wires none (a chat's
+   *  working folder) gets a tree that only reads — no row menu, no drop, no picker. */
+  onRename?: (entry: FsEntry, nextName: string) => void
   /** Delete an entry (file or dir). */
-  onDelete: (entry: FsEntry) => void
+  onDelete?: (entry: FsEntry) => void
   /** Upload files into a directory entry. */
-  onUpload: (dirEntry: FsEntry, files: File[]) => void
+  onUpload?: (dirEntry: FsEntry, files: File[]) => void
   /** Create a new file/folder INSIDE a directory entry (inline name prompt in the
    *  tree). Optional — when omitted, the dir context menu offers no create actions
    *  (e.g. a read-only host). Hosts that wire it get VSCode-style "New file/folder
@@ -86,7 +88,7 @@ export function FileTree({ dirs, rootPath, activePath, gitStatuses, onOpenFile, 
   const loadError = dirs.errors[rootPath]
   if (shown.length === 0 && loadError) return <div role="alert" data-type="body-s" className="px-m py-s text-danger">{loadError}</div>
   if (shown.length === 0) {
-    return emptyUpload
+    return emptyUpload && onUpload
       ? <EmptyFolder label={emptyLabel} folder={{ name: baseName(rootPath), path: rootPath, is_dir: true }} onUpload={onUpload} />
       : <div className="px-m py-s text-on-surface-low text-[0.8125rem]">{emptyLabel}</div>
   }
@@ -181,7 +183,7 @@ function TreeNode({ entry, depth, dirs, activePath, gitStatuses, onOpenFile, art
     committedRename.current = true
     const next = draft.trim()
     setRenaming(false)
-    if (next && next !== entry.name) onRename(entry, next)
+    if (next && next !== entry.name) onRename?.(entry, next)
   }
 
   // Begin creating a child in THIS dir: expand it (so the inline input + the new
@@ -211,8 +213,21 @@ function TreeNode({ entry, depth, dirs, activePath, gitStatuses, onOpenFile, art
     setDropActive(false)
     if (!entry.is_dir) return
     const files = Array.from(e.dataTransfer.files)
-    if (files.length) onUpload(entry, files)
+    if (files.length) onUpload?.(entry, files)
   }
+
+  // The row's actions: only the ones the host wires. None, and the row has no menu to open.
+  const actions: MenuItem[] = [
+    // Create-here actions for a directory (only when the host wires onCreate).
+    ...(entry.is_dir && onCreate ? [
+      { icon: FilePlus2, label: 'New file here', onClick: () => { void startCreate('file') } },
+      { icon: FolderPlus, label: 'New folder here', onClick: () => { void startCreate('dir') } },
+    ] : []),
+    ...(onRename ? [{ icon: Pencil, label: 'Rename', onClick: startRename }] : []),
+    ...(entry.is_dir && onUpload ? [{ icon: Upload, label: 'Upload here', onClick: () => uploadInput.current?.click() }] : []),
+    ...(onDelete ? [{ icon: Trash2, label: 'Delete', tone: 'danger' as const, onClick: () => onDelete(entry) }] : []),
+  ]
+  const dropsHere = entry.is_dir && !!onUpload
 
   // Open the row's action menu from the "⋯" button (keyboard/touch path — the
   // right-click contextmenu is mouse-only) anchored to the button's rect.
@@ -225,10 +240,10 @@ function TreeNode({ entry, depth, dirs, activePath, gitStatuses, onOpenFile, art
   return (
     <div>
       <div className="group/row relative"
-        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY }) }}
-        onDragOver={entry.is_dir ? (e) => { e.preventDefault(); e.stopPropagation(); setDropActive(true) } : undefined}
-        onDragLeave={entry.is_dir ? () => setDropActive(false) : undefined}
-        onDrop={entry.is_dir ? onDrop : undefined}
+        onContextMenu={actions.length ? (e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY }) } : undefined}
+        onDragOver={dropsHere ? (e) => { e.preventDefault(); e.stopPropagation(); setDropActive(true) } : undefined}
+        onDragLeave={dropsHere ? () => setDropActive(false) : undefined}
+        onDrop={dropsHere ? onDrop : undefined}
       >
         {renaming ? (
           <div className="flex items-center gap-1.5 py-1.5 pr-2" style={{ paddingLeft: 10 + depth * 16 }}>
@@ -291,7 +306,7 @@ function TreeNode({ entry, depth, dirs, activePath, gitStatuses, onOpenFile, art
         {/* "⋯" actions trigger — the keyboard/touch path to the row menu (the
             right-click contextmenu is mouse-only). Hidden until row hover/focus so
             it doesn't clutter; opens the SAME menu. */}
-        {!renaming && (
+        {!renaming && actions.length > 0 && (
           <button type="button" onClick={openMenuFromButton} aria-label={`Actions for ${entry.name}`}
             // 24px HIT BOX, 20px of paint. Measured 13 of these on `#/files` at **20x20**, each inside
             // its own clickable row — so SC 2.5.8's spacing exception cannot apply however far the
@@ -304,20 +319,8 @@ function TreeNode({ entry, depth, dirs, activePath, gitStatuses, onOpenFile, art
           </button>
         )}
       </div>
-      {entry.is_dir && <FolderUploadInput folder={entry} onUpload={onUpload} inputRef={uploadInput} />}
-      {menu && (
-        <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}
-          items={[
-            // Create-here actions for a directory (only when the host wires onCreate).
-            ...(entry.is_dir && onCreate ? [
-              { icon: FilePlus2, label: 'New file here', onClick: () => { void startCreate('file') } },
-              { icon: FolderPlus, label: 'New folder here', onClick: () => { void startCreate('dir') } },
-            ] : []),
-            { icon: Pencil, label: 'Rename', onClick: startRename },
-            ...(entry.is_dir ? [{ icon: Upload, label: 'Upload here', onClick: () => uploadInput.current?.click() }] : []),
-            { icon: Trash2, label: 'Delete', tone: 'danger' as const, onClick: () => onDelete(entry) },
-          ]} />
-      )}
+      {entry.is_dir && onUpload && <FolderUploadInput folder={entry} onUpload={onUpload} inputRef={uploadInput} />}
+      {menu && actions.length > 0 && <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} items={actions} />}
       {entry.is_dir && open && children !== null && (() => {
         const kids = hideNamesDeep?.size ? children.filter((c) => !hideNamesDeep.has(c.name)) : children
         return (
@@ -353,7 +356,7 @@ function TreeNode({ entry, depth, dirs, activePath, gitStatuses, onOpenFile, art
  *  button both open one, so they cannot drift in what reaches `onUpload` — the picked files, never
  *  an empty pick — or in clearing the input, without which picking the same file again is silent. */
 function FolderUploadInput({ folder, onUpload, inputRef }: {
-  folder: FsEntry; onUpload: TreeProps['onUpload']; inputRef: RefObject<HTMLInputElement | null>
+  folder: FsEntry; onUpload: NonNullable<TreeProps['onUpload']>; inputRef: RefObject<HTMLInputElement | null>
 }) {
   return (
     <input ref={inputRef} type="file" multiple className="hidden"
@@ -366,7 +369,7 @@ function FolderUploadInput({ folder, onUpload, inputRef }: {
  *  else: the only way in was a drag nobody was told about, and "Upload here" lived only in a
  *  SUB-folder's row menu, so the folder you were standing in could not be uploaded to by clicking.
  *  The button is that same "Upload here" — same picker, same `onUpload` — for the current folder. */
-function EmptyFolder({ label, folder, onUpload }: { label: string; folder: FsEntry; onUpload: TreeProps['onUpload'] }) {
+function EmptyFolder({ label, folder, onUpload }: { label: string; folder: FsEntry; onUpload: NonNullable<TreeProps['onUpload']> }) {
   const input = useRef<HTMLInputElement>(null)
   return (
     <div className="flex flex-col items-center gap-s px-m py-l text-center">

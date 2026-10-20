@@ -9,7 +9,8 @@
  *  `everyChordIsOneRegistryRow.test.tsx` lists in a ratchet that only shrinks.
  *
  *  Adding a key: add a row here, then give it a runner with `useKeyBinding(id, run)` where the thing
- *  it toggles lives.
+ *  it toggles lives. A row whose runner lives in a page reaches the shell's palette through
+ *  `useBoundRunner(id)`.
  *
  *  Scopes:
  *  - `global`: runs from anywhere in the app, a text field included, through the one handler.
@@ -18,14 +19,14 @@
  *    approval is never answered from the palette.
  *
  *  Keys are written for macOS; elsewhere ⌘ is Ctrl and ⌥ is Alt. Shortcuts can't be remapped. */
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 
 export type KeyScope = 'global' | 'focused'
 
 export const THREAD_NUMBERS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const
 
 export type CommandId =
-  | 'palette' | 'sidebar' | 'drawer' | 'focus-mode' | 'reading-mode' | 'next-needs-you' | 'new-chat'
+  | 'palette' | 'sidebar' | 'drawer' | 'focus-mode' | 'reading-mode' | 'workspace-tree' | 'next-needs-you' | 'new-chat'
   | `chat-${(typeof THREAD_NUMBERS)[number]}`
   | 'approve-focused' | 'restore-last-prompt'
 
@@ -56,6 +57,12 @@ export const KEYMAP: readonly KeyBinding[] = [
   {
     id: 'reading-mode', label: 'Reading mode: fold the composer', scope: 'global', chords: ['mod+shift+.'],
     keywords: 'reading read long answer fold hide collapse composer', disabledReason: 'Open a chat to fold its composer',
+  },
+  // The chat's working folder beside its conversation (`pages/chat/panes`). Its runner is the open
+  // chat's, so the palette runs it only while a chat is open (`useBoundRunner`).
+  {
+    id: 'workspace-tree', label: "Show or hide the chat's working folder", scope: 'global', chords: ['mod+shift+e'],
+    keywords: 'files file tree explorer workspace directory folder', disabledReason: 'Open a chat to see its working folder',
   },
   { id: 'next-needs-you', label: 'Go to the next chat that needs you', keywords: 'approval waiting attention your turn', scope: 'global', chords: ['mod+alt+a'] },
   { id: 'new-chat', label: 'New chat', keywords: 'thread start', scope: 'global', chords: ['mod+n'] },
@@ -148,6 +155,10 @@ export function matchBinding(e: KeyboardEvent | React.KeyboardEvent, id: Command
 
 const runners = new Map<CommandId, () => void>()
 let listening = false
+/** Who is told when a runner is given or taken back (`useBoundRunner`). */
+const watchers = new Set<() => void>()
+const runnersChanged = () => { for (const w of watchers) w() }
+const watchRunners = (w: () => void) => { watchers.add(w); return () => { watchers.delete(w) } }
 
 function onKey(e: KeyboardEvent) {
   if (e.defaultPrevented) return
@@ -187,7 +198,15 @@ export function useKeyBinding(id: CommandId, run: (() => void) | undefined): voi
     if (!runs) return
     const call = () => latest.current?.()
     runners.set(id, call)
+    runnersChanged()
     listen()
-    return () => { if (runners.get(id) === call) runners.delete(id) }
+    return () => { if (runners.get(id) === call) { runners.delete(id); runnersChanged() } }
   }, [id, runs])
+}
+
+/** The runner a mounted page gave the global row *id* with `useKeyBinding`, or none: how the shell's
+ *  palette runs a row whose runner lives in a page (a chat's working folder) while that page is
+ *  there, and lists it dimmed with its reason when it is not. */
+export function useBoundRunner(id: CommandId): (() => void) | undefined {
+  return useSyncExternalStore(watchRunners, () => runners.get(id))
 }
