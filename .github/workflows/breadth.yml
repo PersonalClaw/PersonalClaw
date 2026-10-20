@@ -212,7 +212,17 @@ jobs:
       - name: pytest (shard ${{ matrix.shard }})
         id: pytest
         continue-on-error: true
-        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-ubuntu.xml
+        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-ubuntu.xml --shard-ids "$RUNNER_TEMP/ids/shard-ids-ubuntu-${{ matrix.shard }}.txt"
+      # The ids this shard collected, for the union check (`shard-union`). None is uploaded
+      # when pytest wrote none, and the union reads that as red.
+      - name: Upload the test ids this shard collected (ubuntu · shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shard-ids-ubuntu-${{ matrix.shard }}
+          path: ${{ runner.temp }}/ids/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload JUnit results (ubuntu-24.04-3.13 · shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -318,7 +328,17 @@ jobs:
       - name: pytest (shard ${{ matrix.shard }})
         id: pytest
         continue-on-error: true
-        run: uv run pytest -n 2 --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-macos.xml
+        run: uv run pytest -n 2 --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-macos.xml --shard-ids "$RUNNER_TEMP/ids/shard-ids-macos-${{ matrix.shard }}.txt"
+      # The ids this shard collected, for the union check (`shard-union`). None is uploaded
+      # when pytest wrote none, and the union reads that as red.
+      - name: Upload the test ids this shard collected (macos · shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shard-ids-macos-${{ matrix.shard }}
+          path: ${{ runner.temp }}/ids/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload JUnit results (macos-26-3.12 · shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -614,7 +634,17 @@ jobs:
       - name: pytest (shard ${{ matrix.shard }})
         id: pytest
         continue-on-error: true
-        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-arm.xml
+        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-arm.xml --shard-ids "$RUNNER_TEMP/ids/shard-ids-arm-${{ matrix.shard }}.txt"
+      # The ids this shard collected, for the union check (`shard-union`). None is uploaded
+      # when pytest wrote none, and the union reads that as red.
+      - name: Upload the test ids this shard collected (arm · shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shard-ids-arm-${{ matrix.shard }}
+          path: ${{ runner.temp }}/ids/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload JUnit results (ubuntu-24.04-arm-3.13 · shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -710,7 +740,17 @@ jobs:
       - name: pytest (shard ${{ matrix.shard }})
         id: pytest
         continue-on-error: true
-        run: uv run pytest -n auto --dist worksteal --cov=personalclaw tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-coverage-shard.xml
+        run: uv run pytest -n auto --dist worksteal --cov=personalclaw tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-coverage-shard.xml --shard-ids "$RUNNER_TEMP/ids/shard-ids-coverage-shard-${{ matrix.shard }}.txt"
+      # The ids this shard collected, for the union check (`shard-union`). None is uploaded
+      # when pytest wrote none, and the union reads that as red.
+      - name: Upload the test ids this shard collected (coverage-shard · shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shard-ids-coverage-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/ids/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload JUnit results (coverage · shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1049,7 +1089,17 @@ jobs:
       - name: pytest (canary shard ${{ matrix.shard }})
         id: pytest
         continue-on-error: true
-        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-canary.xml
+        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-canary.xml --shard-ids "$RUNNER_TEMP/ids/shard-ids-canary-${{ matrix.shard }}.txt"
+      # The ids this shard collected, for the union check (`shard-union`). None is uploaded
+      # when pytest wrote none, and the union reads that as red.
+      - name: Upload the test ids this shard collected (canary · shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shard-ids-canary-${{ matrix.shard }}
+          path: ${{ runner.temp }}/ids/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload JUnit results (canary · shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1300,10 +1350,583 @@ jobs:
         run: |
           "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/audit__1.json"
 
+  planned-ids-ubuntu:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg planned-ids-ubuntu/1
+    # The planned suite (#3923: every file `shards plan` covers), collected on the `ubuntu`
+    # leg's own runner and Python, so the ids `shard-union` holds that leg's shards to differ
+    # from theirs only if a test ran nowhere or twice, never by platform or Python. It
+    # collects and runs no test, so it is no security evidence, and it runs every night: the
+    # union reads tonight's collection, which a carried result would not have uploaded.
+    needs: [freshness]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
+      PY: "3.13.16"
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.1"
+          python-version: "3.13.16"
+          enable-cache: true
+          prune-cache: true
+      # As the macos leg: `uv python find` never downloads, so the managed interpreter is made first.
+      - name: the uv-managed Python this shard runs on
+        run: uv venv "$RUNNER_TEMP/shard-python"
+      - name: this shard's inputs, as its runner reports them
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" \
+            --node "$(node --version 2>/dev/null || echo none)"
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: the planned suite's test files
+        run: >-
+          "$(uv python find "$PY")" -m tools.ci shards universe --out "$RUNNER_TEMP/universe.txt"
+      - name: pytest (collect the planned suite, writing its ids)
+        id: pytest
+        run: uv run pytest --collect-only -qq -n0 tests --shard-list "$RUNNER_TEMP/universe.txt" --junitxml=reports/junit-planned-ubuntu.xml --shard-ids "$RUNNER_TEMP/ids/planned-ids-ubuntu.txt"
+      - name: Upload the planned suite's ids
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: planned-ids-ubuntu
+          path: ${{ runner.temp }}/ids/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload JUnit results (planned-ids-ubuntu)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-planned-ubuntu
+          path: reports/junit-planned-ubuntu.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: record what this shard ran
+        if: always()
+        env:
+          OUTCOME: ${{ job.status }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-ubuntu__1.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-planned-ids-ubuntu-1
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red.
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-ubuntu__1.json"
+
+  planned-ids-macos:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg planned-ids-macos/1
+    # The planned suite (#3923: every file `shards plan` covers), collected on the `macos`
+    # leg's own runner and Python, so the ids `shard-union` holds that leg's shards to differ
+    # from theirs only if a test ran nowhere or twice, never by platform or Python. It
+    # collects and runs no test, so it is no security evidence, and it runs every night: the
+    # union reads tonight's collection, which a carried result would not have uploaded.
+    # It waits for the macos suite, as security-macos does, so it never takes a macOS runner
+    # beside the suite's two; it runs whatever the suite concluded.
+    needs: [freshness, macos]
+    if: ${{ !cancelled() }}
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
+      PY: "3.12.15"
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.1"
+          python-version: "3.12.15"
+          enable-cache: true
+          prune-cache: true
+      # As the macos leg: `uv python find` never downloads, so the managed interpreter is made first.
+      - name: the uv-managed Python this shard runs on
+        run: uv venv "$RUNNER_TEMP/shard-python"
+      - name: this shard's inputs, as its runner reports them
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" \
+            --node "$(node --version 2>/dev/null || echo none)"
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: the planned suite's test files
+        run: >-
+          "$(uv python find "$PY")" -m tools.ci shards universe --out "$RUNNER_TEMP/universe.txt"
+      - name: pytest (collect the planned suite, writing its ids)
+        id: pytest
+        run: uv run pytest --collect-only -qq -n0 tests --shard-list "$RUNNER_TEMP/universe.txt" --junitxml=reports/junit-planned-macos.xml --shard-ids "$RUNNER_TEMP/ids/planned-ids-macos.txt"
+      - name: Upload the planned suite's ids
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: planned-ids-macos
+          path: ${{ runner.temp }}/ids/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload JUnit results (planned-ids-macos)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-planned-macos
+          path: reports/junit-planned-macos.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: record what this shard ran
+        if: always()
+        env:
+          OUTCOME: ${{ job.status }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-macos__1.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-planned-ids-macos-1
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red.
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-macos__1.json"
+
+  planned-ids-arm:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg planned-ids-arm/1
+    # The planned suite (#3923: every file `shards plan` covers), collected on the `arm`
+    # leg's own runner and Python, so the ids `shard-union` holds that leg's shards to differ
+    # from theirs only if a test ran nowhere or twice, never by platform or Python. It
+    # collects and runs no test, so it is no security evidence, and it runs every night: the
+    # union reads tonight's collection, which a carried result would not have uploaded.
+    needs: [freshness]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
+      PY: "3.13.16"
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.1"
+          python-version: "3.13.16"
+          enable-cache: true
+          prune-cache: true
+      # As the macos leg: `uv python find` never downloads, so the managed interpreter is made first.
+      - name: the uv-managed Python this shard runs on
+        run: uv venv "$RUNNER_TEMP/shard-python"
+      - name: this shard's inputs, as its runner reports them
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" \
+            --node "$(node --version 2>/dev/null || echo none)"
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: the planned suite's test files
+        run: >-
+          "$(uv python find "$PY")" -m tools.ci shards universe --out "$RUNNER_TEMP/universe.txt"
+      - name: pytest (collect the planned suite, writing its ids)
+        id: pytest
+        run: uv run pytest --collect-only -qq -n0 tests --shard-list "$RUNNER_TEMP/universe.txt" --junitxml=reports/junit-planned-arm.xml --shard-ids "$RUNNER_TEMP/ids/planned-ids-arm.txt"
+      - name: Upload the planned suite's ids
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: planned-ids-arm
+          path: ${{ runner.temp }}/ids/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload JUnit results (planned-ids-arm)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-planned-arm
+          path: reports/junit-planned-arm.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: record what this shard ran
+        if: always()
+        env:
+          OUTCOME: ${{ job.status }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-arm__1.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-planned-ids-arm-1
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red.
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-arm__1.json"
+
+  planned-ids-coverage-shard:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg planned-ids-coverage-shard/1
+    # The planned suite (#3923: every file `shards plan` covers), collected on the `coverage-shard`
+    # leg's own runner and Python, so the ids `shard-union` holds that leg's shards to differ
+    # from theirs only if a test ran nowhere or twice, never by platform or Python. It
+    # collects and runs no test, so it is no security evidence, and it runs every night: the
+    # union reads tonight's collection, which a carried result would not have uploaded.
+    needs: [freshness]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
+      PY: "3.12.15"
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.1"
+          python-version: "3.12.15"
+          enable-cache: true
+          prune-cache: true
+      # As the macos leg: `uv python find` never downloads, so the managed interpreter is made first.
+      - name: the uv-managed Python this shard runs on
+        run: uv venv "$RUNNER_TEMP/shard-python"
+      - name: this shard's inputs, as its runner reports them
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" \
+            --node "$(node --version 2>/dev/null || echo none)"
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: the planned suite's test files
+        run: >-
+          "$(uv python find "$PY")" -m tools.ci shards universe --out "$RUNNER_TEMP/universe.txt"
+      - name: pytest (collect the planned suite, writing its ids)
+        id: pytest
+        run: uv run pytest --collect-only -qq -n0 tests --shard-list "$RUNNER_TEMP/universe.txt" --junitxml=reports/junit-planned-coverage-shard.xml --shard-ids "$RUNNER_TEMP/ids/planned-ids-coverage-shard.txt"
+      - name: Upload the planned suite's ids
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: planned-ids-coverage-shard
+          path: ${{ runner.temp }}/ids/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload JUnit results (planned-ids-coverage-shard)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-planned-coverage-shard
+          path: reports/junit-planned-coverage-shard.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: record what this shard ran
+        if: always()
+        env:
+          OUTCOME: ${{ job.status }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-coverage-shard__1.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-planned-ids-coverage-shard-1
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red.
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-coverage-shard__1.json"
+
+  planned-ids-canary:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg planned-ids-canary/1
+    # The planned suite (#3923: every file `shards plan` covers), collected on the `canary`
+    # leg's own runner and Python, so the ids `shard-union` holds that leg's shards to differ
+    # from theirs only if a test ran nowhere or twice, never by platform or Python. It
+    # collects and runs no test, so it is no security evidence, and it runs every night: the
+    # union reads tonight's collection, which a carried result would not have uploaded.
+    # It runs on the canary's image, so its red is that image's news, as the canary's is:
+    # `continue-on-error`, and only `shard-union-canary` reads it.
+    needs: [freshness]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    continue-on-error: true
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
+      PY: "3.12.15"
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.1"
+          python-version: "3.12.15"
+          enable-cache: true
+          prune-cache: true
+      # As the macos leg: `uv python find` never downloads, so the managed interpreter is made first.
+      - name: the uv-managed Python this shard runs on
+        run: uv venv "$RUNNER_TEMP/shard-python"
+      - name: this shard's inputs, as its runner reports them
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" \
+            --node "$(node --version 2>/dev/null || echo none)"
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: the planned suite's test files
+        run: >-
+          "$(uv python find "$PY")" -m tools.ci shards universe --out "$RUNNER_TEMP/universe.txt"
+      - name: pytest (collect the planned suite, writing its ids)
+        id: pytest
+        run: uv run pytest --collect-only -qq -n0 tests --shard-list "$RUNNER_TEMP/universe.txt" --junitxml=reports/junit-planned-canary.xml --shard-ids "$RUNNER_TEMP/ids/planned-ids-canary.txt"
+      - name: Upload the planned suite's ids
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: planned-ids-canary
+          path: ${{ runner.temp }}/ids/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload JUnit results (planned-ids-canary)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-planned-canary
+          path: reports/junit-planned-canary.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: record what this shard ran
+        if: always()
+        env:
+          OUTCOME: ${{ job.status }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-canary__1.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-planned-ids-canary-1
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red.
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-canary__1.json"
+
+  shard-union:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg shard-union/1
+    # #3923: each suite leg's shards together collected that leg's planned suite, each test id
+    # once: none missing, none extra, none twice. `shards check` already holds every file to
+    # one shard on every run; this is the net under it, at the level of test ids. A shard or a
+    # collection that uploaded no ids is red, never absent. It holds the four legs whose red
+    # is the run's; the canary's union is `shard-union-canary`, advisory as the canary is.
+    needs: [freshness, ubuntu, macos, arm, coverage-shard, planned-ids-ubuntu, planned-ids-macos, planned-ids-arm, planned-ids-coverage-shard]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PY: "3.13.16"
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.1"
+          python-version: "3.13.16"
+          enable-cache: true
+          prune-cache: true
+      # As the macos leg: `uv python find` never downloads, so the managed interpreter is made first.
+      - name: the uv-managed Python this shard runs on
+        run: uv venv "$RUNNER_TEMP/shard-python"
+      - name: this shard's inputs, as its runner reports them
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" \
+            --node "$(node --version 2>/dev/null || echo none)"
+      # A missing id file is the union's red to name; a download that fails outright fails
+      # the job, which is red too.
+      - name: every shard's and every planned collection's ids
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: '*-ids-*'
+          path: ${{ runner.temp }}/ids
+          merge-multiple: true
+      - name: each leg's shards collected its planned suite, each id once
+        id: union
+        run: >-
+          "$(uv python find "$PY")" -m tools.ci shards union --dir "$RUNNER_TEMP/ids"
+          --leg ubuntu:4 --leg macos:6 --leg arm:4 --leg coverage-shard:6
+      - name: record what this shard ran
+        if: always()
+        env:
+          OUTCOME: ${{ job.status }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/shard-union__1.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-shard-union-1
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red.
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/shard-union__1.json"
+
+  shard-union-canary:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg shard-union-canary/1
+    # The canary's shards held to its planned suite, as `shard-union` holds the other four
+    # legs. A red here is the next image's news, not a verdict on the run, as the canary's own
+    # red is: `continue-on-error`, and `shard-union` never reads the canary's ids.
+    needs: [freshness, canary, planned-ids-canary]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    continue-on-error: true
+    env:
+      PY: "3.13.16"
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.1"
+          python-version: "3.13.16"
+          enable-cache: true
+          prune-cache: true
+      # As the macos leg: `uv python find` never downloads, so the managed interpreter is made first.
+      - name: the uv-managed Python this shard runs on
+        run: uv venv "$RUNNER_TEMP/shard-python"
+      - name: this shard's inputs, as its runner reports them
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" \
+            --node "$(node --version 2>/dev/null || echo none)"
+      # A missing id file is the union's red to name; a download that fails outright fails
+      # the job, which is red too.
+      - name: the canary shards' and the canary's planned collection's ids
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: '*-ids-canary*'
+          path: ${{ runner.temp }}/ids
+          merge-multiple: true
+      - name: the canary's shards collected its planned suite, each id once
+        id: union
+        run: >-
+          "$(uv python find "$PY")" -m tools.ci shards union --dir "$RUNNER_TEMP/ids"
+          --leg canary:4
+      - name: record what this shard ran
+        if: always()
+        env:
+          OUTCOME: ${{ job.status }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/shard-union-canary__1.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-shard-union-canary-1
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red.
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/shard-union-canary__1.json"
+
   report:
     # Last: settles every leg, writes the run's record under its digest, and keeps the leg
     # issues. It writes issues only on main; a dispatch on another ref says what it would do.
-    needs: [freshness, ubuntu, macos, rails-macos, collection-parses, arm, coverage-shard, coverage, security, security-macos, canary, install-smoke, audit]
+    needs: [freshness, ubuntu, macos, rails-macos, collection-parses, arm, coverage-shard, coverage, security, security-macos, canary, planned-ids-ubuntu, planned-ids-macos, planned-ids-arm, planned-ids-coverage-shard, planned-ids-canary, shard-union, shard-union-canary, install-smoke, audit]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15

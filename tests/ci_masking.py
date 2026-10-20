@@ -182,6 +182,14 @@ TOLERATED: tuple[Tolerated, ...] = (
         "issue, and not a verdict on the run.",
     ),
     Tolerated(
+        _BREADTH,
+        ("planned-ids-canary", "shard-union-canary"),
+        None,
+        "The canary's union check: its planned suite collected on the next Ubuntu image, and its "
+        "shards held to it. Its red is the image's news, as the canary's is, and the gating "
+        "union (`shard-union`) never reads the canary's ids.",
+    ),
+    Tolerated(
         ".github/workflows/pr-feedback.yml",
         ("lint-help",),
         "dl",

@@ -76,6 +76,15 @@ NON_REUSABLE = frozenset(
         "canary",
         "install-smoke",
         "audit",
+        # #3923's union check reads the ids each of these uploads that night: a carried result
+        # uploads none, so each runs every night.
+        "planned-ids-ubuntu",
+        "planned-ids-macos",
+        "planned-ids-arm",
+        "planned-ids-coverage-shard",
+        "planned-ids-canary",
+        "shard-union",
+        "shard-union-canary",
     }
 )
 
@@ -94,6 +103,15 @@ SHARDS: Mapping[str, int] = {
     "canary": 4,
     "install-smoke": 1,
     "audit": 1,
+    # #3923: each suite leg's planned suite, collected on its own runner, and the union checks:
+    # the four gating legs' and the advisory canary's.
+    "planned-ids-ubuntu": 1,
+    "planned-ids-macos": 1,
+    "planned-ids-arm": 1,
+    "planned-ids-coverage-shard": 1,
+    "planned-ids-canary": 1,
+    "shard-union": 1,
+    "shard-union-canary": 1,
 }
 
 
