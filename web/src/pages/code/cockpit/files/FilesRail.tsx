@@ -4,6 +4,7 @@ import { WorkspaceTree } from './WorkspaceTree'
 import { ChangesPanel } from './ChangesPanel'
 import { FileFinder } from './FileFinder'
 import { useFilesRail } from './useFilesRail'
+import type { RouteProps } from '../../../../app/useQueryState'
 
 // ── The cockpit's files rail ───────────────────────────────────────────────────────────────────
 //
@@ -11,8 +12,10 @@ import { useFilesRail } from './useFilesRail'
 // a Changes tab with the workspace's git changes and the run's merged work. `useFilesRail` keeps
 // which tab is up and the Changes count shown on the Files tab.
 
-export function FilesRail({ ws, isProjectDir, running, merges }: { ws: string; isProjectDir: boolean; running: boolean; merges?: LoopMerge[] }) {
-  const { tab, setTab, changeCount } = useFilesRail({ ws, isProjectDir, running })
+export function FilesRail({ ws, isProjectDir, running, merges, query, setQuery }: {
+  ws: string; isProjectDir: boolean; running: boolean; merges?: LoopMerge[]
+} & Partial<Pick<RouteProps, 'query' | 'setQuery'>>) {
+  const { tab, setTab, changeCount } = useFilesRail({ ws, isProjectDir, running, query, setQuery })
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-0.5 border-b border-outline-variant/40 px-2 py-1.5">

@@ -12,6 +12,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A chat's task mode is in its address (`?mode=plan`), so a reload, a copied address or a `personalclaw://` link opens a new thread in that mode, and an existing thread keeps its own, so an address never changes how a chat runs; a link into a new thread that is already open moves it to the link's mode with its approval back to Normal.**
 - **On macOS the desktop window's controls sit in the strip above the sidebar, and the sidebar takes the system's translucent material while the page stays opaque; with Reduce transparency on, or on Linux, the window stays opaque.**
+- **A code project's cockpit keeps its review in its address: the Files or Changes tab, the file, diff or commit the center shows, and the open task, so a reload, Back, a copied address or a `personalclaw://code/<id>` link opens the same review; a link only opens it and never steers, queues or runs anything.**
 
 ### Changed
 

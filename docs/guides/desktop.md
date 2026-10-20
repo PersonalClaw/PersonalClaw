@@ -123,9 +123,10 @@ personalclaw://<page>[/<item>...][?<state>=<value>&...]
   shell pages, `onboarding` and `companion`, are not on the list: a link to either is refused.
 - **Up to four items** follow: a thread, a settings panel, an item's id. Each is letters, digits and
   `. _ : @ ~ -`.
-- **The state** is `project`, `mode`, `pane`, `file` (a path inside the thread's folder) and, on
-  a new thread only, `prompt`, each given once. An artifact has a page of its own, so a link names
-  it as one (`personalclaw://artifacts/<slug>`); an `artifact` key gets the link refused.
+- **The state** is `project`, `mode`, `pane`, `file` (a path inside the thread's folder), on a
+  new thread only `prompt`, and on a code project's cockpit only `diff`, `commit` and `task`, each
+  given once. An artifact has a page of its own, so a link names it as one
+  (`personalclaw://artifacts/<slug>`); an `artifact` key gets the link refused.
 
 What the dashboard does with the state:
 
@@ -134,7 +135,8 @@ What the dashboard does with the state:
   reload shows it in the composer again, still unsent. If the app is already showing a new
   thread, the link opens a fresh one with its prompt in place of the unsent draft.
 - **`pane`** opens one of the chat's panes: `activity` on a thread, `history` on a new thread.
-  A pane the thread does not have is left closed. Other pages do not read `pane`.
+  A pane the thread does not have is left closed. Other pages, apart from a code project's cockpit
+  (below), do not read `pane`.
 - **`file`** is the file the thread's file pane opens beside it.
 - **`project`** binds a new thread to that project, as the project's own Chat button does.
 - **`mode`** is read by the page it names, as that page's own address does: Skills opens its
@@ -149,6 +151,24 @@ What the dashboard does with the state:
   follows the mode as you change it, so a reload or a copied address opens the chat in the mode it
   was in.
 
+On a code project's cockpit (`personalclaw://code/<id>`) the state is the review you had open, and
+the cockpit's own address keeps it as you click, so a reload, Back or a copied address opens the
+same review:
+
+- **`pane`** is the files rail's tab: `changes`, or `files`, which is also what it shows with none.
+- **`file`**, **`diff`** or **`commit`** is the one thing the center shows: a file open in the
+  editor, a file's working-copy diff, or a commit's changes. A file and a diff are paths inside the
+  project's workspace; a commit is its hash, 7 to 40 lowercase hex characters. The center shows one
+  at a time, so a link that names more than one of the three is refused. A commit's hash is only
+  read: it opens that commit's changes and goes nowhere else. A commit the Changes tab lists by a
+  shorter hash, as git abbreviates in some repositories, opens when you click it, and the address
+  then names none of the three.
+- **`task`** opens that task's detail in the Tasks panel. Opening it only shows it: its steer box
+  starts empty, and nothing is queued or sent. A task that is not in the project's lists is closed
+  again once they are read and hold a task.
+
+`diff`, `commit` and `task` on any other page get the link refused.
+
 For example:
 
 | Link | Opens |
@@ -159,13 +179,14 @@ For example:
 | `personalclaw://automations` | Automations |
 | `personalclaw://artifacts/<slug>` | that artifact |
 | `personalclaw://threads/<key>?pane=activity&file=src%2Fapp.py` | that thread, with its Activity pane and that file open |
+| `personalclaw://code/<id>?pane=changes&diff=src%2Fapp.py&task=<task>` | that code project, on its Changes tab, with that file's diff and that task open |
 
 **A link only opens a page. It never acts.** It sends nothing, approves nothing, answers nothing
 and runs nothing. Any other key in a link, a key that would act included, gets the link refused.
 So does an unknown page, an encoded `/`, `#`, `?` or quote inside an item, a fragment, a value
-that is too long or the wrong shape, a file path outside the thread's folder, and a prompt with
-control characters other than tabs and line breaks. A refused link brings the app forward and
-changes nothing.
+that is too long or the wrong shape, a file path outside the thread's folder, more than one of
+`file`, `diff` and `commit`, and a prompt with control characters other than tabs and line
+breaks. A refused link brings the app forward and changes nothing.
 
 A link that arrives while the app is still starting waits until the dashboard has loaded, and only
 the newest one waits. It is delivered once, and only to the dashboard of the gateway the window

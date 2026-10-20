@@ -106,14 +106,16 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
       <div className="flex min-h-0 flex-1">
         <CollapsiblePanel side="left" panelKey="code-left" def={300} min={200} max={460}
           icon={FolderTree} label="Files">
-          <FilesRail ws={fileRoot} isProjectDir={!ws} running={active} merges={p.merges} />
+          <FilesRail ws={fileRoot} isProjectDir={!ws} running={active} merges={p.merges} query={query} setQuery={setQuery} />
         </CollapsiblePanel>
-        <CenterEditor ws={fileRoot} showTerm={showTerm} onCloseTerm={() => setShowTerm(false)} running={active} runCmd={pendingRunCmd} />
+        <CenterEditor ws={fileRoot} showTerm={showTerm} onCloseTerm={() => setShowTerm(false)} running={active} runCmd={pendingRunCmd}
+          query={query} setQuery={setQuery} />
         <CollapsiblePanel side="right" panelKey="code-right" def={340} min={260} max={520}
           icon={ListChecks} label="Tasks">
           <RightPanel project={p} onTasksChanged={refetchTasks} tasksNonce={tasksNonce}
             activityBySession={activityBySession} gateFail={gateFail} stalled={stalled} onNudged={load} onStartNew={onStartNew}
-            onAnswerOnScreen={setAnswerOnScreen} answerWanted={answerWanted} onAnswerShown={answerShown} />
+            onAnswerOnScreen={setAnswerOnScreen} answerWanted={answerWanted} onAnswerShown={answerShown}
+            query={query} setQuery={setQuery} />
         </CollapsiblePanel>
       </div>
 

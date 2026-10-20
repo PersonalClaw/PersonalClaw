@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useVisiblePoll } from '../../../../lib/useVisiblePoll'
 import { useGitStatus } from '../../../files/filesData'
+import type { RouteProps } from '../../../../app/useQueryState'
+
+type Tab = 'files' | 'changes'
 
 // ── The cockpit files rail's controller ───────────────────────────────────────────────────────
 //
@@ -8,8 +11,19 @@ import { useGitStatus } from '../../../files/filesData'
 // (a light git status, polled while the worker runs and re-read on a save), and ⌘P switching to the
 // Files tab so the finder is there to focus. `FilesRail.tsx` draws it.
 
-export function useFilesRail({ ws, isProjectDir, running }: { ws: string; isProjectDir: boolean; running: boolean }) {
-  const [tab, setTab] = useState<'files' | 'changes'>('files')
+export function useFilesRail({ ws, isProjectDir, running, query, setQuery }: {
+  ws: string; isProjectDir: boolean; running: boolean
+} & Partial<Pick<RouteProps, 'query' | 'setQuery'>>) {
+  // The tab is in the cockpit's address (`pane=changes`; Files is no key), written as a replace,
+  // so a reload, a copied address or a link opens the same tab. Without an address (a caller that
+  // passes none) it is kept here.
+  const [localTab, setLocalTab] = useState<Tab>('files')
+  const tab: Tab = setQuery ? (query?.pane === 'changes' ? 'changes' : 'files') : localTab
+  const setTab = (next: Tab) => {
+    if (setQuery) setQuery({ pane: next === 'changes' ? 'changes' : null }, { replace: true })
+    else setLocalTab(next)
+  }
+  const setTabRef = useRef(setTab); setTabRef.current = setTab
   // A light, rail-level git-status read JUST for the Changes-tab count badge — so the
   // user sees review-worthy changes are waiting while they're on the Files tab (the
   // ChangesPanel, which owns the full status + history, is unmounted then). A
@@ -42,7 +56,7 @@ export function useFilesRail({ ws, isProjectDir, running }: { ws: string; isProj
   useEffect(() => {
     const onFocusFind = () => {
       if (tabRef.current !== 'files') {
-        setTab('files')
+        setTabRef.current('files')
         setTimeout(() => window.dispatchEvent(new CustomEvent('ne:code-focus-find')), 0)
       }
     }
