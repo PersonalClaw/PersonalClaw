@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Execute the PACKAGED backend hard enough to catch an incomplete bundle. Release-blocking.
 #
 # `release.yml`'s desktop jobs already mounted the artefact, asserted `app.asar` and the
@@ -18,14 +18,19 @@
 # the exact rot that produced these findings — `personalclaw-backend.spec` had
 # hand-transcribed the wheel's package-data globs and drifted eleven of thirty.
 #
-#   usage: scripts/smoke_backend_bundle.sh <path to personalclaw-backend>
+#   usage: sh scripts/smoke_backend_bundle.sh <path to personalclaw-backend>
+#
+# POSIX sh, so it runs as `sh <path>` (the one way CI's supply-chain check reads a script a step
+# runs) under ubuntu-24.04's dash, which has no `pipefail`, as well as macOS's sh. So no pipe's
+# status hides in it: each command whose failure matters writes a file or a variable first, and
+# the pipe that reads it ends in the command that decides.
 #
 # MEASURED both directions on 2026-09-23, two bundles built from one tree with only the
 # spec differing: RED on the pre-fix bundle (`ModuleNotFoundError: No module named
 # 'personalclaw.sdk.tool'` + `Failed to enable extension personalclaw-ui-docs`), GREEN on
 # the post-fix bundle. An assertion added after the fix, never seen failing, is not a test.
 
-set -euo pipefail
+set -eu
 
 BACKEND="${1:?usage: scripts/smoke_backend_bundle.sh <path to personalclaw-backend>}"
 test -x "$BACKEND" || { echo "smoke: $BACKEND is not executable"; exit 1; }
@@ -138,15 +143,20 @@ api /api/skills | expect "the bundled skills are there" \
 curl -sf --max-time 120 -X POST -H 'Content-Type: application/json' \
   -d '{"tool": "document_formats", "arguments": {}}' "http://127.0.0.1:$PORT/api/tools/invoke" \
   | expect "a document writer is there" 'd["ok"] and not d["output"].endswith(": none")'
+# The tool server's answers go to a file, so its own exit status is the pipe's and fails here.
+MCP_OUT="$(mktemp)"
 printf '%s\n' \
   '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "smoke", "version": "0"}}}' \
   '{"jsonrpc": "2.0", "method": "notifications/initialized"}' \
   '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}' \
-  | PERSONALCLAW_HOME="$SMOKE_HOME" "$BACKEND" mcp-core 2>/dev/null | tail -1 \
-  | expect "the tool server agent CLIs run lists its tools" \
-    'd.get("id") == 2 and len(d["result"]["tools"]) > 0'
-REFERENCE="$(PERSONALCLAW_HOME="$SMOKE_HOME" "$BACKEND" doctor --paths \
-  | awk -F'\t' '$1 == "reference" {print $2}')"
+  | PERSONALCLAW_HOME="$SMOKE_HOME" "$BACKEND" mcp-core >"$MCP_OUT" 2>/dev/null \
+  || { echo "smoke: FAIL — the tool server agent CLIs run exited nonzero"; exit 1; }
+tail -1 "$MCP_OUT" | expect "the tool server agent CLIs run lists its tools" \
+  'd.get("id") == 2 and len(d["result"]["tools"]) > 0'
+# The same for doctor: its listing is read whole first, so a failed doctor fails here.
+DOCTOR_PATHS="$(PERSONALCLAW_HOME="$SMOKE_HOME" "$BACKEND" doctor --paths)" \
+  || { echo "smoke: FAIL — doctor --paths exited nonzero"; exit 1; }
+REFERENCE="$(printf '%s\n' "$DOCTOR_PATHS" | awk -F'\t' '$1 == "reference" {print $2}')"
 test -d "$REFERENCE" || { echo "smoke: FAIL — the route reference is no folder: $REFERENCE"; exit 1; }
 echo "smoke: the route reference is a folder -> ok"
 
@@ -161,25 +171,26 @@ echo "smoke: gateway.log is $(wc -l <"$LOG") lines"
 # Every one of these was in the owner's 2026-09-23 log. A packaged bundle that produces
 # any of them is broken in a way no source-tree test can see, because in a checkout the
 # files these name are simply on disk.
-SIGNATURES=(
-  "ModuleNotFoundError"                        # an sdk.* (or any) submodule missing
-  "Failed to enable extension"                 # the consequence: a dead app platform
-  "FileNotFoundError"                          # a package data file missing
-  "Dropping MCP server"                        # the agent lost a tool surface
-  "Could not resolve personalclaw binary"      # ...because the bundle has no console script
-  "runner catalog: shipped"                    # the catalogue read failed
-  "projection rule pack unreadable"            # the builtin rule pack read failed
-  "not a git repository"                       # git shelled out inside a bundle
-  "unrecognized top-level keys"                # a config key nothing recognizes
-)
 failed=0
-for sig in "${SIGNATURES[@]}"; do
-  if grep -qF "$sig" "$LOG"; then
-    echo "smoke: FAIL — packaged gateway logged: $sig"
-    grep -nF "$sig" "$LOG" | head -5
+signatures=0
+signature() {
+  # $1 = a line an incomplete bundle logs
+  signatures=$((signatures + 1))
+  if grep -qF "$1" "$LOG"; then
+    echo "smoke: FAIL — packaged gateway logged: $1"
+    grep -nF "$1" "$LOG" | head -5
     failed=1
   fi
-done
+}
+signature "ModuleNotFoundError"                        # an sdk.* (or any) submodule missing
+signature "Failed to enable extension"                 # the consequence: a dead app platform
+signature "FileNotFoundError"                          # a package data file missing
+signature "Dropping MCP server"                        # the agent lost a tool surface
+signature "Could not resolve personalclaw binary"      # ...because the bundle has no console script
+signature "runner catalog: shipped"                    # the catalogue read failed
+signature "projection rule pack unreadable"            # the builtin rule pack read failed
+signature "not a git repository"                       # git shelled out inside a bundle
+signature "unrecognized top-level keys"                # a config key nothing recognizes
 
 if [ "$failed" -ne 0 ]; then
   echo "--- full gateway.log ---"
@@ -187,4 +198,4 @@ if [ "$failed" -ne 0 ]; then
   exit 1
 fi
 
-echo "smoke: PASS — the packaged backend booted and logged none of the ${#SIGNATURES[@]} incomplete-bundle signatures"
+echo "smoke: PASS — the packaged backend booted and logged none of the $signatures incomplete-bundle signatures"

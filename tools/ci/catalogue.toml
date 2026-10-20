@@ -388,8 +388,6 @@ command = [
   { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q", "tests/rails", "--junitxml=reports/junit-rails-macos.xml"] },
 ]
 
-# The dependency audit every night on main, where a new advisory lands without a commit. The
-# same command as `audit`, under breadth's cap.
 # One whole-suite collection in one process with the parse guard loaded (#3927): red on a parse
 # of the source tree while pytest collects. It collects and runs no test (--collect-only), so it
 # is no security evidence, and it may carry an earlier result on identical inputs.
@@ -411,6 +409,30 @@ command = [
   { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "-p", "collection_parse_guard", "tests", "--junitxml=reports/junit-collection-parses.xml"], env = { PYTHONPATH = "tests" } },
 ]
 
+# The installer smoke, in a bare container: the checkout's wheel, the staged installer and the
+# served one-liner, each a script under tools/ci/ run as `sh <script>`, in turn. It reads PyPI and
+# the installer the website serves as they are the night it runs, so it is live, as the nightly
+# audit is, and its evidence is never reused, by TTL or by tree.
+[[job]]
+id = "install-smoke"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = ["package-index"]
+toolchain = ["uv"]
+cache = []
+security = "ordinary"
+live = true
+python = "3.13.16"
+timeout_min = 20
+script = [
+  "tools/ci/install_smoke_current.sh",
+  "tools/ci/install_smoke_staged.sh",
+  "tools/ci/install_smoke_served.sh",
+]
+container = "ubuntu:26.04@sha256:88a381d5b5eeb2b35d3ad70925a362c37ce569daf43ede89ff818ec20e4d3794"
+
+# The dependency audit every night on main, where a new advisory lands without a commit. The
+# same command as `audit`, under breadth's cap.
 [[job]]
 id = "audit-nightly"
 tiers = ["breadth"]

@@ -3,9 +3,9 @@ only what it needs.
 
 ``check`` reads a tree (repository-relative path to text): the workflows, the local actions,
 every Dockerfile, the Dependabot file, ``.nvmrc``, the root npm manifest and lock, each image's
-npm manifest and lock under ``deploy/docker/``, and the policy. It returns one ``Violation`` per
-broken rule, with the policy file's exceptions applied. It never raises on a malformed input:
-that reads as a violation too. The rules:
+npm manifest and lock under ``deploy/docker/``, every shell script, and the policy. It returns
+one ``Violation`` per broken rule, with the policy file's exceptions applied. It never raises on
+a malformed input: that reads as a violation too. The rules:
 
 - ``action-sha``: a ``uses:`` names a 40-character commit SHA and its release as ``# vX.Y.Z``,
   on one line the reader can read; a ``docker://`` action is an image and is judged as one; a
@@ -18,11 +18,12 @@ that reads as a violation too. The rules:
 - ``run-install``: a command that installs a tool, wherever the shell would run it
   (tools/ci/shell_installs.py), names its exact version, takes it from a lock, or installs this
   project; a download is never run by a shell or an interpreter, but the project's own installer
-  in the one step that tests it. OS packages are outside the rule. An image's npm manifest under
-  ``deploy/docker/`` pins each tool exactly, under ``dependencies`` only; the lock beside it was
-  generated from it, and fetches every package from the npm registry under a sha512 integrity;
-  a Dockerfile stage copies the lock in and runs ``npm ci`` after the copy; and no other install
-  fetches a tool that manifest names.
+  in the one step and script that test it. A step's repository scripts are read under its rules:
+  a script runs as ``sh <path>``, and every other way of running one is a violation. OS packages
+  are outside the rule. An image's npm manifest under ``deploy/docker/`` pins each tool exactly,
+  under ``dependencies`` only; the lock beside it was generated from it, and fetches every
+  package from the npm registry under a sha512 integrity; a Dockerfile stage copies the lock in
+  and runs ``npm ci`` after the copy; and no other install fetches a tool that manifest names.
 - ``setup-floating``: a setup or install action pins a literal exact version (or the file that
   names one), never ``check-latest``; QEMU and BuildKit images are pinned by digest; an action
   the check does not know fails until it is listed.
@@ -54,6 +55,7 @@ import fnmatch
 import functools
 import json
 import os
+import posixpath
 import re
 import shlex
 import tomllib
@@ -150,12 +152,36 @@ def action_paths(root: Path) -> list[Path]:
     return sorted(found)
 
 
+def script_paths(root: Path) -> list[Path]:
+    """Every shell script under *root*, wherever it sits: a ``.sh`` or ``.bash`` file in any
+    case, or a file with no suffix whose first line opens a shell (a git hook). A step may run
+    any of them, and the check reads the ones it runs."""
+    found: list[Path] = []
+    for folder, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in _SKIPPED and not d.startswith(".venv")]
+        for name in files:
+            path = Path(folder) / name
+            if is_script_name(name) or ("." not in name and _opens_a_shell(path)):
+                found.append(path)
+    return sorted(found)
+
+
+def _opens_a_shell(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            first = handle.readline(200).decode("utf-8", "replace")
+    except OSError:
+        return False
+    return bool(_SHELL_SHEBANG.match(first))
+
+
 def tree_paths(root: Path) -> list[Path]:
     """The files ``check`` reads."""
     return [
         *sorted(p for p in root.glob(".github/workflows/*") if p.suffix in WORKFLOW_SUFFIXES),
         *action_paths(root),
         *dockerfile_paths(root),
+        *script_paths(root),
         root / DEPENDABOT_FILE,
         root / POLICY_FILE,
         root / ".nvmrc",
@@ -714,13 +740,367 @@ def image_digest(tree: Tree) -> list[Violation]:
 
 # ── installs a run: or RUN performs ─────────────────────────────────────────────────────────
 
-#: The project's own installer, piped into sh on purpose by the one step that tests it.
+#: The project's own installer, piped into sh on purpose by the one step that tests it, from the
+#: one script that step runs, and from nowhere else: not that step's own text, not another step
+#: that runs the same script, not another script the step runs.
 OWN_INSTALLER = "https://personalclaw.dev/install"
 OWN_INSTALLER_STEP = (
     ".github/workflows/breadth.yml",
     "install-smoke",
     "smoke — the SERVED one-liner (https://personalclaw.dev/install)",
 )
+OWN_INSTALLER_SCRIPT = "tools/ci/install_smoke_served.sh"
+
+#: The public installer the staged smoke runs: the artifact under test, not CI's toolchain. It
+#: bootstraps uv from Astral's installer and installs this project at a floor, both on purpose
+#: (its header says why). Reached through the staged step's own script, and only there, these
+#: exact lines are its subject; every other line of it is read as any script is, and the uv
+#: bootstrap holds only while the file still names Astral's installer.
+STAGED_INSTALLER_STEP = (
+    ".github/workflows/breadth.yml",
+    "install-smoke",
+    "smoke — the STAGED installer (deploy/website/install.sh)",
+)
+STAGED_INSTALLER_SCRIPT = "tools/ci/install_smoke_staged.sh"
+STAGED_INSTALLER = "deploy/website/install.sh"
+STAGED_INSTALLER_URL = 'UV_INSTALLER_URL="https://astral.sh/uv/install.sh"'
+STAGED_INSTALLER_LINES = frozenset(
+    {
+        'curl -fsSL "$UV_INSTALLER_URL" | sh',
+        'wget -qO- "$UV_INSTALLER_URL" | sh',
+        'uv tool install --upgrade --python "$PC_PYTHON" "$PC_PACKAGE>=$PC_MIN_VERSION"',
+    }
+)
+
+#: The suffixes of a repository shell script, in any case. A file with no suffix is one when its
+#: first line opens a shell (a git hook's ``#!/bin/sh``).
+SCRIPT_SUFFIXES = (".sh", ".bash")
+_SHELL_SHEBANG = re.compile(r"#!\s*\S*/(?:env\s+(?:-\S+\s+)*)?(?:ba|z|da|k)?sh\b")
+#: How a step names the checkout's root before a path: the runner's own name for it.
+_ROOT_PREFIXES = ("$GITHUB_WORKSPACE/", "${GITHUB_WORKSPACE}/")
+#: How deep a script that runs a script is followed; deeper is a violation, never a skip.
+_SCRIPT_DEPTH = 4
+#: Commands that name a script without running it.
+_READERS = frozenset(
+    {"shellcheck", "sha256sum", "shasum", "chmod", "test", "[", "ls", "git", "echo", "printf"}
+    | {"curl", "wget"}  # what one writes and then runs is a download's, judged as one
+)
+#: Interpreters other than a shell, and their options whose next word is code they run.
+_CODE_OPTIONS = (
+    (re.compile(r"python\d*(?:\.\d+)?"), ("-c",)),
+    (re.compile(r"perl|ruby"), ("-e", "-E")),
+    (re.compile(r"node"), ("-e", "--eval", "-p", "--print")),
+)
+#: ``uv run``'s options whose next word is their value.
+_UV_RUN_VALUED = frozenset(
+    "--with --with-editable --with-requirements --extra --group --only-group --no-group --package"
+    " --env-file --python -p --project --directory --index --default-index --index-url -i"
+    " --extra-index-url --find-links -f --index-strategy --keyring-provider --resolution"
+    " --prerelease --exclude-newer --link-mode --config-setting -C --cache-dir --config-file"
+    " --color --allow-insecure-host --python-platform --upgrade-package -P --reinstall-package"
+    " --refresh-package --no-binary-package --no-build-package".split()
+)
+
+
+def is_script_name(rel: str) -> bool:
+    """Whether a path's name says it is a shell script."""
+    return rel.lower().endswith(SCRIPT_SUFFIXES)
+
+
+def is_script(rel: str, text: str) -> bool:
+    """Whether the repository file *rel*, holding *text*, is a shell script: by its suffix, or,
+    with no suffix, by a first line that opens a shell."""
+    name = rel.rsplit("/", 1)[-1]
+    return is_script_name(name) or ("." not in name and bool(_SHELL_SHEBANG.match(text)))
+
+
+def _uv_run(words: list[str]) -> list[str]:
+    """*words* with a leading ``uv run`` and its options taken off, so ``uv run sh x.sh`` is
+    read as ``sh x.sh``."""
+    if words[:2] != ["uv", "run"]:
+        return words
+    rest = words[2:]
+    while rest and rest[0].startswith("-"):
+        flag = rest[0]
+        rest = rest[1 + (flag in _UV_RUN_VALUED and "=" not in flag) :]
+    return shell_installs.unwrap(rest)
+
+
+def _locate(word: str, downloaded: Collection[str]) -> tuple[str, str]:
+    """Where the path *word* points, as (kind, path): ``downloaded`` (a file a download in the
+    same text wrote), ``variable`` (a name the check cannot read), ``outside`` (an absolute path,
+    a home path, or one above the checkout) or ``repository`` with the path in normal form."""
+    if word in downloaded:
+        return "downloaded", word
+    path = word
+    for prefix in _ROOT_PREFIXES:
+        if path.startswith(prefix):
+            path = path[len(prefix) :]
+            break
+    if "$" in path or "`" in path or path == "<stdin>":
+        return "variable", word
+    if path.startswith(("/", "~")):
+        return "outside", word
+    path = posixpath.normpath(path)
+    if path == ".." or path.startswith("../"):
+        return "outside", word
+    return "repository", path
+
+
+def _downloads(lines: list[tuple[int, str]]) -> set[str]:
+    """The files a ``curl`` or ``wget`` of these lines writes (``-o``, ``-O``, ``--output``,
+    ``--output-document``, joined to the option, at the end of a cluster such as ``-qO``, or a
+    redirection), as the words name them."""
+    found: set[str] = set()
+    valued = {"curl": ("o", "--output"), "wget": ("O", "--output-document")}
+    for _, line in lines:
+        for commands in shell_installs.pipelines(line):
+            for words in commands:
+                option = valued.get(words[0].rsplit("/", 1)[-1])
+                if option is None:
+                    continue
+                letter, long = option
+                for i, word in enumerate(words[1:], 1):
+                    after = words[i + 1] if i + 1 < len(words) else ""
+                    if word in (long, ">", ">>"):
+                        found.add(after)
+                    elif word.startswith(f"{long}="):
+                        found.add(word.split("=", 1)[1])
+                    elif word.startswith(">"):
+                        found.add(word.lstrip(">"))
+                    elif word.startswith("-") and not word.startswith("--") and letter in word:
+                        rest = word[word.index(letter) + 1 :]
+                        found.add(rest or after)
+    found.discard("-")
+    found.discard("")
+    return found
+
+
+def _named_in(code: str, scripts: Collection[str]) -> list[str]:
+    """The repository scripts the code *code* names: a script of the tree, or a ``.sh`` or
+    ``.bash`` path, anywhere in it."""
+    named = {p for p in scripts if p in code}
+    named |= set(re.findall(r"[\w./-]+\.(?:sh|bash)\b", code))
+    return sorted(named)
+
+
+def _names_a_script(word: str, scripts: Collection[str]) -> str | None:
+    """The repository script *word* names, in normal form, or None. A URL names none."""
+    if "://" in word:
+        return None
+    kind, path = _locate(word, ())
+    if kind != "repository" or not path or path == ".":
+        return None
+    return path if path in scripts or is_script_name(path) else None
+
+
+def _command_runs(
+    words: list[str], *, fed: str | None, scripts: Collection[str], downloaded: Collection[str]
+) -> tuple[list[str], list[str]]:
+    """The repository scripts the one command *words* runs as ``sh <path>``, which the check
+    reads, and the problems of every other way it runs one, which are never skipped. *fed* is
+    what its standard input is piped from: None, ``download`` (a ``curl`` or ``wget``, which the
+    download rule judges) or ``pipe`` (anything else). *scripts* are the tree's shell scripts and
+    *downloaded* the files a download in the same text wrote."""
+    words = _uv_run(words)
+    if not words:
+        return [], []
+    head = words[0].rsplit("/", 1)[-1]
+    reads: list[str] = []
+    found: list[str] = []
+    placed: set[int] = {0}
+    call = shell_installs.shell_call(words)
+    if words[0] in (".", "source") and len(words) > 1:
+        placed.add(1)
+        kind, path = _locate(words[1], downloaded)
+        if kind == "downloaded":
+            found.append(f"sources {path}, a file a download wrote")
+        elif kind == "variable":
+            found.append(f"sources {path}, a script the check cannot locate")
+        elif kind == "repository":
+            found.append(f"sources {path} with `{words[0]}`, not as `sh {path}`")
+        elif posixpath.normpath(path).startswith("../"):
+            found.append(f"sources {path}, a file outside the repository the check cannot read")
+    elif call is not None:
+        placed.update(i for i, w in enumerate(words) if i and w == call.command)
+        if call.operand_at is not None:
+            placed.add(call.operand_at)
+        if call.reads_only or call.command is not None:
+            pass  # it runs nothing of a file; a -c script is read as lines of its own
+        elif call.operand is not None:
+            kind, path = _locate(call.operand, downloaded)
+            shown = " ".join([head, *call.options])
+            if kind == "downloaded":
+                found.append(f"runs {path}, a file a download wrote")
+            elif kind == "variable":
+                found.append(f"runs {path}, a script the check cannot locate")
+            elif kind == "outside":
+                found.append(f"runs {path}, a file outside the repository the check cannot read")
+            elif shown != "sh":
+                found.append(f"runs {path} with `{shown}`, not as `sh {path}`")
+            else:
+                reads.append(path)
+        elif call.stdin is not None and call.stdin[0] == "<":
+            if call.stdin[1] != "/dev/null":
+                what = call.stdin[1] or "a substitution"
+                found.append(f"feeds {what} to {head} on stdin, not as `sh <path>`")
+        elif call.stdin is not None and call.stdin[0] == "<<<":
+            found.append(f"feeds a here-string to {head}, which the check does not read")
+        elif call.stdin is None and fed == "pipe":
+            found.append(f"runs what a pipe feeds {head}, which the check does not read")
+    else:
+        kind, path = _locate(words[0], downloaded)
+        if kind == "downloaded":
+            found.append(f"runs {path}, a file a download wrote")
+        elif kind == "repository" and (path in scripts or is_script_name(path)):
+            found.append(f"runs {path} as a program, not as `sh {path}`")
+        elif kind == "variable" and is_script_name(path):
+            found.append(f"runs {path}, a script the check cannot locate")
+        elif kind == "outside" and is_script_name(path):
+            found.append(f"runs {path}, a file outside the repository the check cannot read")
+        for pattern, options in _CODE_OPTIONS:
+            if not pattern.fullmatch(head):
+                continue
+            for i, word in enumerate(words[1:-1], 1):
+                if word not in options:
+                    continue
+                placed.add(i + 1)
+                found += [
+                    f"names {p} in {head}'s {word} code, which the check does not read"
+                    for p in _named_in(words[i + 1], scripts)
+                ]
+    if head not in _READERS and not (call is not None and call.reads_only):
+        for i, word in enumerate(words):
+            redirect = shell_installs.REDIRECT.fullmatch(word)
+            if redirect and (word[0] in "<>&" or word[0].isdigit()):
+                placed.update((i, i + 1) if not redirect.group(2) else (i,))
+            named_path = None if i in placed else _names_a_script(word, scripts)
+            if named_path is not None:
+                found.append(f"names {named_path} in a `{head}` command the check does not read")
+    return reads, found
+
+
+def _text_runs(
+    lines: list[tuple[int, str]],
+    scripts: Collection[str],
+    data: Collection[tuple[str, list[str]]] = (),
+) -> tuple[list[str], list[str]]:
+    """The repository scripts these shell lines run as ``sh <path>``, in order, and the problems
+    of every other way they run one. *data* are the heredocs something other than a shell reads:
+    one an interpreter reads is code, and a repository script it names is a problem too."""
+    downloaded = _downloads(lines)
+    reads: list[str] = []
+    found: list[str] = []
+    for line, body in data:
+        for commands in shell_installs.pipelines(line):
+            for words in commands:
+                head = words[0].rsplit("/", 1)[-1]
+                if any(w.startswith("<<") for w in words) and any(
+                    pattern.fullmatch(head) for pattern, _ in _CODE_OPTIONS
+                ):
+                    found += [
+                        f"names {p} in a heredoc {head} runs, which the check does not read"
+                        for p in _named_in("\n".join(body), scripts)
+                    ]
+    for _, line in lines:
+        for commands in shell_installs.pipelines(line):
+            for at, words in enumerate(commands):
+                upstream = {c[0].rsplit("/", 1)[-1] for c in commands[:at]}
+                fed = None if not at else "download" if {"curl", "wget"} & upstream else "pipe"
+                more, problems = _command_runs(
+                    words, fed=fed, scripts=scripts, downloaded=downloaded
+                )
+                reads += more
+                found += problems
+    return reads, found
+
+
+def tree_scripts(tree: Tree) -> frozenset[str]:
+    """The shell scripts of *tree*."""
+    return frozenset(rel for rel, text in tree.items() if is_script(rel, text))
+
+
+def scripts_run(
+    read: Callable[[str], str | None], text: str, depth: int = _SCRIPT_DEPTH
+) -> list[tuple[str, str | None]]:
+    """Each repository script the shell *text* runs as ``sh <path>``, the one way the check
+    reads one, and each script those run in turn to *depth*, depth first, as (path, text). *read*
+    gives a path's text, or None when there is no such file: that path is returned with None, so
+    a caller refuses it rather than reading nothing."""
+    out: list[tuple[str, str | None]] = []
+
+    def visit(body: str, chain: tuple[str, ...]) -> None:
+        reads, _ = _text_runs(shell_installs.read_script(body).lines, ())
+        for path in reads:
+            if path in chain or len(chain) >= depth:
+                continue
+            content = read(path)
+            out.append((path, content))
+            if content is not None:
+                visit(content, (*chain, path))
+
+    visit(text, ())
+    return out
+
+
+def _scripts_problems(
+    tree: Tree,
+    text: str,
+    *,
+    where: tuple[str, str, str],
+    installs: Collection[str],
+    have: set[str],
+    values: dict[str, str],
+    locked: Mapping[str, str],
+    scripts: Collection[str],
+    chain: tuple[str, ...] = (),
+) -> list[str]:
+    """The problems of the shell *text* a workflow step runs (*chain* empty) or of the
+    repository script at the end of *chain*, the scripts the step ran to reach it, and of each
+    repository script that text runs in turn. A script is read when it is run as ``sh <path>``;
+    every other way of running one (another shell, an option, ``.`` or ``source``, a bare path,
+    a pipe or a redirection into a shell, code an interpreter is handed) is a problem, as are a
+    script the tree does not hold, one named through a variable, one a download wrote, and one
+    deeper than :data:`_SCRIPT_DEPTH` or already in *chain*. None is skipped. *where* is the
+    step (file, job id, name)."""
+    served = where == OWN_INSTALLER_STEP and chain == (OWN_INSTALLER_SCRIPT,)
+    own = OWN_INSTALLER if served else None
+    artifact = where == STAGED_INSTALLER_STEP and chain == (
+        STAGED_INSTALLER_SCRIPT,
+        STAGED_INSTALLER,
+    )
+    read = shell_installs.read_script(text)
+    lines = read.lines
+    found: list[str] = []
+    if artifact:
+        if not any(line == STAGED_INSTALLER_URL for _, line in lines):
+            found.append(f"no longer names Astral's uv installer ({STAGED_INSTALLER_URL})")
+        lines = [(n, line) for n, line in lines if line not in STAGED_INSTALLER_LINES]
+    found += _script_problems(
+        shell_installs.Script(lines, read.data), installs, have, True, values, own, locked
+    )
+    reads, problems = _text_runs(read.lines, scripts, read.data)
+    found += problems
+    for path in reads:
+        if path not in tree:
+            found.append(f"runs {path}, which the tree does not hold")
+            continue
+        if path in chain or len(chain) + 1 > _SCRIPT_DEPTH:
+            found.append(f"runs {path} past the depth the check follows")
+            continue
+        inner = _scripts_problems(
+            tree,
+            tree[path],
+            where=where,
+            installs=installs,
+            have=have,
+            values=values,
+            locked=locked,
+            scripts=scripts,
+            chain=(*chain, path),
+        )
+        found += [f"{path}: {problem}" for problem in inner]
+    return found
 
 
 def _literal_env(*scopes: object) -> dict[str, str]:
@@ -864,19 +1244,27 @@ def run_install(tree: Tree) -> list[Violation]:
         return frozenset(lock_binaries(tree.get(lock, "")))
 
     locked = _image_locked_names(tree)
+    scripts = tree_scripts(tree)
     workflows = dict(_workflows(tree))
     for rel, job_id, job, steps in _step_lists(tree):
         have: set[str] = set()
         top = workflows.get(rel, {}).get("env")
         for step in steps:
             name = step_name(step)
-            own = OWN_INSTALLER if (rel, job_id, name) == OWN_INSTALLER_STEP else None
             values = _literal_env(top, job.get("env"), step.get("env"))
-            script = shell_installs.read_script(str(step.get("run", "")))
             # A step's `npm ci` installs the root lock when it runs from the checkout's root.
             directory = str(step.get("working-directory", "") or "")
             installs = binaries("package-lock.json") if directory in ("", ".", "./") else ()
-            found = _script_problems(script, installs, have, True, values, own, locked)
+            found = _scripts_problems(
+                tree,
+                str(step.get("run", "")),
+                where=(rel, job_id, name),
+                installs=installs,
+                have=have,
+                values=values,
+                locked=locked,
+                scripts=scripts,
+            )
             for problem in _numbered(found):
                 ref = f"{job_id} {name}: {problem}"
                 bad.append(Violation("run-install", rel, ref, ref))

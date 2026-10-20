@@ -199,9 +199,49 @@ def test_a_script_in_a_container_loads() -> None:
     job = catalogue.load(text).job("rails")
     assert (job.command, job.script, job.container) == (
         (),
-        "deploy/docker/smoke.sh",
+        ("deploy/docker/smoke.sh",),
         "personalclaw:test",
     )
+
+
+def test_a_list_of_scripts_in_a_container_loads_in_order() -> None:
+    text = _with(
+        'command = [{ argv = ["uv", "run", "pytest", "tests/rails"] }]',
+        'script = ["tools/ci/a.sh", "tools/ci/b.sh"]\ncontainer = "ubuntu:26.04"',
+    )
+    assert catalogue.load(text).job("rails").script == ("tools/ci/a.sh", "tools/ci/b.sh")
+
+
+@pytest.mark.parametrize(
+    ("script", "expect"),
+    [
+        ("[]", "is a path, or a non-empty list of paths"),
+        ('[""]', "is a path, or a non-empty list of paths"),
+        ("5", "is a path, or a non-empty list of paths"),
+        ('["../x.sh"]', "is not a path inside the repository"),
+        ('["/bin/x.sh"]', "is not a path inside the repository"),
+        ('["$X/x.sh"]', "is not a path inside the repository"),
+        ('["~/x.sh"]', "is not a path inside the repository"),
+        ('["{runner_temp}/x.sh"]', "is not a path inside the repository"),
+        ('["a.sh", "a.sh"]', "names a path twice"),
+        # One path, one spelling: the repository's normal form, so a repeat cannot hide.
+        ('["./tools/ci/a.sh"]', "is not in the repository's normal form"),
+        ('["tools/ci//a.sh"]', "is not in the repository's normal form"),
+        ('["tools/ci/./a.sh"]', "is not in the repository's normal form"),
+        ('["tools/ci/"]', "is not in the repository's normal form"),
+        ('["./tools/ci/a.sh", "tools/ci/a.sh"]', "is not in the repository's normal form"),
+        ('[" "]', "holds whitespace"),
+        ('["tools/ci/a b.sh"]', "holds whitespace"),
+    ],
+)
+def test_a_script_list_the_loader_cannot_run_is_refused(script: str, expect: str) -> None:
+    problems = _refused(
+        _with(
+            'command = [{ argv = ["uv", "run", "pytest", "tests/rails"] }]',
+            f'script = {script}\ncontainer = "ubuntu:26.04"',
+        )
+    )
+    assert any(expect in p for p in problems), problems
 
 
 def test_a_merge_tier_without_the_rails_job_is_refused() -> None:

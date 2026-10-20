@@ -1027,6 +1027,23 @@ class TestParsersAreNotVacuous:
         (guard,) = fetch_guards(body)
         assert not re.search(r"^\s*exit\s+[1-9]", guard, flags=re.MULTILINE)
 
+    def test_live_leg_reads_the_scripts_its_steps_run(self) -> None:
+        """A leg that runs its smoke from a script is read as the script: the served leg's
+        `pipefail` lives in tools/ci/install_smoke_served.sh, not in the step."""
+        _jid, body = _live_leg(
+            "jobs:\n  leg:\n    steps:\n      - name: " + SERVED_URL + "\n"
+            "        run: sh tools/ci/install_smoke_served.sh\n"
+        )
+        assert "set -o pipefail" in body, body
+
+    def test_a_live_leg_running_a_script_that_is_not_a_file_is_an_error(self) -> None:
+        """A rename of the script must red the rail, not leave it reading the step alone."""
+        with pytest.raises(AssertionError, match="tools/ci/nowhere.sh, which is not a file"):
+            _live_leg(
+                "jobs:\n  leg:\n    steps:\n      - name: " + SERVED_URL + "\n"
+                "        run: sh tools/ci/nowhere.sh\n"
+            )
+
     def test_live_leg_found_by_url_not_by_name(self) -> None:
         jid, body = _live_leg(
             "jobs:\n  renamed-anything:\n    steps:\n      - run: curl " + SERVED_URL + "\n"

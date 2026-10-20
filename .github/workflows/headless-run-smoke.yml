@@ -77,7 +77,7 @@ jobs:
           PERSONALCLAW_SCRIPTED_MODEL_SCRIPT: ${{ github.workspace }}/web/e2e/fixtures/scripted-chat.json
         run: |
           uv run personalclaw setup --agent-only
-          uv run bash scripts/ci_smoke_run.sh
+          uv run sh scripts/ci_smoke_run.sh
 
       # A headless run must not leave a gateway behind. `run` kills the transient
       # gateway it started by pid; assert that rather than trusting it, because a leaked

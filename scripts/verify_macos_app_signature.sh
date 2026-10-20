@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 #
 # verify_macos_app_signature.sh — fail the build unless a macOS .app is ad-hoc signed with a
 # VALID seal over the bundle we actually built, and carries no third-party signing authority.
@@ -66,7 +66,9 @@
 # is bought, this script is the single place that encodes the rule — allow the new authority
 # here rather than deleting the gate.
 
-set -euo pipefail
+# POSIX sh, so release.yml runs it as `sh <path>`, the one way CI's supply-chain check reads a
+# script a step runs. No pipe here needs `pipefail`: each ends in the command whose status decides.
+set -eu
 
 #: The bundle identifier every artifact of this project must claim. Asserted literally *and*
 #: against the bundle's own Info.plist: the literal catches an appId change, the cross-check

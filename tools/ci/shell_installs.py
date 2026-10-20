@@ -10,7 +10,9 @@ the reader leans to failing: a command it cannot place is a problem, not a pass.
   ``{ }``, ``$( )`` and backticks, and after ``if``, ``then``, ``do`` and the other keywords;
 - the wrappers in front of a command (``sudo`` and ``env`` with their options, ``timeout``,
   ``xargs``, ``nice``, ``nohup``, ``time``, ``command``, ``exec``, ``stdbuf``), and the script
-  of ``sh -c "<script>"``;
+  of ``sh -c "<script>"`` (``bash -ec`` too);
+- how a shell gets its script (``shell_call``): its options and their values, its operand, and
+  its standard input, so ``bash -o pipefail x.sh`` runs ``x.sh`` and ``bash <<EOF`` its heredoc;
 - a heredoc a shell reads, whose body is a script, and one anything else reads, whose body is
   data (kept for the image rule);
 - a Dockerfile ``RUN``'s flags, its exec form and its heredocs.
@@ -81,14 +83,108 @@ def _heredoc_tags(line: str) -> list[tuple[int, str]]:
 
 def _reads_a_script(prefix: str) -> bool:
     """Whether the command a heredoc feeds (the text before ``<<``) runs its body as a script:
-    a shell with no script file, or nothing (a Dockerfile ``RUN <<EOF``)."""
+    a shell with no script file and no ``-c`` script, or nothing (a Dockerfile ``RUN <<EOF``)."""
     prefix = re.sub(r"^\s*RUN\b(?:\s+--\S+)*", "", prefix, flags=re.I)
     command = re.split(r"&&|\|\||;|\||\(", prefix)[-1]
     words = unwrap(_plain_words(command))
     if not words:
         return True
-    return bool(_SHELLS.fullmatch(words[0].rsplit("/", 1)[-1])) and not any(
-        not w.startswith("-") for w in words[1:]
+    call = shell_call(words)
+    return call is not None and call.operand is None and call.command is None
+
+
+@dataclass(frozen=True)
+class ShellCall:
+    """How one shell command (``sh``, ``bash``, ``dash``, ``zsh``, ``ksh``) gets its script.
+
+    *options* are the options as written, with the values of those that take one. *reads_only*:
+    ``-n`` (or ``-o noexec``), so it parses its script and runs nothing. *command*: the ``-c``
+    script. *operand*: the script file it runs, and *operand_at* its index in the words. *stdin*:
+    what its standard input is redirected from, as (operator, word): ``<`` a file, ``<<`` a
+    heredoc (the word is its tag), ``<<<`` a here-string. *from_stdin*: ``-s``, so every
+    operand is an argument and the script is its standard input."""
+
+    options: tuple[str, ...] = ()
+    reads_only: bool = False
+    command: str | None = None
+    operand: str | None = None
+    operand_at: int | None = None
+    stdin: tuple[str, str] | None = None
+    from_stdin: bool = False
+
+
+#: A shell's options whose next word is their value.
+_SHELL_VALUED = frozenset({"--rcfile", "--init-file"})
+#: A redirection word: its operator, and its target when it is written joined to it.
+REDIRECT = re.compile(r"\d*(<<<|<<-?|<>|<&|>&|&>>|&>|>>|>\||<|>)(.*)", re.S)
+
+
+def shell_call(words: list[str]) -> ShellCall | None:
+    """How the command *words* (unwrapped) runs its script, or None when it is no shell. Its
+    options, redirections and operands are told apart as the shell does: ``bash -o pipefail
+    x.sh`` runs ``x.sh``, and ``bash -s < x.sh`` and ``bash <<EOF`` read their standard input."""
+    if not words or not _SHELLS.fullmatch(words[0].rsplit("/", 1)[-1]):
+        return None
+    options: list[str] = []
+    reads_only = from_stdin = False
+    command: str | None = None
+    operand: str | None = None
+    operand_at: int | None = None
+    stdin: tuple[str, str] | None = None
+    wants_command = options_done = False
+    i = 1
+    while i < len(words):
+        word, at = words[i], i
+        i += 1
+        if word == "<stdin>":  # what xargs gives the command (see pipelines)
+            if operand is None and command is None and not wants_command:
+                operand, operand_at = word, at
+            continue
+        redirect = REDIRECT.fullmatch(word)
+        if redirect and (word[0] in "<>&" or word[0].isdigit()):
+            operator, target = redirect.group(1), redirect.group(2)
+            if not target and i < len(words):
+                target, i = words[i], i + 1
+            operator = "<<" if operator == "<<-" else "<" if operator == "<>" else operator
+            if operator in ("<", "<<", "<<<") and stdin is None:
+                stdin = (operator, target)
+            continue
+        if operand is not None or command is not None:
+            continue  # the script's own arguments
+        if not options_done and word in ("-", "--"):
+            options_done = True  # the end of the options, as either shell reads it
+            continue
+        if not options_done and len(word) > 1 and word[0] in "-+":
+            options.append(word)
+            if word.startswith("--"):
+                if word in _SHELL_VALUED and i < len(words):
+                    options.append(words[i])
+                    i += 1
+                continue
+            letters = word[1:]
+            reads_only = reads_only or ("n" in letters and word[0] == "-")
+            from_stdin = from_stdin or ("s" in letters and word[0] == "-")
+            wants_command = wants_command or ("c" in letters and word[0] == "-")
+            if letters[-1] in "oO" and i < len(words):
+                value = words[i]
+                i += 1
+                options.append(value)
+                reads_only = reads_only or (word == "-o" and value == "noexec")
+            continue
+        if wants_command:
+            command = word  # the first operand after -c is its script
+            continue
+        if from_stdin:
+            continue  # with -s, an operand is an argument
+        operand, operand_at = word, at
+    return ShellCall(
+        options=tuple(options),
+        reads_only=reads_only,
+        command=command,
+        operand=operand,
+        operand_at=operand_at,
+        stdin=stdin,
+        from_stdin=from_stdin,
     )
 
 
@@ -259,8 +355,11 @@ def pipelines(line: str) -> list[list[list[str]]]:
         out += pipelines(inner)
     for commands in list(out):
         for words in commands:
-            if _SHELLS.fullmatch(words[0].rsplit("/", 1)[-1]) and "-c" in words[1:-1]:
-                out += pipelines(words[words.index("-c") + 1])
+            call = shell_call(words)
+            if call is not None and call.command is not None:
+                out += pipelines(call.command)
+            elif call is not None and "-c" in words[1:-1]:
+                out += pipelines(words[words.index("-c") + 1])  # leaning to reading it
     return out
 
 
