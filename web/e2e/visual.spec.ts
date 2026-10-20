@@ -1,6 +1,8 @@
-import { expect, test } from '@playwright/test'
-import { ROUTES, VIEW_ROUTES, THEMES, ORB_STATE_SHOTS } from './routes'
-import { seedTheme, gotoRoute, expectRouteScreenshot, assertPristineFlywheel } from './helpers'
+import { expect, test, type Page } from '@playwright/test'
+import { ROUTES, VIEW_ROUTES, THEMES, ORB_STATE_SHOTS, REDUCED_MOTION_SHOTS, type ReducedMotionOpen } from './routes'
+import {
+  seedTheme, gotoRoute, expectRouteScreenshot, assertPristineFlywheel, settleDom, settleEntranceAnimations,
+} from './helpers'
 
 // ── Visual-regression baselines — every nav route × both themes ─────────────
 // This is the safety rail. Capture baselines BEFORE touching a surface:
@@ -118,6 +120,51 @@ for (const { key, theme, reducedMotion } of ORB_STATE_SHOTS) {
       const gallery = page.locator('[data-orb-gallery]')
       await expect(gallery.locator('[data-agent-orb]')).toHaveCount(30)
       await expect(gallery).toHaveScreenshot(`${key}.png`, { animations: 'disabled', maxDiffPixels: 0 })
+    })
+  })
+}
+
+// ── Reduced motion: the surfaces the motion audit stripped, at rest under the preference ───────
+// `routes.ts`'s REDUCED_MOTION_SHOTS: each route the audit touched that this suite shoots, and the
+// command palette and the composer's + menu open, with `prefers-reduced-motion: reduce` in force.
+// The shots above prove each page looks right once its motion ends; these prove a user who asked
+// for no motion is shown each page whole, with nothing left at an entrance's first frame. Two
+// things are proved before the capture, because a picture alone cannot tell them apart from a
+// clean result: that the preference was in force on the page photographed, and that an opened
+// surface came to rest (under reduced motion it has no fade to wait for). The titles carry no
+// `(#/`: these are not route scans, so `assert-no-route-skips.mjs` does not count them.
+const OPEN: Record<ReducedMotionOpen, (page: Page) => Promise<void>> = {
+  'command palette': async (page) => {
+    // The listener is the shell's, on `window`; `gotoRoute` has already proved the shell mounted.
+    await page.keyboard.press('ControlOrMeta+k')
+    await expect(page.getByRole('listbox', { name: 'Commands' })).toBeVisible()
+  },
+  'composer menu': async (page) => {
+    await page.getByRole('button', { name: 'Add to message' }).click()
+    await expect(page.getByRole('button', { name: 'Attach files' })).toBeVisible()
+  },
+}
+
+for (const { key, theme, route, open } of REDUCED_MOTION_SHOTS) {
+  test.describe(`visual: ${key}`, { tag: '@visual' }, () => {
+    test.describe.configure({ timeout: 300_000 })
+    test.use({ reducedMotion: 'reduce' })
+    test(open ? `${open} open` : 'the route at rest', async ({ page }) => {
+      await assertPristineFlywheel(page)
+      await seedTheme(page, theme)
+      const loaded = await gotoRoute(page, route, BUDGET)
+      expect(
+        await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches),
+        `${key}: prefers-reduced-motion is not in force, so this would photograph a user with no preference`,
+      ).toBe(true)
+      const exhausted = [...loaded.exhausted]
+      if (open) {
+        await OPEN[open](page)
+        if (!(await settleDom(page, undefined, BUDGET.settleMs))) exhausted.push(`settleDom (the ${open})`)
+        if (!(await settleEntranceAnimations(page, BUDGET.fadeMs))) exhausted.push(`settleEntranceAnimations (the ${open})`)
+      }
+      const settle = { settled: exhausted.length === 0, exhausted }
+      await expectRouteScreenshot(page, key, settle)
     })
   })
 }

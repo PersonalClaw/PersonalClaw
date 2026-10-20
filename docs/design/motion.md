@@ -98,6 +98,13 @@ Corollary for spreads: `instant` declares `type: 'tween'` on purpose. Call sites
 `stiffness` would let Framer infer a spring again — the collapse would leak back through the
 spread. Keep the explicit type if you ever touch it.
 
+**How a browser checks it.** `web/e2e/surfaces.spec.ts`'s reduced-motion step fails a surface
+that still declares a CSS transition or animation over 50 ms with the preference set; it cannot
+see framer or canvas motion. `web/e2e/visual.spec.ts` photographs the surfaces §10 strips under
+the preference, plus the command palette and a menu open (`REDUCED_MOTION_SHOTS` in
+`web/e2e/routes.ts`), which is what shows an element left at an entrance's first frame.
+`design/reducedMotionSnapshots.test.ts` holds that list to §10's strip table.
+
 ---
 
 ## 4. Gestures

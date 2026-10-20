@@ -248,3 +248,41 @@ export const ORB_STATE_SHOTS = THEMES.flatMap((theme) => [
   { key: `agent-orb-states-${theme}`, theme, reducedMotion: 'no-preference' as const },
   { key: `agent-orb-states-${theme}-reduced-motion`, theme, reducedMotion: 'reduce' as const },
 ])
+
+// ── Reduced motion — the surfaces the motion audit stripped, under the preference ──────────────
+// `docs/design/motion.md` §10 takes the motion off the app's high-frequency actions, and §3 says what
+// reduced motion leaves of the rest: nothing that moves. `visual.spec.ts` photographs each surface the
+// audit touched that the suite already shoots, and the command palette and a menu open, with
+// `prefers-reduced-motion: reduce` in force, in both themes. A golden of its own rather than the motion
+// shot's: reduced motion also changes the picture (a `.glass` surface drops its blur), so the two
+// frames differ by design. `reducedMotionSnapshots.test.ts` holds this list to the audit's strip table,
+// and `visualBaselineCoverage.test.ts` holds each `key` to a committed golden.
+export type ReducedMotionOpen = 'command palette' | 'composer menu'
+
+export interface ReducedMotionShot {
+  /** The surface, as `reducedMotionSnapshots.test.ts` names it. */
+  id: string
+  /** The golden's name: `<id>-<theme>-reduced-motion`. */
+  key: string
+  theme: Theme
+  /** The hash route the shot loads, with no leading `#/`. */
+  route: string
+  /** What the shot opens once the route is at rest, if anything. */
+  open?: ReducedMotionOpen
+}
+
+const REDUCED_MOTION_SURFACES: { id: string; route: string; open?: ReducedMotionOpen }[] = [
+  { id: 'dashboard', route: 'dashboard' },
+  { id: 'chat', route: 'chat' },
+  { id: 'projects', route: 'projects' },
+  { id: 'tasks', route: 'tasks' },
+  { id: 'apps', route: 'apps' },
+  { id: 'settings', route: 'settings' },
+  { id: 'command-palette', route: 'chat', open: 'command palette' },
+  // The composer's + menu: a `ui/Popover` menu, the primitive most of the app's menus are built on.
+  { id: 'composer-menu', route: 'chat', open: 'composer menu' },
+]
+
+export const REDUCED_MOTION_SHOTS: ReducedMotionShot[] = THEMES.flatMap((theme) =>
+  REDUCED_MOTION_SURFACES.map((s) => ({ ...s, theme, key: `${s.id}-${theme}-reduced-motion` })),
+)

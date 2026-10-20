@@ -157,12 +157,18 @@ async function navigateIn(page, surface) {
 }
 
 /** `app/CommandPalette` renders a `div.fixed.inset-0` holding `[role="listbox"]` with
- *  `aria-label="Commands"` — and NO `role="dialog"`. A `[role="dialog"], [cmdk-root]`
+ *  `aria-label="Commands and results"` — and NO `role="dialog"`. A `[role="dialog"], [cmdk-root]`
  *  probe therefore reported "the palette did not open" on a run whose own frame slice
  *  showed 41 frames at a 23ms mean, i.e. while it demonstrably *was* opening. Keyed to
  *  the real selector, and the skip stays because a renamed control must not read as a
- *  measured-clean surface. */
-const PALETTE = '[role="listbox"][aria-label="Commands"]'
+ *  measured-clean surface.
+ *
+ *  The label is matched by its first word. An exact `"Commands"` stopped matching when the
+ *  list became "Commands and results", and the miss was worse than a skip: the palette was
+ *  open, unseen, for the rest of the recipe, so the composer step timed out on its overlay
+ *  and the disclosure step's click landed on a palette row, which navigated the probe off
+ *  Chat (to `#/tools`, later `#/capabilities`) and voided the reading. */
+const PALETTE = '[role="listbox"][aria-label^="Commands"]'
 
 /** Open the command palette — `overlayEnter` on `physics.playful`, the most overshoot in
  *  the vocabulary, over 22 staggered `[role="option"]` rows. The ⌘K listener lives on
