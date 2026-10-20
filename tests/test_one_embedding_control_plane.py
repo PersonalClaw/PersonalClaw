@@ -27,8 +27,15 @@ migrates nothing -- so the coupling was simply wrong and is NOT reproduced on th
 
 from __future__ import annotations
 
-import inspect
+import asyncio
+import json
+import threading
+import time
+from unittest.mock import MagicMock
 
+import pytest
+from aiohttp import web
+from aiohttp.test_utils import make_mocked_request
 from gateway_routes_shared import handler_for
 from one_embedding_control_plane_shared import REPO, RETIRED_PATHS
 
@@ -69,50 +76,120 @@ def test_the_dead_setup_state_machine_is_gone():
     carefully-worded diagnostics and a "Click Enable to retry" string for a button nothing rendered.
     """
     assert not hasattr(mem_mod, "_embedding_setup_status")
-    src = inspect.getsource(mem_mod)
-    assert "setup_step" not in src
-    assert "can_retry" not in src
+    for name, value in vars(mem_mod).items():
+        if isinstance(value, dict):
+            assert not {"setup_step", "can_retry"} & set(value), f"{name} still holds the machine"
 
 
 # ── the survivor: `migrated` still has exactly one owner ────────────────────────────────────
 
 
-def test_set_migrated_survives_and_the_migrate_endpoint_still_calls_it():
+@pytest.fixture
+def config_file(tmp_path, monkeypatch):
+    """A `config.json` of the test's own, as the config transaction finds it; returns a reader
+    of `memory.migrated` (``None`` while unset)."""
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"memory": {}}), encoding="utf-8")
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: path)
+    return lambda: json.loads(path.read_text(encoding="utf-8")).get("memory", {}).get("migrated")
+
+
+class _LegacyStore:
+    """The global memory, whose markdown migration produces *counts*; it records how many
+    migrations ran at once."""
+
+    def __init__(self, counts: dict[str, int], *, hold: float = 0.0) -> None:
+        self.counts = counts
+        self.hold = hold
+        self.running = 0
+        self.most_at_once = 0
+        self._lock = threading.Lock()
+
+    def migrate_from_markdown(self) -> dict[str, int]:
+        with self._lock:
+            self.running += 1
+            self.most_at_once = max(self.most_at_once, self.running)
+        time.sleep(self.hold)
+        with self._lock:
+            self.running -= 1
+        return dict(self.counts)
+
+
+def _migrate(store: _LegacyStore, monkeypatch) -> web.Response:
+    monkeypatch.setattr(mem_mod, "_global_provider", lambda _state: store)
+    app = web.Application()
+    app["state"] = MagicMock()  # no session headers: not a restricted session
+    return mem_mod.api_memory_migrate(make_mocked_request("POST", "/api/memory/migrate", app=app))
+
+
+def test_set_migrated_survives_and_the_migrate_endpoint_still_calls_it(config_file, monkeypatch):
     """🪤 `_set_migrated` sat INSIDE the deleted block. Cutting the block wholesale would have
     taken it with it and broken the real migration endpoint -- the likeliest way this surgery
-    goes wrong, so it is asserted rather than assumed."""
-    assert hasattr(mem_mod, "_set_migrated")
-    assert "_set_migrated(True)" in inspect.getsource(mem_mod.api_memory_migrate)
+    goes wrong, so a migration that produced entries is driven and its record read back."""
+    resp = asyncio.run(_migrate(_LegacyStore({"semantic": 3, "episodic": 0}), monkeypatch))
+    assert resp.status == 200
+    assert config_file() is True, "a migration that produced entries was not recorded"
 
 
-def test_the_migrate_lock_survives_too():
+def test_the_migrate_lock_survives_too(config_file, monkeypatch):
     """🪤 The SECOND survivor, and the one I actually cut: three module-level symbols shared the
     deleted range -- the dead status dict, a faiss-install lock used only by the retired handlers,
     and `_migrate_lock`, which `api_memory_migrate` still needs. mypy caught it (`Name
-    "_migrate_lock" is not defined`), which is the real guard; this pins it so a future tidy-up of
-    this region cannot repeat it silently."""
-    assert hasattr(mem_mod, "_migrate_lock")
-    assert "_migrate_lock" in inspect.getsource(mem_mod.api_memory_migrate)
+    "_migrate_lock" is not defined`), which is the real guard. Two migrations asked for at once
+    run one after the other."""
+    store = _LegacyStore({"semantic": 0, "episodic": 0}, hold=0.2)
+
+    async def both() -> list[web.Response]:
+        return list(
+            await asyncio.gather(_migrate(store, monkeypatch), _migrate(store, monkeypatch))
+        )
+
+    assert [r.status for r in asyncio.run(both())] == [200, 200]
+    assert store.most_at_once == 1, "two migrations ran over one store at once"
     # And the lock that WAS only the retired plane's is gone.
     assert not hasattr(mem_mod, "_faiss_install_lock")
 
 
-def test_migration_is_the_only_thing_that_sets_migrated():
-    """The correctness claim. Enabling embeddings must not assert that a migration happened."""
-    src = inspect.getsource(mem_mod)
-    setters = [ln.strip() for ln in src.splitlines() if "_set_migrated(True)" in ln]
-    assert len(setters) == 1, f"more than one writer of migrated: {setters}"
+def test_migration_is_the_only_thing_that_sets_migrated(config_file, monkeypatch):
+    """The correctness claim. Enabling embeddings must not assert that a migration happened: a
+    re-index, the reachable path a new embedding model takes, runs to its end and leaves
+    `migrated` unset, and writes it through no other door."""
+    from personalclaw.dashboard.embedding_reindex import ReindexRegistry
 
-    # And the coupling was not merely moved to the reachable re-index path.
-    reindex = (REPO / "src/personalclaw/dashboard/embedding_reindex.py").read_text(encoding="utf-8")
-    assert "migrated" not in reindex, "the reachable path must not claim a migration either"
+    writes: list[bool] = []
+    real = mem_mod._set_migrated
+
+    async def spy(value: bool) -> None:
+        writes.append(value)
+        await real(value)
+
+    monkeypatch.setattr(mem_mod, "_set_migrated", spy)
+
+    async def reindex() -> str:
+        jobs = ReindexRegistry()
+        job, error = jobs.start(
+            model="probe", knowledge_store=None, memory_store=None, embedder=None
+        )
+        assert error is None and job is not None
+        for _ in range(500):
+            if job.status != "running":
+                return job.status
+            await asyncio.sleep(0.01)
+        raise AssertionError("the re-index did not finish")
+
+    assert asyncio.run(reindex()) == "done"
+    assert writes == [] and config_file() is None, "the re-index claimed a migration"
 
 
-def test_migrate_still_gates_on_actually_having_migrated_something():
+def test_migrate_still_gates_on_actually_having_migrated_something(config_file, monkeypatch):
     """Vacuity guard for the rule above: `migrated` is set only when entries were produced, which
-    is what makes "migration owns this field" true rather than a slogan."""
-    src = inspect.getsource(mem_mod.api_memory_migrate)
-    assert 'counts.get("semantic", 0) > 0' in src and 'counts.get("episodic", 0) > 0' in src
+    is what makes "migration owns this field" true rather than a slogan. Episodic entries alone
+    count too."""
+    asyncio.run(_migrate(_LegacyStore({"semantic": 0, "episodic": 0}), monkeypatch))
+    assert config_file() is None, "a migration that produced nothing was recorded"
+    asyncio.run(_migrate(_LegacyStore({"semantic": 0, "episodic": 2}), monkeypatch))
+    assert config_file() is True, "episodic entries alone were not recorded"
 
 
 # ── the capability claim is verified, not assumed ───────────────────────────────────────────
