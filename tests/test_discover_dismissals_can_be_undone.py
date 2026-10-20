@@ -26,12 +26,12 @@ enables nothing, configures nothing, and cannot make a tip appear that auto-hid 
 
 from __future__ import annotations
 
-import inspect
 import json
 from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import make_mocked_request
+from gateway_routes_shared import handler_for
 
 from personalclaw.dashboard.handlers import legibility as handler
 from personalclaw.legibility import discover as dc
@@ -108,15 +108,11 @@ async def test_clearing_nothing_is_a_200_not_an_error(home: Path):
 def test_the_delete_route_is_registered():
     """A handler nothing routes to is as inert as no handler at all.
 
-    Read off the registration function's own source rather than by building the app: the
-    ``aiohttp`` app factory pulls in the whole gateway, and the fact under test is one line
-    of wiring. Asserted on the SAME path as the POST, which is the design — one resource,
-    two verbs — so a future split into a ``/restore`` noun has to come through here.
+    One resource, two verbs: the gateway serves POST and DELETE on the same path, so a future
+    split into a ``/restore`` noun has to come through here.
     """
-    from personalclaw.dashboard import routes
-
-    src = inspect.getsource(routes)
-    assert 'add_post("/api/legibility/discover/dismiss"' in src, "POST anchor moved"
+    path = "/api/legibility/discover/dismiss"
+    assert handler_for("POST", path) is handler.api_discover_dismiss
     assert (
-        'add_delete("/api/legibility/discover/dismiss", api_discover_dismiss_clear)' in src
+        handler_for("DELETE", path) is handler.api_discover_dismiss_clear
     ), "the clear handler exists but nothing routes to it"

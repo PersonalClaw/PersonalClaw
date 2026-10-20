@@ -121,6 +121,51 @@ LOADER_BUDGET = frozenset(
 )
 
 
+#: Each module that reads an ``mcp.json`` server's ``disabled`` switch, and how many raw reads of it
+#: it keeps: the toggle's disable path asks whether it is already the real ``true``, which is a
+#: question about what to write, not a reading of the switch.
+_MCP_SWITCH_READERS = {
+    "mcp_client.py": 0,
+    "mcp_discovery.py": 0,
+    "agent.py": 0,
+    "dashboard/handlers/mcp.py": 1,
+    "providers/mcp_instances.py": 0,
+}
+
+
+def _calls_named(tree, name: str) -> list:
+    import ast
+
+    return [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, (ast.Name, ast.Attribute))
+        and (n.func.id if isinstance(n.func, ast.Name) else n.func.attr) == name
+    ]
+
+
+@pytest.mark.parametrize("module, raw_reads", sorted(_MCP_SWITCH_READERS.items()))
+def test_an_mcp_server_switch_is_read_one_way(module, raw_reads):
+    """A server's ``disabled`` switch is read through ``mcp_status.switched_off``, which reads the
+    words as written and keeps a server it cannot read off.
+
+    Why a rail: a raw ``.get("disabled")`` reads the text ``"false"`` as on, and the reader that
+    does it can sit in any of these modules behind paths a single request does not reach; the
+    property is which call reads the switch, counted per module."""
+    tree = source_index.tree(SRC / module)
+    assert _calls_named(tree, "switched_off"), f"{module} no longer reads a server's switch"
+    raw = [
+        c
+        for c in _calls_named(tree, "get")
+        if c.args and getattr(c.args[0], "value", None) == "disabled"
+    ]
+    assert len(raw) == raw_reads, (
+        f"{module} reads a server's `disabled` itself. Read it with mcp_status.switched_off, "
+        "which reads the words as written and keeps a server it cannot read off."
+    )
+
+
 def test_a_record_loader_reads_no_switch_by_truthiness():
     """A stored switch is read through ``safety_flags.strict_bool`` with its safe value; only the
     records in :data:`LOADER_BUDGET` may still read a boolean another way."""

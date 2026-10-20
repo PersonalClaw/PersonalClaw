@@ -39,6 +39,7 @@ from pathlib import Path
 
 import connector_pack_shared
 import pytest
+from gateway_routes_shared import handler_for
 
 from personalclaw.apps.manifest import (
     PACK_ARG_TYPES,
@@ -1264,13 +1265,11 @@ async def test_the_recipe_directory_is_reachable_over_http():
 
 def test_the_recipe_route_is_registered_on_the_knowledge_router():
     """The handler existing is not the same as the route existing (the shape this repo's own
-    inert-surface census keeps catching), so the registration is asserted separately."""
-    import inspect
-
+    inert-surface census keeps catching), so the gateway's route table is asked which handler
+    serves it."""
     from personalclaw.dashboard.handlers import knowledge as handlers
 
-    src = inspect.getsource(handlers.setup_knowledge_routes)
-    assert '"/api/knowledge/source-recipes", list_source_recipes' in src
+    assert handler_for("GET", "/api/knowledge/source-recipes") is handlers.list_source_recipes
 
 
 def test_the_denylist_names_every_root_the_docstring_claims():

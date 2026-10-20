@@ -473,17 +473,6 @@ def test_the_tree_now_carries_more_than_one_elicit_token(fresh_home):
     assert len(files) > 1, f"the capability left no trace in src/: {out!r}"
 
 
-def test_the_inbound_out_of_scope_note_is_left_intact(fresh_home):
-    """Clause 5b. This change is the CLIENT half. The read-only inbound surface's written
-    refusal to issue server→client requests is a deliberate non-goal, and an implementer
-    reading "elicitation" as one feature is exactly how it would get deleted."""
-    text = (REPO_ROOT / "src" / "personalclaw" / "inbound" / "mcp_http.py").read_text(
-        encoding="utf-8"
-    )
-    assert "**Deliberately unmet clauses of LATER drafts:** anything requiring" in text
-    assert "(elicitation, sampling) or a resumable event stream is out of scope" in text
-
-
 # ── the unit-level rail under the content mapping ──
 
 

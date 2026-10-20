@@ -218,17 +218,51 @@ def test_every_real_first_party_dep_declaration_passes_the_guard(no_pip) -> None
         app_manager._reject_core_dependency_conflicts(_manifest(deps, name=app), deps)
 
 
-def test_the_guard_runs_on_update_too_not_only_install() -> None:
-    """Both lifecycle call sites funnel through `_install_python_deps`, so one guard
-    covers install AND update. Asserted structurally: if a future change gives update
-    its own dep path, this catches it."""
-    import inspect
+@pytest.fixture
+def apps_home(tmp_path, monkeypatch):
+    """An isolated home for the real installer: apps install under *tmp_path*."""
+    import personalclaw.config.loader as loader
+    from personalclaw.apps import manager
 
-    src = inspect.getsource(app_manager)
-    assert (
-        src.count("_install_python_deps(manifest)") == 2
-    ), "install and update no longer share the single guarded dependency path"
-    assert src.count("_reject_core_dependency_conflicts(manifest, reqs)") == 1
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
+    return tmp_path
+
+
+def _app_source(root, *, version: str, deps: list[str], subdir: str):
+    d = root / subdir / "dep-app"
+    d.mkdir(parents=True)
+    manifest = {"name": "dep-app", "version": version, "displayName": "Dep", "description": "x"}
+    if deps:
+        manifest["dependencies"] = {"pythonDependencies": deps}
+    (d / "app.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return d
+
+
+def test_install_refuses_an_app_that_re_pins_a_core_dependency(apps_home, no_pip) -> None:
+    """Install, end to end: the app is not installed, the reason names the package, and pip
+    never ran (``no_pip``)."""
+    from personalclaw.apps import manager
+
+    src = _app_source(apps_home, version="1.0.0", deps=[f"{_CORE_NAME}<1.21"], subdir="a")
+    res = app_manager.install(src, confirm=True)
+    assert not res.ok
+    assert _CORE_NAME in (res.error or "") and "refused" in (res.error or ""), res.error
+    assert manager._read_installed("dep-app") is None
+
+
+def test_update_refuses_an_app_that_re_pins_a_core_dependency(apps_home, no_pip) -> None:
+    """Update, end to end, held to the same guard as install: a new version that re-pins a
+    core dependency is refused, the installed version stays, and pip never ran."""
+    from personalclaw.apps import manager
+
+    first = _app_source(apps_home, version="1.0.0", deps=[], subdir="a")
+    assert app_manager.install(first, confirm=True).ok
+    newer = _app_source(apps_home, version="2.0.0", deps=[f"{_CORE_NAME}<1.21"], subdir="b")
+    res = app_manager.update(newer, confirm=True)
+    assert not res.ok
+    assert _CORE_NAME in (res.error or "") and "refused" in (res.error or ""), res.error
+    assert manager._read_installed("dep-app").version == "1.0.0"
 
 
 def test_core_pins_exclude_extras_by_marker_not_by_name_list() -> None:
@@ -327,16 +361,15 @@ def test_an_unparseable_spec_still_discloses_and_does_not_claim_core_ownership()
 def test_the_catalog_carries_the_disclosure_to_every_scanned_card() -> None:
     """The three scan paths (git, local, native) build a `CatalogEntry` from a manifest, and
     all three splat the consent facts from ONE projection (`disclosure.describe`, which the
-    install dialog reads too) — which is what stops a fourth scan site from surfacing
-    permissions and crons while forgetting the packages. Asserted structurally, because the
-    defect being fixed was precisely an omission."""
+    install dialog reads too). That each scan path's card carries the packages is driven in
+    `tests/test_app_catalog.py::test_every_scan_path_puts_the_package_disclosure_on_its_card`;
+    this keeps the registry pointer's half."""
     import inspect
 
     from personalclaw.apps import catalog
 
     src = inspect.getsource(catalog)
-    assert src.count("**describe(m),") == 3
-    # …and no scan site hand-builds a consent field beside it.
+    # No scan site hand-builds a consent field beside the projection.
     assert "pythonDependencies=" not in src
     # A registry POINTER must NOT get one: its manifest is unread, and `consentKnown=False`
     # is what the frontend reads to say "unknown" rather than "none".

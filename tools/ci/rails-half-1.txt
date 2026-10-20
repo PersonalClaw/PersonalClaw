@@ -2,6 +2,7 @@ tests/rails/test_a_chat_turns_body_runs_only_inside_run_chat.py
 tests/rails/test_a_command_a_run_starts_keeps_to_its_egress_tier_tree.py
 tests/rails/test_a_declared_read_asks_nobody_tree.py
 tests/rails/test_a_native_stage_is_a_leaf_to_its_own_tools_tree.py
+tests/rails/test_a_private_chat_controls_only_its_own_runs_tree.py
 tests/rails/test_a_release_dispatched_on_a_branch_publishes_nothing.py
 tests/rails/test_a_requests_work_is_the_caller_its_sign_in_proves_tree.py
 tests/rails/test_a_stop_never_waits_forever_on_a_cancelled_task_tree.py
@@ -44,6 +45,7 @@ tests/rails/test_computer_use_approval_ladder_tree.py
 tests/rails/test_computer_use_live_view_tree.py
 tests/rails/test_config_roundtrip_tree.py
 tests/rails/test_container_host_tree.py
+tests/rails/test_control_bridge_tree.py
 tests/rails/test_dependency_bounds_tree.py
 tests/rails/test_desktop_macos_signature_gate_tree.py
 tests/rails/test_each_home_has_its_own_tmux_server_tree.py
@@ -121,6 +123,7 @@ tests/rails/test_subresource_read_census.py
 tests/rails/test_surface_layers_safe_mode_tree.py
 tests/rails/test_surface_overlay_tree.py
 tests/rails/test_task_engine_owned_guard_tree.py
+tests/rails/test_terminal_default_cwd_tree.py
 tests/rails/test_the_desktop_app_refuses_python_children_tree.py
 tests/rails/test_the_suite_never_reaches_the_machines_keychain_tree.py
 tests/rails/test_timezone_resolution_has_one_owner.py

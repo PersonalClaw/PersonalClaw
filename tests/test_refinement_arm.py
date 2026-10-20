@@ -22,6 +22,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from gateway_routes_shared import handler_for
 
 from personalclaw import after_turn_review as atr
 from personalclaw.skills import loader as loader_mod
@@ -393,24 +394,15 @@ def test_a_new_kind_proposal_carries_no_diff_and_no_version(home):
     assert proposals.accept(prop.id).version == 0
 
 
-def test_the_proposal_detail_route_is_registered(home):
-    """A defined handler is not a reachable one.
+def test_the_proposal_detail_route_is_registered():
+    """A defined handler is not a reachable one: the gateway serves a proposal's detail and its
+    accept with their own handlers."""
+    from personalclaw.dashboard.handlers import skills as handlers
 
-    The skills routes are registered in the route table ``start_dashboard`` runs, which cannot
-    be driven without starting a server — so this scans the registration source. Comment lines are
-    stripped first (a text scanner otherwise reads a commented-out route as a live one), and a
-    fabricated path is asserted ABSENT so the scan cannot pass vacuously.
-    """
-    from personalclaw.dashboard import routes as routes_mod
-
-    src = inspect.getsource(routes_mod.register_dashboard_routes)
-    code = "\n".join(ln for ln in src.split("\n") if not ln.strip().startswith("#"))
-    for expected in (
-        'add_get("/api/skills/proposals/{id}", api_skill_proposal_detail)',
-        'add_post("/api/skills/proposals/{id}/accept", api_skill_proposal_accept)',
-    ):
-        assert expected in code, f"{expected} is not registered — the endpoint would 404"
-    assert 'add_get("/api/skills/proposals/{id}/diff"' not in code, "vacuity floor"
+    detail = handler_for("GET", "/api/skills/proposals/p1")
+    assert detail is handlers.api_skill_proposal_detail, "the detail endpoint would 404"
+    accept = handler_for("POST", "/api/skills/proposals/p1/accept")
+    assert accept is handlers.api_skill_proposal_accept, "the accept endpoint would 404"
 
 
 # ── The call site (a mechanism nothing calls is not a feature) ─────────────────────────────

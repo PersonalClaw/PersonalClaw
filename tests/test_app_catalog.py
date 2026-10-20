@@ -296,6 +296,45 @@ def test_git_scan_is_cached_within_its_ttl(tmp_path, offline_git_sources):
     assert {e.name for e in fresh} == {"alpha-app", "beta-app"}
 
 
+def _with_a_package(folder: Path, name: str, *, native: bool = False) -> None:
+    """An app in *folder* that declares one Python package, so its card has one to disclose."""
+    folder.mkdir(parents=True)
+    manifest = json.loads(_app_manifest(name))
+    manifest["dependencies"] = {"pythonDependencies": ["openai>=1.0"]}
+    if native:
+        manifest["native"] = True
+    (folder / "app.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def test_every_scan_path_puts_the_package_disclosure_on_its_card(tmp_path, offline_git_sources):
+    """Git, local and native scans each build a card from a manifest, and each card carries what
+    installing it would pip-install, classified as the install dialog shows it. A scan path that
+    forgot the packages would show a card whose consent screen says nothing about them."""
+    disclosed = [{"spec": "openai>=1.0", "coreOwned": False}]
+
+    work = tmp_path / "repo" / "work"
+    work.mkdir(parents=True)
+    _git("init", "--initial-branch=main", ".", cwd=work)
+    _with_a_package(work / "git-app", "git-app")
+    _git("add", "-A", cwd=work)
+    _git("commit", "-m", "fixture", cwd=work)
+    bare = tmp_path / "repo" / "apps.git"
+    _git("clone", "--bare", str(work), str(bare), cwd=tmp_path / "repo")
+    (git_card,) = catalog._scan_git_source(f"file://{bare}", now=0.0)
+
+    local_root = tmp_path / "local-apps"
+    _with_a_package(local_root / "local-app", "local-app")
+    catalog.add_local_source(str(local_root))
+    (local_card,) = [e for e in catalog._scan_local_sources() if e.name == "local-app"]
+
+    _with_a_package(tmp_path / "native" / "native-app", "native-app", native=True)
+    (native_card,) = [e for e in catalog.available_bundled() if e.name == "native-app"]
+
+    for card in (git_card, local_card, native_card):
+        assert card.to_dict()["pythonDependencies"] == disclosed, card.sourceKind
+        assert card.consentKnown is True, card.sourceKind
+
+
 def test_same_repo_with_and_without_dot_git_is_one_source(tmp_path):
     """GitHub serves a repo at both spellings, so they must not become two sources —
     two sources means two full clones per catalog refresh for one set of apps."""

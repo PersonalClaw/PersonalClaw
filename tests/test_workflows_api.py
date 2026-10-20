@@ -24,6 +24,7 @@ import json
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
+from gateway_routes_shared import handler_for
 
 from personalclaw.workflows import defs as defs_mod
 from personalclaw.workflows import handlers as H
@@ -192,11 +193,7 @@ class TestOneEngineTwoSurfaces:
         assert paths.index("/api/workflows/runs") < paths.index("/api/workflows/{name}")
 
     def test_the_server_mounts_them(self) -> None:
-        import inspect
-
-        from personalclaw.dashboard import routes
-
-        assert "register_workflow_routes(app)" in inspect.getsource(routes)
+        assert handler_for("GET", "/api/workflows") is H.api_defs_list
 
     def test_the_gateway_publishes_the_supervisor_to_both_consumers(self) -> None:
         """Without this the routes create runs nobody drives and the trigger provider

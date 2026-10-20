@@ -209,6 +209,9 @@ class TestTransport:
             assert body["jsonrpc"] == "2.0"
             assert body["result"]["protocolVersion"] == mcp_http.PROTOCOL_VERSION
             assert body["result"]["serverInfo"]["name"] == "personalclaw"
+            # Read-only and request-response: it offers tools and nothing that would have it ask
+            # the client something back (elicitation, sampling) or keep a stream open.
+            assert body["result"]["capabilities"] == {"tools": {}}
             # An inbound answer carries the user's data — never cacheable.
             assert resp.headers["Cache-Control"] == "no-store"
         finally:

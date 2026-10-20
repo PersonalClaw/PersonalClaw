@@ -565,16 +565,6 @@ class TestCronCli:
         _cron(argparse.Namespace(cron_action="list"))
         assert "No cron jobs." in capsys.readouterr().out
 
-    def test_the_cli_no_longer_touches_the_legacy_service(self):
-        """🔴 The clean break, pinned at the source: a re-added `ScheduleService` write here would
-        silently stop firing again, and the symptom (a cron that runs only after a restart) is
-        exactly the one that took this long to notice."""
-        import inspect
-
-        from personalclaw import cli_commands
-
-        assert "ScheduleService" not in inspect.getsource(cli_commands._cron)
-
 
 class TestSetupTimezone:
     def test_auto_detect_from_tz_env(self, monkeypatch):

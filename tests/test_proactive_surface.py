@@ -16,6 +16,7 @@ import json
 from typing import Any
 
 import pytest
+from gateway_routes_shared import handler_for
 
 from personalclaw.proactive.manifest import (
     CollectedItem,
@@ -482,20 +483,11 @@ class TestTheRoutesAreRegistered:
             assert callable(getattr(handlers, name)), name
 
     def test_the_server_registers_all_three_paths(self) -> None:
-        import inspect
+        from personalclaw.dashboard.handlers import proactive as handlers
 
-        from personalclaw.dashboard import routes
-
-        source = inspect.getsource(routes)
-        for path in (
-            '"/api/proactive/digest"',
-            '"/api/proactive/digest/reply"',
-            '"/api/proactive/install"',
-        ):
-            assert path in source, path
-        # Vacuity: a path this module does NOT register must be absent, so the assertion above is
-        # not satisfied by any substring of the file.
-        assert '"/api/proactive/nonexistent"' not in source
+        assert handler_for("GET", "/api/proactive/digest") is handlers.api_proactive_digest
+        assert handler_for("POST", "/api/proactive/digest/reply") is handlers.api_proactive_reply
+        assert handler_for("POST", "/api/proactive/install") is handlers.api_proactive_install
 
 
 class TestTheReplyLedgerKindIsVisible:

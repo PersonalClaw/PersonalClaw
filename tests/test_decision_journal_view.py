@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import make_mocked_request
+from gateway_routes_shared import handler_for, registrations
 
 from personalclaw.dashboard.handlers.decisions import api_decision_journal
 from personalclaw.decisions import (
@@ -118,14 +119,10 @@ def _resolve(store, triggers, memory, item_id: str, grade: str) -> None:
 class TestRegistration:
     def test_the_route_is_registered_and_points_at_this_handler(self) -> None:
         """A handler nothing routes to is the defect this repo keeps finding: its own tests are
-        green and the surface is unreachable. Asserted against the route table
-        (``dashboard/routes.py``) because that is the one file that decides whether this URL
-        exists."""
-        src = (SRC / "dashboard" / "routes.py").read_text()
-        assert 'add_get("/api/knowledge/decisions", handlers.api_decision_journal)' in src
-        # Vacuity floor: if the probe string above ever stops matching the file's real spelling,
-        # this line says so instead of the assertion silently passing on a renamed route.
-        assert src.count("/api/knowledge/decisions") == 1
+        green and the surface is unreachable. The gateway's route table serves this URL with
+        this handler, and holds it once."""
+        assert handler_for("GET", "/api/knowledge/decisions") is api_decision_journal
+        assert registrations("GET", "/api/knowledge/decisions") == 1
 
     def test_the_handler_is_exported_from_the_facade(self) -> None:
         """The route table reaches handlers as ``handlers.X``, so an unexported handler is an

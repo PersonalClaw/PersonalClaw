@@ -325,17 +325,11 @@ async def test_a_temporary_chat_previews_an_edit_of_any_run_it_can_read(
 
 
 def test_every_workflow_tool_that_changes_something_is_held_to_the_rule():
-    """Every workflow tool that is not read-only asks the one rule in the gateway, under the
-    operation the gateway's route for the same call names, so a new one cannot be added without."""
-    import inspect
-
-    from personalclaw.workflows import handlers
-
+    """Every workflow tool that is not read-only names the operation it asks the rule about, so a
+    new one cannot be added without. That each operation is one a gateway route guards is held
+    in ``tests/rails/test_a_private_chat_controls_only_its_own_runs_tree.py``."""
     tools = {tool["name"] for tool in mcp_workflows._list_tools()}
     assert set(mcp_workflows._CHANGES) == tools - mcp_workflows.READ_ONLY_TOOLS
-    routes = inspect.getsource(handlers)
-    for operation in set(mcp_workflows._CHANGES.values()):
-        assert f'(request, "{operation}"' in routes, operation
 
 
 # ── a call that names no work ──────────────────────────────────────────────────────────────────

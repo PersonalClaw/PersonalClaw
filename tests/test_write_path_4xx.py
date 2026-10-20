@@ -201,15 +201,33 @@ class TestAgentDetailPatch:
         assert "atomic_json_write(f, data)" in src
         assert "f.write_text(json.dumps(data" not in src
 
-    def test_the_mutations_are_audited(self):
-        """The unguarded path was also the unlogged one — this handler had zero `log_api_access`
-        calls while its siblings had two."""
-        import inspect
+    @pytest.mark.parametrize(
+        ("method", "body", "operation"),
+        [
+            ("PATCH", {"description": "new"}, "agent.detail_update"),
+            ("DELETE", None, "agent.detail_delete"),
+        ],
+    )
+    def test_the_mutations_are_audited(self, tmp_path, monkeypatch, method, body, operation):
+        """The unguarded path was also the unlogged one: this handler had no audit while its
+        siblings did. Each change it makes writes one audit entry naming what it did."""
+        import asyncio
 
-        from personalclaw.dashboard.handlers import agents as A
+        from personalclaw.dashboard.handlers.agents import api_agent_detail
 
-        src = inspect.getsource(A.api_agent_detail)
-        assert src.count("log_api_access") >= 2, "both DELETE and PATCH must audit"
+        folder = tmp_path / "agents"
+        folder.mkdir()
+        (folder / "bot.json").write_text(json.dumps({"name": "bot", "description": "x"}))
+        monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: folder)
+        audit = MagicMock()
+        monkeypatch.setattr("personalclaw.dashboard.handlers.sel", lambda: audit)
+        req = _request(body, method=method, match={"name": "bot"})
+        req.get = lambda key, default=None: {"user": "dashboard"}.get(key, default)
+        req.app = {"state": MagicMock()}
+        resp = asyncio.run(api_agent_detail(req))
+        assert resp.status == 200, resp.text
+        logged = [c.kwargs.get("operation") for c in audit.log_api_access.call_args_list]
+        assert logged == [operation]
 
 
 # ── #424: clean_event_metadata ────────────────────────────────────────────────
