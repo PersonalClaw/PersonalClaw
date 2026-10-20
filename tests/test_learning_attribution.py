@@ -20,7 +20,10 @@ The properties covered:
 
 from __future__ import annotations
 
+import json
+
 import pytest
+from table_rows import row
 
 from personalclaw.learning import accountability
 from personalclaw.learning import attribution as A
@@ -308,20 +311,154 @@ def test_verdict_history_feeds_proposer_trust(home):
 
 
 # ── the module is no longer inert (the end-to-end check) ──
+#
+# The headline: `accountability.py` had ZERO production importers. `attribution` is that importer,
+# the curator tick (`learning/curator_tick.py`) runs its grading, and the memory consolidation in
+# `history.py` runs the tick. Each link is driven here, with `accountability.attribute` watched and
+# still deciding every verdict.
 
 
-def test_accountability_now_has_a_production_importer():
-    """The headline: `accountability.py` had ZERO production importers. `attribution` is that
-    importer, and it is itself wired into the curator tick (`learning/curator_tick.py`), which
-    the consolidation in `history.py` runs."""
-    import inspect
+def _watch_attribute(monkeypatch) -> list[tuple[dict, object]]:
+    """Every call grading makes to `accountability.attribute`, with what it answered."""
+    real = accountability.attribute
+    calls: list[tuple[dict, object]] = []
 
-    src = inspect.getsource(A)
-    assert "accountability" in src
-    tick = inspect.getsource(__import__("personalclaw.learning.curator_tick", fromlist=["_x"]))
-    assert "attribution.grade_accepted_changes" in tick
-    hist = inspect.getsource(__import__("personalclaw.history", fromlist=["_x"]))
-    assert "run_curator_tick(" in hist
+    def watched(**kw):
+        answer = real(**kw)
+        calls.append((kw, answer))
+        return answer
+
+    monkeypatch.setattr(accountability, "attribute", watched)
+    return calls
+
+
+def _accepted_then(kind: str, runs: int, target: str = "nightly") -> None:
+    """A schema failure of *target*, a change accepted that predicts its fix, then *runs* runs of
+    *target*: clean, or harmful (the schema failure still there and a new code failure beside it).
+    """
+    before = _run(target, status=RunStatus.FAILED)
+    _fail(before, "load", _SCHEMA)
+    _accept_a_change(target, ["schema_violation"])
+    for _ in range(runs):
+        if kind == "clean":
+            _run(target)
+        else:
+            r = _run(target, status=RunStatus.FAILED)
+            _fail(r, "load", _SCHEMA)
+            _fail(r, "transform", _CODE)
+
+
+def test_the_curator_tick_grades_every_accepted_change(home, monkeypatch, subtests):
+    """`run_curator_tick` grades each accepted change whose runs since are in, by what
+    `accountability.attribute` answers for the change's bet and those runs, files the revert a
+    HARMFUL verdict owes, and counts what it graded in its summary. Too few runs since leave a
+    change PENDING for a later tick, and a curator turned off grades nothing."""
+    from personalclaw.learning.curator_tick import run_curator_tick
+
+    calls = _watch_attribute(monkeypatch)
+    harm, clean = "harmful", "clean"
+    # case, the changes (target, the runs after acceptance: clean or harmful and how many, the
+    # verdict after the tick), the config's `learning` section, the tick's note on the grading
+    table = [
+        ("a change that did harm", [("nightly", harm, 3, "HARMFUL")], {}, "graded=1 reverts=1"),
+        ("a change that delivered", [("nightly", clean, 3, "EFFECTIVE")], {}, "graded=1 reverts=0"),
+        ("too few runs since", [("nightly", clean, 2, "PENDING")], {}, None),
+        (
+            "one change ready and one not",
+            [("nightly", harm, 3, "HARMFUL"), ("weekly", clean, 1, "PENDING")],
+            {},
+            "graded=1 reverts=1",
+        ),
+        (
+            "the curator turned off",
+            [("nightly", harm, 3, "PENDING")],
+            {"curator_enabled": False},
+            None,
+        ),
+    ]
+    assert len(table) == 5
+    for i, (case, changes, learning, note) in enumerate(table):
+        with row(subtests, case=case):
+            here = home / f"row-{i}"
+            here.mkdir()
+            monkeypatch.setenv("PERSONALCLAW_HOME", str(here))
+            monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda here=here: here)
+            (here / "config.json").write_text(json.dumps({"learning": learning}), encoding="utf-8")
+            calls.clear()
+            for target, kind, runs, _verdict in changes:
+                _accepted_then(kind, runs, target)
+
+            summary = run_curator_tick(None)
+
+            recs = {rec.target: rec for rec in A._all()}
+            got = {t: (rec.verdict, rec.resolved) for t, rec in recs.items()}
+            want = {t: (verdict, verdict != "PENDING") for t, _k, _r, verdict in changes}
+            assert got == want, case
+            reverts = [p.id for p in P.list_pending(kind=P.Kind.RETIREMENT.value)]
+            owed = [recs[t].revert_proposal_id for t, _k, _r, v in changes if v == "HARMFUL"]
+            assert reverts == owed and all(owed), f"{case}: reverts {reverts}, owed {owed}"
+            if note is None:
+                assert "attribution" not in summary, f"{case}: the tick says {summary!r}"
+            else:
+                assert f"attribution {note}" in summary.split("; "), f"{case}: {summary!r}"
+            if learning.get("curator_enabled") is False:
+                assert summary == "" and calls == [], f"{case}: {summary!r}, {len(calls)} gradings"
+                continue
+            assert len(calls) == len(changes), f"{case}: graded {len(calls)} times"
+            asked = sorted((kw["predicted_fixes"], kw["outcome"].runs_after) for kw, _a in calls)
+            assert asked == sorted(
+                (["schema_violation"], runs) for _t, _k, runs, _v in changes
+            ), f"{case}: {asked}"
+            answered = sorted((answer.verdict, answer.reason) for _kw, answer in calls)
+            assert answered == sorted((rec.verdict, rec.reason) for rec in recs.values()), case
+
+
+@pytest.mark.asyncio
+async def test_the_memory_consolidation_runs_the_tick_that_grades(home, monkeypatch):
+    """The cadence the tick runs on: a history consolidation's maintenance. Driven through the real
+    `HistoryConsolidator._consolidate_locked`, with a model that answers one line and a memory
+    service whose own upkeep does nothing, the pass reaches its maintenance, and the curator tick
+    there grades the change its runs since show harmful and files the revert."""
+    from unittest.mock import MagicMock
+
+    from personalclaw.history import HistoryConsolidator
+
+    class _QuietService:
+        has_vector = False
+
+        def __getattr__(self, _name):
+            return lambda *_a, **_k: 0
+
+    calls = _watch_attribute(monkeypatch)
+    _accepted_then("harmful", 3)
+    (rec,) = A._all()
+    assert (rec.verdict, rec.resolved) == ("PENDING", False), "graded before any pass"
+
+    rows = [{"role": "user", "content": "hi", "ts": "2026-08-26"}]
+    log = MagicMock()
+    log.get_unconsolidated = MagicMock(return_value=(rows, 1))
+    log.read_messages = MagicMock(return_value=rows)
+    log.get_metadata = MagicMock(return_value={})
+    memory = MagicMock()
+    memory.read_preferences = MagicMock(return_value="")
+    memory.read_projects = MagicMock(return_value="")
+    consolidator = HistoryConsolidator(log=log, memory=memory, vector_store=None, migrated=True)
+    consolidator._memory_service = _QuietService()  # type: ignore[assignment]
+
+    async def _one_line(_prompt: str, _chat_key: str, **_kw: object):
+        return {"history_entry": "one line"}
+
+    consolidator._call_llm = _one_line  # type: ignore[assignment]
+
+    await consolidator._consolidate_locked("k", include_history=True)
+
+    log.mark_consolidated.assert_called_once_with("k", 1)  # the pass ran to its end
+    (rec,) = A._all()
+    assert (rec.verdict, rec.resolved) == ("HARMFUL", True)
+    (rev,) = P.list_pending(kind=P.Kind.RETIREMENT.value)
+    assert rev.id == rec.revert_proposal_id and "nightly" in rev.title
+    assert A.verdict_history() == [("refiner", "HARMFUL")]
+    assert len(calls) == 1 and calls[0][0]["outcome"].runs_after == 3
 
 
 def test_a_harmful_verdict_also_revokes_standing_autonomy_grants(home, monkeypatch):
