@@ -33,10 +33,15 @@ happened.
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 
 import pytest
+from table_rows import row
 
 from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore, _redact_stored
+
+pytestmark = pytest.mark.security
 
 SECRET = "sk-ant-api03-REALTOKEN123456789"
 
@@ -156,28 +161,102 @@ def test_a_redaction_failure_does_NOT_lose_the_run_record(tmp_path, monkeypatch)
     assert total == 1
 
 
-def test_the_redaction_is_at_the_SINGLE_write_point():
+def _sync_row(**fields):
+    """A writer that hands one run straight to `append_sync`, the way a caller with no event loop
+    does, never through the async `append`."""
+
+    def write(home):
+        ScheduleRunStore(home).append_sync(
+            ScheduleRun(run_id="r1", job_id="clock:a", status="failure", **fields)
+        )
+
+    return write
+
+
+def _reaper_row(reason):
+    """The reaper's own row for a run it closed: a real caller of `append_sync` that redacts
+    nothing itself."""
+    from personalclaw.triggers import reaper
+
+    def write(home):
+        assert reaper._write_row(
+            "clock:a",
+            status=reaper.RESTART_INTERRUPTED_STATUS,
+            reason=reason,
+            name="clock a",
+            started_at=1.0,
+            now=2.0,
+            source="clock",
+            base_dir=home,
+        )
+
+    return write
+
+
+def test_the_redaction_is_at_the_SINGLE_write_point(tmp_path, subtests):
     """One funnel, so a future caller cannot forget it — the per-call-site alternative is how the
-    injection-screen and capability-fence gaps happened."""
-    import inspect
+    injection-screen and capability-fence gaps happened. The funnel is `append_sync`: the async
+    `append` only hands a run to it, and the reaper's pass calls it directly. So a row written
+    straight through it, each field holding the credential, reaches neither file in plaintext, and
+    the reaper's row, whose writer leaves the redaction to the funnel, is clean too."""
+    leak = f"tok={SECRET} and the rest"
+    table = [
+        ("summary", "summary", _sync_row(summary=leak)),
+        ("trace", "trace", _sync_row(trace=leak)),
+        ("error", "error", _sync_row(error=leak)),
+        ("job_name", "job_name", _sync_row(job_name=leak)),
+        ("the reaper's row", "error", _reaper_row(leak)),
+    ]
+    assert len(table) == 5
+    for n, (door, field, write) in enumerate(table):
+        with row(subtests, door=door):
+            home = tmp_path / f"home-{n}"
+            write(home)
+            ledger = home / "cron-history"
+            files = sorted(p.name for p in ledger.glob("*.jsonl"))
+            assert files == ["_index.jsonl", "clock:a.jsonl"], f"{door}: wrote {files}"
+            assert _disk_hits(home, SECRET) == [], f"{door}: the credential is on disk"
+            for name in files:
+                (stored,) = [json.loads(line) for line in (ledger / name).read_text().splitlines()]
+                if field == "trace" and name == "_index.jsonl":
+                    assert "trace" not in stored, f"{door}: the index row carries a trace"
+                    continue
+                assert (
+                    stored[field] == "tok=[REDACTED: credential] and the rest"
+                ), f"{door}: {name}'s {field} is {stored[field]!r}"
 
-    from personalclaw.schedule_history import ScheduleRunStore as Store
 
-    src = inspect.getsource(Store.append_sync)
-    assert "_redact_stored(run.summary)" in src
-    assert "_redact_stored(run.trace)" in src
-    assert "_redact_stored(run.error)" in src
-
-
-def test_it_reuses_the_SHARED_matcher():
+def test_it_reuses_the_SHARED_matcher(tmp_path, subtests, monkeypatch):
     """Not a second regex set. A credential pattern added to `security` must cover this
     automatically
-    — a private copy would drift, the lesson already learned with the workflow lint."""
-    import inspect
+    — a private copy would drift, the lesson already learned with the workflow lint.
 
-    src = inspect.getsource(_redact_stored)
-    assert "redact_credentials" in src
-    assert "redact_exfiltration_urls" in src
+    Each row is a token shape no matcher knows yet, added to one of `security`'s two shared sets:
+    its credential patterns, and the patterns that mark a URL's query as carrying one. Before the
+    addition the ledger keeps the token; once it is added there, and nowhere else, a run whose
+    summary holds it is written with the token gone, as the shared masker writes it."""
+    from personalclaw import security
+
+    token = "ledgerzz-0f1e2d3c4b5a69788796a5b4"
+    table = [
+        ("_CREDENTIAL_PATTERNS", f"rotated {token} for the sync"),
+        ("_EXFIL_PATTERNS", f"posted to https://collector.example.net/c?k={token} done"),
+    ]
+    assert len(table) == 2
+    for matcher, text in table:
+        with row(subtests, matcher=matcher):
+            assert token in _redact_stored(text), f"{matcher}: a matcher already knows the token"
+            with monkeypatch.context() as patch:
+                shared = getattr(security, matcher)
+                added = re.compile(f"(?:{shared.pattern})|ledgerzz-[0-9a-f]{{24}}", shared.flags)
+                patch.setattr(security, matcher, added)
+                home = tmp_path / matcher
+                store = _write(home, summary=text)
+                masked = security.redact_or_withhold(text)
+                assert token not in masked, f"{matcher}: the added pattern masks nothing"
+                assert _disk_hits(home, "ledgerzz") == [], f"{matcher}: the token is on disk"
+                runs, _total = asyncio.run(store.list_for_job("clock:a", 0, 5))
+                assert runs[0]["summary"] == masked, f"{matcher}: {runs[0]['summary']!r}"
 
 
 # ── the dispatch half, verified rather than assumed ──
