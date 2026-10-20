@@ -1,0 +1,141 @@
+# Weekly CI health (#3948): the one "Weekly CI health" issue, from up to 90 days of the record.
+#
+# `rerun` runs every test tests/quarantine.toml lists ten times on main
+# (`python -m tools.ci quarantine-rerun`). It runs the repository's own tests, so it holds no
+# write token, and hands the report only the JSON tally it writes.
+#
+# `report` fetches the window (`python -m tools.ci fetch`): the histories and the newest slots
+# file the collector (ci-telemetry.yml) uploaded from main, each checked to be the collector's
+# own upload as the shard planner checks it, and each history's run line shown to be a counted
+# run its own workflow lists. The archives are kept as they arrived, in one stored archive,
+# window.zip, read in place and never unpacked or run. Fetching each history costs two calls of
+# the job token's, which GitHub allows 1,000 an hour for the whole repository, and 90 days are
+# about 860 histories, so window.zip alone is carried to the next run as the
+# `flake-report-window` artifact: the next run takes it only when this workflow's own scheduled
+# or dispatched run on main uploaded it, checks every history in it again, and fetches only the
+# collector runs it does not hold. The fetch keeps a reserve of calls for the other workflows and
+# writes fetch-status.json, how the window was built. Then `python -m tools.ci report` reads the
+# window, states the exact window it read and how much of the 90 days it holds, and on main edits
+# the one open issue titled "Weekly CI health" that this workflow's account opened, or opens it
+# once. A person's issue of that title is never touched.
+#
+# No durations cache is refreshed here: the shard planner reads the record itself (#4778).
+#
+# Its own schedule slot, Mondays 08:13 UTC, is clear of every other workflow's.
+name: Weekly CI health
+
+on:
+  schedule:
+    - cron: "13 8 * * 1"  # Mondays, 08:13 UTC
+  workflow_dispatch:
+
+# One report at a time, never cancelled: a second run waits, and then edits the issue the first
+# opened.
+concurrency:
+  group: flake-report
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # Every uv step uses a uv-managed CPython, never the runner image's own (as ci.yml's env says).
+  UV_PYTHON_PREFERENCE: only-managed
+
+jobs:
+  rerun:
+    runs-on: ubuntu-24.04
+    # Ten rounds of at most ten tests, each under its 120 s timeout, within the rerun's own
+    # 25 minutes, and the toolchain's install.
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
+        with:
+          python-version: "3.12.15"
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: run each quarantined test ten times
+        run: uv run python -m tools.ci quarantine-rerun --rounds 10 --out "$RUNNER_TEMP/reruns/reruns.json"
+      - name: Upload the reruns
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: quarantine-reruns
+          path: ${{ runner.temp }}/reruns/reruns.json
+          if-no-files-found: error
+          retention-days: 7
+
+  report:
+    needs: [rerun]
+    # The report runs when the reruns did not, and says so beside each entry.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    # About 70 new histories a week, and the carried window of about 2.3 GB down and up again.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read   # the collector's runs and archives, and the window this workflow carried
+      issues: write   # the one "Weekly CI health" issue; nothing else
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # Main's own tools/ci, run on the image's python3: standard-library Python, nothing installed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the reruns
+        if: ${{ needs.rerun.result == 'success' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: quarantine-reruns
+          path: ${{ runner.temp }}/reruns
+      - name: fetch the window
+        id: fetch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -m tools.ci fetch --repo "$GITHUB_REPOSITORY" --out "$RUNNER_TEMP/window"
+      - name: report, and on main write the weekly issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_REPO: ${{ github.ref == 'refs/heads/main' && github.repository || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          more=()
+          if [ -f "$RUNNER_TEMP/reruns/reruns.json" ]; then
+            more+=(--reruns "$RUNNER_TEMP/reruns/reruns.json")
+          fi
+          if [ -n "$ISSUE_REPO" ]; then
+            more+=(--issue-repo "$ISSUE_REPO")
+          fi
+          python3 -m tools.ci report --history "$RUNNER_TEMP/window" \
+            --fetch-status "$RUNNER_TEMP/window/fetch-status.json" \
+            --json "$RUNNER_TEMP/report/report.json" --run-url "$RUN_URL" "${more[@]}"
+      - name: Upload the report's figures
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: weekly-ci-health
+          path: ${{ runner.temp }}/report/report.json
+          if-no-files-found: ignore
+          retention-days: 90
+      # The fetched window, for the next run to start from: window.zip alone, which is all the
+      # next run takes. Stored, not compressed again: its archives are compressed already.
+      - name: Carry the window to the next run
+        if: ${{ !cancelled() && steps.fetch.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flake-report-window
+          path: ${{ runner.temp }}/window/window.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 15

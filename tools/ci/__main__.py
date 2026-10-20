@@ -8,9 +8,11 @@ from collections.abc import Callable
 from . import (
     audit,
     catalogue,
+    fetch,
     jobs,
     parity,
     plan,
+    quarantine_rerun,
     rails_census,
     release_manifest,
     report,
@@ -33,9 +35,11 @@ def _verify_check_run(argv: list[str]) -> int:
 COMMANDS: dict[str, Callable[[list[str]], int]] = {
     "audit": audit.main,
     "explain": catalogue.explain_main,
+    "fetch": fetch.main,
     "list": catalogue.list_main,
     "parity": parity.main,
     "plan": plan.main,
+    "quarantine-rerun": quarantine_rerun.main,
     "rails": rails_census.main,
     "release-manifest": release_manifest.main,
     "report": report.main,

@@ -1021,9 +1021,10 @@ The figures:
   A skip or an expected failure is not a run;
 - **durations:** each test's p50 and p99, the 20 slowest, and the week-over-week trend;
 - **the quarantine:** every entry of `tests/quarantine.toml` (`--quarantine` reads another list),
-  with its issue, its assignee, its expiry and the days left, soonest first. On its date an
-  entry has expired, as the suite reads it, and the report flags it. A missing list is an empty
-  quarantine; an entry not in the list's shape fails the report;
+  with its issue, its assignee, its expiry and the days left, soonest first, and its reruns
+  (`--reruns`, below): how many of its ten rounds it failed. On its date an entry has expired,
+  as the suite reads it, and the report flags it. A missing list is an empty quarantine; an
+  entry, or a reruns file, not in its shape fails the report;
 - **browse-live's environment quarantine:** each of the newest 5 head commits of main that
   measured the browse proof, newest first, quarantined when a `junit-browse-live` line carries
   `environment_failure`. One head is one observation, so a rerun cannot inflate the rate: of a
@@ -1036,6 +1037,19 @@ The figures:
 - **scheduled runs:** from the newest slots file, each workflow's slots that ran, with the median
   lag, and every missed or pending slot as a line of its own.
 
+It reads the folder's files named `history-<run>-<attempt>.jsonl` (`history-\d+-\d+\.jsonl`) and
+`slots-<time>.jsonl` (`slots-[A-Za-z0-9_.:-]+\.jsonl`), and the members so named at the top of
+every archive in it, in place: the fetch below keeps each archive as it was downloaded, and a
+member is unpacked in memory, line by line, within the same limits, never to disk. A member named
+otherwise, under a folder, or whose name its archive holds twice is not read, and an archive that
+is not one fails the report.
+`--issue-repo` writes the weekly issue: it edits the one open issue titled "Weekly CI health"
+that the workflow token's account (`github-actions[bot]`) opened, or opens it once. It looks in
+the issues listing, not in search, which lags behind a new issue, so two reports in a row edit
+one issue; two such issues (a race) edit the older and name the other in a warning. Anyone's
+issue of that title is left alone. The body stays under GitHub's limit, cut with a line naming
+the run whose summary and `report.json` hold the rest.
+
 `tools/ci/parity.py` (`python -m tools.ci parity --history <history-run-attempt.jsonl>`) reads
 one attempt's history, from the `telemetry-history-<run>-<attempt>` artifact, and compares the
 test node ids `test-shard` ran (its `junit-test-shard-*` reports) with those `test-macos` ran
@@ -1045,6 +1059,65 @@ are equal. An id one side ran more than once is named but is no difference. It e
 it can't read: missing, empty, not JSON lines, another schema or a version it does not read, a
 line over 1 MiB or a whole over 256 MiB, or no report of one side (a push whose tree was already
 tested runs no `test-macos`). It reads only the file it is given, and no workflow runs it yet.
+
+### The weekly report
+
+`.github/workflows/flake-report.yml` runs Mondays at 08:13 UTC, a slot no other workflow takes,
+and on dispatch, one run at a time and never cancelled:
+
+- **`rerun`** runs every test the quarantine lists ten times (`python -m tools.ci
+  quarantine-rerun`): one pytest process a round over every listed test, each with its JUnit
+  report, within 25 minutes. A quarantined test is marked an expected failure, so its failure
+  reports as one and counts as a failure; a round that ran nothing (pytest refused its arguments,
+  or the suite refused the list) or ran out of time counts each test as not run, never as
+  passed. It runs the repository's own tests, so it holds `contents: read` and no write token,
+  and hands on only the JSON tally.
+- **`report`** holds `contents: read` for its checkout, `actions: read` for the record, and
+  `issues: write` for the one weekly issue, which it writes only on `main`. Its token reaches the
+  fetch step and the report step alone. It runs whatever the reruns concluded, and says "no
+  reruns" beside each entry when they did not run.
+- **The fetch** (`tools/ci/fetch.py`, `python -m tools.ci fetch`) lists the collector's runs on
+  main in the last 91 days and keeps those that are the collector's own and succeeded; of each
+  run's artifacts it takes only the one that run uploaded, on main, in this repository,
+  unexpired, named `telemetry-history-<run>-<attempt>` or `telemetry-slots-<run>`, within
+  32 MiB as listed and as it arrives. These are the checks the shard planner makes
+  (`telemetry.collector_run` and `telemetry.upload_refusal`, one copy of each). A history
+  archive is kept only when it holds `history-<run>-<attempt>.jsonl` alone, whose run line names
+  that run and attempt, a counted run (a `ci.yml` push to main, or a scheduled or dispatched
+  Breadth run on main), and a run its own workflow's listing shows with that attempt. The fetch
+  keeps the newest slots archive and every history in the window, one download at a time, in one
+  stored archive, `window.zip`, beside `fetch-status.json`, how it was built. Every collector run
+  and artifact it skips is in the status's refusals with the check that refused it.
+- **Archives are read in place.** Neither the fetch nor the report unpacks anything to disk or
+  runs anything an archive holds: `window.zip` holds the collector archives as they arrived, and
+  each is read inside it. A member that is absolute, holds `..` or a folder, or is a link is
+  refused and named in the log (`telemetry.member_refusal`), and so is a collector archive past
+  32 MiB; a window of more than 2,000 members or 6 GiB, or holding a name twice (a member is
+  opened by its name), is refused whole. The window being built stops at both caps, keeping the
+  manifest's place, and never takes a name it holds.
+- **The carried window.** Each history costs two calls of the job token's, which GitHub allows
+  1,000 an hour for the whole repository, and 90 days are about 860 histories. So the report job
+  uploads `window.zip` alone as `flake-report-window` (stored, since its archives are compressed
+  already; kept 15 days, so one missed week is survived), with `fetched.json` in it naming the
+  collector run each history came from. The next run reads the run that uploaded the artifact
+  through the API, by the id the artifact names, and takes it only when that run is this
+  workflow's own scheduled or dispatched run on main, and the artifact holds `window.zip` alone;
+  otherwise the window refills from the record within the budget. Every carried history is
+  checked again as a fetched one is: its collector run must still be listed as the collector's
+  own, and its run line shown from its own workflow's listing. One that fails, that left the
+  window, or whose `fetched.json` entry is not in its shape (no time with its zone, say) is
+  dropped, and fetched again while its collector run is listed. Only the collector runs the
+  window does not hold are fetched: about 70 a week.
+- **A budget.** Before each history the fetch reads how many calls the token has left
+  (`rate_limit`, which costs none) and stops at 200, so the other workflows keep theirs; a count
+  it cannot read is a spent budget, and the status says so. It fetches newest first, warns how
+  many it left, and the next run fetches the rest.
+- **The record.** The issue states the exact window it read, how many of the 90 days and runs
+  it holds, whether the carried window was kept or why it was refused, and how many histories
+  were carried, dropped on the recheck, fetched, refused and left for the next run, with the
+  first 20 refusals (each as code, since it can quote an archive's names).
+- **No durations cache.** The shard planner reads the record itself (#4778), so this workflow
+  refreshes nothing for it.
 
 ## The selection map
 
@@ -1894,6 +1967,7 @@ The audited writes today:
 | `release.yml` | `notes` | `contents: write` | creating the GitHub Release |
 | `release.yml` | `attest` | `id-token: write`, `attestations: write` | build-provenance attestations |
 | `breadth.yml` | `report` | `issues: write` | one issue per red nightly leg |
+| `flake-report.yml` | `report` | `issues: write` | the one "Weekly CI health" issue |
 
 ### The dependency audit
 
