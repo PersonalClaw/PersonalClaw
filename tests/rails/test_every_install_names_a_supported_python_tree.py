@@ -32,6 +32,8 @@ _COMMAND_SOURCES = (
     "deploy/**/*.md",
     "deploy/website/install.sh",
     ".github/workflows/*.yml",
+    # The scripts a workflow step runs as `sh <path>`: breadth's install smokes among them.
+    "tools/ci/*.sh",
 )
 
 
@@ -43,7 +45,8 @@ _MUST_CARRY_A_COMMAND = frozenset(
         "docs/guides/getting-started.md",
         "docs/guides/platforms.md",
         "deploy/website/install.sh",
-        ".github/workflows/breadth.yml",
+        # breadth.yml's install-smoke runs it: the checkout's own install, at a named Python.
+        "tools/ci/install_smoke_current.sh",
     }
 )
 

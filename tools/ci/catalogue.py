@@ -320,7 +320,8 @@ class Job:
     live: bool = False
     reuse: Reuse = NEVER
     command: tuple[Step, ...] = ()
-    script: str | None = None
+    #: The scripts a job runs in its container, in order: one or more repository paths.
+    script: tuple[str, ...] | None = None
     container: str | None = None
     env: Env = field(default_factory=Env)
     workers: int | str | None = None
@@ -492,6 +493,37 @@ def _env(fields: _Fields, where: str, raw: object) -> Env:
     return Env(raw)
 
 
+def _scripts(fields: _Fields) -> tuple[str, ...] | None:
+    """``script``: one repository path, or a non-empty list of them, each run in turn in the
+    job's container as ``sh <path>``. A path is inside the repository, in its one normal form
+    (no empty or ``.`` part, no ``./`` in front), with no whitespace, so one script has one
+    spelling and a repeat cannot hide behind a second."""
+    raw = fields.raw.get("script")
+    if raw is None:
+        return None
+    paths = [raw] if isinstance(raw, str) else raw
+    if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p for p in paths):
+        fields.fault("script", "is a path, or a non-empty list of paths")
+        return None
+    for path in paths:
+        parts = path.split("/")
+        if re.search(r"\s", path):
+            fields.fault("script", f"names {path!r}, which holds whitespace")
+        elif (
+            path.startswith(("/", "~")) or ".." in parts or "$" in path or _PLACEHOLDER.search(path)
+        ):
+            fields.fault("script", f"names {path!r}, which is not a path inside the repository")
+        elif any(part in ("", ".") for part in parts):
+            fields.fault(
+                "script",
+                f"names {path!r}, which is not in the repository's normal form (an empty or ."
+                " part): name the path itself",
+            )
+    if len(set(paths)) != len(paths):
+        fields.fault("script", "names a path twice")
+    return tuple(paths)
+
+
 def _steps(fields: _Fields) -> tuple[Step, ...]:
     raw = fields.raw.get("command")
     if raw is None:
@@ -641,7 +673,7 @@ def _job(raw: object, n: int, problems: list[str]) -> Job | None:
         live=fields.flag("live"),
         reuse=reuse,
         command=_steps(fields),
-        script=fields.string("script"),
+        script=_scripts(fields),
         container=fields.string("container"),
         env=env,
         workers=workers,
@@ -1044,6 +1076,6 @@ def explain_main(argv: list[str]) -> int:
         )
         for step in job.command:
             print(f"  {step.render()}")
-        if job.script is not None:
-            print(f"  script {job.script} in {job.container}")
+        for script in job.script or ():
+            print(f"  script {script} in {job.container}")
     return 0

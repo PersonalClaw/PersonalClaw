@@ -14,8 +14,12 @@ from __future__ import annotations
 
 import pathlib
 import re
+import textwrap
 
 import pytest
+import yaml
+
+from tools.ci import supply_chain
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -154,4 +158,28 @@ def _live_leg(full_text: str) -> tuple[str, str]:
         "and the header's smoke claim is false again."
     )
     assert len(matches) == 1, f"expected one live installer leg, found {sorted(matches)}"
-    return next(iter(matches.items()))
+    jid, body = next(iter(matches.items()))
+    return jid, body + "".join("\n" + text for text in _scripts_run(body).values())
+
+
+def _scripts_run(body: str) -> dict[str, str]:
+    """The repository scripts a job's steps run, by path, with their text, so a rail about what
+    a leg does reads the shell the leg runs, not only the step that calls it. A step runs one as
+    ``sh <path>``, the one way tools/ci/supply_chain.py reads a script a step runs, and finds
+    them the same way. One level: a script a script runs (the staged leg runs
+    ``deploy/website/install.sh``) is the subject of its own rails. A path a step names that is
+    not a file fails, so a rename cannot leave the rail reading nothing."""
+    job = yaml.safe_load(textwrap.dedent(body))
+    steps = job.get("steps") if isinstance(job, dict) else None
+    found: dict[str, str] = {}
+    for step in steps or []:
+        run = str(step.get("run", "")) if isinstance(step, dict) else ""
+        for rel, text in supply_chain.scripts_run(_read, run, depth=1):
+            assert text is not None, f"the live leg runs {rel}, which is not a file"
+            found[rel] = text
+    return found
+
+
+def _read(rel: str) -> str | None:
+    path = _ROOT / rel
+    return path.read_text(encoding="utf-8") if path.is_file() else None

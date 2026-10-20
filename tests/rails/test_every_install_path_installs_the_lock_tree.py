@@ -29,7 +29,7 @@ _RANGE_INSTALLS = {
         "the public installer installs the published wheel from PyPI, whose metadata carries "
         "pyproject's ranges and no lock"
     ),
-    (".github/workflows/breadth.yml", "uv tool install --python"): (
+    ("tools/ci/install_smoke_current.sh", "uv tool install --python"): (
         "rehearses the public installer on this checkout, so it resolves exactly what that "
         "installer will"
     ),
@@ -57,6 +57,8 @@ def _install_files() -> list[Path]:
         ),
         *(_ROOT / "scripts").glob("*.sh"),
         *(_ROOT / "deploy").rglob("*.sh"),
+        # The scripts a workflow step runs from tools/ci (breadth's install smokes among them).
+        *(_ROOT / "tools" / "ci").glob("*.sh"),
         _ROOT / "Makefile",
     ]
     return sorted(p for p in files if p.is_file())

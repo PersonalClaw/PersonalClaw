@@ -42,7 +42,7 @@ from rails_repo import REPO
 
 from tools.ci import breadth_evidence, catalogue
 from tools.ci import jobs as run_jobs
-from tools.ci import rails_census, shards
+from tools.ci import rails_census, shards, shell_installs, supply_chain
 
 #: An exact release, ``X.Y.Z``.
 _EXACT = re.compile(r"\d+\.\d+\.\d+")
@@ -56,6 +56,10 @@ def _read_paths(root: Path) -> list[Path]:
         *sorted(root.glob(".github/workflows/*.yml")),
         *local_actions.action_paths(root),
         *sorted(root.glob("deploy/docker/Dockerfile*")),
+        # The shell scripts a workflow step runs (``sh <path>``), which a row reads as the step.
+        *sorted(root.glob("tools/ci/*.sh")),
+        *sorted(root.glob("scripts/*.sh")),
+        *sorted(root.glob("deploy/*/*.sh")),
         root / "package.json",
         *sorted(root.glob("*/package.json")),
         root / "pyproject.toml",
@@ -2058,6 +2062,21 @@ def _night_violations(jobs: dict[str, Any], cron: list[str]) -> list[str]:
     return bad
 
 
+def _as_run(tree: Tree, job_id: str, step: dict[str, Any], bad: list[str]) -> str:
+    """The shell a step runs: its ``run:``, then the shell lines of each repository script it
+    runs as ``sh <path>`` and of each script those run, as tools/ci/supply_chain.py reads them.
+    A script the tree does not hold is a violation, so a rename cannot leave a row reading
+    nothing."""
+    run = str(step.get("run", ""))
+    texts = [run]
+    for path, text in supply_chain.scripts_run(tree.get, run):
+        if text is None:
+            bad.append(f"breadth.yml:{job_id} runs {path}, which is not a file")
+        else:  # its shell, not its prose: a script's comments name what it does not do
+            texts += [line for _, line in shell_installs.read_script(text).lines]
+    return "\n".join(texts)
+
+
 def breadth_shards_violations(tree: Tree) -> list[str]:
     """Every breadth shard records what it ran, so the record holds what the run did:
 
@@ -2065,7 +2084,7 @@ def breadth_shards_violations(tree: Tree) -> list[str]:
       one key, which no other job writes and its ``decide --key`` names; the keys and their
       matrices' shard counts (every dimension) are exactly ``SHARDS``;
     - a managed Python is installed before the first ``uv python find`` (setup-uv only names
-      one, and ``uv python find`` never downloads);
+      one, and ``uv python find`` never downloads), in a step's ``run:`` or a script it runs;
     - a decision that crashes leaves the shard to run (``continue-on-error``);
     - every ``--tree`` is the checkout's or freshness's, with no fallback, and a ``TREE`` is
       freshness's as it is; the served installer is never hashed from a ``curl … |
@@ -2084,7 +2103,7 @@ def breadth_shards_violations(tree: Tree) -> list[str]:
     found: dict[str, int] = {}
     for job_id, job in jobs.items():
         steps = job.get("steps") or []
-        runs = [str(s.get("run", "")) for s in steps]
+        runs = [_as_run(tree, job_id, s, bad) for s in steps]
         keys = {m for run in runs for m in _ENTRY.findall(run)}
         if len(keys) > 1 or (not keys and job_id not in _NOT_A_LEG):
             bad.append(f"breadth.yml:{job_id} writes entries under {sorted(keys)}, not one key")
@@ -4042,6 +4061,35 @@ ROWS: tuple[Row, ...] = (
         "breadth-shards-record-what-they-ran",
         breadth_shards_violations,
         (
+            Control(
+                "no script install-smoke runs installs a managed Python before `uv python find`",
+                lambda root: [
+                    plant.plant(root)
+                    for plant in (
+                        _plant(
+                            "",
+                            "tools/ci/install_smoke_current.sh",
+                            "uv tool install --python 3.13 .\n",
+                            "uv pip install --python 3.13 .\n",
+                        ),
+                        _plant(
+                            "",
+                            "deploy/website/install.sh",
+                            '    uv tool install --upgrade --python "$PC_PYTHON"',
+                            '    uv pip install --upgrade --python "$PC_PYTHON"',
+                        ),
+                    )
+                ],
+                expect="breadth.yml:install-smoke runs `uv python find` before any managed Python",
+            ),
+            _plant(
+                "a step running a script the tree does not hold",
+                _BREADTH,
+                "        run: sh tools/ci/install_smoke_current.sh\n",
+                "        run: sh tools/ci/install_smoke_gone.sh\n",
+                expect="breadth.yml:install-smoke runs tools/ci/install_smoke_gone.sh, which is"
+                " not a file",
+            ),
             _plant(
                 "no managed Python before `uv python find`",
                 _BREADTH,
@@ -5934,6 +5982,9 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     # Collects the whole suite and runs no test (catalogue.collect_only), so it is no security
     # evidence: ordinary, and it may carry an earlier result.
     "collection-parses": _Mapped(("breadth.yml:collection-parses",), ("breadth",), reuse="tree"),
+    # It reads the installer the website serves and PyPI as they are the night it runs: live,
+    # like the nightly audit, so its evidence is never reused, by TTL or by tree.
+    "install-smoke": _Mapped(("breadth.yml:install-smoke",), ("breadth",), live=True),
     "client": _Mapped(("client",), ("change", "merge")),
     "web-unit": _Mapped(("web",), ("change", "merge"), reuse="tree"),
     "web-build": _Mapped(("web",), ("merge",), reuse="tree"),
@@ -5957,12 +6008,6 @@ _ORCHESTRATION = frozenset(
         "breadth.yml:report",
     }
 )
-
-#: breadth.yml jobs not yet an entry's, each with the change that maps it. Only shrinks.
-_NOT_YET_MAPPED: dict[str, str] = {
-    "breadth.yml:install-smoke": "its smokes move into scripts the supply-chain check and the"
-    " installer rail read, in a change of their own",
-}
 
 
 def _where(key: str) -> str:
@@ -6181,6 +6226,40 @@ fi
 echo "all coverage shards passed"
 
 """,  # noqa: E501
+    "install-smoke's: the bare container's own system, for the log": r"""
+. /etc/os-release
+echo "container ${PRETTY_NAME} on ${RUNNER_OS} ${RUNNER_ARCH}"
+""",  # noqa: E501
+    "install-smoke's: the bare container's curl and CA roots, before any installer runs": r"""
+set -eu
+apt-get update -qq
+apt-get install -y --no-install-recommends ca-certificates curl
+""",  # noqa: E501
+    "install-smoke's: its inputs, the served installer's digest among them": r"""
+if curl -fsSL --retry 3 --max-time 60 -o "$RUNNER_TEMP/served-install.sh" https://personalclaw.dev/install; then
+  installer=$(sha256sum "$RUNNER_TEMP/served-install.sh" | cut -d' ' -f1)
+else
+  installer=unreadable
+fi
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+  --tree "${TREE:?freshness named no tree}" \
+  --image "ubuntu:26.04" \
+  --image-version "sha256:88a381d5b5eeb2b35d3ad70925a362c37ce569daf43ede89ff818ec20e4d3794" \
+  --arch "$RUNNER_ARCH" \
+  --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+  --uv "$(uv --version | awk '{print $2}')" --node none \
+  --external "installer_sha256=$installer" --external "night=${NIGHT:?freshness named no night}"
+if [ "$installer" = unreadable ]; then
+  echo "::error title=installer unreadable::the served installer could not be read, so this leg's inputs are not known: red"
+  exit 1
+fi
+""",  # noqa: E501
+    "install-smoke's: what it ran, written to the run's record": r"""
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/install-smoke__1.json"
+""",  # noqa: E501
+    "install-smoke's: its result, read back from the entry it wrote": r"""
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/install-smoke__1.json"
+""",  # noqa: E501
 }
 
 
@@ -6292,9 +6371,12 @@ def _runs_marked(job: catalogue.Job, marked: frozenset[str]) -> list[str]:
 def _claim(
     job: catalogue.Job, lines: list[_Line], claims: dict[_Line, list[str]], bad: list[str]
 ) -> None:
-    """Match each of the entry's steps to the next of its jobs' lines that runs it, in order."""
+    """Match each of the entry's steps to the next of its jobs' lines that runs it, in order.
+    A script entry's steps are its scripts, each run as ``sh <script>``: the one way
+    tools/ci/supply_chain.py reads a script a step runs."""
     last, last_step = -1, 0
-    for n, step in enumerate(job.command, 1):
+    steps = job.command or tuple(catalogue.Step(("sh", s)) for s in job.script or ())
+    for n, step in enumerate(steps, 1):
         hits = [
             i
             for i, line in enumerate(lines)
@@ -6447,12 +6529,8 @@ def _catalogue_check(root: Path) -> list[str]:
     actions = local_actions.actions_at(root)
     bad: list[str] = []
     mapped = {c for entry in _CATALOGUE_JOBS.values() for c in entry.ci_jobs}
-    for ci_job in sorted(set(jobs) - mapped - _ORCHESTRATION - set(_NOT_YET_MAPPED)):
+    for ci_job in sorted(set(jobs) - mapped - _ORCHESTRATION):
         bad.append(f"{_where(ci_job)} is no catalogue entry's, and not orchestration")
-    for ci_job in sorted(set(_NOT_YET_MAPPED) & mapped):
-        bad.append(f"{_where(ci_job)} is an entry's: take it off the not-yet-mapped list")
-    for ci_job in sorted(set(_NOT_YET_MAPPED) - set(jobs)):
-        bad.append(f"the not-yet-mapped list names {_where(ci_job)}, which does not exist")
     lines = {c: _job_lines(c, jobs[c], bad) for c in sorted(mapped & set(jobs))}
     ran = {
         tuple(words)
@@ -6486,6 +6564,7 @@ def _catalogue_check(root: Path) -> list[str]:
             if own:
                 _claim(job, [line for c in own for line in lines[c]], claims, bad)
         _installs(job, [jobs[c] for c in entry.ci_jobs], bad)
+        _stops_at_a_failure(job, root, bad)
         mine = [line for line, holders in claims.items() if job.id in holders]
         _same_job(job, jobs, mine, bad, actions)
         _posture(job, marked, bad)
@@ -6503,11 +6582,29 @@ def _catalogue_check(root: Path) -> list[str]:
     return bad
 
 
+def _stops_at_a_failure(job: catalogue.Job, root: Path, bad: list[str]) -> None:
+    """Each script a script entry runs is one the tree holds, and its first command is
+    ``set -eu``, so a command that fails fails the job instead of the next line running."""
+    for rel in job.script or ():
+        path = root / rel
+        if not path.is_file():
+            bad.append(f"{job.id}: runs {rel}, which the tree does not hold")
+            continue
+        lines = shell_installs.read_script(path.read_text(encoding="utf-8")).lines
+        if not lines or lines[0][1] != "set -eu":
+            first = lines[0][1] if lines else "nothing"
+            bad.append(f"{job.id}: {rel} opens with `{first}`, not `set -eu`")
+
+
 def _catalogue_scaffold(root: Path) -> None:
-    """The tree's own ci.yml and catalogue, which agree, and a marked stand-in for each module
-    the tree marks security, so the census finds what the entries' steps run."""
+    """The tree's own ci.yml and catalogue, which agree, the scripts its script entries run, and
+    a marked stand-in for each module the tree marks security, so the census finds what the
+    entries' steps run."""
     for rel in (_CI, _BREADTH, catalogue.CATALOGUE, _SETUP_ACTION):
         _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
+    for job in catalogue.read(REPO).jobs:
+        for rel in job.script or ():
+            _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
     for rel in _tree_marked():
         _write(root, rel, _MARKED)
 
@@ -7014,11 +7111,34 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             expect="suite-macos: shards is 4, and breadth.yml runs 6",
         ),
         _plant(
-            "a not-yet-mapped job renamed away",
+            "a script entry whose step runs another script",
             _BREADTH,
-            "  install-smoke:\n",
-            "  install-smoke-moved:\n",
-            expect="the not-yet-mapped list names breadth.yml job install-smoke",
+            "        run: sh tools/ci/install_smoke_staged.sh\n",
+            "        run: sh tools/ci/install_smoke_other.sh\n",
+            expect="install-smoke: command step 2 (.$ sh tools/ci/install_smoke_staged.sh)",
+        ),
+        _plant(
+            "a script entry's script that does not stop at its first failing command",
+            "tools/ci/install_smoke_staged.sh",
+            "\nset -eu\n",
+            "\nset -u\n",
+            expect="install-smoke: tools/ci/install_smoke_staged.sh opens with `set -u`, not"
+            " `set -eu`",
+        ),
+        _plant(
+            "a script entry whose step runs its script with bash",
+            _BREADTH,
+            "        run: sh tools/ci/install_smoke_current.sh\n",
+            "        run: bash tools/ci/install_smoke_current.sh\n",
+            expect="install-smoke: command step 1 (.$ sh tools/ci/install_smoke_current.sh) is no"
+            " run: line",
+        ),
+        _plant(
+            "a script entry whose scripts are out of the job's order",
+            catalogue.CATALOGUE,
+            '  "tools/ci/install_smoke_current.sh",\n  "tools/ci/install_smoke_staged.sh",\n',
+            '  "tools/ci/install_smoke_staged.sh",\n  "tools/ci/install_smoke_current.sh",\n',
+            expect="install-smoke: command step 2 is out of ci.yml's order",
         ),
         Control(
             "a closed breadth line no mapped job runs any more",

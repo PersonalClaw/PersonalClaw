@@ -649,7 +649,6 @@ jobs:
         # because `desktop-linux` needs the identical assertion and two copies drift.
         run: |
           set -euo pipefail
-          ROOT="$PWD"
           cd desktop/dist
           ls -la
           DMG=$(ls -1 *.dmg | head -1)
@@ -674,10 +673,10 @@ jobs:
           # desktop/dist/*/PersonalClaw.app (the build output), this one inspects the copy
           # a user actually mounts and drags to Applications — the artifact whose failed
           # Install started all of this.
-          "$ROOT/scripts/verify_macos_app_signature.sh" "$APP"
+          sh "$GITHUB_WORKSPACE/scripts/verify_macos_app_signature.sh" "$APP"
           BACKEND="$APP/Contents/Resources/backend-dist/personalclaw-backend/personalclaw-backend"
           test -x "$BACKEND"
-          "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$BACKEND"
+          sh "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$BACKEND"
           # Name the arch in the log so an arm64-only dmg is never mistaken for universal.
           echo "built arch: $(uname -m)"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -755,7 +754,7 @@ jobs:
           test -f squashfs-root/resources/app.asar
           BACKEND=squashfs-root/resources/backend-dist/personalclaw-backend/personalclaw-backend
           test -x "$BACKEND"
-          "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$(pwd)/$BACKEND"
+          sh "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$(pwd)/$BACKEND"
           # deb: correct package name + the same two load-bearing paths present.
           # Each listing goes to a file before it is searched: `grep -q` stops reading at its
           # first match, so under pipefail the tar that dpkg-deb runs fails writing the rest

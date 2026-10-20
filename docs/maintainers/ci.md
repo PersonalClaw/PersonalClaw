@@ -214,10 +214,10 @@ entry to the `ci.yml` and `breadth.yml` jobs it maps to, in both directions:
 - Each entry's tiers, `security`, `live` and `reuse` are the ones the row's table gives it, so
   changing one takes an edit in both places.
 - Every `ci.yml` and `breadth.yml` job is an entry's or orchestration (`tree-check`, `changes`,
-  `shard-plan`, `test`, `test-macos-gate`; breadth's `freshness` and `report`). One breadth job
-  is on a closed not-yet-mapped list, `install-smoke`, until its smokes move into scripts the
-  supply-chain check and the installer rail read; the list only shrinks, and names only jobs
-  that exist.
+  `shard-plan`, `test`, `test-macos-gate`; breadth's `freshness` and `report`). An entry with a
+  `script` list (`install-smoke`) holds its job's `sh <script>` steps, one per script, in order:
+  `sh <path>` is the one way the supply-chain check reads a script a step runs. Each of those
+  scripts is the tree's and opens with `set -eu`, so a command that fails fails the job.
 - No job outside the catalogue runs a test, in any workflow file. The row
   "no-workflow-job-outside-the-catalogue-runs-a-test" reads every job no entry is mapped to,
   with the local actions it calls, and refuses a command whose word is a test runner:
@@ -310,18 +310,19 @@ tool reads it: `web-unit`'s `VITEST_MAX_WORKERS`, which `ci.yml` sets to the run
 A job that sets `workers` passes it through a pytest `-n` or a `workers_env`. `workers_env` may
 not name a variable the runner owns.
 
-A job has either a `command` or a `script` with its `container`, never both. A command is a list
-of steps. Each step is an argv run from the repository root, or from `workdir` under it, with its
-own `env` set on top of the job's: the workflow step's own `env:`, such as a flag that turns a
-skip into a failure. A value only the runner knows is written as a placeholder: `{runner_temp}`,
-`{shard}`, `{base}` (the commit a diff is taken against) or `{python}` (the uv-managed
-interpreter of the entry's `python`). An argument or an `env` value
-containing `$`, or a placeholder the catalogue does not have, is refused, so no step reads the
-environment around the catalogue. An `env` name is a variable name (`[A-Z_][A-Z0-9_]*`), and not
-one the runner owns (`tools.ci.run.runner_owns`: `PATH`, `HOME`, `TMPDIR`, the locale, git's
-variables and `PERSONALCLAW_HOME`), so no entry the loader reads is refused when it runs. A
-`workdir` holds no `$` and no placeholder. A sharded job's steps name `{shard}`; an unsharded
-job's do not.
+A job has either a `command` or a `script` with its `container`, never both. A `script` is one
+repository path or a list of them, each run in turn in the container as `sh <path>`; a path is
+inside the repository, in its one normal form (no `./`, no empty or `.` part) and without
+whitespace, and named once. A command is a list of steps. Each step is an argv run from the
+repository root, or from `workdir` under it, with its own `env` set on top of the job's: the
+workflow step's own `env:`, such as a flag that turns a skip into a failure. A value only the runner
+knows is written as a placeholder: `{runner_temp}`, `{shard}`, `{base}` (the commit a diff is taken
+against) or `{python}` (the uv-managed interpreter of the entry's `python`). An argument or an `env`
+value containing `$`, or a placeholder the catalogue does not have, is refused, so no step reads the
+environment around the catalogue. An `env` name is a variable name (`[A-Z_][A-Z0-9_]*`), and not one
+the runner owns (`tools.ci.run.runner_owns`: `PATH`, `HOME`, `TMPDIR`, the locale, git's variables
+and `PERSONALCLAW_HOME`), so no entry the loader reads is refused when it runs. A `workdir` holds no
+`$` and no placeholder. A sharded job's steps name `{shard}`; an unsharded job's do not.
 
 `needs_node` and `needs_browser` agree with the toolchain: `needs_node` exactly when it installs
 `node`, `needs_browser` exactly when it installs `chromium`. A pathspec's magic is read as git
@@ -1685,9 +1686,28 @@ in `tools/ci/shell_installs.py`), the policy they read in `tools/ci/supply-chain
 It reads every workflow (`.yml` and `.yaml`), every local action's `action.yml` (its steps
 are judged as if they ran in the job that calls it), every Dockerfile or Containerfile in the
 tree whatever its spelling, `.github/dependabot.yml`, `.nvmrc`, the root `package.json` and
-`package-lock.json`, each image's npm manifest and lock under `deploy/docker/`, and the policy.
-A workflow or action file that does not parse fails
-(`workflow-yaml`), and that rule cannot be waived.
+`package-lock.json`, each image's npm manifest and lock under `deploy/docker/`, the policy, and
+every shell script in the tree (`.sh` or `.bash` in any case, or a file with no suffix whose
+first line opens a shell, such as a git hook). A workflow or action file that does not parse
+fails (`workflow-yaml`), and that rule cannot be waived.
+
+A step's `run:` is read, and so is each repository script it runs as `sh <path>`, under the
+step's rules, and each script that script runs the same way, to a depth of four. `sh <path>` is
+the one way to run a repository script, so every script a step runs is read: the path is a
+repository path (`$GITHUB_WORKSPACE/` in front is the checkout's root, and `./` or `//` in it is
+read in normal form), and a wrapper the reader already takes off (`sudo`, `env`, `timeout`, an
+assignment, `uv run` and its options) runs the `sh <path>` behind it. Every other way of running
+one fails, and none is skipped, in the step's text and in every script it reads: another shell or
+a shell option (`bash x.sh`, `sh -e x.sh`, `bash -o pipefail x.sh`), `.` or `source`, a bare path
+(`./x.sh`, `tools/ci/x`, `.githooks/pre-push`), a shell fed a script on its standard input (a
+pipe, `< x.sh`, a here-string), an interpreter handed code that names one (`python3 -c`, a heredoc
+`python3` reads), and a command that names one without running it the check knows of (`cp x.sh`;
+`shellcheck`, `chmod`, `git`, `test` and the like only read it). So does a script the tree does
+not hold, one named through a variable the check cannot read (`$ROOT/x.sh`), a file outside the
+repository (`sh /tmp/x.sh`), a file a download in the same text wrote (`curl -o f …; sh f`), and
+a script past the depth or one already being read. A shell that only reads its script (`sh -n`)
+runs nothing in it, a heredoc a shell reads is read as its lines, and a system file sourced
+(`. /etc/os-release`) is not the repository's.
 
 It does not read, and review holds instead:
 
@@ -1761,8 +1781,16 @@ It does not read, and review holds instead:
   `npm install --package-lock-only` in that folder, or take Dependabot's PR, which does both.
 - **A download a shell or an interpreter runs** fails: piped into `sh`, `bash`, `python` and the
   like (through `tee` or `sudo -E` too), or given as `<(curl …)` or `"$(curl …)"`. The one
-  allowed is the public installer, `https://personalclaw.dev/install`, piped into `sh` in
-  `breadth.yml`'s install-smoke step that tests it, and nowhere else.
+  allowed is the public installer, `https://personalclaw.dev/install`, piped into `sh` by
+  `tools/ci/install_smoke_served.sh` when `breadth.yml`'s install-smoke step that tests the
+  served installer runs it itself, and nowhere else: not in that step's own text, not in another
+  script it runs, not through another script, not from a copy of the script. The staged
+  installer, `deploy/website/install.sh`, is the artifact the staged step tests: when that step
+  runs `tools/ci/install_smoke_staged.sh` and that script runs it, its uv bootstrap from Astral's
+  installer and its install of this project at a floor are its subject, and every other line of
+  it is read as any script is; from any other step, through any other script, or as a copy, it
+  is read as any script is. The bootstrap holds only while the file still names Astral's
+  installer.
 - **A setup action:** a literal exact version or the file that names one, never `check-latest`
   (anything but a literal `false` fails) and never an expression. setup-qemu names its binfmt
   image by digest; setup-buildx names an exact buildx release, and its BuildKit image by digest

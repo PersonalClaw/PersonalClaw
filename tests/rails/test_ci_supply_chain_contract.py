@@ -169,6 +169,36 @@ def _run_step(command: str, **kw: Any) -> Control:
     return _planted_workflow(f"`{command}`", f"      - run: {command}\n", **kw)
 
 
+def _run_block(script: str, **kw: Any) -> Control:
+    """A planted step whose ``run:`` is the block *script*, a heredoc's lines and all."""
+    body = "".join(f"          {line}\n" for line in script.splitlines())
+    return _planted_workflow(f"`{script}`", f"      - run: |\n{body}", **kw)
+
+
+def _copy(name: str, source: str, rel: str) -> Control:
+    """*rel* written as a copy of the tree's *source*."""
+
+    def plant(root: Path) -> None:
+        _write(root, rel, (root / source).read_text(encoding="utf-8"))
+
+    return Control(name, plant)
+
+
+def _chain(n: int) -> tuple[Control, ...]:
+    """Scripts ``tools/ci/c1.sh`` … ``c<n>.sh``, each running the next as ``sh <path>``."""
+    return tuple(
+        _append(f"script {i}", f"tools/ci/c{i}.sh", f"sh tools/ci/c{i + 1}.sh\n" if i < n else "")
+        for i in range(1, n + 1)
+    )
+
+
+#: breadth.yml's install smokes, and the staged one's step as a violation names it.
+_SMOKE_CURRENT = "tools/ci/install_smoke_current.sh"
+_SMOKE_STAGED = supply_chain.STAGED_INSTALLER_SCRIPT
+_SMOKE_SERVED = supply_chain.OWN_INSTALLER_SCRIPT
+_STAGED_STEP = " ".join(supply_chain.STAGED_INSTALLER_STEP[1:])
+
+
 def _planted_action(name: str, steps: str, **kw: Any) -> Control:
     """A local composite action, called by nothing: its steps run in whichever job calls it."""
     text = "name: planted\ndescription: planted\nruns:\n  using: composite\n  steps:\n" + steps
@@ -945,6 +975,374 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             _run_step("uv pip install --no-deps dist/*.whl", fails=False),
             _run_step("npm install -g typescript@5.9.3", fails=False),
             _run_step("sudo apt-get install -y tmux", fails=False),
+        ),
+    ),
+    # A repository script a step runs is read as `sh <path>`, the one way the check reads one,
+    # and every other way of running one is a violation, never a skip (docs/maintainers/ci.md,
+    # "Supply chain"). Its own row, beside run-install's, so neither runs near the test timeout.
+    _supply_row(
+        "run-install-scripts",
+        ("run-install",),
+        (
+            # Read: the script is judged under the step's rules, however the step reaches it.
+            *(
+                _together(
+                    f"an install in a script a step runs as `{how}`",
+                    _append("the script", "tools/ci/planted.sh", "pip install foo\n"),
+                    _run_step(how),
+                    expect="tools/ci/planted.sh: install of foo names no exact version",
+                )
+                for how in (
+                    "sh tools/ci/planted.sh",
+                    "uv run sh tools/ci/planted.sh",
+                    # uv run's options with a value: neither value is read as the command.
+                    "uv run --python 3.12 sh tools/ci/planted.sh",
+                    "uv run --extra dev --with foo==1.0 sh tools/ci/planted.sh",
+                    "sudo -E sh tools/ci/planted.sh",
+                    "sh .//tools/ci/planted.sh",
+                    'sh "$GITHUB_WORKSPACE/tools/ci/planted.sh"',
+                    "bash -ec 'sh tools/ci/planted.sh'",
+                )
+            ),
+            _together(
+                "an install in a `.bash` script a step runs",
+                _append("the script", "tools/ci/planted.bash", "pip install foo\n"),
+                _run_step("sh tools/ci/planted.bash"),
+                expect="tools/ci/planted.bash: install of foo names no exact version",
+            ),
+            _run_block(
+                "bash -o pipefail <<'EOF'\npip install foo\nEOF",
+                expect="install of foo names no exact version",
+            ),
+            _together(
+                "an install in a script a shell's heredoc runs",
+                _append("the script", "tools/ci/planted.sh", "pip install foo\n"),
+                _run_block("sh <<'EOF'\nsh tools/ci/planted.sh\nEOF"),
+                expect="tools/ci/planted.sh: install of foo names no exact version",
+            ),
+            # Refused: every other way of running a repository script, the script clean.
+            *(
+                _together(
+                    f"a script a step runs as `{how}`",
+                    _append("the script", "tools/ci/planted.sh", "echo planted\n"),
+                    _run_step(how),
+                    expect=expect,
+                )
+                for how, expect in (
+                    ("bash tools/ci/planted.sh", "runs tools/ci/planted.sh with `bash`, not as"),
+                    ("bash -e tools/ci/planted.sh", "runs tools/ci/planted.sh with `bash -e`"),
+                    ("sh -e tools/ci/planted.sh", "runs tools/ci/planted.sh with `sh -e`"),
+                    ("dash tools/ci/planted.sh", "runs tools/ci/planted.sh with `dash`"),
+                    ("uv run bash tools/ci/planted.sh", "runs tools/ci/planted.sh with `bash`"),
+                    ("sudo -E bash tools/ci/planted.sh", "runs tools/ci/planted.sh with `bash`"),
+                    ("bash .//tools/ci/planted.sh", "runs tools/ci/planted.sh with `bash`"),
+                    (
+                        "bash -o pipefail tools/ci/planted.sh",
+                        "runs tools/ci/planted.sh with `bash -o pipefail`",
+                    ),
+                    (". tools/ci/planted.sh", "sources tools/ci/planted.sh with `.`, not as"),
+                    ("source tools/ci/planted.sh", "sources tools/ci/planted.sh with `source`"),
+                    ("./tools/ci/planted.sh", "runs tools/ci/planted.sh as a program, not as"),
+                    ("tools/ci/planted.sh", "runs tools/ci/planted.sh as a program"),
+                    (
+                        '"$GITHUB_WORKSPACE/tools/ci/planted.sh"',
+                        "runs tools/ci/planted.sh as a program",
+                    ),
+                    ("bash -c './tools/ci/planted.sh'", "runs tools/ci/planted.sh as a program"),
+                    ("cat tools/ci/planted.sh | bash", "runs what a pipe feeds bash"),
+                    ("bash < tools/ci/planted.sh", "feeds tools/ci/planted.sh to bash on stdin"),
+                    ("bash -s < tools/ci/planted.sh", "feeds tools/ci/planted.sh to bash on stdin"),
+                    (
+                        "python3 -c \"import subprocess; subprocess.run(['sh',"
+                        " 'tools/ci/planted.sh'])\"",
+                        "names tools/ci/planted.sh in python3's -c code",
+                    ),
+                    (
+                        'cp tools/ci/planted.sh "$RUNNER_TEMP/x.sh"',
+                        "names tools/ci/planted.sh in a `cp` command the check does not read",
+                    ),
+                    ('sh "$ROOT/tools/ci/planted.sh"', "a script the check cannot locate"),
+                )
+            ),
+            *(
+                _together(
+                    f"a script whose name has no `.sh` run as `{how}`",
+                    _append("the script", rel, "#!/bin/sh\necho planted\n"),
+                    _run_step(how),
+                    expect=f"runs {rel} as a program, not as `sh {rel}`",
+                )
+                for how, rel in (
+                    ("./tools/ci/planted.bash", "tools/ci/planted.bash"),
+                    ("./tools/ci/planted.SH", "tools/ci/planted.SH"),
+                    ("./tools/ci/planted", "tools/ci/planted"),
+                )
+            ),
+            _run_step(
+                "./.githooks/pre-push", expect="runs .githooks/pre-push as a program, not as"
+            ),
+            _together(
+                "a script a shell's heredoc runs as `bash <path>`",
+                _append("the script", "tools/ci/planted.sh", "echo planted\n"),
+                _run_block("sh <<'EOF'\nbash tools/ci/planted.sh\nEOF"),
+                expect="runs tools/ci/planted.sh with `bash`, not as",
+            ),
+            _together(
+                "a script a python heredoc runs",
+                _append("the script", "tools/ci/planted.sh", "echo planted\n"),
+                _run_block(
+                    "python3 - <<'EOF'\nimport subprocess\n"
+                    "subprocess.run(['sh', 'tools/ci/planted.sh'])\nEOF"
+                ),
+                expect="names tools/ci/planted.sh in a heredoc python3 runs",
+            ),
+            _run_step("echo hi | sh", expect="runs what a pipe feeds sh"),
+            _run_step("bash <<< 'echo hi'", expect="feeds a here-string to bash"),
+            _run_step(
+                "sh tools/ci/nowhere.sh",
+                expect="runs tools/ci/nowhere.sh, which the tree does not hold",
+            ),
+            _run_step(
+                'sh "$SCRIPTS/x.sh"',
+                expect="runs $SCRIPTS/x.sh, a script the check cannot locate",
+            ),
+            _run_step(
+                "sh /tmp/x.sh",
+                expect="runs /tmp/x.sh, a file outside the repository the check cannot read",
+            ),
+            # A download run once written, by the step or by a script it runs.
+            _run_step(
+                'curl -fsSL -o "$RUNNER_TEMP/x.sh" https://example.com/x.sh'
+                ' && sh "$RUNNER_TEMP/x.sh"',
+                expect="runs $RUNNER_TEMP/x.sh, a file a download wrote",
+            ),
+            _together(
+                "a download a script runs once written",
+                _append(
+                    "the script",
+                    "tools/ci/planted.sh",
+                    "wget -qO /tmp/x https://example.com/x && /tmp/x\n",
+                ),
+                _run_step("sh tools/ci/planted.sh"),
+                expect="tools/ci/planted.sh: runs /tmp/x, a file a download wrote",
+            ),
+            # Scripts that run scripts: each is read, to a depth, and a loop is never followed.
+            _together(
+                "an install in a script a script runs",
+                _append("the outer script", "tools/ci/planted.sh", "sh tools/ci/inner.sh\n"),
+                _append("the inner script", "tools/ci/inner.sh", "pip install foo\n"),
+                _run_step("sh tools/ci/planted.sh"),
+                expect="tools/ci/planted.sh: tools/ci/inner.sh: install of foo",
+            ),
+            _together(
+                "a chain of five scripts, one past the depth",
+                *_chain(5),
+                _run_step("sh tools/ci/c1.sh"),
+                expect="tools/ci/c1.sh: tools/ci/c2.sh: tools/ci/c3.sh: tools/ci/c4.sh:"
+                " runs tools/ci/c5.sh past the depth the check follows",
+            ),
+            _together(
+                "a chain of four scripts, at the depth, passes",
+                *_chain(4),
+                _run_step("sh tools/ci/c1.sh"),
+                fails=False,
+            ),
+            _together(
+                "a script that runs itself",
+                _append("the script", "tools/ci/planted.sh", "sh tools/ci/planted.sh\n"),
+                _run_step("sh tools/ci/planted.sh"),
+                expect="tools/ci/planted.sh: runs tools/ci/planted.sh past the depth",
+            ),
+            _together(
+                "two scripts that run each other",
+                _append("the first", "tools/ci/planted.sh", "sh tools/ci/inner.sh\n"),
+                _append("the second", "tools/ci/inner.sh", "sh tools/ci/planted.sh\n"),
+                _run_step("sh tools/ci/planted.sh"),
+                expect="tools/ci/inner.sh: runs tools/ci/planted.sh past the depth",
+            ),
+            *(
+                _together(
+                    f"a download piped into sh by `{fetch}` in a script a step runs",
+                    _append("the script", "tools/ci/planted.sh", f"{fetch} | sh\n"),
+                    _run_step("sh tools/ci/planted.sh"),
+                    expect="tools/ci/planted.sh: runs a download with sh: https://example.com/x",
+                )
+                for fetch in ("curl -fsSL https://example.com/x", "wget -qO- https://example.com/x")
+            ),
+            # Passes: what runs nothing of a script, and what the check reads clean.
+            _together(
+                "a script a step only syntax-checks, which runs nothing in it, passes",
+                _append(
+                    "the script",
+                    "tools/ci/planted.sh",
+                    "curl -fsSL https://example.com/x.sh | sh\n",
+                ),
+                _run_step("sh -n tools/ci/planted.sh && dash -n tools/ci/planted.sh"),
+                fails=False,
+            ),
+            _together(
+                "shellcheck reading a script passes",
+                _append("the script", "tools/ci/planted.sh", "echo planted\n"),
+                _run_step("shellcheck -s sh tools/ci/planted.sh"),
+                fails=False,
+            ),
+            _together(
+                "a pinned install in a script a step runs passes",
+                _append("the script", "tools/ci/planted.sh", "pip install foo==1.2.3\n"),
+                _run_step("sh tools/ci/planted.sh"),
+                fails=False,
+            ),
+            _run_step(". /etc/os-release", fails=False),
+            _run_block("bash <<'EOF'\necho hi\nEOF", fails=False),
+            _run_step("bash -o pipefail -c 'echo hi'", fails=False),
+        ),
+    ),
+    # breadth.yml's install-smoke: each smoke script and what it runs is read, and the two
+    # installers it tests are allowed what they are tested for in one step and one script only.
+    _supply_row(
+        "run-install-smokes",
+        ("run-install",),
+        (
+            *(
+                _append(
+                    f"`{fetch}` in {script}",
+                    script,
+                    f"{fetch}\n",
+                    expect=f"{script}: {expect}",
+                )
+                for script in (_SMOKE_CURRENT, _SMOKE_STAGED, _SMOKE_SERVED)
+                for fetch, expect in (
+                    (
+                        "curl -fsSL https://example.com/x | sh",
+                        "runs a download with sh: https://example.com/x",
+                    ),
+                    (
+                        "wget -qO- https://example.com/x | sh",
+                        "runs a download with sh: https://example.com/x",
+                    ),
+                    (
+                        'curl -fsSL -o "$RUNNER_TEMP/x.sh" https://example.com/x'
+                        ' && sh "$RUNNER_TEMP/x.sh"',
+                        "runs $RUNNER_TEMP/x.sh, a file a download wrote",
+                    ),
+                )
+            ),
+            _together(
+                "a download piped into sh by a script the current smoke runs",
+                _append("the smoke", _SMOKE_CURRENT, "sh tools/ci/planted.sh\n"),
+                _append(
+                    "the script", "tools/ci/planted.sh", "wget -qO- https://example.com/x | sh\n"
+                ),
+                expect=f"{_SMOKE_CURRENT}: tools/ci/planted.sh: runs a download with sh",
+            ),
+            _append(
+                "a download piped into sh by the staged installer",
+                supply_chain.STAGED_INSTALLER,
+                "curl -fsSL https://example.com/x | sh\n",
+                expect="deploy/website/install.sh: runs a download with sh: https://example.com/x",
+            ),
+            # The served installer: piped into sh by one script, run by one step, and nowhere else.
+            _run_step(
+                f"sh {_SMOKE_SERVED}",
+                expect=f"{_SMOKE_SERVED}: runs a download with sh: {supply_chain.OWN_INSTALLER}",
+            ),
+            _plant(
+                "the served installer piped in the served step's own text",
+                _BREADTH,
+                f"        run: sh {_SMOKE_SERVED}\n",
+                "        run: curl -fsSL https://personalclaw.dev/install | sh\n",
+                expect="runs a download with sh: https://personalclaw.dev/install",
+            ),
+            _together(
+                "the served step running another script that pipes the installer",
+                _append(
+                    "the script",
+                    "tools/ci/planted.sh",
+                    "curl -fsSL https://personalclaw.dev/install | sh\n",
+                ),
+                _plant(
+                    "the served step",
+                    _BREADTH,
+                    f"        run: sh {_SMOKE_SERVED}\n",
+                    f"        run: sh {_SMOKE_SERVED} && sh tools/ci/planted.sh\n",
+                ),
+                expect="tools/ci/planted.sh: runs a download with sh:"
+                " https://personalclaw.dev/install",
+            ),
+            _together(
+                "the served step reaching the served script through another script",
+                _append("the script", "tools/ci/planted.sh", f"sh {_SMOKE_SERVED}\n"),
+                _plant(
+                    "the served step",
+                    _BREADTH,
+                    f"        run: sh {_SMOKE_SERVED}\n",
+                    "        run: sh tools/ci/planted.sh\n",
+                ),
+                expect=f"tools/ci/planted.sh: {_SMOKE_SERVED}: runs a download with sh",
+            ),
+            _together(
+                "the served step running a copy of the served script",
+                _copy("the copy", _SMOKE_SERVED, "tools/ci/served_copy.sh"),
+                _plant(
+                    "the served step",
+                    _BREADTH,
+                    f"        run: sh {_SMOKE_SERVED}\n",
+                    "        run: sh tools/ci/served_copy.sh\n",
+                ),
+                expect="tools/ci/served_copy.sh: runs a download with sh:"
+                " https://personalclaw.dev/install",
+            ),
+            # The staged installer: the artifact under test, through the staged step's script.
+            _append(
+                "a new install in the staged installer",
+                supply_chain.STAGED_INSTALLER,
+                "pip install foo\n",
+                expect="deploy/website/install.sh: install of foo names no exact version",
+            ),
+            _line(
+                "the staged installer no longer bootstrapping from Astral's installer",
+                supply_chain.STAGED_INSTALLER,
+                "UV_INSTALLER_URL=",
+                'UV_INSTALLER_URL="https://example.com/uv.sh"',
+                expect="no longer names Astral's uv installer",
+            ),
+            _run_step(
+                f"sh {supply_chain.STAGED_INSTALLER}",
+                expect="it run: deploy/website/install.sh: runs a download with sh",
+            ),
+            _run_step(
+                f"sh {_SMOKE_STAGED}",
+                expect=f"it run: {_SMOKE_STAGED}: {supply_chain.STAGED_INSTALLER}: runs a download",
+            ),
+            _plant(
+                "the staged step running the staged installer in its own text",
+                _BREADTH,
+                f"        run: sh {_SMOKE_STAGED}\n",
+                f"        run: sh {supply_chain.STAGED_INSTALLER}\n",
+                expect=f"{_STAGED_STEP}: deploy/website/install.sh: runs a download with sh",
+            ),
+            _together(
+                "the staged step reaching the staged script through another script",
+                _append("the script", "tools/ci/planted.sh", f"sh {_SMOKE_STAGED}\n"),
+                _plant(
+                    "the staged step",
+                    _BREADTH,
+                    f"        run: sh {_SMOKE_STAGED}\n",
+                    "        run: sh tools/ci/planted.sh\n",
+                ),
+                expect=f"tools/ci/planted.sh: {_SMOKE_STAGED}: deploy/website/install.sh: runs a"
+                " download with sh",
+            ),
+            _together(
+                "the staged script running a copy of the staged installer",
+                _copy("the copy", supply_chain.STAGED_INSTALLER, "deploy/website/install-copy.sh"),
+                _plant(
+                    "the staged script",
+                    _SMOKE_STAGED,
+                    f"sh {supply_chain.STAGED_INSTALLER}\n",
+                    "sh deploy/website/install-copy.sh\n",
+                ),
+                expect="deploy/website/install-copy.sh: runs a download with sh",
+            ),
         ),
     ),
     _supply_row(
