@@ -439,40 +439,100 @@ class TestBlockingMode:
             defs_mod.unregister_provider("ctx-mem")
 
 
-# ── the context.py injection ─────────────────────────────────────────────────
+# ── the injection into a chat's message ─────────────────────────────────────
+
+#: Another chat, whose own runs (a batch of its subagents) CHAT's turn must not be told of.
+OTHER_CHAT = "dashboard:chat-2-1700000001"
+
+
+def _builder(tmp_path):
+    from personalclaw.context import ContextBuilder
+    from personalclaw.memory import MemoryStore
+    from personalclaw.skills import SkillsLoader
+
+    return ContextBuilder(
+        memory=MemoryStore(workspace=tmp_path / "ws"),
+        skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+    )
+
+
+def _message(builder, *, is_new_session: bool = False) -> str:
+    """The message CHAT's turn sends for the request "hello"."""
+    return builder.build_message("hello", is_new_session=is_new_session, session_key=CHAT)[0]
+
+
+def _batch_of(session_key: str, name: str) -> WorkflowRun:
+    """A run that is *session_key*'s own: a batch of that chat's subagents."""
+    from personalclaw.workflows.models import OriginKind, RunOrigin
+
+    return _run(
+        RunStatus.RUNNING,
+        name=name,
+        origin=RunOrigin(kind=OriginKind.SUBAGENT_TOOL, session_key=session_key),
+    )
 
 
 class TestContextInjection:
-    def test_context_py_injects_the_block(self) -> None:
-        """The wiring itself: an unwired block is invisible no matter how good it is."""
-        import inspect
+    @pytest.mark.parametrize("is_new_session", [True, False], ids=["new-session", "follow-up"])
+    def test_every_message_carries_the_runs_its_chat_reads(self, tmp_path, is_new_session) -> None:
+        """The wiring itself: an unwired block is invisible no matter how good it is. A chat's
+        message, the first of a session and every one after it, carries the block of the runs in
+        flight that chat reads: your run and the chat's own batch, and not another chat's batch."""
+        yours = _run(RunStatus.RUNNING, name="yours")
+        own = _batch_of(CHAT, "own-batch")
+        theirs = _batch_of(OTHER_CHAT, "their-batch")
 
-        from personalclaw import context
+        message = _message(_builder(tmp_path), is_new_session=is_new_session)
 
-        source = inspect.getsource(context)
-        assert "active_workflows_block" in source
+        assert "[ACTIVE WORKFLOWS" in message
+        assert f"yours (run_id: {yours.id})" in message
+        assert f"own-batch (run_id: {own.id})" in message
+        assert theirs.id not in message and "their-batch" not in message
 
-    def test_the_injection_is_wrapped_against_raising(self) -> None:
-        """NEVER BREAK A TURN — asserted on the CALL SITE, not just the helper."""
-        import inspect
+    @pytest.mark.parametrize("failure", ["the block raises", "its module does not import"])
+    def test_a_block_that_fails_costs_the_message_only_the_block(
+        self, tmp_path, monkeypatch, failure
+    ) -> None:
+        """NEVER BREAK A TURN, at the call site and not just in the helper: with a run in flight,
+        a block that raises, or whose module fails to import, leaves the message exactly as it is
+        when the block has nothing to say."""
+        import sys
 
-        from personalclaw import context
+        _run(RunStatus.RUNNING)
+        builder = _builder(tmp_path)
+        target = "personalclaw.workflows.context_block.active_workflows_block"
+        monkeypatch.setattr(target, lambda **_: "")
+        without_the_block = _message(builder)
 
-        source = inspect.getsource(context)
-        # The import sits inside the guarded block, so measure from the CALL and look for
-        # the enclosing try/except around it.
-        idx = source.index("active_workflows_block(")
-        before, after = source[:idx], source[idx:]
-        assert before.rstrip().endswith("=") or "try:" in before[-800:]
-        assert "except Exception" in after[:600]
+        if failure == "the block raises":
 
-    def test_it_does_not_auto_create_a_project(self) -> None:
-        """`resolve_project_id` auto-creates when nothing resolves; a read-only context
-        block must not have side effects."""
-        import inspect
+            def boom(**_) -> str:
+                raise RuntimeError("block exploded")
 
-        from personalclaw import context
+            monkeypatch.setattr(target, boom)
+        else:
+            monkeypatch.setitem(sys.modules, "personalclaw.workflows.context_block", None)
 
-        source = inspect.getsource(context)
-        idx = source.index("active_workflows_block(")
-        assert "resolve_project_id" not in source[idx : idx + 200]
+        message = _message(builder)
+        assert "hello" in message
+        assert message == without_the_block
+
+    def test_the_block_binds_no_project_and_filters_by_none(self, tmp_path) -> None:
+        """`resolve_project_id` auto-creates when nothing resolves, and a read-only context block
+        must not have side effects: building a message makes no project. A run in flight is
+        worth surfacing whatever project it is bound to, so no project filters the block either."""
+        from personalclaw.tasks.hierarchy import HierarchyStore
+
+        projects = HierarchyStore()
+        elsewhere = projects.create_project("Elsewhere")
+        before = {p.id for p in projects.list_projects()}
+        bound = _run(RunStatus.RUNNING, name="elsewhere-run", project_id=elsewhere.id)
+        unbound = _run(RunStatus.RUNNING, name="no-project-run")
+
+        builder = _builder(tmp_path)
+        messages = [_message(builder, is_new_session=new) for new in (True, False)]
+
+        assert {p.id for p in HierarchyStore().list_projects()} == before
+        for message in messages:
+            assert f"elsewhere-run (run_id: {bound.id})" in message
+            assert f"no-project-run (run_id: {unbound.id})" in message
