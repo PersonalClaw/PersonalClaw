@@ -687,6 +687,54 @@ def test_the_digest_does_NOT_touch_the_memory_subsystem(store, tmp_path):
     assert hist == [], "web_watch must not write memory history"
 
 
+# ── the default knowledge store a test is given (`_isolate_knowledge`) ──
+
+
+def test_the_default_knowledge_store_is_built_when_something_first_asks_for_it(
+    tmp_path, monkeypatch
+):
+    """🔴 `_isolate_knowledge` builds this test's stand-in for the default knowledge store the first
+    time something asks for it, not in every test's setup: few tests here fire without a store of
+    their own, and building one costs about 20 ms. It is built once, in this test's own folder."""
+    from personalclaw import knowledge
+    from personalclaw.knowledge import store as knowledge_store
+
+    built: list[str] = []
+
+    class _Counted(knowledge_store.KnowledgeStore):
+        def __init__(self, db_path: str) -> None:
+            built.append(db_path)
+            super().__init__(db_path)
+
+    monkeypatch.setattr(knowledge_store, "KnowledgeStore", _Counted)
+
+    first = knowledge.get_knowledge_store()
+    assert len(built) == 1, "the default knowledge store was built before anything asked for it"
+    assert knowledge.get_knowledge_store() is first
+    assert len(built) == 1, "the default knowledge store was built again"
+    assert built[0].startswith(f"{tmp_path}/"), built[0]
+
+
+def test_a_fire_without_a_store_of_its_own_writes_none_another_test_left(
+    store, tmp_path, monkeypatch
+):
+    """The planted leak: a process-wide knowledge store an earlier test left (or the real home's).
+    A fire that brings no store of its own writes this test's stand-in, and the planted store gains
+    nothing. Red without `_isolate_knowledge`."""
+    from personalclaw import knowledge
+
+    left_behind = _SpyKnowledge()
+    monkeypatch.setattr(knowledge, "_store", left_behind)
+    trigger = _watch(store)
+    pages = {"v": FEED_TWO}
+    web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher(pages))  # seed
+    pages["v"] = FEED_THREE
+    web_poll.poll_one(trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_fetcher(pages))
+
+    assert left_behind.items == [], "the fire wrote a store another test left behind"
+    assert knowledge.get_knowledge_store().search_items_fts_count("post-3") >= 1
+
+
 def test_the_new_spec_keys_are_ACCEPTED_by_validation():
     """`escalate_headless` / `max_headless_requests` must be in `SPEC_KEYS['web_watch']`, or an
     opted-in watch validates with an 'unknown key' warning."""
