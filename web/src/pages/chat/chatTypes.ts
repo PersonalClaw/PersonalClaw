@@ -13,7 +13,7 @@ import { questionSegmentOf } from './questionFrames'
 import { markerFor } from './pasteBlocks'
 import type { TurnPaste } from './PasteChip'
 // `turnRuns` imports ChatTurn from here as `import type` too.
-import { rowRuns, type TurnRun } from './turnRuns'
+import { rowRuns, storedMs, type TurnRun } from './turnRuns'
 
 export interface TextSegment { kind: 'text'; text: string }
 
@@ -387,8 +387,9 @@ export interface ChatTurn {
   // no model (an agent CLI's, a slash command's).
   servedModel?: ServedModel
   // How long THIS assistant turn worked: one run per gateway turn its answer shows (`turnRuns`),
-  // timed by the gateway's run state on a page that heard the turn end, else by the turn's rows.
-  // The folded work says their sum. Absent on a turn nothing timed, and on every user turn.
+  // timed by the gateway's run state on a page that heard the turn end, else by the time the
+  // gateway stored with the turn's answer, else by the turn's rows. The folded work says their
+  // sum. Absent on a turn nothing timed, and on every user turn.
   runs?: TurnRun[]
   // paste blocks referenced by `[Paste #N]` markers in this turn's text, kept so
   // the bubble can render the markers as inspectable chips after send.
@@ -594,7 +595,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; asked_for?: string; confirms?: unknown; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; steered?: boolean; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string; model?: string; chosen?: string }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string; question?: unknown } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; asked_for?: string; confirms?: unknown; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; steered?: boolean; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string; model?: string; chosen?: string; duration_ms?: unknown }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string; question?: unknown } }
 
 /** The blocks a sent message of hers carries (`meta.pastes` on its row, `pastes` on a frame that
  *  tells a page of it), or undefined when it carries none. */
@@ -732,10 +733,12 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
     if (joinedSkills) { t.skillsUsed = joinedSkills; joinedSkills = undefined }
     return t
   }
-  // How long each answer worked, from its rows (`turnRuns`).
+  // How long each answer worked, from what its rows stored (`turnRuns`).
   const runs = rowRuns()
 
   for (const m of messages) {
+    // The time the gateway measured for the turn, on the turn's last answer row.
+    let took: number | undefined
     // A row that starts one of the gateway's turns starts a run; a message she steered into a
     // running turn is part of that turn.
     if (TURN_DISPATCH_ROLES.has(m.role) && m.meta?.steered !== true) runs.started(m.ts)
@@ -808,6 +811,8 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       const served = servedModelOf(m.meta?.turn_telemetry)
       if (served) at.servedModel = served
       else delete at.servedModel
+      // How long the gateway measured the turn, from the same record: its run's time.
+      took = storedMs(m.meta?.turn_telemetry)
       // What fed the turn ("Injected 1,204 chars of context …"), on the same last message: live it
       // is the `context` activity line the turn's footer shows, which a reload never replays — or
       // the `context_without_memory` one of a turn that read none of your memory, kept as that kind
@@ -923,7 +928,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
     // other roles (queued/system): skip.
     // A row the turn wrote went into the answer at the end, and is a row of the run being read.
     const into = turns[turns.length - 1]
-    if (m.role !== 'user' && TRANSCRIPT_ROLES.has(m.role) && into?.role === 'assistant') runs.row(into, m.ts)
+    if (m.role !== 'user' && TRANSCRIPT_ROLES.has(m.role) && into?.role === 'assistant') runs.row(into, m.ts, took)
   }
   // A turn read before its answer began, or stopped before it said anything, still shows the
   // skills that joined it.

@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import { hydrateTurns, type HistMsg } from './chatTypes'
 
-// ── After a reload, a turn is timed from the rows it wrote ──────────────────────────────────────
+// ── After a reload, a turn stored without its time is timed from the rows it wrote ─────────────
 //
 // A page that heard a turn end has the gateway's own start and end for it (`run_state`). A reload
-// has only the rows, so each run of a turn is timed from the first row it wrote to its last, and is
-// named by the row that started it, the name the gateway gives the running turn
-// (`run_state.turn.message_id`), so the live times replace the rows' for the same run.
+// reads the time the gateway stored with the turn's answer (`aReloadedTurnReadsItsStoredTime`);
+// where it stored none, as on these rows, each run of a turn is timed from the first row it wrote
+// to its last. Either way a run is named by the row that started it, the name the gateway gives the
+// running turn (`run_state.turn.message_id`), so the live times replace the stored ones for the
+// same run.
 //
 // Its first row, not the row that started it: a regenerated answer, or a failed turn tried again,
 // keeps the question's row and its old time, and from there it would count the hours between.

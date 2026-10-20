@@ -4,7 +4,7 @@ import { runState } from '../../test/runState'
 
 // ── A failed step says so on the folded work, before anyone opens it ────────────────────────
 //
-// A finished turn folds its steps into "Worked for Ns · N steps · <tools>" so the answer leads.
+// A finished turn folds its steps into "Worked for Ns · N steps" so the answer leads.
 // Measured before this: a turn whose one real step failed (`ok` false, the error in its result)
 // folded to "Worked through 2 steps · automation_create" above a reply saying the watch was set
 // up. The red mark was only on the card inside the fold, so the fold agreed with the reply.
@@ -107,7 +107,8 @@ describe('the folded work of a finished turn', () => {
       ANSWER,
     ])
     expect(fold.textContent).toContain('1 failed')
-    expect(fold.textContent).toContain('automation_create')
+    // The count says it; the line names no tool.
+    expect(fold.textContent).not.toContain('automation_create')
   })
 
   it('counts every failed step, and only the failed ones', async () => {
