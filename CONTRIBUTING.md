@@ -539,6 +539,20 @@ Every entry is ONE line under `## [Unreleased]`, in its section (`### Added`, `#
   `apps-contract` job refuses one that also matches an app the change leaves alone, or
   that matches no app at all. See [SDK changes](#sdk-changes).
 
+### What each step validates
+
+A branch is checked with `make check` before a commit: the change tier, on your working tree as
+it stands. A pull request is checked with `make gate` before you open or update it (the merge
+tier, on the committed tree), and then by GitHub CI on the pull request, which is the gate: no
+local run, yours or anyone's, stands in for it. A `merge-verdict` check that sums up the pull
+request's run comes later (#3910). A release is cut from a `main` commit whose own main-push run
+is green ([release runbook](docs/maintainers/release-runbook.md#tagging)); a release gate that
+enforces this and reads the nightly breadth comes later (#3911). There is no batch step and no
+push to `main`: each change lands as the squash merge of its own up-to-date pull request. You
+need no tool beyond this repository's commands. "Local tooling and evidence" in
+[docs/maintainers/ci.md](docs/maintainers/ci.md) says what any faster local tooling may decide,
+and that a missing or unreadable input always falls back to these commands.
+
 ### What CI will and won't tell you on your first PR
 
 If you open a PR from a fork and your GitHub account is only a few days old,

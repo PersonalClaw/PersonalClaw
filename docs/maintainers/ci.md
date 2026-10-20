@@ -1170,6 +1170,125 @@ Nothing consults it until `python -m tools.ci run` and `run-job` do.
   loop over a name bound more than once or over a list or set, so no pass is keyed on a list
   read short; the rail `tests/rails/test_ci_capabilities_tree.py` holds this tree to it.
 
+## Local tooling and evidence
+
+A maintainer may run private tooling that makes local work faster. This section says, for each
+place such tooling meets the repository, what it may decide, which evidence it reads and writes,
+and where the repository's own commands and GitHub CI stay the authority (#4586). A contributor
+needs none of it: the commands in [CONTRIBUTING.md](../../CONTRIBUTING.md) and GitHub CI produce
+every verdict that counts.
+
+Two rules hold for every seam:
+
+- **A local result never stands in for GitHub's.** No local run, private or public, posts a
+  check, writes a verdict GitHub reads, or turns a red green. A local receipt names no controller
+  (see "Receipts"), so `trust.check_receipt` refuses it as GitHub evidence.
+- **The fail-safe is the public path.** An input that is unknown, unreadable, missing, stale or
+  edited selects the documented command and the full work, never a shortcut. The public tools
+  already fail this way: a path the planner cannot classify plans the whole tier, and a job
+  record that cannot be read is refused. A private tool that wraps them may only add work to
+  that, never remove it.
+
+### What each step validates
+
+| Step | What runs | Counts as |
+|---|---|---|
+| Before a commit | `make check`: the change tier, on the working tree as it stands, no record | advice |
+| Before opening or updating a pull request | `make gate`: the merge tier, on the committed tree, one record per job | advice |
+| The pull request | `ci.yml`'s run on the pull request | the gate |
+| A push to `main` | `ci.yml`'s main-push run: `tree-check`, then every job it does not skip | the check of what landed |
+| A release | a tag on a `main` commit whose own main-push run is green ([release runbook](release-runbook.md#tagging)) | the release |
+
+There is no batch step: each change gets its own pull request and its own verdict. Every change
+is meant to reach `main` as the squash merge of an up-to-date pull request. Until the rulesets
+and the required merge verdict land (#3907, #3910), `main` still accepts a direct push; its
+main-push run finds no pull request merged as that commit, so `tree-check` answers no and every
+job runs. The `merge-verdict` check is not posted yet: its controller App comes with #3910. The
+release gate that refuses any other commit and reads the nightly breadth is #3911's and is not
+built: until then the runbook's rule is the check.
+
+### The seams
+
+Each entry gives the seam's inputs, its outputs, what it does on failure, its trust boundary, the
+identity it names (the tree, the external revisions, the toolchain), its receipt, and the public
+path when the private tool is not there.
+
+**1. Memory-aware admission of heavy and short jobs.** Private: it admits jobs across several
+clones on one host, which the public runner leaves out.
+
+- **Inputs:** each job's `workers` and `mem_gb` from the catalogue, whether the job is short or
+  long, and the free memory of the host and of any container VM.
+- **Outputs:** when each job starts. Never which jobs run, their commands or their results.
+- **On failure:** a memory reading that is missing, unreadable, or older than the poll interval
+  the tool declares, and a tool that crashes, admit nothing beyond what the run does on its own.
+- **Trust boundary:** timing only. It never decides, reuses or reports a verdict.
+- **Identity:** none of its own; the jobs it schedules record the tree and the partner revisions.
+- **Receipt:** it writes none. The run's own job records are the evidence, and admission leaves
+  them unchanged; its log of waits and peak memory is diagnostic only.
+- **Without it:** `make check` and `make gate` run directly, with the catalogue's worker counts.
+  The public runner does not schedule by memory yet: the loader reads and checks `mem_gb`, and
+  nothing acts on it. A per-job CPU and memory budget is #3920's.
+
+**2. Culprit-isolating batch validation.** Retired. It validated several branches together;
+with no batch step there is nothing to publish.
+
+**3. The local push gate and exact-pair verdict reuse.** Retired as private tooling: the check
+before a push is the repository's own hook and `make gate`, and reuse is the public verdict
+store.
+
+- **The hook today** (`.githooks/pre-push`, which runs `scripts/run_prepush.sh`) checks Python
+  lint when the outgoing commits touch Python, and runs the clean-install, build and
+  render-smoke chain for frontend changes headed for `main`, a release branch or a tag; on a
+  topic branch CI is that chain's gate. It refuses an outgoing ref that is not this worktree's
+  `HEAD`. It checks the working tree, and does not refuse a dirty one. A hook that runs the
+  catalogue's change tier is #3920's and is not built.
+- **Inputs of reuse:** the verdict store's key (see "Verdict reuse"): the job's entry, its exact
+  steps, the selection, the commit's tree, each partner repository's commit (the apps partner
+  among them), each lock file's digest, the toolchain, the OS and architecture, the container,
+  and the host's capabilities. So a pass could be reused only for the exact core and partner
+  pair it ran on.
+- **Outputs:** a job reused or run, and why. Today nothing consults the store, so `make gate`
+  runs every job. A `make gate` that reads the store, writes `reuse-receipt.json` and takes
+  `--no-reuse` is #3919's local wiring, in review and not on `main`.
+- **On failure:** a dirty checkout replays and records nothing; a key that cannot be built, or an
+  entry that is torn, foreign or of another version, runs the job. A live or `security` job
+  always runs, and its result is never recorded.
+- **Trust boundary:** local only. The store lives in the clone's own git folder, and no entry
+  reaches GitHub.
+- **Identity:** the key above, which names the tree, the partner revisions and the toolchain.
+- **Receipt:** the run's reuse receipt, #3919's: per job its decision, class, key, the key's
+  inputs and its source, and the run's `dirty` field.
+- **Without it:** `make gate` with every job run; GitHub CI on the pull request is the gate.
+- **On GitHub,** a push to `main` decides with `tree-check`, all or nothing. A replay of each
+  job its pull request's first run passed is #3919's push-side half, in review: it would read
+  only attempt 1 of the head's first `merge.yml` run, run every shard of a job when one shard
+  failed, and never replay a pass that read a partner repository, so `apps-contract` would
+  always run. Nothing will call it until `merge.yml` writes a verdict file per job (#3915) and
+  the controller App posts the merge verdict (#4584).
+
+**4. One command contract for a branch, a pull request and a push.** Public: `make check` before
+a commit, `make gate` before opening or updating a pull request, and GitHub CI on the pull
+request as the gate (see "Local runs" and the table above). There is no batch command and no
+command that pushes to `main`. Private guidance names the same two commands and copies no test
+command of its own.
+
+**5. Dependency stores shared across worktrees.** Private: it is machine setup outside the
+repository.
+
+- **Inputs:** the exact lock digests (`uv.lock`, `package-lock.json`) and the toolchain.
+- **Outputs:** an environment identical to the one `uv sync --locked` and `npm ci` build from
+  those locks.
+- **On failure:** a store keyed by another lock digest, or one that is missing or unreadable,
+  falls back to a cold `uv sync --locked` and `npm ci`. A store is added to and never edited, and
+  carries a digest of its own content, checked before each use: a store edited under the right
+  key fails that check and is rebuilt.
+- **Trust boundary:** it never changes a verdict or a key; the verdict store's key already holds
+  the lock digests and the toolchain.
+- **Identity:** the lock digests and the toolchain above.
+- **Receipt:** the run's reuse receipt (#3919), whose key inputs name the lock digests.
+- **Without it:** the documented installs, `uv sync --locked --extra dev` and `npm ci`, which a
+  catalogue job's toolchain runs anyway.
+
 ## The quarantine
 
 The one way a known failure is waived is an entry of `tests/quarantine.toml` (#3947). The rules
