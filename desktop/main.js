@@ -98,7 +98,7 @@ function resolveLoginPath() {
 const POLL_INTERVAL_MS = 500;
 const MAX_WAIT_MS = 120_000; // 2 min max wait for backend
 const PERSONALCLAW_HOME = process.env.PERSONALCLAW_HOME || path.join(os.homedir(), ".personalclaw");
-const TAB_BAR_HEIGHT = 28; // macOS native tab bar height in px
+const { TAB_BAR_HEIGHT, makeWindowChrome } = require("./windowChrome");
 /** How often the menu bar refreshes its approvals/loops counts. */
 const PRESENCE_REFRESH_MS = 5000;
 /** How long quit waits for the gateway to stop before escalating. */
@@ -919,7 +919,8 @@ function setupWindowContents(win, { attachBridge = true } = {}) {
     `);
     view.webContents.executeJavaScript(
       `getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()`
-    ).then(bg => { if (bg && !win.isDestroyed()) win.setBackgroundColor(bg); }).catch(() => {});
+    ).then(bg => { if (bg && !win.isDestroyed() && !windowChrome.shows()) win.setBackgroundColor(bg); }).catch(() => {});
+    view.webContents.executeJavaScript(windowChrome.script()).catch(() => {});
     syncNativeTheme(view, win);
   });
 
@@ -1021,15 +1022,14 @@ async function noteSessionEvent(details) {
   console.log(`gateway ${origin} signed this app out`);
 }
 
+const windowChrome = makeWindowChrome({ platform: process.platform, nativeTheme });
 function makeWindow() {
   return new BaseWindow({
     width: 1280,
     height: 860,
-    minWidth: 550,
-    minHeight: 600,
+    minWidth: 550, minHeight: 600,
     tabbingIdentifier: "personalclaw",
-    titleBarStyle: "hidden",
-    backgroundColor: "#0f0f0f",
+    ...windowChrome.options(),
   });
 }
 
@@ -1712,6 +1712,8 @@ if (!app.requestSingleInstanceLock()) {
     }
     syncLoginItemToTray();
     const win = createWindow();
+    // The sidebar material follows the system's reduced-transparency setting in every window.
+    windowChrome.watch(() => BaseWindow.getAllWindows());
 
     try {
       await startGateway();

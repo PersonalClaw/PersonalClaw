@@ -137,10 +137,10 @@ describe("the shell pages use the shared tokens' values", () => {
   }
 
   it("the window and the gateway switcher open on the canvas colour", () => {
-    const main = fs.readFileSync(path.join(ROOT, "main.js"), "utf8");
-    const makeWindow = /function makeWindow\(\) \{[\s\S]*?\n\}/.exec(main);
-    assert.ok(makeWindow, "makeWindow must be findable");
-    assert.match(makeWindow[0], new RegExp(`backgroundColor: "${DARK.get("canvas")}"`, "i"));
+    // The window's colour is windowChrome.js's opaque fallback, which makeWindow spreads in
+    // (windowChrome.test.js holds that it sets no colour of its own).
+    const chrome = fs.readFileSync(path.join(ROOT, "windowChrome.js"), "utf8");
+    assert.match(chrome, new RegExp(`const OPAQUE_BACKGROUND = "${DARK.get("canvas")}";`, "i"));
     const dialog = fs.readFileSync(path.join(ROOT, "connectDialog.js"), "utf8");
     assert.match(dialog, new RegExp(`backgroundColor: "${DARK.get("canvas")}"`, "i"));
   });
