@@ -191,6 +191,31 @@ def build_protocol_provider(
     )
 
 
+def wire_efforts(protocol: str, model_id: str) -> tuple[str, ...]:
+    """The reasoning-effort levels the wire client ``protocol`` names sends ``model_id`` as
+    themselves, lowest first, from the tables that wire builds its requests from.
+
+    ``"anthropic"`` (``AnthropicProvider``): an adaptive model's own levels, and every level as a
+    thinking budget for any other model. ``"openai"`` (``OpenAIProvider``): low, medium and high for
+    a reasoning model, none for any other. A level outside them is sent as the nearest lower one,
+    or not at all, so a model declares exactly these. ``()`` for no model, and for a protocol core
+    has no wire client for: that wire is its app's, and so is what it sends.
+
+    It sits beside :func:`build_protocol_provider`, which builds the wire client a protocol names:
+    a model that client serves, whose app's records say nothing of efforts, declares these.
+    """
+    from personalclaw.llm.anthropic import thinking_efforts
+    from personalclaw.llm.openai import reasoning_efforts
+
+    if not str(model_id or "").strip():
+        return ()
+    if protocol == "anthropic":
+        return thinking_efforts(model_id)
+    if protocol == "openai":
+        return reasoning_efforts(model_id)
+    return ()
+
+
 def resolve_credential(entry: ProviderEntry, kwargs: dict, *, label: str) -> Credential | None:
     """Resolve a ProviderEntry's credential via the optional credential_store
     (registry contract), or None when the entry declares none. Mirrors the

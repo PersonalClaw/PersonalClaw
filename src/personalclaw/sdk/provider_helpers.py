@@ -47,6 +47,7 @@ from personalclaw.llm.branded_specs import (  # noqa: E402,F401
     build_protocol_provider,
     resolve_credential,
     resolve_spec_secret,
+    wire_efforts,
 )
 from personalclaw.llm.capabilities import Capability, ProviderCapability  # noqa: F401
 from personalclaw.llm.catalog import (  # noqa: F401
@@ -95,8 +96,9 @@ class BrandedCatalog(ModelCatalog):
     ``capabilities_of`` reads what the vendor's own model records say each model does (see
     :func:`openai_compatible_discover_models`); without one, a model is read by its id.
     ``efforts_of`` reads the same records for the reasoning-effort levels each model takes, and a
-    curated ``fallback_models`` row names its own ``efforts``; without either, a model declares
-    none."""
+    curated ``fallback_models`` row names its own ``efforts``; without either, a model declares the
+    levels the spec's protocol's wire sends it (:func:`wire_efforts`), and so does the configured
+    model this catalog offers when nothing else lists it."""
 
     def __init__(
         self,
@@ -143,13 +145,22 @@ class BrandedCatalog(ModelCatalog):
             return f"{reason} (or set {env})" if env else reason
         return f"No API key configured (set it or {env})" if env else "No API key configured"
 
+    def _wire_efforts(self, model_id: str) -> list[str]:
+        """The levels this spec's wire sends ``model_id``, for a model nothing else declares."""
+        return list(wire_efforts(self._spec.protocol, model_id))
+
     def _fallback(self) -> list[ModelInfo]:
         rows = [
             ModelInfo(
                 id=m["id"],
                 name=m.get("name", m["id"]),
                 capabilities=list(m.get("capabilities", infer_capabilities(m["id"]))),
-                efforts=[str(e) for e in m.get("efforts") or ()],
+                # A row that names its levels (``[]`` included) is taken at its word.
+                efforts=(
+                    [str(e) for e in m["efforts"]]
+                    if m.get("efforts") is not None
+                    else self._wire_efforts(m["id"])
+                ),
             )
             for m in self._spec.fallback_models
         ]
@@ -165,6 +176,7 @@ class BrandedCatalog(ModelCatalog):
                     name=self._default_model,
                     capabilities=list(self._spec.capabilities)
                     or infer_capabilities(self._default_model),
+                    efforts=self._wire_efforts(self._default_model),
                 ),
             )
         return rows
@@ -334,7 +346,8 @@ def register_branded_app(
     ``efforts_of`` reads the same record for the reasoning-effort levels the model takes
     (``["low", "medium", "high"]``, ``[]`` for none). The composer offers a model an effort choice
     only when it declares levels, so an app whose vendor says how deep a model reasons passes one;
-    a curated ``fallback_models`` row says it with its own ``efforts`` key.
+    a curated ``fallback_models`` row says it with its own ``efforts`` key. Without either, a model
+    declares the levels the spec's protocol's wire sends it (:func:`wire_efforts`).
     """
 
     def _factory(

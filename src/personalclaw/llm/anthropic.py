@@ -81,6 +81,14 @@ _EFFORT_STEP_DOWN: dict[str, str] = {"xhigh": "high"}
 _THINKING_BLOCK_TYPES = ("thinking", "redacted_thinking")
 
 
+def thinking_efforts(model: str) -> tuple[str, ...]:
+    """The effort levels this wire sends ``model`` as themselves, lowest first: the levels an
+    adaptive model takes (``catalog.thinking_shape``), and every budget level for any other model.
+    A level outside them is sent as the nearest lower one (:func:`_thinking_request`)."""
+    shape = thinking_shape(model)
+    return shape.efforts if shape.adaptive else tuple(_THINKING_BUDGETS)
+
+
 def _thinking_request(model: str, effort: str, max_tokens: int) -> dict[str, Any]:
     """The request fields that ask ``model`` to reason at ``effort``: ``{}`` for no effort.
 

@@ -29,12 +29,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A code project's cockpit opens a diff in a pane beside the editor instead of over it: drag its edge or use the arrow keys to resize it, it opens at the same width next time, and closing it puts the keyboard focus back on the change you opened it from.**
 - **A chat's turns read in one centred column 768 px wide, whatever content width you picked; the content width still sets the other pages and the composer.**
 - **The terminal drawer's Open full opens the session the drawer shows on the Terminal page, rather than the page's first session.**
+- **The composer offers a reasoning effort again for a model whose provider app uses PersonalClaw's built-in Anthropic- or OpenAI-compatible client, with the levels that client sends the model (`personalclaw.sdk.model.wire_efforts`, the `model-efforts` core feature).**
 
 ### Fixed
 
 - **The gateway and web images build their dashboard once, on the build machine, instead of under emulation for arm64.**
 - **Filled icon buttons such as the composer's send and stop, a page header's primary and danger actions, and an app's primary header action show their keyboard focus ring in the page's ink colour, like the primary and danger buttons, where the coral ring matched the button's own colour and could barely be seen.**
 - **A chat on Auto, or on any model that declares no effort levels, runs at Default effort, where one that had stored a level kept running at it with no control left to show or change it; the composer says it set Default.**
+- **A model on an OpenAI-compatible provider whose id has `o1`, `o3` or `o4` only inside another word is no longer sent a reasoning effort, and Xhigh reaches an OpenAI reasoning model as High, as Max does.**
 
 ## [0.2.3] — 2026-10-19
 
