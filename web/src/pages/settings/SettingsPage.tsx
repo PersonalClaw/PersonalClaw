@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import {
   Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
   FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope, ThumbsUp,
@@ -156,16 +155,6 @@ export function SettingsPage({ sub, navigate, query, setQuery, duringSetup = fal
   const go = (id: string) => navigate?.(id ? `settings/${id}` : 'settings')
   const backToSetup = () => navigate?.('onboarding')
   const current = sub ? SUBPAGES.find((s) => s.id === sub) : undefined
-
-  // Legacy deep-link: Vocabulary merged into Speech & Transcription (the `voice`
-  // subpage). #/settings/vocabulary → #/settings/voice?section=vocabulary, which
-  // scrolls to the merged Vocabulary & corrections section. Replace (not push) so
-  // Back doesn't bounce through the dead route.
-  const legacyVocabulary = sub === 'vocabulary'
-  useEffect(() => {
-    if (legacyVocabulary) navigate?.('settings/voice?section=vocabulary', { replace: true })
-  }, [legacyVocabulary, navigate])
-  if (legacyVocabulary) return null
 
   // Home (no valid sub, or bare #/settings): the bento grid.
   if (!current) {

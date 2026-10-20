@@ -18,6 +18,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A code project's cockpit keeps its review in its address: the Files or Changes tab, the file, diff or commit the center shows, and the open task, so a reload, Back, a copied address or a `personalclaw://code/<id>` link opens the same review; a link only opens it and never steers, queues or runs anything.**
 - **Write reply styles of your own in Settings, and let an app add styles only when it holds the new `replyStyles` permission.**
 - **A new chat asks once how you like things explained, and keeps your answer as a pinned preference.**
+- **⌘K has Start a loop, so every page the app opens is one search away, and a link to an address the app has retired, such as an artifact's link from before artifacts had their own page, opens the new page straight away instead of passing through the old one.**
 
 ### Changed
 

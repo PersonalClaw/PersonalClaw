@@ -3,7 +3,7 @@ import { MotionConfig, motion } from 'framer-motion'
 import { ease, duration } from '../design/motion'
 import { armCueAudio } from '../design/soundCues'
 import { installPushCuePlayback } from './pushCuePlayback'
-import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, Radar, Settings, Smartphone, Sparkles, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
+import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, Radar, Repeat, Settings, Smartphone, Sparkles, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
 import { IncidentBanner } from './IncidentBanner'
@@ -803,6 +803,8 @@ function AppInner() {
     { id: 'go:mission-control', label: 'Mission Control', hint: 'Go to', icon: Radar, keywords: 'attention lanes approvals needs approval your turn working idle', run: () => navigate('mission-control') },
     { id: 'go:notifications', label: 'Notifications', hint: 'Go to', icon: Bell, keywords: 'alerts feed', run: () => navigate('notifications') },
     { id: 'go:discover', label: 'Discover', hint: 'Go to', icon: Compass, keywords: 'tips tour learn features guide', run: () => navigate('discover') },
+    // The loop composer has no rail tile (loops start from Projects), so this row is its way in.
+    { id: 'act:start-loop', label: 'Start a loop', hint: 'Action', icon: Repeat, keywords: 'loop goal code design autonomous plan run new', run: () => navigate('loop') },
     { id: 'act:settings', label: 'Open Settings', hint: 'Action', icon: Settings, run: () => navigate('settings') },
     // Every keyboard shortcut, from the keymap: the drawer, the sidebar, focus and reading mode, the
     // chats, what needs you, and the keys a focused control handles, listed with why they don't run

@@ -63,10 +63,17 @@ supported width, 320 to 1440 px (#3812):
 
 **Old addresses keep working.** Every route the app has shipped resolves, as a redirect to its new
 home or tab. The redirect replaces the history entry, so Back never bounces through the old
-address, and query parameters and sub-paths carry over, so a deep link lands on the same item. A
-moved route keeps a compact path, a palette entry and a route alias, and the old shell's stored
-state still opens it (#3818, #3819). Every route and substate round-trips through the URL, browser
-history and `personalclaw://` links, and a link restores state without ever acting (#3827).
+address, and query parameters and sub-paths carry over, so a deep link lands on the same item.
+Each retired address is one row of the redirect table, `web/src/app/routeRedirects.ts`: the old
+address, the new one, the segments and query keys the new page reads, and the pull request that
+moved it. The router rewrites an old address before any page draws it, and no row lands on another
+row's old address, so a redirect never chains: when a page moves again, the rows that point at it
+move with it. A page sends its own address elsewhere only for what it holds at that moment, such as
+a room link that names no room, and never for a move. Every desktop page the router serves has a
+palette row. A moved route keeps a compact path, a palette entry and a route alias, and the old
+shell's stored state still opens it (#3818, #3819). Every route and substate round-trips through the
+URL, browser history and `personalclaw://` links, and a link restores state without ever acting
+(#3827).
 
 ## Screen specs
 

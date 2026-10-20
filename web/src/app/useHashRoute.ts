@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 
 import { viewTransition } from '../design/motion'
+import { redirectFor } from './routeRedirects'
 
 /** Minimal hash router — keeps the active page + view-state in `location.hash`
  *  so every page, sub-page, tab, filter, and open panel is URL-addressable:
@@ -21,7 +22,12 @@ import { viewTransition } from '../design/motion'
  *  CURRENT route+sub without touching the path. Default is push (a history
  *  entry); pass `replace: true` to overwrite the current entry instead. Pass
  *  `remount: true` when the update is a navigation for the page: it bumps
- *  `navEpoch` as `navigate` does, so a page keyed on it mounts afresh. */
+ *  `navEpoch` as `navigate` does, so a page keyed on it mounts afresh.
+ *
+ *  A retired address (`routeRedirects.ts`) never reaches a page: it is rewritten to where it opens
+ *  now when the hook first reads the bar, on every `hashchange` (Back, Forward, a link the desktop
+ *  shell or a notification opens) and on every `navigate`/`setQuery`, in place of the history entry
+ *  it would have had. */
 interface HashRoute {
   route: string
   sub: string
@@ -37,6 +43,14 @@ interface HashRoute {
 
 function rawHash(): string {
   return (typeof location !== 'undefined' ? location.hash : '').replace(/^#\/?/, '')
+}
+
+/** Rewrite a retired address in the bar to where it opens now (`routeRedirects.ts`), replacing
+ *  its history entry, so Back never returns to it. */
+function settleHash(): void {
+  if (typeof location === 'undefined') return
+  const moved = redirectFor(rawHash())
+  if (moved !== null) history.replaceState(null, '', `#/${moved}`)
 }
 
 function parseHash(fallback: string): { route: string; sub: string; query: Record<string, string> } {
@@ -67,7 +81,9 @@ function buildHash(path: string, query: Record<string, string>): string {
 }
 
 export function useHashRoute(fallback: string): HashRoute {
-  const [state, setState] = useState(() => parseHash(fallback))
+  // Settled before the first read, so the first render already has the new address: a page that
+  // drew for the old one would run its effects, its reads among them, for an address that is gone.
+  const [state, setState] = useState(() => { settleHash(); return parseHash(fallback) })
   const [navEpoch, setNavEpoch] = useState(0)
   /** The route last applied to `state` — a mirror, never a source of truth. It exists
    *  because the `hashchange` listener below is registered once with `[]` deps, so its
@@ -107,6 +123,7 @@ export function useHashRoute(fallback: string): HashRoute {
     // crossfade would animate nothing. It is safe precisely here because a native
     // listener is never inside a React render or commit.
     const onHash = () => {
+      settleHash()
       if (parseHash(fallback).route === applied.current) { applyHash(); return }
       viewTransition(() => { flushSync(applyHash) })
     }
@@ -119,7 +136,9 @@ export function useHashRoute(fallback: string): HashRoute {
   // to force a fresh mount — e.g. re-clicking the active nav item resets the page).
   // A same-page query update (setQuery: open an item, change a filter/tab) must NOT
   // bump it, or the whole page remounts + refetches before the panel opens.
-  const apply = (next: string, replace: boolean, bumpEpoch: boolean) => {
+  const apply = (written: string, replace: boolean, bumpEpoch: boolean) => {
+    // A retired address is never written: its new one is, as the one history entry.
+    const next = redirectFor(written) ?? written
     if (bumpEpoch) setNavEpoch((n) => n + 1)
     const live = rawHash()
     if (live === next) { applyHash(); return }

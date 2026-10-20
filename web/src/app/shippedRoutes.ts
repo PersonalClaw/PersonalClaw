@@ -6,7 +6,8 @@
  *  link the gateway writes into an Inbox item, a notification or a reply, and the sub-routes and
  *  substates each section documents in its header comment. A link someone kept (a bookmark, an old
  *  transcript, a copied URL) has to keep opening, so an entry is never dropped when its page moves:
- *  it gains a `lands` naming where it opens now.
+ *  it gains a `lands` naming where it opens now, and the move retires it with a row of
+ *  `routeRedirects.ts`, the one table the router sends an old address through.
  *
  *  What holds this list to its sources, and the app to this list:
  *
@@ -62,8 +63,9 @@ export interface ShippedRoute {
   readonly from: readonly RouteSource[]
   /** The first release that had it, where the tags were read (see the header). */
   readonly since?: Release
-  /** Where the shell settles when it opens this address, when that is not the address itself: an
-   *  in-app redirect, or a link's own words rewritten into the ones the page reads. */
+  /** Where the shell settles when it opens this address, when that is not the address itself: a
+   *  retired address's row in `routeRedirects.ts`, a page's own landing, or a link's own words
+   *  rewritten into the ones the page reads. */
   readonly lands?: string
   /** Opened on a home whose first-run setup is not done. Every other entry is opened signed in,
    *  set up, on an empty home. */
@@ -118,7 +120,7 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'notifications', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'discover', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.2' },
   { route: 'mission-control', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.2.0' },
-  { route: 'loop', from: ['router', 'deep-link', 'documented'], since: 'v0.1.0' },
+  { route: 'loop', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
   // The bare loops and code routes fold into the one loop composer (`LoopsSection`, `CodeSection`).
   { route: 'loops', from: ['router', 'deep-link', 'notification', 'documented'], since: 'v0.1.0', lands: 'loop' },
   { route: 'code', from: ['router', 'deep-link', 'gateway'], since: 'v0.1.0', lands: 'loop?kind=code' },
