@@ -75,17 +75,22 @@ BANNED_PROVIDER_NAMES = (
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    """A private home per test, and no surface token leaking between them.
+    """A private home per test, and no surface token or spent rate leaking between them.
 
     Cleared on BOTH sides: ``create_surface_token`` mirrors into ``os.environ`` itself,
     so a token minted mid-test is a variable monkeypatch never recorded and never
     undoes — it would read as "this surface has a valid token" for every later test in
-    this worker.
+    this worker. The rate buckets are the process's too, and every test here is one
+    client's, so without the reset a test answered 429 for what the tests before it spent.
     """
+    from personalclaw.inbound import caps
+
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     for surface in _SURFACES:
         monkeypatch.delenv(f"PERSONALCLAW_INBOUND_{surface}_TOKEN", raising=False)
+    caps.reset_for_tests()
     yield
+    caps.reset_for_tests()
     for surface in _SURFACES:
         os.environ.pop(f"PERSONALCLAW_INBOUND_{surface}_TOKEN", None)
 
@@ -921,13 +926,98 @@ def test_cosmetic_aliases_are_accepted_and_discarded():
             assert pattern not in source, f"the dialect branches on the cosmetic alias {alias!r}"
 
 
-def test_resolve_voice_is_the_only_voice_seam():
-    """The voice seam: ONE function for profiles to be re-implemented against."""
-    assert callable(dialect.resolve_voice)
-    source = _dialect_source()
-    # Every voice resolution in this module goes through the seam, so the count of
-    # direct `active_voice_params` calls is exactly one — the seam's own body.
-    assert source.count("active_voice_params(") == 1
+#: ``(case, method, route, body, the name the seam is asked for)``: each request that resolves a
+#: voice, and the voice it names.
+_VOICE_REQUESTS = [
+    (
+        "speech naming a voice",
+        "post",
+        dialect.ROUTE_SPEECH,
+        {"model": "tts-1", "input": "hi", "voice": "narrator"},
+        "narrator",
+    ),
+    ("speech naming none", "post", dialect.ROUTE_SPEECH, {"model": "tts-1", "input": "hi"}, ""),
+    ("the voices list", "get", dialect.ROUTE_VOICES, None, ""),
+]
+
+
+@pytest.mark.asyncio
+async def test_every_voice_the_dialect_resolves_goes_through_the_seam(monkeypatch, subtests):
+    """The voice seam: ONE function for profiles to be re-implemented against. Each request that
+    resolves a voice asks ``resolve_voice`` once, for the name it was given, and the registry's
+    ``active_voice_params`` is reached only from inside the seam, for this surface with that name
+    as the profile. A handler asking the registry itself would leave a voice no re-implemented
+    seam could change, so the registry is watched under every product name that holds it."""
+    import sys
+
+    from table_rows import row
+
+    from personalclaw.tts import registry
+
+    _enable(monkeypatch)
+    token = _token()
+    seam = dialect.resolve_voice
+    original = registry.active_voice_params
+    inside = [False]
+    asked: list[str] = []
+    resolved: list[tuple[str, str, bool]] = []
+
+    class _Bound:
+        name = display_name = "bound"
+
+        def list_models(self) -> list[str]:
+            return ["narrator", "calm"]
+
+    def _registry(*, surface: str = "", profile_id: str = "") -> dict:
+        resolved.append((surface, profile_id, inside[0]))
+        return {"provider": _Bound(), "voice": "calm", "speed": 1.0, "speech_voice": ""}
+
+    def _watched_seam(name: str = "", **kwargs):
+        asked.append(name)
+        inside[0] = True
+        try:
+            return seam(name, **kwargs)
+        finally:
+            inside[0] = False
+
+    async def _spoken(provider, text, *, voice, speed, speech_voice):
+        yield 0, text, b"RIFF-fake-wav"
+
+    held = [
+        (module, name)
+        for module in list(sys.modules.values())
+        if getattr(module, "__name__", "").startswith("personalclaw")
+        for name, value in list(vars(module).items())
+        if value is original
+    ]
+    assert (registry, "active_voice_params") in held, "the registry's own name was not found"
+    for module, name in held:
+        monkeypatch.setattr(module, name, _registry)
+    monkeypatch.setattr(dialect, "resolve_voice", _watched_seam)
+    monkeypatch.setattr("personalclaw.voice_reply.streaming_voice_reply", _spoken)
+    client, _ = await _client(monkeypatch)
+    try:
+        assert len(_VOICE_REQUESTS) == 3, "a request was dropped from the table"
+        for case, method, route, body, name in _VOICE_REQUESTS:
+            with row(subtests, case=case):
+                asked.clear()
+                resolved.clear()
+                if method == "post":
+                    resp = await client.post(route, data=json.dumps(body), headers=_auth(token))
+                else:
+                    resp = await client.get(route, headers=_auth(token))
+                payload = await resp.read()
+                assert resp.status == 200, (case, payload[:200])
+                assert asked == [name], f"{case}: the seam was asked {asked}"
+                surface = f"inbound:{dialect.OPENAI_SURFACE}"
+                assert resolved == [(surface, name, True)], f"{case}: the registry saw {resolved}"
+                if route == dialect.ROUTE_SPEECH:
+                    assert payload == b"RIFF-fake-wav", case
+                else:
+                    ids = [v["id"] for v in json.loads(payload)["data"]]
+                    assert ids == ["narrator", "calm"], case
+    finally:
+        await client.close()
 
 
 # ── 8. Audio aliases ──────────────────────────────────────────────────────────
