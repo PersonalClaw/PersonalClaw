@@ -163,16 +163,57 @@ def test_the_doctor_is_SILENT_for_an_unscoped_trigger():
 # ── the legacy agent-scoped path is intact ──
 
 
-def test_the_chat_path_has_NO_GLOBAL_firing_fallback():
-    """The actual requirement, asserted rather than trusted: the resolver returns [] on any
-    failure so a broken lookup fires NOTHING instead of falling back to every hook."""
-    import inspect
+async def _turn_firing(tmp_path, *, references: list[str], lookup_fails: bool) -> list[str]:
+    """Run one real chat turn with one prompt-submit hook (``g1``) in the store, and return the
+    ids of the hooks that ran. The agent references *references*; with *lookup_fails* every
+    lookup of the agent's bindings the turn makes raises."""
+    from unittest.mock import patch
 
+    from reply_style_shared import FIRST, Conversation
+
+    from personalclaw import hooks
     from personalclaw.dashboard import chat_runner
 
-    src = inspect.getsource(chat_runner)
-    assert "fire_for_ids" in src
-    assert "never silently fall back to global firing" in src or "no global firing path" in src
+    chat = await Conversation(tmp_path, agent={"triggers": references}).start()
+    store = hooks.ScriptHookStore(config_dir=tmp_path / "hooks-home")
+    store.create(
+        {
+            "id": "g1",
+            "name": "every prompt",
+            "event": hooks.HOOK_EVENT_USER_PROMPT_SUBMIT,
+            "provider": "bash",
+            "provider_config": {"command": "true"},
+        }
+    )
+    chat.state._hook_store = store
+    ran: list[str] = []
+
+    async def record(hook, context="", hook_event=None, **_kw):
+        ran.append(hook.id)
+        return hooks.ScriptHookResult(hook_id=hook.id, hook_name=hook.name, event="", exit_code=0)
+
+    def fails(*_a, **_k):
+        raise RuntimeError("the agent's bindings cannot be read")
+
+    real = chat_runner.resolve_agent_bindings
+    with (
+        patch.object(hooks, "run_script_hook", record),
+        patch.object(chat_runner, "resolve_agent_bindings", fails if lookup_fails else real),
+    ):
+        await chat.send(FIRST)
+    assert chat.model.requests, "the turn never reached the model, so it proves nothing"
+    return ran
+
+
+@pytest.mark.asyncio
+async def test_the_chat_path_has_NO_GLOBAL_firing_fallback(tmp_path):
+    """A chat turn fires only the hooks its agent references. When the lookup of those
+    references fails, the turn fires NOTHING rather than falling back to every hook in the
+    store, and the turn itself still runs."""
+    control = await _turn_firing(tmp_path / "control", references=["g1"], lookup_fails=False)
+    assert control == ["g1"], "positive control: a referenced hook fires on this turn"
+    assert await _turn_firing(tmp_path / "unref", references=[], lookup_fails=False) == []
+    assert await _turn_firing(tmp_path / "broken", references=["g1"], lookup_fails=True) == []
 
 
 def test_the_substrate_event_kind_has_no_chat_turn_source():

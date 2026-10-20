@@ -33,6 +33,7 @@ import os
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from gateway_routes_shared import handler_for
 
 from personalclaw.inbound import a2a
 from personalclaw.inbound import audit as audit_mod  # noqa: F401 — imported for parity
@@ -302,14 +303,10 @@ class TestPublishWritePath:
         assert result["code"] == "WF_DEF_NO_WRITABLE_PROVIDER"
 
     def test_the_route_is_registered(self):
-        import inspect
-
         from personalclaw.workflows import handlers as wf_handlers
 
-        source = inspect.getsource(wf_handlers.register_workflow_routes)
-        assert '"/api/workflows/{name}/a2a-publish", api_def_a2a_publish' in source
-        # Floor: the matcher is reading the real route table, not an empty string.
-        assert '"/api/workflows/{name}/refine", api_def_refine' in source
+        served = handler_for("POST", "/api/workflows/digest/a2a-publish")
+        assert served is wf_handlers.api_def_a2a_publish
 
 
 # ── 2. empty card vs broken card ──────────────────────────────────────────────
@@ -955,15 +952,8 @@ class TestOutboundEgressIsDenyByDefault:
 
 
 def test_the_gateway_registers_the_surface():
-    """Assert the CALL SITE. A module nothing mounts is a module that never runs."""
-    import inspect
-
-    from personalclaw.dashboard import routes as routes_mod
-
-    source = inspect.getsource(routes_mod.register_dashboard_routes)
-    assert "from personalclaw.inbound.a2a import register_routes" in source
-    assert "_register_a2a(app)" in source
-    # Vacuity floor: this matcher must be reading the block that mounts the OTHER inbound
-    # dialects too. A refactor that moved registration elsewhere would otherwise let the
-    # two asserts above fail for a reason that reads as "A2A is unmounted".
-    assert "_register_capture(app)" in source
+    """A module nothing mounts is a module that never runs: the gateway serves A2A's card and its
+    task routes with A2A's own handlers."""
+    assert handler_for("GET", a2a.ROUTE_CARD) is a2a.handle_agent_card
+    assert handler_for("POST", a2a.ROUTE_TASKS) is a2a.handle_tasks
+    assert handler_for("GET", a2a.ROUTE_TASK.replace("{task_id}", "t1")) is a2a.handle_task_get

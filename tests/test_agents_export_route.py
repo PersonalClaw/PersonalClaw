@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from gateway_routes_shared import handler_for
 
 from personalclaw.config.loader import AgentProfile, AppConfig
 from personalclaw.dashboard.handlers.agent_export import api_agents_export
@@ -242,9 +243,6 @@ def test_the_route_is_the_owners_alone():
 
 
 def test_the_gateway_registers_the_route():
-    """A handler nobody registers is the defect this route was written for."""
-    import inspect
-
-    from personalclaw.dashboard import routes
-
-    assert '"/api/agents/export", api_agents_export' in inspect.getsource(routes)
+    """A handler nobody registers is the defect this route was written for, so the gateway's own
+    route table is asked which handler serves it."""
+    assert handler_for("POST", "/api/agents/export") is api_agents_export

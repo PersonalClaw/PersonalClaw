@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
+from gateway_routes_shared import handler_for
 
 from personalclaw.dashboard.handlers import trigger_runs
 from personalclaw.dashboard.handlers import triggers as T
@@ -579,12 +580,8 @@ def test_week_and_doctor_routes_register_before_the_id_route():
     """`/week` and `/doctor` must not be captured as trigger ids.
 
     The ordering landmine already paid for once with `/surfacing`: aiohttp matches in registration
-    order, so a literal path registered after `/{id}` is unreachable.
+    order, so a literal path registered after `/{id}` is unreachable. The gateway serves each with
+    its own handler.
     """
-    import inspect
-
-    src = inspect.getsource(T.register_trigger_routes)
-    week = src.index('"/api/triggers/week"')
-    doctor = src.index('"/api/triggers/doctor"')
-    by_id = src.index('"/api/triggers/{id}"')
-    assert week < by_id and doctor < by_id
+    assert handler_for("GET", "/api/triggers/week") is T.api_triggers_week
+    assert handler_for("GET", "/api/triggers/doctor") is T.api_triggers_doctor

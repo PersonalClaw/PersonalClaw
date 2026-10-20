@@ -20,6 +20,7 @@ import stat
 from unittest.mock import patch
 
 import pytest
+from gateway_routes_shared import handler_for
 
 from personalclaw import project_context
 from personalclaw.legibility.always_on import (
@@ -490,24 +491,13 @@ def _call(handler, **kwargs) -> tuple[int, dict]:
 
 
 def test_the_three_viewer_routes_are_registered_to_their_handlers():
-    """Registration is asserted at source because these routes are wired in the route table
-    ``start_dashboard`` runs, which cannot be invoked in a unit test. A handler with no route is the
-    inert-control shape this repo keeps finding."""
-    import inspect
-
-    from personalclaw.dashboard import routes
-
-    source = inspect.getsource(routes.register_dashboard_routes)
-    for line in (
-        'app.router.add_get("/api/legibility/always-on", api_always_on)',
-        'app.router.add_get("/api/legibility/always-on/doc", api_always_on_doc)',
-        'app.router.add_put("/api/legibility/always-on/doc", api_always_on_doc_write)',
-    ):
-        assert line in source, f"route not registered: {line}"
+    """A handler with no route is the inert-control shape this repo keeps finding, so the
+    gateway's route table is asked which handler serves each of the three viewer routes."""
     from personalclaw.dashboard.handlers import legibility as handlers
 
-    for name in ("api_always_on", "api_always_on_doc", "api_always_on_doc_write"):
-        assert callable(getattr(handlers, name, None)), f"handler missing: {name}"
+    assert handler_for("GET", "/api/legibility/always-on") is handlers.api_always_on
+    assert handler_for("GET", "/api/legibility/always-on/doc") is handlers.api_always_on_doc
+    assert handler_for("PUT", "/api/legibility/always-on/doc") is handlers.api_always_on_doc_write
 
 
 def test_get_always_on_returns_the_inventory(isolated_home, store):

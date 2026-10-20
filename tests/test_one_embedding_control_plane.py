@@ -29,9 +29,10 @@ from __future__ import annotations
 
 import inspect
 
+from gateway_routes_shared import handler_for
 from one_embedding_control_plane_shared import REPO, RETIRED_PATHS
 
-from personalclaw.dashboard import handlers, routes, server
+from personalclaw.dashboard import handlers
 from personalclaw.dashboard.handlers import memory as mem_mod
 
 #: The six retired handler names, and the route paths they were registered under.
@@ -54,11 +55,12 @@ def test_no_retired_handler_survives_on_the_barrel():
 
 
 def test_no_retired_route_is_registered():
-    # The gateway's routes: the ones `start_dashboard` adds itself, and its route table's.
-    src = inspect.getsource(server) + inspect.getsource(routes)
-    assert '"/api/memory/facets"' in src, "vacuity: the route table was read"
+    """The gateway serves none of the retired paths under any method, while the facets route
+    they sat beside still resolves, so the table asked is the real one."""
+    assert handler_for("GET", "/api/memory/facets") is mem_mod.api_memory_facets
     for path in RETIRED_PATHS:
-        assert path not in src, f"{path} is still registered"
+        for method in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+            assert handler_for(method, path) is None, f"{method} {path} is still served"
 
 
 def test_the_dead_setup_state_machine_is_gone():
@@ -118,12 +120,13 @@ def test_migrate_still_gates_on_actually_having_migrated_something():
 
 def test_every_retired_capability_still_has_a_reachable_home():
     """Deleting a plane is only safe if its capabilities survive elsewhere. Each of these is
-    registered by the model-downloads/registry handlers and wrapped in `api.ts`."""
-    downloads = (REPO / "src/personalclaw/dashboard/handlers/model_downloads.py").read_text(
-        encoding="utf-8"
-    )
-    assert '"/api/models/local/{provider}/{model}"' in downloads, "local-model delete"
-    assert '"/api/models/local/{provider}/search"' in downloads, "local-model search"
+    served by the model-downloads handlers and wrapped in `api.ts`."""
+    from personalclaw.dashboard.handlers import model_downloads as downloads
+
+    delete = handler_for("DELETE", "/api/models/local/ollama/llama3")
+    assert delete is downloads.api_local_model_delete, "local-model delete"
+    search = handler_for("GET", "/api/models/local/ollama/search")
+    assert search is downloads.api_local_model_search, "local-model search"
 
     api_ts = (REPO / "web/src/lib/api.ts").read_text(encoding="utf-8")
     for wrapper in ("/api/models/local/", "/api/models/downloads", "/api/models/active/"):

@@ -25,7 +25,8 @@ This census keeps both so:
 * :data:`LOADER_BUDGET` is the exact set of record loaders that still read a boolean with
   ``bool()``: records the product writes itself. A new one fails, and so does an app manifest's.
 * Every boolean in the ``config.json`` schema is driven through the loader with text in it.
-* An MCP server's ``disabled`` switch has one reader, ``mcp_status.switched_off``.
+* An MCP server's ``disabled`` switch has one reader, ``mcp_status.switched_off``
+  (``tests/rails/test_request_boolean_census_tree.py``).
 
 ``tests/test_tool_boolean_census.py`` is the sibling for a model's tool arguments, which arrive as
 text as often as not and are read as the word they spell (``safety_flags.yes_or_no``).
@@ -37,7 +38,7 @@ import json
 from typing import Any
 
 import pytest
-from request_boolean_census_shared import BODY_BOOLEANS, SRC, _loader_misreads, _scan
+from request_boolean_census_shared import BODY_BOOLEANS, _loader_misreads, _scan
 
 #: Fields that grant a consent, publish, or widen what runs. An omitted one is never a yes.
 _WIDENING = {
@@ -215,27 +216,3 @@ def test_a_config_boolean_written_as_false_text_reads_false(path):
     assert load(" Off ") is False
     assert load(False) is False
     assert load("true") == default
-
-
-# ── An MCP server's switch ───────────────────────────────────────────────────────────────────
-
-#: Each module that reads an ``mcp.json`` server's ``disabled`` switch, and how many raw reads of it
-#: it keeps: the toggle's disable path asks whether it is already the real ``true``, which is a
-#: question about what to write, not a reading of the switch.
-_MCP_SWITCH_READERS = {
-    "mcp_client.py": 0,
-    "mcp_discovery.py": 0,
-    "agent.py": 0,
-    "dashboard/handlers/mcp.py": 1,
-    "providers/mcp_instances.py": 0,
-}
-
-
-@pytest.mark.parametrize("module, raw_reads", sorted(_MCP_SWITCH_READERS.items()))
-def test_an_mcp_server_switch_is_read_one_way(module, raw_reads):
-    source = (SRC / module).read_text(encoding="utf-8")
-    assert "switched_off(" in source, f"{module} no longer reads a server's switch: re-pin it"
-    assert source.count('.get("disabled")') == raw_reads, (
-        f"{module} reads a server's `disabled` itself. Read it with mcp_status.switched_off, "
-        "which reads the words as written and keeps a server it cannot read off."
-    )

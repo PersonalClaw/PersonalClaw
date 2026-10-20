@@ -24,6 +24,7 @@ import json
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
+from gateway_routes_shared import handler_for
 
 from personalclaw.dashboard.handlers import learning as L
 
@@ -439,18 +440,14 @@ def test_an_unreadable_config_fails_OPEN_for_the_read_surface(monkeypatch):
 
 def test_the_literal_paths_register_before_the_id_route():
     """`staging` must not be captured as a proposal id — an ordering landmine already paid
-    for twice."""
-    import inspect
-
-    src = inspect.getsource(L.register_learning_routes)
-    assert src.index('"/api/learning/staging/week"') < src.index('"/api/learning/proposals/{id}"')
-    assert src.index('"/api/learning/proposals"') < src.index('"/api/learning/proposals/{id}"')
+    for twice. The gateway serves each literal path with its own handler, and an id with the
+    proposal's."""
+    assert handler_for("GET", "/api/learning/staging/week") is L.api_learning_staging_week
+    assert handler_for("GET", "/api/learning/proposals") is L.api_learning_proposals
+    assert handler_for("GET", "/api/learning/proposals/p1") is L.api_learning_proposal
 
 
 def test_the_routes_are_registered_in_the_server():
-    """A handler nobody registers is a page that 404s."""
-    import inspect
-
-    from personalclaw.dashboard import routes
-
-    assert "register_learning_routes(app)" in inspect.getsource(routes)
+    """A handler nobody registers is a page that 404s: the gateway serves the learning routes."""
+    assert handler_for("GET", "/api/learning/proposals") is L.api_learning_proposals
+    assert handler_for("GET", "/api/learning/health") is L.api_learning_health

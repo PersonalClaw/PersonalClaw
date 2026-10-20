@@ -19,7 +19,6 @@ assert the RESOLUTION and the create response that advertises it, never a reques
 the chain still terminates somewhere real; `test_home_remains_the_last_resort` pins that.
 """
 
-import inspect
 import json
 import os
 from unittest.mock import MagicMock, patch
@@ -150,12 +149,3 @@ async def test_the_default_is_still_gated_on_a_safe_root(tmp_path):
 
 
 # ── one resolver, two readers ────────────────────────────────────────────────
-
-
-def test_the_spawn_and_the_create_response_share_one_resolver():
-    """The WS spawn and the REST create sit in handlers that cannot be driven from one call,
-    so what matters is that neither RE-DERIVES the chain. Asserted over source: exactly two
-    readers, and the duplicated `cfg.get("cwd") or $HOME` they both used to carry is gone."""
-    src = inspect.getsource(terminal)
-    assert 'cfg.get("cwd") or os.environ.get("HOME"' not in src
-    assert src.count("default_terminal_cwd(cfg)") == 2

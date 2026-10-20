@@ -224,20 +224,32 @@ def test_the_iteration_sleep_is_bounded(monkeypatch, tmp_path):
 # ── 🔴 the cutover: exactly one clock engine ──
 
 
-def test_boot_rotates_run_history_without_a_legacy_service():
-    """🔴 SUPERSEDED. This asserted `load_without_timer` — the legacy service's boot call.
+@pytest.mark.asyncio
+async def test_boot_rotates_run_history_without_a_legacy_service(tmp_path, monkeypatch):
+    """Boot rotates the run history itself, once: the one load-bearing thing the retired legacy
+    service's boot call did, now owned by ``ScheduleRunStore``."""
+    from unittest.mock import AsyncMock, patch
 
-    That method did two things: load `crons.json` (for CRUD nothing uses any more) and rotate run
-    history. Only the rotation was load-bearing, and `ScheduleRunStore` owns it, so boot calls that
-    directly and the class is gone.
-    """
-    import inspect
-
+    import personalclaw.config.loader as loader
+    from personalclaw.config.loader import AppConfig
     from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.schedule_history import ScheduleRunStore
 
-    src = inspect.getsource(GatewayOrchestrator._init_cron)
-    assert "ScheduleRunStore(config_dir()).rotate_all()" in src
-    assert "load_without_timer" not in src
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.gateway.config_dir", lambda: tmp_path)
+    cfg = AppConfig()
+    with patch.object(cfg, "load_credentials", return_value={}):
+        orch = GatewayOrchestrator(cfg, no_dashboard=True, no_crons=False, no_open=True)
+    rotate = AsyncMock()
+    try:
+        with patch.object(ScheduleRunStore, "rotate_all", rotate):
+            await orch._init_cron()
+    finally:
+        for name in ("_clock_task", "_reaper_task", "_file_watch_task", "_web_watch_task"):
+            task = getattr(orch, name, None)
+            if task is not None:
+                task.cancel()
+    assert rotate.await_count == 1
 
 
 def test_boot_has_no_legacy_timer_left_to_arm(tmp_path):

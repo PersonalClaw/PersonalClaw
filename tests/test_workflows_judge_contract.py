@@ -5,8 +5,6 @@ than discourages. The distinction matters: prompt doctrine ("be skeptical") is a
 and advice loses to a worker being scored on completion.
 """
 
-import inspect
-
 import pytest
 from workflows_judge_contract_shared import _repo_src
 
@@ -475,7 +473,7 @@ def test_the_docstring_describes_the_live_path_rather_than_disclaiming_it():
     docstring must NAME the seams that enforce — a reader who is told enforcement is live and not
     told where goes looking for a caller they cannot find.
     """
-    from personalclaw.workflows import engine, judge_contract
+    from personalclaw.workflows import judge_contract
 
     doc = (judge_contract.__doc__ or "").lower()
     assert _UNWIRED_MARKER not in doc, (
@@ -489,20 +487,39 @@ def test_the_docstring_describes_the_live_path_rather_than_disclaiming_it():
             "unwired notice it replaced"
         )
 
-    gate = inspect.getsource(engine.dispatch_gate)
-    # Vacuity floor #2: confirm we are reading the function that owns the judge branch before
-    # drawing a conclusion from what its text does contain.
-    assert "GateKind.JUDGE" in gate, (
-        "dispatch_gate no longer contains the judge branch — this rail is reading the wrong "
-        "function and the assertions below prove nothing"
+
+async def _judged(answer: str) -> tuple[list[str], object]:
+    """Run a live judge gate whose model answers *answer*: what it was asked, and the result."""
+    from personalclaw.workflows.bindings import BindingContext
+    from personalclaw.workflows.engine import dispatch_gate
+    from personalclaw.workflows.models import Node
+
+    asked: list[str] = []
+
+    async def completion(instruction, use_case=None, output_type=None, **_kw):
+        asked.append(instruction)
+        return answer
+
+    node = Node.from_dict(
+        {"kind": "gate", "id": "j", "config": {"kind": "judge", "prompt": "Is it done?"}}
     )
-    assert "EXACTLY ONE word" not in gate, (
-        "the judge gate demands one bare word again. A bare word cannot carry the proof a PASS is "
-        "required to cite, so the contract becomes inexpressible on the live path — that is the "
-        "regression the wiring removed, not a simplification"
-    )
-    for named in ("judge_instruction", "parse_judge_json", "validate_verdict"):
-        assert named in gate, f"the judge gate no longer calls {named!r}"
+    return asked, await dispatch_gate(node, BindingContext(), now=0.0, completion=completion)
+
+
+@pytest.mark.asyncio
+async def test_the_live_judge_gate_asks_for_the_contract_verdict_not_one_word():
+    """The gate asks the judge for the contract's JSON verdict (``judge_instruction``), and a bare
+    word is not taken as a pass: one word cannot carry the proof a PASS has to cite, so a gate
+    that asked for one would make the contract inexpressible on the live path."""
+    from personalclaw.workflows.models import FailureClass, InstanceState
+
+    asked, bare = await _judged("PASS")
+    assert asked == [judge_instruction("Is it done?", JudgeHints())]
+    assert bare.state == InstanceState.FAILED
+    assert bare.failure.failure_class == FailureClass.PROTOCOL
+
+    _, proved = await _judged('{"verdict": "PASS", "proof": "re-ran the command; exit 0"}')
+    assert proved.state == InstanceState.DONE, "positive control: a contract PASS passes"
 
 
 def test_the_posture_measurement_stays_with_the_code():

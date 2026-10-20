@@ -410,15 +410,8 @@ class TestConfigRoundTrip:
 
             assert _EDITABLE_CONFIG[f"loops.{field_name}"] == {"type": "bool"}
         else:
-            import pathlib
-
-            src = (
-                pathlib.Path(__file__).resolve().parents[1]
-                / "src/personalclaw/dashboard/handlers/files.py"
-            ).read_text(encoding="utf-8")
-            assert src.count(f'"{field_name}"') >= 2  # allowlist + bool coercion loop
-            # And the round trip, driven: the value a PUT stores is the value the GET answers.
-            # (A source check for `"{field}": cfg.dashboard.{field}` went red when #3641 read the
+            # The round trip, driven: the value a PUT stores is the value the GET answers. (A
+            # source check for `"{field}": cfg.dashboard.{field}` went red when #3641 read the
             # section into a local, with the GET still returning the field.)
             assert asyncio.run(_dashboard_config_round_trip(field_name, not default)) is (
                 not default
