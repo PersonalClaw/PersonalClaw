@@ -14,9 +14,12 @@ exists because the opposite behaviour would be visibly wrong to a user:
 
 from __future__ import annotations
 
+import asyncio
 import json
+import types
 
 import pytest
+from table_rows import row
 
 from personalclaw.inbox import InboxStore, ItemKind, ItemStatus
 from personalclaw.planning import scratchpad
@@ -493,33 +496,137 @@ def test_seen_state_tolerates_junk():
     assert scratchpad.SeenState.from_dict({"entries": {"a": {"line": 1}}}).knows("a")
 
 
-def test_the_intake_is_actually_called_from_the_poll_loop(home):
-    """🔴 A scan nobody runs is the inert-control shape this repo keeps fixing.
+# ── the live caller: the gateway's file-watch poll loop, driven ──
 
-    Asserted on the SOURCE of the loop that owns it, matching
-    `test_gateway_file_watch.test_the_poll_loop_is_started_in_init_cron`: a behavioural assertion
-    would pass against a helper that exists and is never reached. `_scan_scratchpad` must be
-    invoked from `_file_watch_poll_loop`, and it must call `scan_and_propose`.
-    """
-    import inspect
-
-    from personalclaw import gateway as G
-
-    loop_src = inspect.getsource(G.GatewayOrchestrator._file_watch_poll_loop)
-    assert "_scan_scratchpad" in loop_src, "the scan must be reached from a loop that actually runs"
-
-    helper_src = inspect.getsource(G.GatewayOrchestrator._scan_scratchpad)
-    assert "scan_and_propose" in helper_src
+VET = "- [ ] book the vet for Friday\n"
+PASSPORT = "- [ ] renew the passport before June\n"
 
 
-def test_the_intake_runs_inside_the_incident_guard(home):
-    """Proposing work is unattended background activity, so incident mode must suspend it too."""
-    import inspect
+class _LiveInbox:
+    """The dashboard state a running gateway hands the scan: the inbox service's store, the one
+    the API serves, and the notifications a proposal delivers."""
 
-    from personalclaw import gateway as G
+    def __init__(self, store: InboxStore) -> None:
+        self._inbox_svc = types.SimpleNamespace(inbox=store)
+        self.notified: list[str] = []
 
-    src = inspect.getsource(G.GatewayOrchestrator._file_watch_poll_loop)
-    assert src.index("_scan_scratchpad") > src.index("incident_active()")
+    def notify(self, kind, title, body, meta=None):
+        self.notified.append(title)
+
+
+def _passes(home, monkeypatch, caplog, steps, *, named=True):
+    """Run the gateway's own `_file_watch_poll_loop` in *home* over a pad holding one todo, one
+    pass per entry of *steps*, each entry's changes made just before its pass: `add` writes a
+    second todo to the pad, `on` and `off` turn incident mode on and off, `name` names the pad in
+    config.json (*named* names it before the first pass). Returns the pad lines the live inbox
+    holds a proposal for before each pass and after the last, and the live state."""
+    import personalclaw.gateway as gw
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.guardrails import incident
+
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: home)
+    pad = write_pad(home, VET)
+
+    def name_the_pad() -> None:
+        cfg = AppConfig()
+        cfg.planning.scratchpad_path = str(pad)
+        (home / "config.json").write_text(json.dumps(cfg.to_dict()), encoding="utf-8")
+
+    act = {
+        "add": lambda: pad.write_text(VET + PASSPORT, encoding="utf-8"),
+        "on": lambda: incident.activate("a test of the scratchpad intake"),
+        "off": incident.resume,
+        "name": name_the_pad,
+    }
+    if named:
+        name_the_pad()
+    store = InboxStore(path=home / "inbox.json")
+    state = _LiveInbox(store)
+
+    pads: set[str] = set()
+
+    def proposed() -> tuple[int, ...]:
+        # Kept, not asserted, here: it runs inside the loop's own `except Exception`, which would
+        # swallow a failed assertion and go round again.
+        rows = [r for r in store.items.values() if r.item_kind == ItemKind.PROPOSAL.value]
+        pads.update(str(r.refs.get("scratchpad_path")) for r in rows)
+        return tuple(sorted(int(r.refs.get("scratchpad_line", 0)) for r in rows))
+
+    so_far: list[tuple[int, ...]] = []
+
+    async def sleep(_secs: float) -> None:
+        so_far.append(proposed())
+        if len(so_far) > len(steps):
+            raise asyncio.CancelledError
+        for step in filter(None, steps[len(so_far) - 1].split("+")):
+            act[step]()
+
+    monkeypatch.setattr(
+        gw,
+        "asyncio",
+        types.SimpleNamespace(
+            sleep=sleep, to_thread=asyncio.to_thread, CancelledError=asyncio.CancelledError
+        ),
+    )
+    orch = object.__new__(gw.GatewayOrchestrator)
+    orch.dashboard_state = state
+    # The promotion scan shares the loop and is not what this drives.
+    orch._scan_autonomy_promotions = lambda: None
+    caplog.clear()
+    try:
+        with caplog.at_level("WARNING", logger="personalclaw.gateway"):
+            with pytest.raises(asyncio.CancelledError):
+                asyncio.run(orch._file_watch_poll_loop())
+    finally:
+        incident.resume()
+    failed = [r.getMessage() for r in caplog.records if r.name == "personalclaw.gateway"]
+    assert failed == [], "a pass failed and the loop went on"
+    assert pads <= {str(pad)}, f"proposed from a pad this home does not name: {pads}"
+    return so_far, state
+
+
+def test_the_poll_loop_raises_the_scratchpads_proposals(tmp_path, monkeypatch, caplog, subtests):
+    """🔴 A scan nobody runs is the inert-control shape this repo keeps fixing: a helper that
+    exists and is never reached passes every test of the helper.
+
+    Driven: the gateway's own poll loop, each row in its own home, with nothing between it and the
+    scan. A pass raises a proposal for each todo the pad gained since the last, into the store the
+    API serves, with one notification each; an unchanged pad raises nothing again, and a pad named
+    in config.json while the loop runs is read from the next pass."""
+    # case, the steps before each pass, the pad named before the first, the lines proposed
+    table = [
+        ("each pass raises what is new", ("", "add"), True, [(), (1,), (1, 2)]),
+        ("an unchanged pad raises nothing again", ("", "", ""), True, [(), (1,), (1,), (1,)]),
+        ("a pad named while the loop runs", ("", "name", ""), False, [(), (), (1,), (1,)]),
+    ]
+    for case, steps, named, want in table:
+        with row(subtests, case=case):
+            got, state = _passes(tmp_path / case, monkeypatch, caplog, steps, named=named)
+            assert got == want, f"{case}: proposed before each pass {got}"
+            assert len(state.notified) == len(want[-1]), f"{case}: {state.notified}"
+
+
+def test_incident_mode_holds_the_intake_and_the_first_pass_after_raises_it(
+    tmp_path, monkeypatch, caplog, subtests
+):
+    """Proposing work is unattended background activity, so incident mode suspends it too.
+
+    Driven: the same loop, each row in its own home. While incident mode is on a pass proposes
+    nothing, though the pad gained a todo; the loop keeps going, and the first pass after the
+    switch is turned off raises what it held."""
+    # case, the steps before each pass, the lines proposed before each pass and after the last
+    table = [
+        ("on from the start", ("on", "", "off"), [(), (), (), (1,)]),
+        ("on after one pass", ("", "on+add", "", "off"), [(), (1,), (1,), (1,), (1, 2)]),
+        ("on and never off", ("on", "add"), [(), (), ()]),
+    ]
+    for case, steps, want in table:
+        with row(subtests, case=case):
+            got, state = _passes(tmp_path / case, monkeypatch, caplog, steps)
+            assert got == want, f"{case}: proposed before each pass {got}"
+            assert len(state.notified) == len(want[-1]), f"{case}: {state.notified}"
 
 
 def test_a_proposal_row_is_a_non_channel_kind(home):
