@@ -708,39 +708,98 @@ def test_AUTOPAUSED_and_QUARANTINED_are_NEVER_revived_on_a_timer(store, tmp_path
         assert store.get(f"clock:{state}").trigger.state == state
 
 
-def test_the_park_cooldown_is_PERSISTED_by_the_outcome_path():
+def _ended(store, tmp_path, monkeypatch, *, at, exc=None, tid="clock:sync"):
+    """A fire of *tid* that ended at *at*, through the recorder every fire's ending goes through
+    (`run_record.record_run`), into a run history on *tmp_path*: raising *exc*, or succeeding.
+    Returns the stored trigger after it."""
+    from types import SimpleNamespace
+
+    from personalclaw.action_providers.base import ActionResult
+    from personalclaw.schedule_history import ScheduleRunStore
+    from personalclaw.triggers import run_record, run_source
+
+    monkeypatch.setattr(run_record, "time", SimpleNamespace(time=lambda: at))
+    asyncio.run(
+        run_record.record_run(
+            store.get(tid).trigger,
+            started_at=at,
+            exc=exc,
+            result=None if exc is not None else ActionResult(success=True),
+            source=run_source.SCHEDULE,
+            store=store,
+            runs=ScheduleRunStore(tmp_path),
+        )
+    )
+    return store.get(tid).trigger
+
+
+def test_the_park_cooldown_is_PERSISTED_by_the_outcome_path(store, tmp_path, monkeypatch):
     """The other half of the wiring. `evaluate` has always returned `retry_after`; the outcome path
-    dropped it, so even a caller that asked `unpark_due` had nothing to read."""
-    import inspect
+    dropped it, so even a caller that asked `unpark_due` had nothing to read.
 
-    from personalclaw.triggers import run_record
+    A fire that ends in a transport outage parks its trigger with the cooldown on the stored row,
+    which the tick then keeps it parked for and brings it back after; a clean ending clears it."""
+    from personalclaw.triggers.autopause import PARK_COOLDOWN_SECS
+    from personalclaw.triggers.models import TriggerState
 
-    source = inspect.getsource(run_record)
-    assert "live.park_retry_after = (" in source
-    assert "float(decision.retry_after)" in source
+    _parkable(store, tmp_path)
+    live = _ended(store, tmp_path, monkeypatch, at=NOW, exc=ConnectionError("host unreachable"))
+    assert live.state == TriggerState.PARKED.value
+    assert live.park_retry_after == NOW + PARK_COOLDOWN_SECS, "the cooldown is on the stored row"
+
+    held = asyncio.run(SVC.tick(store, now=NOW + PARK_COOLDOWN_SECS - 1, persist=True))
+    assert held.unparked == [], "a cooldown that has not elapsed keeps it parked"
+    assert store.get("clock:sync").trigger.state == TriggerState.PARKED.value
+    back = asyncio.run(SVC.tick(store, now=NOW + PARK_COOLDOWN_SECS, persist=True))
+    assert back.unparked == ["clock:sync"], "the tick reads the cooldown the outcome path wrote"
+
+    _ended(store, tmp_path, monkeypatch, at=NOW + 1_000, exc=ConnectionError("host unreachable"))
+    live = _ended(store, tmp_path, monkeypatch, at=NOW + 1_100)
+    assert live.state == TriggerState.ACTIVE.value
+    assert live.park_retry_after == 0.0, "a clean ending carries no stale cooldown into the next"
 
 
-def test_the_unpark_runs_BEFORE_the_due_set_is_computed():
+def test_the_unpark_runs_BEFORE_the_due_set_is_computed(store, tmp_path):
     """Order is load-bearing: a parked trigger has `state != ACTIVE`, so `fires_automatically` is
     False and `due_ids` filters it out. Unparking after that walk would never bring anything back.
-    """
-    import inspect
 
-    source = inspect.getsource(SVC.tick)
-    assert source.index("_unpark_ready(") < source.index("for trigger_id in due_ids(")
+    One tick: a parked trigger whose cooldown has elapsed and whose slot is due comes back AND
+    fires in that tick, not a slot later."""
+    _parkable(store, tmp_path)
+    _park(store, retry_after=NOW + 10_100)
+    result = asyncio.run(SVC.tick(store, now=NOW + 10_200, base_dir=tmp_path, persist=True))
+    assert result.unparked == ["clock:sync"]
+    assert [f.trigger.id for f in result.fires] == ["clock:sync"], "it fires in the tick it is back"
 
 
-def test_unparking_does_NOT_reset_the_failure_counter(store, tmp_path):
+def test_unparking_does_NOT_reset_the_failure_counter(store, tmp_path, monkeypatch, caplog):
     """Parking never spent the budget in the first place (a parking exit leaves
     `consecutive_failures` untouched, deliberately, so a flapping credential cannot clear a real
     streak). Clearing it on unpark would hand a genuinely failing trigger a fresh budget every time
-    an unrelated outage parked it."""
-    import inspect
+    an unrelated outage parked it.
 
-    source = inspect.getsource(SVC._unpark_ready)
-    assert "consecutive_failures" in source, "the reasoning must be recorded"
-    assert "consecutive_failures = 0" not in source
-    assert "consecutive_failures=0" not in source
+    The count is derived from the run history (`autopause.consecutive_failures_from`), so this
+    drives it there: two failures of a budget of three, an outage that parks it, the tick that
+    brings it back, and one more failure, which is the third and pauses it."""
+    from personalclaw.triggers.autopause import PARK_COOLDOWN_SECS
+    from personalclaw.triggers.models import TriggerState
+
+    trigger = _parkable(store, tmp_path)
+    trigger.failure_policy = {"autopause_after": 3}
+    store.upsert(trigger)
+    for i in (1, 2):
+        live = _ended(store, tmp_path, monkeypatch, at=NOW + i, exc=RuntimeError("boom"))
+    assert live.state == TriggerState.ACTIVE.value
+    live = _ended(store, tmp_path, monkeypatch, at=NOW + 3, exc=ConnectionError("unreachable"))
+    assert live.state == TriggerState.PARKED.value
+
+    back_at = NOW + 3 + PARK_COOLDOWN_SECS
+    assert asyncio.run(SVC.tick(store, now=back_at, persist=True)).unparked == ["clock:sync"]
+    with caplog.at_level("WARNING", logger="personalclaw.triggers.run_record"):
+        live = _ended(store, tmp_path, monkeypatch, at=back_at + 1, exc=RuntimeError("boom"))
+    assert live.state == TriggerState.AUTOPAUSED.value, "the third failure in a row pauses it"
+    assert live.enabled is False
+    assert "autopaused: paused after 3 failed runs" in caplog.text
 
 
 # ── 🔴 the TICK now records lateness ──
