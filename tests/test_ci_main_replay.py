@@ -534,7 +534,7 @@ def test_an_unreadable_verdict_file_runs_every_job(subtests: Any) -> None:
         "a record with no quarantined list": _record("rails").replace(
             b'"quarantined": [],\n ', b""
         ),
-        "a record of another schema": _record("rails").replace(b"job-record/1", b"job-record/2"),
+        "a record of another schema": _record("rails").replace(b"job-record/2", b"job-record/1"),
     }
     assert len(planted) == 4
     for name, bad in planted.items():

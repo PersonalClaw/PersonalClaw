@@ -16,11 +16,13 @@ must then exist and be newer than the job's start, so a pytest that died before 
 red.
 
 Each job (each shard of a sharded one) leaves one record (:func:`verdict.job_record`): its key,
-result, the head it ran on, the partner revisions it read, the diagnostic rerun (below), which
-quarantined tests failed, and each step's argv, exit and seconds. A record is left
-only when the checkout was clean, at the same head, before and after the job, and each partner
-checkout the job reads was at the same head before and after it: otherwise the head or partner
-revision it would name is not what it ran.
+result, the head it ran on, the partner revisions it read, the run and its attempt (on GitHub,
+``$GITHUB_RUN_ID`` and ``$GITHUB_RUN_ATTEMPT``, either refused before any step when it cannot be
+read; locally, no run and attempt 1), the diagnostic rerun (below), which quarantined tests
+failed, and each step's argv, exit and seconds. A record is left only when the checkout was
+clean, at the same head, before and after the job, and each partner checkout the job reads was
+at the same head before and after it: otherwise the head or partner revision it would name is
+not what it ran.
 
 **The diagnostic rerun.** When a pytest step exits 1 (tests ran and some failed) and nothing else
 went wrong, :func:`diagnose` reads the failed tests from the step's own JUnit report, each as the
@@ -61,8 +63,9 @@ its receipt, ``reuse-receipt.json``; each other job runs, and a clean pass of a 
 recorded. ``--no-reuse`` reads no recorded pass and still records. A working-tree run and
 ``run-job`` never read or write the store.
 
-A local result never stands in for GitHub's: no workflow reads these records or the store. A
-local ``--workers N`` replaces the catalogue's worker count, is refused on GitHub, is written in
+A local result never stands in for GitHub's: a local record names no run, so a run's verdict
+(``verdict --records --run-id``) reads it red, and no workflow reads the store. A local
+``--workers N`` replaces the catalogue's worker count, is refused on GitHub, is written in
 the record, and is in the key.
 
 Standard library only, like every ``tools/ci`` module.
@@ -1108,6 +1111,35 @@ def _owned_env(job: Job) -> None:
         raise Unreadable(f"{job.id}: its env sets {', '.join(owned)}, which the runner owns")
 
 
+def run_attempt(host: Host) -> int:
+    """The run attempt a record names: on GitHub, ``$GITHUB_RUN_ATTEMPT``, which a rerun of the
+    run raises, so a reader of attempt 1 can refuse a record a later attempt wrote; locally, 1.
+    On GitHub a value that is not a whole number from 1 to 999999 in ASCII digits
+    (:data:`verdict.ATTEMPT_TEXT`), or none, is refused before any step runs, since a record must
+    never name an attempt it cannot vouch for."""
+    if not host.on_github:
+        return 1
+    text = os.environ.get("GITHUB_RUN_ATTEMPT")
+    if text is None or not verdict.ATTEMPT_TEXT.fullmatch(text):
+        raise Unreadable(
+            f"GITHUB_RUN_ATTEMPT must be a whole number from 1 to 999999 on GitHub, got {text!r}"
+        )
+    return int(text)
+
+
+def run_id_of(host: Host) -> int | None:
+    """The run a record names: on GitHub, ``$GITHUB_RUN_ID``, so the run's verdict reads a record
+    of another run red; locally, none, so no run's verdict ever reads a local record green. On
+    GitHub a value that is not a whole number from 1 in ASCII digits (:data:`verdict.RUN_ID_TEXT`),
+    or none, is refused before any step runs."""
+    if not host.on_github:
+        return None
+    text = os.environ.get("GITHUB_RUN_ID")
+    if text is None or not verdict.RUN_ID_TEXT.fullmatch(text):
+        raise Unreadable(f"GITHUB_RUN_ID must be a whole number from 1 on GitHub, got {text!r}")
+    return int(text)
+
+
 def run_one(
     cat: Catalogue,
     job: Job,
@@ -1129,6 +1161,8 @@ def run_one(
         raise Unreadable(
             "--working-tree is a local mode: on GitHub the checkout is the commit under test"
         )
+    run_id = run_id_of(host)
+    attempt = run_attempt(host)
     head, clean = _state(host)
     revisions = external_revisions([job], host)
     slug = re.sub(r"[^a-z0-9-]+", "-", key.lower()).strip("-")
@@ -1288,6 +1322,8 @@ def run_one(
         result=word,
         identity=verdict.Identity(head, revisions),
         steps=steps,
+        attempt=attempt,
+        run_id=run_id,
         rerun=rerun,
         quarantined=quarantined,
         plan=plan,

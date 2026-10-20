@@ -497,6 +497,21 @@ overrides (`--areas`, beside the catalogue by default):
   catalogue does not have makes that override's paths whole-tier instead.
 - **`--outputs`** prints the two GitHub output lines on stdout, `full=true|false` and
   `jobs=<JSON list>`, and the plan as JSON on stderr, with anything the floor read printed.
+- **`--matrix`** prints the plan as a job matrix instead: one entry per planned job and shard,
+  in plan order, each with its `id`, `key`, `shard` (`i/N`, or empty for a job that takes no
+  `--shard`, so a workflow passes `--shard` only when it is set), `runs-on`, `timeout`,
+  `python`, `node`, `browser`, `container` (a script job's, or empty), `after` and `stage`, all
+  taken from the catalogue. `after` names the planned jobs whose output the entry's job uses
+  (the catalogue's `after`), and `stage` is 1 for an entry that waits for none, else one more
+  than the latest stage it waits for: a `strategy.matrix` starts every entry at once, so a
+  workflow runs one matrix per stage, each after the one before (in the merge tier `web-build`
+  is stage 1, `package` and the e2e legs 2, and `e2e`, which merges the legs, 3). An entry's
+  `key` is the key `run-job` writes in that shard's record (`python-suite (2/4)`), and `keys`
+  lists them all: the plan a results stage judges the uploaded records against. With
+  `--outputs` it adds two lines, `matrix=` (holding `include` alone, since any other key of a
+  `strategy.matrix` would become a dimension) and `keys=`. A planned job the catalogue does not
+  hold, or an `after` that makes a cycle, exits 2. Nothing calls it yet; the candidate
+  workflows will, and split the entries by stage.
 - **Exit codes:** 0 with a plan; 2, printing nothing, when the tier has no job in the catalogue
   (`weekly` and `release` have none yet), or the catalogue or its overrides, or the
   `--trusted-areas` file or the catalogue beside it, cannot be read, so a caller plans
@@ -587,6 +602,28 @@ the default branch, exits 0 green, 1 red and 2 on input it cannot read. Any usag
 it cannot read: there is no `-h`, because a help page would exit 0 having judged nothing, and an
 option given twice is refused rather than the last one winning. It appends its reasons, or why
 it could not read its input, to the step summary.
+
+`--records <folder>` adds the per-job records one run's test stage uploaded, one artifact per
+folder as `download-artifact` lays them out, read with `from_job_records`, and `--run-id <id>`
+(`github.run_id`) names that run: each is refused without the other. Each test-stage entry
+uploads its record as `ci-record-<key slug>-<run id>-<attempt>` (`verdict.record_artifact`), so
+a rerun never overwrites the first attempt's records, and each record must sit alone in the
+folder that name gives its own key and attempt in this run: another run's artifact, a renamed
+one, a second upload of a record, or two records in one folder is refused. With `--records` a
+planned key is met only by its record, so one with no record reads `missing`, and a matrix
+entry that never started is red even when `needs` shows the matrix job as green; a `needs` job
+named as a planned key is refused, since it would stand in for that record. A record of another
+head reads `stale head`; one naming another run reads `another run`, and a local one, which
+names no run, `no run`.
+
+`--attempt <n>` is the run's own attempt (`github.run_attempt`, 1 to 999999 in ASCII digits, 1
+by default). The `needs` results are stamped with it. The records keep the attempt each names,
+and one naming a later attempt than the run's is refused, so a rerun's record never stands in
+an earlier attempt's reading. On a rerun, a planned key with no attempt-1 record reads
+`missing on attempt 1`: every planned entry ran on attempt 1, so a key attempt 1 left no record
+for (a runner that died, a cancelled entry) stays red, as a red on attempt 1 does, and a rerun
+carries only what attempt 1 recorded. Also refused: a link anywhere in the folder, a file beside
+the artifact folders, a file over 1 MB, and any record the reader would refuse.
 
 On a push to `main` only, `decide_main_push` takes one more input: the planned jobs
 `tools/ci/superseded.py` proved were replaced by a newer push (see "A burst of merges" below).
@@ -1269,14 +1306,16 @@ shadow mode, and the recall study.
 - **Its reports.** Each JUnit report the job declares must exist and be newer than the job's
   start, or the job is red: a pytest that died before writing one is red, not green.
 - **One record per job, or per shard.** `verdict.job_record` writes its key, result, head,
-  partner revisions, attempt, the diagnostic rerun (below), which quarantined tests
-  failed (read from the reports' `quarantine_issue` property), where a shard plan came from, a
-  local worker count, and each step's argv, exit and seconds. The partner revisions are those
-  of the partners the job's own external inputs name. `verdict.from_job_records` reads records
-  back and refuses any other shape, NaN and Infinity among them. A checkout that was not clean
-  at one head before and after the job leaves no record, since the head it would name is not
-  the tree it ran; so does a partner checkout the job reads that was not at one head before and
-  after it. The partner checkout (`.ci-apps`) and the e2e jobs' reports (`web/e2e-report.json`,
+  partner revisions, run and attempt (on GitHub `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT`, and a
+  value of either that is not a whole number from 1 in ASCII digits, or none, runs nothing;
+  locally no run and attempt 1, so a run's verdict reads a local record red), the diagnostic
+  rerun (below), which quarantined tests failed (read from the reports' `quarantine_issue`
+  property), where a shard plan came from, a local worker count, and each step's argv, exit and
+  seconds. The partner revisions are those of the partners the job's own external inputs name.
+  `verdict.from_job_records` reads records back and refuses any other shape, NaN and Infinity
+  among them. A checkout that was not clean at one head before and after the job leaves no
+  record, since the head it would name is not the tree it ran; so does a partner checkout the
+  job reads that was not at one head before and after it. The partner checkout (`.ci-apps`) and the e2e jobs' reports (`web/e2e-report.json`,
   `web/blob-report/`, `web/playwright-report/`) are git-ignored, so they leave the checkout clean.
 - **What runs here.** A job for the other platform family, in a container, or needing a
   toolchain or a partner checkout (`.ci-apps`) this machine lacks is named and not run. A
