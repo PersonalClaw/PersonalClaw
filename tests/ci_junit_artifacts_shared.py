@@ -80,7 +80,7 @@ def commands(step: str) -> list[str]:
     * ``run: cmd`` → one command;
     * ``run: |`` (literal) → one per line, joining ``\\``-continuations;
     * ``run: >`` (folded) → the whole payload joined into ONE command, which is what the
-      shell receives. ``security-corpus`` spells its invocation this way, so a per-line
+      shell receives. ``security`` spells its invocation this way, so a per-line
       scan would read the flag as living on a different command from the ``pytest``.
     """
     lines = step.splitlines()

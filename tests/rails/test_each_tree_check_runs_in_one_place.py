@@ -47,45 +47,20 @@ KNOWN_COPIES: frozenset[tuple[str, str]] = frozenset()
 
 #: The suite's modules and helpers that read ``docs/``: prose checked against the tree. Each is a
 #: whole-tree read the suite still holds, so the suite's inputs are the docs too (#3945). These
-#: three are security-marked, so the rails census keeps them where they are, and they stay.
+#: two are security-marked, so the rails census keeps them where they are, and they stay. The
+#: third, ``tests/security/test_scanner_adversarial.py``, is the ``security`` job's
+#: (``shards.JOB_OWNED``), so it is no longer the suite's.
 KNOWN_DOCS_READERS: frozenset[str] = frozenset(
     {
-        "tests/security/test_scanner_adversarial.py",
         "tests/test_architecture_docs_match_the_tree.py",
         "tests/test_browse_cdp_preflight.py",
     }
 )
 
 #: The test files a workflow job runs by name while the shards collect them too, until the
-#: shards leave each to its job (``shards.JOB_OWNED``). ``(workflow job, file)``.
-KNOWN_FILE_COPIES: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("breadth.yml security-corpus", "tests/security/test_app_data_reads_never_follow_links.py"),
-        ("breadth.yml security-corpus", "tests/security/test_app_installs_what_was_scanned.py"),
-        ("breadth.yml security-corpus", "tests/security/test_app_signature.py"),
-        ("breadth.yml security-corpus", "tests/security/test_app_staging_links.py"),
-        ("breadth.yml security-corpus", "tests/security/test_mode_independence.py"),
-        ("breadth.yml security-corpus", "tests/security/test_scanner_adversarial.py"),
-        ("breadth.yml security-corpus", "tests/security/test_scanner_judges_what_the_app_runs.py"),
-        ("breadth.yml security-corpus", "tests/security/test_scanner_reachability.py"),
-        ("breadth.yml security-corpus", "tests/security/test_scanner_recall.py"),
-        ("breadth.yml security-corpus", "tests/security/test_scanner_runtime_use.py"),
-        ("breadth.yml security-corpus", "tests/test_supply_chain_gates.py"),
-        ("breadth.yml security-corpus", "tests/test_supply_chain_scanner.py"),
-        ("ci.yml security-corpus", "tests/security/test_app_data_reads_never_follow_links.py"),
-        ("ci.yml security-corpus", "tests/security/test_app_installs_what_was_scanned.py"),
-        ("ci.yml security-corpus", "tests/security/test_app_signature.py"),
-        ("ci.yml security-corpus", "tests/security/test_app_staging_links.py"),
-        ("ci.yml security-corpus", "tests/security/test_mode_independence.py"),
-        ("ci.yml security-corpus", "tests/security/test_scanner_adversarial.py"),
-        ("ci.yml security-corpus", "tests/security/test_scanner_judges_what_the_app_runs.py"),
-        ("ci.yml security-corpus", "tests/security/test_scanner_reachability.py"),
-        ("ci.yml security-corpus", "tests/security/test_scanner_recall.py"),
-        ("ci.yml security-corpus", "tests/security/test_scanner_runtime_use.py"),
-        ("ci.yml security-corpus", "tests/test_supply_chain_gates.py"),
-        ("ci.yml security-corpus", "tests/test_supply_chain_scanner.py"),
-    }
-)
+#: shards leave each to its job (``shards.JOB_OWNED``). ``(workflow job, file)``. None is left:
+#: the security corpus, the last, runs in ``ci.yml``'s ``security`` job alone.
+KNOWN_FILE_COPIES: frozenset[tuple[str, str]] = frozenset()
 
 _NO_BROWSER = (
     "browse-live runs it on Linux with a browser; the shards' run is its only run on macOS and "
@@ -293,6 +268,17 @@ def test_every_file_the_shards_leave_to_a_job_still_runs_there() -> None:
     assert shards.JOB_OWNED, "nothing is left to a job, so this row checks nothing"
     problems = job_owned_problems(REPO, shards.JOB_OWNED)
     assert not problems, "\n  ".join(problems)
+
+
+def test_the_maintainer_docs_name_each_job_the_shards_leave_a_file_to() -> None:
+    """``docs/maintainers/ci.md`` says what the shard plan leaves out: each job of
+    ``shards.JOB_OWNED``, beside the files it runs."""
+    docs = (REPO / "docs" / "maintainers" / "ci.md").read_text(encoding="utf-8")
+    [said] = [p for p in docs.split("\n\n") if p.startswith("The plan leaves out `tests/rails`")]
+    jobs = sorted({owner.split(" ", 1)[1] for owner in shards.JOB_OWNED.values()})
+    assert jobs, "nothing is left to a job, so this row checks nothing"
+    missing = [job for job in jobs if f"in `{job}`" not in said]
+    assert not missing, f"ci.md's paragraph on shards.JOB_OWNED names no file in {missing}"
 
 
 def test_no_suite_module_starts_reading_docs() -> None:

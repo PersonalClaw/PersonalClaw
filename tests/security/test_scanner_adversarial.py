@@ -811,13 +811,37 @@ class TestCorpusIsComplete:
         assert "tests/security/corpus" in text
         assert "pytest" in text
 
-    def test_nightly_job_runs_the_corpus(self):
-        wf = REPO_ROOT / ".github" / "workflows" / "breadth.yml"
+    @pytest.mark.parametrize(
+        "workflow, job, runner",
+        [
+            ("ci.yml", "security", "ubuntu-"),
+            ("breadth.yml", "security", "ubuntu-"),
+            ("breadth.yml", "security-macos", "macos-"),
+        ],
+    )
+    def test_each_tier_has_a_security_job_that_runs_the_corpus(self, workflow, job, runner):
+        """No suite shard collects the corpus, so these jobs are where it runs: ci.yml's on
+        every pull request and push to main, and breadth.yml's nightly on Linux and macOS."""
+        import yaml
+
+        wf = REPO_ROOT / ".github" / "workflows" / workflow
         assert wf.is_file(), f"missing workflow: {wf}"
-        text = wf.read_text(encoding="utf-8")
-        assert "security-corpus:" in text, "no security-corpus job in breadth.yml"
-        assert "tests/security" in text, "the nightly job does not run the corpus"
-        assert "schedule:" in text and "cron:" in text
+        data = yaml.safe_load(wf.read_text(encoding="utf-8"))
+        spec = (data.get("jobs") or {}).get(job)
+        assert spec is not None, f"no {job} job in {workflow}"
+        assert str(spec.get("runs-on", "")).startswith(runner), spec.get("runs-on")
+        runs = " ".join(str(s.get("run") or "") for s in spec.get("steps") or [])
+        for path in (
+            "tests/security",
+            "tests/test_supply_chain_scanner.py",
+            "tests/test_supply_chain_gates.py",
+        ):
+            assert path in runs, f"{workflow}:{job} does not run {path}"
+        if workflow == "ci.yml":
+            assert "if" not in spec, "ci.yml's security job must run on every run"
+        else:
+            on = data.get(True) or data.get("on") or {}
+            assert "schedule" in on, "breadth.yml is not nightly"
 
 
 class TestCorpusRedsOnAWeakenedScanner:

@@ -7,6 +7,7 @@ command is the workflow's".
 
 from __future__ import annotations
 
+import re
 import shlex
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from tools.ci.__main__ import main
 #: each platform as its security evidence.
 _MINIMAL = """
 [tier.merge]
-jobs = ["rails", "python-suite", "python-suite-macos"]
+jobs = ["rails", "python-suite", "python-suite-macos", "security"]
 
 [[job]]
 id = "rails"
@@ -56,10 +57,24 @@ security = "security"
 platform = "macos-26"
 timeout_min = 50
 command = [{ argv = ["uv", "run", "pytest", "tests"] }]
+
+[[job]]
+id = "security"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "security"
+timeout_min = 25
+command = [{ argv = ["uv", "run", "pytest", "tests/security"] }]
 """
 
 #: The merge tier's security evidence, the suite on each platform.
 _SUITES = ("python-suite", "python-suite-macos")
+#: ... and the security corpus's one run, which no suite shard collects. Spelled out, not read from
+#: ``MERGE_SECURITY_JOBS``, so a job dropped there is not dropped from the tests that hold it.
+_SECURITY_EVIDENCE = (*_SUITES, "security")
 
 
 def _refused(text: str) -> list[str]:
@@ -92,7 +107,7 @@ def test_a_minimal_catalogue_loads_into_typed_jobs() -> None:
     assert rails.reuse == catalogue.Reuse("tree")
     assert rails.command == (catalogue.Step(("uv", "run", "pytest", "tests/rails")),)
     assert cat.job("python-suite").shards == 4
-    assert [j.id for j in cat.tier("merge")] == ["rails", *_SUITES]
+    assert [j.id for j in cat.tier("merge")] == ["rails", *_SUITES, "security"]
     assert catalogue.validate(cat) == []
 
 
@@ -232,15 +247,16 @@ def test_halved_rails_without_their_check_in_the_merge_tier_are_refused() -> Non
     assert any("lacks rails-checks" in p for p in _refused(off_merge))
 
 
-@pytest.mark.parametrize("job_id", _SUITES)
+@pytest.mark.parametrize("job_id", _SECURITY_EVIDENCE)
 def test_the_suite_marked_ordinary_is_refused(job_id: str) -> None:
     """The merge tier's security evidence is the suite's own run of its security-marked
-    modules, on each platform, so neither run is ordinary (and so reusable)."""
+    modules, on each platform, and the security corpus's run, so none is ordinary (and so
+    reusable)."""
     problems = _refused(_in_job(job_id, 'security = "security"', 'security = "ordinary"'))
     assert any(p.startswith(f"{job_id}: security is ordinary") for p in problems), problems
 
 
-@pytest.mark.parametrize("job_id", _SUITES)
+@pytest.mark.parametrize("job_id", _SECURITY_EVIDENCE)
 def test_the_suite_out_of_the_merge_tier_is_refused(job_id: str) -> None:
     problems = _refused(_in_job(job_id, 'tiers = ["merge"]', 'tiers = ["breadth"]'))
     assert any(f"the merge tier lacks {job_id}" in p for p in problems), problems
@@ -324,7 +340,7 @@ def _catalogue_file(tmp_path: Path, text: str = _MINIMAL) -> str:
 def test_list_prints_every_job(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["list", "--catalogue", _catalogue_file(tmp_path)]) == 0
     lines = capsys.readouterr().out.splitlines()
-    assert [line.split()[0] for line in lines] == ["rails", *_SUITES]
+    assert [line.split()[0] for line in lines] == ["rails", *_SUITES, "security"]
     assert "reuse tree" in lines[0] and "reuse never" in lines[1]
 
 
@@ -335,9 +351,23 @@ def test_explain_merge_says_what_it_proves_and_lists_its_commands(
     out = capsys.readouterr().out
     assert out.startswith("merge: proves ")
     assert "It does not prove " in out
-    assert "3 job(s)." in out
+    assert "4 job(s)." in out
     assert ".$ uv run pytest tests/rails" in out
     assert "security security" in out
+
+
+def test_explain_merge_counts_the_security_corpus_it_requires_as_proved(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The merge tier requires ``security``, the corpus's one run, on Linux: its text puts the
+    corpus among what the tier proves, and leaves only its macOS run to the nightly."""
+    assert main(["explain", "merge", "--catalogue", _catalogue_file(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "\nsecurity (" in out, "the merge tier lists no security job"
+    proves, _, rest = out.partition("It does not prove ")
+    does_not = rest.split("\n", 1)[0]
+    assert "the security corpus passes on Linux" in proves, proves
+    assert re.search(r"security corpus(?! on macOS)", does_not) is None, does_not
 
 
 def test_explain_refuses_an_unknown_tier(
@@ -637,13 +667,19 @@ def test_a_job_that_reads_the_advisory_feed_is_live() -> None:
 
 @pytest.mark.parametrize(
     "job_id, platform, family",
-    [("python-suite", "macos-26", "ubuntu-"), ("python-suite-macos", "ubuntu-24.04", "macos-")],
+    [
+        ("python-suite", "macos-26", "ubuntu-"),
+        ("python-suite-macos", "ubuntu-24.04", "macos-"),
+        ("security", "macos-26", "ubuntu-"),
+    ],
 )
 def test_each_suite_runs_on_its_own_platform(job_id: str, platform: str, family: str) -> None:
-    """The merge tier's security evidence is the suite's run on each platform, so a suite moved
-    to the other platform leaves one platform's run missing."""
+    """The merge tier's security evidence is the suite's run on each platform and the corpus's
+    run on Linux, so a job moved to another platform leaves one platform's run missing."""
     if job_id == "python-suite":
         text = _in_job(job_id, "timeout_min = 55", f'timeout_min = 55\nplatform = "{platform}"')
+    elif job_id == "security":
+        text = _in_job(job_id, "timeout_min = 25", f'timeout_min = 25\nplatform = "{platform}"')
     else:
         text = _in_job(job_id, 'platform = "macos-26"', f'platform = "{platform}"')
     problems = _refused(text)
@@ -757,7 +793,7 @@ def test_a_loaded_catalogue_cannot_be_changed_in_place_and_hashes() -> None:
     assert cat.job("rails").env == {"PERSONALCLAW_SKIP_APP_BACKENDS": "1"}
     assert rails.command[0].env == {"PERSONALCLAW_REQUIRE_NPM_TREE": "1"}
     assert hash(rails) == hash(catalogue.load(text).job("rails"))
-    assert len({*cat.jobs}) == 3
+    assert len({*cat.jobs}) == 4
 
 
 def test_an_unknown_job_id_is_named() -> None:

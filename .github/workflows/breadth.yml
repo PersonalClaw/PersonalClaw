@@ -807,14 +807,16 @@ jobs:
           path: coverage.xml
           if-no-files-found: warn
 
-  security-corpus:
+  security:
     # report holds each key to this job's latest attempt, by this name.
-    name: breadth-leg security-corpus/1
+    name: breadth-leg security/1
     # The adversarial scanner corpus (five attack classes + the
     # scanned-bytes==installed-bytes race invariant + the red-on-weakness meta-test).
     # Its own job, not a line in the matrix, so a corpus regression is legible on its
     # own; one process, pytest's default, keeps the integrity-race output readable. Published methodology:
-    # docs/security/scanner-testing.md.
+    # docs/security/scanner-testing.md. ci.yml's `security` job runs the same on every run, and no
+    # suite shard collects these files (tools/ci/shards.py JOB_OWNED); this leg and
+    # `security-macos` are the nightly's runs of them.
     needs: [freshness]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
@@ -870,12 +872,12 @@ jobs:
         env:
           OUTCOME: ${{ steps.pytest.outcome }}
         run: |
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/security-corpus__1.json"
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/security__1.json"
       - name: Upload this shard's entry
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: breadth-leg-security-corpus-1
+          name: breadth-leg-security-1
           path: ${{ runner.temp }}/entry/
           if-no-files-found: error
           retention-days: 7
@@ -883,7 +885,85 @@ jobs:
       - name: the shard's result
         if: always()
         run: |
-          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/security-corpus__1.json"
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/security__1.json"
+
+  security-macos:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg security-macos/1
+    # The security corpus on macOS, nightly: the same files as `security`, which runs them on
+    # Linux. No suite shard collects them (tools/ci/shards.py JOB_OWNED), so without this leg
+    # nothing would run them on macOS. It runs 3.13, test-macos's Python, and `security` runs
+    # 3.12, so the corpus runs on each Python requires-python allows. Methodology:
+    # docs/security/scanner-testing.md.
+    needs: [freshness]
+    if: ${{ !cancelled() }}
+    runs-on: macos-26
+    timeout-minutes: 25
+    # No PERSONALCLAW_HOME — see the matrix job. The corpus writes only to tmp_path.
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      PY: "3.13.16"
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.1"
+          python-version: "3.13.16"
+          enable-cache: true
+          prune-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: this shard's inputs, as its runner reports them
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" \
+            --node "$(node --version 2>/dev/null || echo none)"
+      - name: pytest (adversarial scanner corpus)
+        id: pytest
+        continue-on-error: true
+        run: >
+          uv run pytest
+          --junitxml=reports/junit-security-corpus-macos.xml
+          tests/security
+          tests/test_supply_chain_scanner.py
+          tests/test_supply_chain_gates.py
+      # Same argument as ci.yml's `test-shard` upload step.
+      - name: Upload JUnit results (security corpus, macOS)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-security-corpus-macos
+          path: reports/junit-security-corpus-macos.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: record what this shard ran
+        if: always()
+        env:
+          OUTCOME: ${{ steps.pytest.outcome }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/security-macos__1.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-security-macos-1
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red, ran or carried: a carried red is still red (#3904).
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/security-macos__1.json"
 
   canary:
     # report holds each key to this job's latest attempt, by this name.
@@ -1004,7 +1084,7 @@ jobs:
     # until now NOTHING in CI ran it. `deploy/website/install.sh`'s own header claimed this job
     # already existed (the workflow then named "runs it in a bare ubuntu container weekly").
     # It did not:
-    # measured 2026-09-06, this workflow had four jobs — matrix, audit, security-corpus,
+    # measured 2026-09-06, this workflow had four jobs — matrix, audit, security-corpus (now `security`),
     # coverage — and grepping .github/workflows/ for `website/install`, `install.sh` or
     # `personalclaw.dev/install` returned nothing. The ninth absent-vs-declared-false in this
     # repo, and the cheapest kind to write: a claim of coverage costs one comment line.
@@ -1276,7 +1356,7 @@ jobs:
   report:
     # Last: settles every leg, writes the run's record under its digest, and keeps the leg
     # issues. It writes issues only on main; a dispatch on another ref says what it would do.
-    needs: [freshness, ubuntu, macos, rails-macos, collection-parses, arm, coverage-shard, coverage, security-corpus, canary, install-smoke, audit]
+    needs: [freshness, ubuntu, macos, rails-macos, collection-parses, arm, coverage-shard, coverage, security, security-macos, canary, install-smoke, audit]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15

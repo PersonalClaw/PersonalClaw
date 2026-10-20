@@ -35,6 +35,7 @@ jobs = [
   "package",
   "e2e",
   "browse-live",
+  "security",
   "apps-contract",
   "audit",
 ]
@@ -210,10 +211,11 @@ command = [
   { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-test-macos-{shard}.xml"] },
 ]
 
-# The adversarial scanner corpus, on pushes to main.
+# The adversarial scanner corpus and the supply-chain scanner's tests: on every run, the merge
+# tier's third security job, and nightly. No suite shard collects these files (JOB_OWNED).
 [[job]]
 id = "security"
-tiers = ["breadth"]
+tiers = ["change", "merge", "breadth"]
 inputs = [":(glob)**"]
 external_inputs = []
 toolchain = ["uv-sync"]
@@ -225,6 +227,26 @@ env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1" }
 junit = ["reports/junit-security-corpus.xml"]
 command = [
   { argv = ["uv", "run", "pytest", "--junitxml=reports/junit-security-corpus.xml", "tests/security", "tests/test_supply_chain_scanner.py", "tests/test_supply_chain_gates.py"] },
+]
+
+# The same files on macOS, nightly only: no suite shard collects them (JOB_OWNED), so this leg is
+# their one macOS run. It runs 3.13 and `security` runs 3.12, so the corpus runs on each Python
+# requires-python allows. Security posture, never reused.
+[[job]]
+id = "security-macos"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "security"
+platform = "macos-26"
+python = "3.13.16"
+timeout_min = 25
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1" }
+junit = ["reports/junit-security-corpus-macos.xml"]
+command = [
+  { argv = ["uv", "run", "pytest", "--junitxml=reports/junit-security-corpus-macos.xml", "tests/security", "tests/test_supply_chain_scanner.py", "tests/test_supply_chain_gates.py"] },
 ]
 
 # breadth.yml's legs (#3909). Each suite leg runs the suite, so the security-marked modules: it

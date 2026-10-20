@@ -1301,11 +1301,9 @@ def wheel_and_scan_base_violations(tree: Tree) -> list[str]:
 
 _GATE = "needs.tree-check.outputs.tested != 'true'"
 #: ``ci.yml`` jobs that run whatever ``tree-check`` answers: the check itself, the plan, the
-#: security corpus (never skipped on main), the browse proof (security evidence, never reused)
+#: security corpus and the browse proof (security evidence, never reused, so never skipped)
 #: and the SDK contract.
-_ALWAYS_RUN = frozenset(
-    {"tree-check", "changes", "security-corpus", "browse-live", "apps-contract"}
-)
+_ALWAYS_RUN = frozenset({"tree-check", "changes", "security", "browse-live", "apps-contract"})
 _ON_MAIN = "github.ref == 'refs/heads/main'"
 
 
@@ -3640,7 +3638,7 @@ ROWS: tuple[Row, ...] = (
                 "if: ${{ !cancelled() && needs.tree-check.outputs.tested == 'false' }}",
             ),
             Control(
-                "an always-run job with no needs passes (changes, security-corpus)",
+                "an always-run job with no needs passes (changes, security)",
                 _nothing,
                 fails=False,
             ),
@@ -3823,7 +3821,7 @@ ROWS: tuple[Row, ...] = (
                 _BREADTH,
                 "      - name: pytest (adversarial scanner corpus)\n",
                 "      - name: carry\n"
-                "        run: python3 tools/ci/breadth_evidence.py decide --key security-corpus\n"
+                "        run: python3 tools/ci/breadth_evidence.py decide --key security\n"
                 "      - name: pytest (adversarial scanner corpus)\n",
             ),
             _plant(
@@ -5844,8 +5842,9 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "python-suite": _Mapped(("test-shard",), ("merge",), security="security"),
     "python-suite-macos": _Mapped(("test-macos",), ("merge",), security="security"),
     "security": _Mapped(
-        ("security-corpus", "breadth.yml:security-corpus"), ("breadth",), security="security"
+        ("security", "breadth.yml:security"), ("change", "merge", "breadth"), security="security"
     ),
+    "security-macos": _Mapped(("breadth.yml:security-macos",), ("breadth",), security="security"),
     "suite-ubuntu": _Mapped(("breadth.yml:ubuntu",), ("breadth",), security="security"),
     "suite-macos": _Mapped(("breadth.yml:macos",), ("breadth",), security="security"),
     "suite-arm": _Mapped(("breadth.yml:arm",), ("breadth",), security="security"),
@@ -6056,7 +6055,9 @@ tmux -V
 
 "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/rails-macos-26-3.12__1.json"
 
-"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/security-corpus__1.json"
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/security__1.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/security-macos__1.json"
 
 "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/audit__1.json"
 
@@ -6076,7 +6077,9 @@ tmux -V
 
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/rails-macos-26-3.12__1.json"
 
-"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/security-corpus__1.json"
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/security__1.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/security-macos__1.json"
 
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/audit__1.json"
 
@@ -6727,7 +6730,8 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             catalogue.CATALOGUE,
             'security = "security"\npython = "3.12.15"\ntimeout_min = 25\n',
             'security = "ordinary"\nreuse = "tree"\npython = "3.12.15"\ntimeout_min = 25\n',
-            expect="security: security is ordinary, but its steps run security-marked modules",
+            # The loader refuses it first: security is one of the merge tier's security jobs.
+            expect="security: security is ordinary, but its run is the merge tier's security",
         ),
         # The posture and tiers this row holds each entry to.
         _plants(
@@ -6781,9 +6785,9 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "the merge tier's list naming a job that does not claim merge",
             catalogue.CATALOGUE,
-            '  "static",\n',
-            '  "static",\n  "security",\n',
-            expect="security: [tier.merge] lists it, and it is no job whose tiers claim merge",
+            'id = "audit"\ntiers = ["merge"]',
+            'id = "audit"\ntiers = ["breadth"]',
+            expect="audit: [tier.merge] lists it, and it is no job whose tiers claim merge",
         ),
         Control(
             "no merge tier list",
@@ -8617,15 +8621,15 @@ ROWS = (*ROWS, THE_HARNESS_GATES_RUN_IN_THE_MERGE_TIER)
 #
 # A whole-tree check runs in the job that owns it (#3929): the rails in rails (and in breadth's
 # rails-macos), the rails census and the gate aggregate in rails-checks, harness validate and
-# harness scan in static, the security corpus in security. This row holds the catalogue to it:
-# each check runs in a job of every tier listed for it, and a check marked once runs in exactly
-# one job of each such tier, so it is neither skipped nor run twice. Static's validate runs with
-# --strict, so a warning fails it as an error does: no other run checks that the shipped specs
-# carry none. It holds the workflows to the other half: a step that runs harness validate,
-# harness scan, the gate aggregate or the rails census fails its job, with no continue-on-error
-# on the step or its job and no `|| true` after the command. The breadth legs that run the rails
-# and the security corpus record the step's outcome and fail the job on it in their last step,
-# so they are held by the tiers half.
+# harness scan in static, the security corpus in security (and in breadth's security-macos). This
+# row holds the catalogue to it: each check runs in a job of every tier listed for it, and a check
+# marked once runs in exactly one job of each such tier, so it is neither skipped nor run twice.
+# Static's validate runs with --strict, so a warning fails it as an error does: no other run checks
+# that the shipped specs carry none. It holds the workflows to the other half: a step that runs
+# harness validate, harness scan, the gate aggregate or the rails census fails its job, with no
+# continue-on-error on the step or its job and no `|| true` after the command. The breadth legs that
+# run the rails and the security corpus record the step's outcome and fail the job on it in their
+# last step, so they are held by the tiers half.
 
 #: ``(what, the words its argv holds, the tiers that need it, whether exactly one job runs it,
 #: the text a workflow step that runs it carries)``.
@@ -8675,7 +8679,7 @@ OWNED_CHECKS: tuple[tuple[str, frozenset[str], tuple[str, ...], bool, str], ...]
     (
         "the security corpus",
         frozenset({"pytest", "tests/security"}),
-        ("breadth",),
+        ("change", "merge", "breadth"),
         False,
         "tests/security",
     ),
@@ -8744,6 +8748,9 @@ _CI_VALIDATE = (
     "      - name: harness validate (spec shape + reference resolution)\n"
     "        run: uv run python -m harness validate --strict\n"
 )
+#: The start of a breadth-only job's command (security-macos's), where a planted step is in no
+#: other tier.
+_BREADTH_ONLY_COMMAND = 'junit = ["reports/junit-security-corpus-macos.xml"]\ncommand = [\n'
 
 EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
     name="each-whole-tree-check-runs-in-every-tier-that-needs-it-as-a-step-that-fails-its-job",
@@ -8792,12 +8799,27 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             _VALIDATE_STEP + _GATES_STEP,
             expect="the gate aggregate runs in 2 jobs of the merge tier",
         ),
-        _plant(
-            "the security corpus moved out of breadth",
+        _plants(
+            "the security corpus moved out of breadth, both legs",
             catalogue.CATALOGUE,
-            'id = "security"\ntiers = ["breadth"]',
-            'id = "security"\ntiers = ["weekly"]',
+            (
+                (
+                    'id = "security"\ntiers = ["change", "merge", "breadth"]',
+                    'id = "security"\ntiers = ["change", "merge"]',
+                ),
+                (
+                    'id = "security-macos"\ntiers = ["breadth"]',
+                    'id = "security-macos"\ntiers = ["weekly"]',
+                ),
+            ),
             expect="the security corpus runs in no job of the breadth tier",
+        ),
+        _plant(
+            "the security corpus held out of the change tier",
+            catalogue.CATALOGUE,
+            'id = "security"\ntiers = ["change", "merge", "breadth"]',
+            'id = "security"\ntiers = ["merge", "breadth"]',
+            expect="the security corpus runs in no job of the change tier",
         ),
         _plant(
             "continue-on-error on the harness validate step",
@@ -8823,16 +8845,15 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
         _plant(
             "the gate aggregate also in a breadth job, a tier that does not list it, passes",
             catalogue.CATALOGUE,
-            'junit = ["reports/junit-security-corpus.xml"]\ncommand = [\n',
-            'junit = ["reports/junit-security-corpus.xml"]\ncommand = [\n' + _GATES_STEP,
+            _BREADTH_ONLY_COMMAND,
+            _BREADTH_ONLY_COMMAND + _GATES_STEP,
             fails=False,
         ),
         _plant(
             "a second rails job in breadth fails: the rails run once per tier",
             catalogue.CATALOGUE,
-            'junit = ["reports/junit-security-corpus.xml"]\ncommand = [\n',
-            'junit = ["reports/junit-security-corpus.xml"]\ncommand = [\n'
-            '  { argv = ["uv", "run", "pytest", "-q", "tests/rails"] },\n',
+            _BREADTH_ONLY_COMMAND,
+            _BREADTH_ONLY_COMMAND + '  { argv = ["uv", "run", "pytest", "-q", "tests/rails"] },\n',
             expect="the rails runs in 2 jobs of the breadth tier",
         ),
     ),

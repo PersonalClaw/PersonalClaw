@@ -355,17 +355,20 @@ A local run's reuse of a recorded pass is under [Verdict reuse](#verdict-reuse).
 ### The tiers
 
 - **merge:** what a pull request into `main` must pass. Its security evidence is the suite's own
-  run of the security-marked modules, `python-suite` and `python-suite-macos`. The catalogue is
-  refused if this tier lacks the `rails` job, lacks either suite, holds either as anything but
-  `security`, or runs either off its own platform: `python-suite` runs on an `ubuntu-` runner
-  and `python-suite-macos` on a `macos-` one. So no other security job stands in for the suite's
-  run, and neither platform's run is lost. `[tier.merge] jobs` lists the tier's jobs, checked
-  both ways: every job whose tiers claim `merge` is in the list, and the list names only such
-  jobs, so dropping a job from the merge tier takes two edits. A catalogue without the list is
-  refused.
+  run of the security-marked modules, `python-suite` and `python-suite-macos`, and `security`,
+  the one run of the security corpus (`tests/security` and the supply-chain scanner's tests),
+  which no suite shard collects. The catalogue is refused if this tier lacks the `rails` job,
+  lacks any of the three, holds one as anything but `security`, or runs one off its own
+  platform: `python-suite` and `security` run on an `ubuntu-` runner and `python-suite-macos` on
+  a `macos-` one. So no other security job stands in for one of them, and no platform's run is
+  lost. The merge verdict reads a planned job that is missing, skipped or cancelled as red, so
+  a merge verdict on a run without `security` is red. `[tier.merge] jobs` lists the tier's
+  jobs, checked both ways: every job whose tiers claim `merge` is in the list, and the list
+  names only such jobs, so dropping a job from the merge tier takes two edits. A catalogue
+  without the list is refused.
 - **change:** the fast jobs, run before a commit.
 - **breadth:** the checks run on `main` that are too slow or too wide for every pull request,
-  among them the adversarial security corpus.
+  among them the security corpus again, on Linux and on macOS.
 - **weekly** and **release:** reserved for the long checks and for what a release is cut from.
   No job is in them yet.
 
@@ -558,7 +561,7 @@ these hold:
   retarget to `main`, may have tested another base and skipped `test-macos`.
 
 Anything else, and any error, is no. Every job outside the always-run set (`tree-check`,
-`changes`, `security-corpus`, `browse-live`, and `apps-contract` when the plan names it) waits
+`changes`, `security`, `browse-live`, and `apps-contract` when the plan names it) waits
 on the answer and runs unless it is exactly `tested=true`. So a push behind its base, a merge
 queue's commit or a direct push runs the whole gate, `test-macos` included.
 
@@ -695,8 +698,10 @@ group and its `cancel-in-progress` would read false. A workflow added later that
 Pull requests into `main` run the suite on `macos-26` with Python 3.13, in four shards of whole
 test files planned from macOS's own durations, two xdist workers each and no coverage. With
 `test-shard` on Ubuntu and 3.12, every change that merges has run both operating systems and
-both Pythons. The four shards take four of the five macOS runners a run can hold, so
-concurrent pull requests queue on macOS.
+both Pythons. The security corpus is the exception: no shard collects it, so a pull request
+runs it once, in `security`, on Ubuntu and 3.12, and breadth runs it each night on macOS on
+3.13. The four shards take four of the five macOS runners a run can hold, so concurrent pull
+requests queue on macOS.
 
 ### The suite's shards
 
@@ -713,11 +718,12 @@ records its list's digest as one of its inputs, so a result is carried only onto
 measured. Modules stay whole, so a module-scoped fixture is set up in one shard.
 
 The plan leaves out `tests/rails`, which the `rails` job runs, and each file in `shards.JOB_OWNED`,
-which the job named beside it runs by name: `tests/test_website_installer.py`, in `lint`, and
-`tests/test_npm_advisory_floors.py`, in `rails-checks`. `shards
-check` fails a plan that lists one, and a rail
-(`tests/rails/test_each_tree_check_runs_in_one_place.py`) fails when a listed job stops running
-its file, so a file left out of the shards never runs nowhere.
+which the job named beside it runs by name: `tests/test_website_installer.py`, in `lint`;
+`tests/test_npm_advisory_floors.py`, in `rails-checks`; and the security corpus (the ten
+`tests/security` modules, `tests/test_supply_chain_scanner.py` and
+`tests/test_supply_chain_gates.py`), in `security`. `shards check` fails a plan that lists one,
+and a rail (`tests/rails/test_each_tree_check_runs_in_one_place.py`) fails when a listed job
+stops running its file, so a file left out of the shards never runs nowhere.
 
 The per-file seconds come from #3948's telemetry record (see "CI telemetry" below): each file's
 median first-attempt seconds over the leg's own reports in the three newest completed `main`
@@ -789,8 +795,9 @@ The rest of the platform breadth runs nightly (09:37 UTC) and on dispatch:
   earlier result, red or green, only when every input matches.
 - **Legs that run every night:** the suite on Ubuntu 24.04 on 3.13, on macOS 26 on 3.12 (six
   shards, two at a time), on Ubuntu 24.04 on arm64 on 3.13, and under coverage; the security
-  corpus, a canary on the next Ubuntu image (advisory), the installer smoke, and the
-  dependency audit. `NON_REUSABLE` in `tools/ci/breadth_evidence.py` names them. The suite legs
+  corpus on Ubuntu 24.04 on 3.12 and on macOS 26 on 3.13, a canary on the next Ubuntu image
+  (advisory), the installer smoke, and the dependency audit. `NON_REUSABLE` in
+  `tools/ci/breadth_evidence.py` names them. The suite legs
   are here because the suite runs the security-marked modules, and a security result is never
   carried from an earlier night: each runs every night, which costs runner time and nothing
   else. The canary differs from the ubuntu-24.04 leg

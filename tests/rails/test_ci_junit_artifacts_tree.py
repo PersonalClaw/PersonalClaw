@@ -35,9 +35,7 @@ _BREADTH = _WORKFLOWS / "breadth.yml"
 #: than that CI changed. The vacuity floor for :func:`jobs`.
 _LONG_STANDING = {
     "ci.yml": frozenset({"lint", "test-shard", "test", "web", "rails", "harness", "client"}),
-    "breadth.yml": frozenset(
-        {"coverage-shard", "coverage", "audit", "security-corpus", "install-smoke"}
-    ),
+    "breadth.yml": frozenset({"coverage-shard", "coverage", "audit", "security", "install-smoke"}),
 }
 
 
@@ -78,7 +76,7 @@ def test_the_pytest_step_scan_finds_every_known_leg(workflows: dict[str, dict[st
         "test-shard",
         "test-macos",
         "browse-live",
-        "security-corpus",
+        "security",
         "rails",
         "client",
     }, sorted(ci)
@@ -87,7 +85,7 @@ def test_the_pytest_step_scan_finds_every_known_leg(workflows: dict[str, dict[st
         "macos",
         "arm",
         "canary",
-        "security-corpus",
+        "security",
         "coverage-shard",
     }, sorted(full)
 

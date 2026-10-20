@@ -36,7 +36,7 @@ _BREADTH = _ROOT / ".github" / "workflows" / "breadth.yml"
 LONG_STANDING_CI_JOBS = frozenset({"lint", "test", "web", "rails", "harness", "client"})
 
 
-LONG_STANDING_BREADTH_JOBS = frozenset({"install-smoke", "audit", "security-corpus", "coverage"})
+LONG_STANDING_BREADTH_JOBS = frozenset({"install-smoke", "audit", "security", "coverage"})
 
 
 class TestHeaderClaimsAreTrue:

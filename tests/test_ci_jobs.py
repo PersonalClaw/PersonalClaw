@@ -979,7 +979,7 @@ _HERE = "macos-26" if sys.platform == "darwin" else "ubuntu-24.04"
 #: refuses one of them is refused by the rule it names, not by the platform.
 _PLANTED = f"""
 [tier.merge]
-jobs = ["rails", "python-suite", "python-suite-macos"]
+jobs = ["rails", "python-suite", "python-suite-macos", "security"]
 
 [[job]]
 id = "rails"
@@ -1012,6 +1012,17 @@ toolchain = []
 cache = []
 security = "security"
 platform = "macos-26"
+timeout_min = 5
+command = [{{ argv = ["python3", "-c", "pass"] }}]
+
+[[job]]
+id = "security"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = []
+cache = []
+security = "security"
 timeout_min = 5
 command = [{{ argv = ["python3", "-c", "pass"] }}]
 
