@@ -1,6 +1,21 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { Circle } from 'lucide-react'
 import { parseDueDate, dueMeta, statusMeta, STATUSES, TERMINAL } from './taskMeta'
+
+/** Today, for every test in this file: local noon on 1 October 2026. Each relative due date
+ *  below counts from it, never from the day the suite runs. Read off the real clock, FAR_DUE
+ *  came inside the one-week window a week before that day and is overdue from the day after,
+ *  and both checks that name it went red. */
+const NOW = new Date(2026, 9, 1, 12)
+/** The date-only value of the timezone regression, 25 days after NOW: past the one-week
+ *  window, where a due date shows as the calendar day it names. */
+const FAR_DUE = '2026-10-26'
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(NOW)
+})
+afterEach(() => { vi.useRealTimers() })
 
 /** The LOCAL calendar day `offset` days from today, at midnight. */
 const localDay = (offset = 0): Date => {
@@ -41,13 +56,19 @@ describe('dueMeta', () => {
   it('renders a far-future date-only value on the calendar day it NAMES', () => {
     // The regression: a task due 2026-10-26 showed "Oct 25" west of UTC. Compare against a
     // locally-constructed date so the expectation holds in any timezone.
-    const meta = dueMeta('2026-10-26')
+    const meta = dueMeta(FAR_DUE)
     expect(meta?.label).toBe(shortLabel(new Date(2026, 9, 26)))
   })
 
   it('says "Due today" for a date-only value naming the local today', () => {
-    // Must hold for the whole local day, not flip once UTC rolls over.
-    expect(dueMeta(dateOnly(0))?.label).toBe('Due today')
+    // Must hold for the whole local day, not flip once UTC rolls over: so from the day's
+    // first minute to its last, not only at noon.
+    const today = dateOnly(0)
+    expect(dueMeta(today)?.label).toBe('Due today')
+    for (const [h, m] of [[0, 1], [23, 59]] as const) {
+      vi.setSystemTime(new Date(2026, 9, 1, h, m))
+      expect(dueMeta(today)?.label, `at ${h}:${String(m).padStart(2, '0')}`).toBe('Due today')
+    }
   })
 
   it('says "Due tomorrow" and "Due in Nd" inside the one-week window', () => {
@@ -66,7 +87,7 @@ describe('dueMeta', () => {
     expect(dueMeta(dateOnly(0))?.tone).toBe('var(--color-warn)')
     expect(dueMeta(dateOnly(1))?.tone).toBe('var(--color-warn)')
     expect(dueMeta(dateOnly(3))?.tone).toBe('var(--color-on-surface-var)')
-    expect(dueMeta('2026-10-26')?.tone).toBe('var(--color-on-surface-low)')
+    expect(dueMeta(FAR_DUE)?.tone).toBe('var(--color-on-surface-low)')
   })
 
   it('still handles a full ISO timestamp', () => {
