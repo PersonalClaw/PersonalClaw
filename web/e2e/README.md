@@ -26,6 +26,8 @@ The cookie jar lives in a folder of the run's own BESIDE its home (`sign-in-for-
 PW_TOKEN=<its owner token> PW_NO_SERVER=1 PW_BASE_URL=http://localhost:<its port> npm run e2e
 ```
 
+The gateway's `HOME` is a folder of the run's own too, beside its home (`user-home-for-<home>/`, made and removed with it), and every variable that names a folder outside the home (`GATEWAY_UNSET` in `runPlaces.ts`: the other agent tools' setup folders, the Hugging Face and XDG folders, and PersonalClaw's own folder overrides) is taken out of its environment before it starts. Without that, whatever the gateway finds through the home folder was the machine's: at every start it lists the shared skills folder in the real home, and Settings › Security named the real folders of the machine that ran the suite. Beside the home rather than in it, for the cookie jar's reason. `tests/rails/test_e2e_gateway_home_is_the_runs_tree.py` runs the harness's own environment and holds every one of those folders to the run's places.
+
 Two failure modes this closes, both of which read as success:
 
 - **The shell floor.** `helpers.assertShellMounted` (called from `gotoRoute`, so visual *and* a11y get it) fails the test when `nav[data-tour="rail"]` is absent. The rail renders only once the server reports a name, so it proves reachable + authenticated + onboarded in one assertion. `auth.setup.ts` asserts the same thing — its old `#root.innerHTML.length > 100` check *passed* on the onboarding screen, i.e. on precisely the state it existed to prevent.
