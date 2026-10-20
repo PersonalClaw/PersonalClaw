@@ -643,24 +643,144 @@ def test_lesson_header_stops_at_the_first_lesson():
 # ── the wiring into context.py ──
 
 
-def test_the_context_builder_routes_the_blocks_through_the_budget():
-    """The inert-control regression: `allocate()` had zero callers, so the ranking existed and
-    nothing ranked. This asserts the CALL, which no behavioural test of the allocator can see."""
-    import inspect
+def _set_budget_knob(tokens: int) -> None:
+    """Write `learning.context_budget_tokens` into this test's own config.json (a scratch home)."""
+    import json
 
+    from personalclaw.config import loader as config_loader
+
+    config_loader.config_dir()  # the home the file goes in
+    config_loader.config_path().write_text(
+        json.dumps({"learning": {"context_budget_tokens": tokens}}), encoding="utf-8"
+    )
+
+
+def _lessons_in(text: str) -> int:
+    """How many of `lesson_block`'s numbered lessons *text* carries."""
+    return text.count("- When editing module-")
+
+
+@pytest.mark.parametrize("budget", [600, 6000])
+def test_the_context_builder_renders_the_blocks_under_the_configured_budget(budget):
+    """The inert-control regression: `allocate()` had zero callers, so the ranking existed and
+    nothing ranked, and `learning.context_budget_tokens` was a knob nothing read.
+
+    The builder's render of 500 lessons (about 15,900 tokens as they arrive) beside the skill
+    index, voice and persona comes back framed, inside the knob's budget and close to filling it.
+    Both ends, because a budget of its own would pass one of them: at 600 the default 4,000 would
+    overrun it, and at 6,000 it would leave a third unspent.
+    """
     from personalclaw import context
 
-    src = inspect.getsource(context._render_ambient)
-    assert "ambient.render" in src
-    assert "context_budget_tokens" in src
-    # The window is not resolved HERE, nor in the assembler: it is resolved ONCE per turn by
-    # `context_headroom.resolve_window` and threaded in, so the memory sections, the ambient
-    # blocks and the budget check are all scaled by the same number. Assert the scaling is
-    # still WIRED (this function passes a window through to the allocator) and that the
-    # assembler takes the turn's resolved window rather than reading a binding of its own.
-    assert "window=window" in src
-    assert "_window = window" in inspect.getsource(context.ContextBuilder.build_session_context)
-    assert "window.budget_tokens" in inspect.getsource(context.ContextBuilder.build_message)
+    _set_budget_knob(budget)
+    out = context._render_ambient(
+        lessons=lesson_block(500),
+        skill_index=skill_index(),
+        voice=VOICE,
+        persona=PERSONA,
+        window=None,
+    )
+    assert budget * 0.9 < count_tokens(out) <= budget
+    assert "ALWAYS follow these" in out
+    assert 0 < _lessons_in(out) < 500
+
+
+def test_the_context_builder_scales_the_budget_by_the_turns_window():
+    """The window is not resolved here: it is the turn's, resolved ONCE by
+    `context_headroom.resolve_window` and passed through to the allocator, so the memory sections,
+    the ambient blocks and the budget check are all scaled by the same number.
+
+    With the knob at 1,000: an unknown window renders by the knob as set, a 1M-token window by five
+    times it, and a 4,000-token window by an eighth of that window (`MAX_WINDOW_FRACTION`).
+    """
+    from personalclaw import context
+
+    _set_budget_knob(1000)
+    block = lesson_block(500)
+    for window, budget in ((None, 1000), (1_000_000, 5000), (4_000, 500)):
+        out = context._render_ambient(lessons=block, window=window)
+        assert budget * 0.9 < count_tokens(out) <= budget, window
+
+
+def _assembling(lessons: str):
+    """The memory service patched to hold *lessons* as its lessons block, and no episodes."""
+    from contextlib import ExitStack
+    from unittest.mock import patch
+
+    from personalclaw.memory_service import MemoryService
+
+    stack = ExitStack()
+    stack.enter_context(
+        patch.object(MemoryService, "lessons_context", lambda self, *a, **k: lessons)
+    )
+    stack.enter_context(patch.object(MemoryService, "episodic_context", lambda self, *a, **k: ""))
+    return stack
+
+
+def _builder(tmp_path):
+    from personalclaw.context import ContextBuilder
+    from personalclaw.memory import MemoryStore
+    from personalclaw.skills import SkillsLoader
+
+    return ContextBuilder(
+        memory=MemoryStore(workspace=tmp_path / "ws"),
+        skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+    )
+
+
+def test_the_session_assembly_budgets_the_ambient_blocks_by_the_window_it_is_given(tmp_path):
+    """The assembler takes the turn's window rather than a binding of its own: 400 stored lessons
+    (about 12,700 tokens) reach a 4,000-token window's session as the dozen or so its 500-token
+    budget holds, an unknown window's as the knob's 4,000 tokens hold, and a 1M-token window's
+    whole (its budget is 20,000)."""
+    _set_budget_knob(4000)
+    builder = _builder(tmp_path)
+    with _assembling(lesson_block(400)):
+        shown = {
+            window: _lessons_in(builder.build_session_context("dashboard:s1", window=window))
+            for window in (4_000, None, 1_000_000)
+        }
+    assert 0 < shown[4_000] <= 16
+    assert 100 < shown[None] < 400
+    assert shown[1_000_000] == 400
+
+
+def test_a_new_sessions_message_is_assembled_by_the_window_it_is_served_with(tmp_path):
+    """`build_message` hands the session assembly the window the turn is served with
+    (`Window.budget_tokens`): its measured size, or for a locally served model whose size is
+    unmeasured, the floor it budgets by. None (a standalone caller) budgets as an unknown window."""
+    from personalclaw.context_headroom import WINDOW_UNKNOWN, Window
+
+    def served(tokens, floor=None):
+        return Window(
+            tokens=tokens,
+            output_reserve_tokens=500,
+            input_tokens=None if tokens is None else tokens - 500,
+            source="catalog" if tokens is not None else WINDOW_UNKNOWN,
+            floor_tokens=floor,
+        )
+
+    _set_budget_knob(4000)
+    builder = _builder(tmp_path)
+    windows = {
+        "small": served(4_000),
+        "floor": served(None, floor=4_000),
+        "large": served(1_000_000),
+        "none": None,
+    }
+    with _assembling(lesson_block(400)):
+        shown = {
+            name: _lessons_in(
+                builder.build_message(
+                    "hello", is_new_session=True, session_key="dashboard:s1", window=window
+                )[0]
+            )
+            for name, window in windows.items()
+        }
+    assert 0 < shown["small"] <= 16
+    assert shown["floor"] == shown["small"]
+    assert shown["large"] == 400
+    assert 100 < shown["none"] < 400
 
 
 def test_the_old_per_block_lesson_cap_is_gone():
