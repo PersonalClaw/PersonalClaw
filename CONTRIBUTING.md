@@ -351,6 +351,12 @@ outgoing commits touch those paths. pre-commit only formats what a commit
 would otherwise reach CI unformatted. If it fails, run `make format` then `make
 lint` and commit the result.
 
+It also runs the **asset licence check** (`python3 scripts/check_asset_licenses.py`, under a
+second) whenever the outgoing commits add or rename a tracked file outside `src/`. A new
+fixture, screenshot, font or binary must be recorded in `ASSET_LICENSES.json` (see the
+licence-record rule under [Pull requests](#pull-requests)); the gate fails with the check's
+own message, naming each file it found unrecorded, before CI or a release build does.
+
 `scripts/` is in that list because the pre-commit hook formats it and nothing
 used to check it: `make lint`, CI and pre-push all skipped the tree while
 pre-commit rewrote staged `scripts/*.py` with black and isort, so the gate a
