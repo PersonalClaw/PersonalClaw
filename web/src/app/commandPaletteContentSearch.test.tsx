@@ -145,11 +145,11 @@ describe('⌘K content search', () => {
     expect(within(memory).queryByRole('option', { name: /slot\.pending_items/ })).toBeNull()
 
     await user.click(within(memory).getByRole('option', { name: /Budget reviews stay under ten minutes/ }))
-    expect(navigate).toHaveBeenCalledWith(`settings/memory?tab=studio&sel=${encodeURIComponent('lesson:Budget reviews stay under ten minutes.')}`)
+    expect(navigate).toHaveBeenCalledWith(`memory?tab=studio&sel=${encodeURIComponent('lesson:Budget reviews stay under ten minutes.')}`)
     act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true })) })
     await user.type(await screen.findByRole('searchbox'), 'budget')
     await user.click(await screen.findByRole('option', { name: /^pending_items/ }))
-    expect(navigate).toHaveBeenLastCalledWith(`settings/memory?tab=studio&sel=${encodeURIComponent('slot:pending_items')}`)
+    expect(navigate).toHaveBeenLastCalledWith(`memory?tab=studio&sel=${encodeURIComponent('slot:pending_items')}`)
   })
 
   it('does not search content for a single character', async () => {

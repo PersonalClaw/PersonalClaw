@@ -326,13 +326,32 @@ const SPELLINGS: readonly (readonly [address: string, opens: string | null])[] =
   ['settings/%76ocabulary', 'settings/voice?section=vocabulary'],
   ['settings/vocabulary/', 'settings/voice?section=vocabulary'],
   ['settings//vocabulary', 'settings/voice?section=vocabulary'],
+  ['settings/memory', 'memory'],
+  ['settings/%6Demory', 'memory'],
+  ['%73ettings/memory', 'memory'],
+  ['settings/memory/', 'memory'],
+  ['settings//memory', 'memory'],
+  ['/settings/memory', 'memory'],
+  ['settings/memory?tab=audit&sel=fact%3Aa&x=1', 'memory?tab=audit&sel=fact%3Aa'],
+  // Each key the Memory page reads arrives, in the table's order; another key does not.
+  ['settings/memory?partition=p-0a1b2c3d&pref=pref.tone&q=tone&tab=settings', 'memory?tab=settings&pref=pref.tone&partition=p-0a1b2c3d'],
+  // The query is read from the first `?`, so a second one is part of a value, and a repeated key
+  // is read as its last value.
+  ['settings/memory?tab=studio&sel=fact%3Aa?b', 'memory?tab=studio&sel=fact%3Aa%3Fb'],
+  ['settings/memory?tab=health&tab=audit', 'memory?tab=audit'],
   ['Files/report-1', null],
   ['settings/Vocabulary', null],
+  ['settings/Memory', null],
+  ['settings/memory/extra', null],
+  // An encoded `/` stays inside its segment: Settings is handed the subpage `memory/`, which it
+  // never drew as Memory.
+  ['settings/memory%2F', null],
   ['%2566iles/report-1', null],
   ['settings/%2576ocabulary', null],
   // A second `#/` is a route of its own to the router, `#`, which opens no page.
   ['#/files/report-1', null],
   ['#/settings/vocabulary', null],
+  ['#/settings/memory', null],
   // An address the app never wrote: an artifact's slug holds no `/`, so its old link was always
   // `files/<slug>`, and that is what is retired. A deeper path opens the Files page as any other.
   ['files/report-1/extra', null],

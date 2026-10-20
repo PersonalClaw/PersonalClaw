@@ -632,7 +632,7 @@ item vector).
   documents: each memory's `preferences.md` and `projects.md` and its daily history.
   - **A consolidation never undoes an edit made while it ran.** It reads
     `preferences.md` and `projects.md`, waits for its model (seconds, for a real one)
-    and gets back a rewrite of each, while the owner may save them in Settings → Memory
+    and gets back a rewrite of each, while the owner may save them in Library → Memory
     or the Files editor, and the agent write them with its file tools. So a rewrite is
     applied to each file as it is when the model has answered
     (`MemoryStore.rewrite`, `memory.apply_rewrite`), line by line: each
@@ -649,7 +649,7 @@ item vector).
     (`history/<YYYY-MM-DD>.md`); the agent's context reads the recent days together
     (`MemoryStore.read_recent_history`: the last two weeks whole, older days cut to
     their first entry, then to a count), and that view is never written back. The
-    History editor in Settings → Memory lists the days (`GET /api/memory/history`:
+    History editor in Library → Memory lists the days (`GET /api/memory/history`:
     newest first, each with its entry count, today always among them) and holds one
     day's file as it is kept (`GET`/`PUT /api/memory/history/{day}`, named by its date;
     any other name is refused `history_day_invalid` and never made into a path). Its
@@ -698,7 +698,7 @@ item vector).
   frontmatter rewrite invisible; a page the parser cannot read is left alone and
   flagged rather than merged. Files dropped in `<vault>/raw/` go to KNOWLEDGE, never
   into memory — the boundary holds inside the vault. Every sync (the one after a chat
-  ends, and Sync now in Settings → Memory) is followed by the sweep
+  ends, and Sync now in Library → Memory) is followed by the sweep
   (`MemoryVault.sweep_raw`, on the gateway's event loop), which takes each file as the
   Knowledge page takes an upload (`knowledge.file_items.take_file`): typed by its kind
   (`media.classify`), held to the size the upload policy allows it, its bytes scanned,
@@ -812,7 +812,7 @@ item vector).
   maintenance it runs (category TTL, heat promotion, failure synthesis, daily
   digest, the reflex log's retention, topology). Two things are kept in the global
   memory: a lesson joins the global lesson list with the folder's reach
-  (`scope=workspace`, `scope_ref` the folder), the list Settings → Memory → Lessons
+  (`scope=workspace`, `scope_ref` the folder), the list Library → Memory → Lessons
   and `memory_remember` keep, and a proactive check-in, which the heartbeat
   delivers from the global memory and no prompt recalls. A chat whose folder was one
   of PersonalClaw's own and is gone (`memory_locality.folder_is_gone`) keeps nothing
@@ -862,7 +862,7 @@ item vector).
   SQLite keeps beside it, to `memory_index.db.broken-<UTC instant>`, a new one is started,
   and a notice says where the old one went. A lock, a read-only file or a full disk
   changes nothing: keyword search is recorded as degraded with its reason, logged once,
-  and the Doctor's `memory.keyword-search` check (also shown on Settings → Memory →
+  and the Doctor's `memory.keyword-search` check (also shown on Library → Memory →
   Health) says so, tries the index again before it reports, and names every damaged
   copy still set aside.
 - The learning log (`learning.db`: the captures waiting to be compiled, each capture
@@ -911,7 +911,7 @@ item vector).
   (`memory_locality.name_partitions`). `memory_locality.partitions()` lists the global
   memory first, then each folder's; `GET /api/memory/partitions` adds what each holds,
   whether its folder is still there, and the projects it is the memory of.
-- **Settings → Memory shows and manages whichever memory you pick** ("Memory of",
+- **Library → Memory shows and manages whichever memory you pick** ("Memory of",
   shown once there is more than the global memory): every route the page reads and
   changes memory through takes `?partition=<id>` (`handlers/memory.py::asked_partition`),
   so the facts, lessons, episodes, documents, graph, recall test, audit, health and
@@ -1031,7 +1031,7 @@ item vector).
   `lesson_batch` proposal tagged `lesson_conflict`, on the Learning page and in the
   Inbox, naming both rules and the memory hers is in). Accept saves the learned
   lesson as hers in place of hers (`VectorMemoryStore.keep_lesson_in_place_of`,
-  undoable in Settings → Memory → Audit); Reject keeps hers, and the queue's decision
+  undoable in Library → Memory → Audit); Reject keeps hers, and the queue's decision
   memory never asks the same question again. Her own new lesson replaces her older
   one as before. Formation's supersession or cross-key update of a fact she set
   keeps both, flagged as a conflict, and its extract-phase removal of one is not

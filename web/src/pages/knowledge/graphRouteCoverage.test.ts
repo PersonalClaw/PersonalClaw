@@ -107,8 +107,9 @@ describe('the knowledge graph is reachable as a harness route', () => {
     const [path, qs] = GRAPH_ROUTE.split('?')
     const [param, value] = qs.split('=')
 
-    // 1. the base path is a real nav page the harness already knows
-    expect(navRoutes(), `${path} must be a nav route`).toContain(path)
+    // 1. the base path is a real page the harness already knows: a nav route, or a destination's
+    //    tab at an address of its own (Knowledge is Library's, #3815)
+    expect([...navRoutes(), ...VIEW_ROUTES.map((e) => e.route)], `${path} must be a nav route or a tab's`).toContain(path)
 
     // 2. the router splits a query off the hash path, so `#/path?x=y` resolves to `path`
     const hash = read('src/app/useHashRoute.ts')

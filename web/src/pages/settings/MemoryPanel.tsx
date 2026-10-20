@@ -70,7 +70,7 @@ const TOP_TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
 /** Memory — a full explorer over the vector-memory store. Browse/edit semantic
  *  key-values, search episodic memories, audit every memory op, preview injected
  *  context, and tune retention + run consolidation. The active tab rides ?tab
- *  (replace — an in-place view switch), so #/settings/memory?tab=audit deep-links
+ *  (replace — an in-place view switch), so #/memory?tab=audit deep-links
  *  and survives refresh. */
 const ALL_TABS: Tab[] = ['studio', 'recall', 'health', 'audit', 'inspect', 'settings']
 // Old deep-links (?tab=browse/episodic/graph/lessons/editors) fold into the Studio,
@@ -816,7 +816,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts, fa
           <InvestigateButton
             kind={item.kind === 'lesson' ? 'memory_lesson' : 'memory_record'}
             id={item.kind === 'lesson' ? (item.lesson?.rule ?? '') : (item.fact?.key ?? item.episodic?.id ?? '')}
-            backLink="#/settings/memory" size={28} />
+            backLink="#/memory" size={28} />
         )}
         {deletable && (
           <SquareIconButton icon={Trash2} iconSize={13} tone="danger" label="Delete" onClick={onDelete} className="shrink-0" />
@@ -834,7 +834,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts, fa
               <p data-type="caption" className="text-on-surface-low">
                 Forgotten: it no longer reaches the assistant, and the same request never learns it
                 again. It stays here, and among the forgotten ones in{' '}
-                <TextLink href={`#/settings/memory?tab=settings${inThisMemory}`}>Learned preferences</TextLink>, so the
+                <TextLink href={`#/memory?tab=settings${inThisMemory}`}>Learned preferences</TextLink>, so the
                 retirement stays visible.
               </p>
             ) : (
@@ -842,7 +842,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts, fa
                 Learned from how you asked, and shown to the assistant on every turn while it holds.
                 The Learned preferences list shows how strongly it is held now, and pins or
                 forgets it.{' '}
-                <TextLink href={`#/settings/memory?tab=settings&pref=${encodeURIComponent(item.fact.key)}${inThisMemory}`}>
+                <TextLink href={`#/memory?tab=settings&pref=${encodeURIComponent(item.fact.key)}${inThisMemory}`}>
                   Manage in Learned preferences →
                 </TextLink>
               </p>

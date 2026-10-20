@@ -39,7 +39,7 @@ const ROUTES = [
   ['05-loops',           '#/loop'],
   ['06-triggers',        '#/triggers'],
   ['07-workflows',       '#/workflows'],
-  ['08-memory',          '#/settings/memory'],
+  ['08-memory',          '#/memory'],
   ['09-apps',            '#/apps?view=native'],
   ['10-skills',          '#/skills'],
   ['11-settings',        '#/settings'],

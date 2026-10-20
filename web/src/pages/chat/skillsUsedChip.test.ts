@@ -117,7 +117,7 @@ describe('learnedSurface — a tap lands where the artifact can be approved or e
   it('routes an after-turn LESSON to the Memory Studio, which reads the lesson store', () => {
     // `run_after_turn_review` calls `service.write_lesson()`, and `MemoryPanel` fetches
     // exactly that store via `api.lessons()` with an editing inspector.
-    expect(learnedSurface('lesson')?.href).toBe('#/settings/memory?tab=studio')
+    expect(learnedSurface('lesson')?.href).toBe('#/memory?tab=studio')
     // NOT the Learning page. That page is the `/api/learning/proposals` inbox — a different
     // artifact class (flywheel `lesson_batch` proposals) that can neither show nor edit an
     // after-turn lesson. This exclusion is the whole finding; see the DISCOVERY note.
@@ -127,8 +127,8 @@ describe('learnedSurface — a tap lands where the artifact can be approved or e
   it('routes a learned preference to the list that can pin or forget it, at its row', () => {
     // Not the Studio: it lists the same row as a raw fact, with no Forget.
     expect(learnedSurface('facet', 'pref.facet.style.abc')?.href)
-      .toBe('#/settings/memory?tab=settings&pref=pref.facet.style.abc')
-    expect(learnedSurface('facet')?.href).toBe('#/settings/memory?tab=settings')
+      .toBe('#/memory?tab=settings&pref=pref.facet.style.abc')
+    expect(learnedSurface('facet')?.href).toBe('#/memory?tab=settings')
     expect(learnedSurface('facet')?.label).toContain('Learned preferences')
   })
 

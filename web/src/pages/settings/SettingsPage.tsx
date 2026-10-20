@@ -1,5 +1,5 @@
 import {
-  Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
+  Palette, Plug, Bell, Cpu, Shield, ShieldAlert, User, MessageSquare, Bot, Inbox,
   FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope, ThumbsUp,
   HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package, Smartphone, MonitorSmartphone, Plug2, FileType2,
   FlaskConical, KeyRound, MessageCircle, Workflow, RefreshCcw, Gauge,
@@ -11,7 +11,6 @@ import { ArrowLeft } from 'lucide-react'
 import { DesignPanel } from './DesignPanel'
 import { AccountPanel } from './AccountPanel'
 import { NotificationsPanel } from './NotificationsPanel'
-import { MemoryPanel } from './MemoryPanel'
 import { SecurityPanel } from './SecurityPanel'
 import { SecretsPanel } from './SecretsPanel'
 import { ProvidersPanel } from './ProvidersPanel'
@@ -58,7 +57,7 @@ import { OPEN_DURING_SETUP } from '../../app/onboarding/openDuringSetup'
 // A subpage panel's render context: `go` navigates between subpages, `navigate` is
 // the raw router (for cross-section links), and `query`/`setQuery` let a panel put
 // its OWN nested state (which tab, which provider is expanded) in the URL — so
-// #/settings/memory?tab=audit and an expanded provider survive refresh + Back.
+// #/settings/voice?section=vocabulary and an expanded provider survive refresh + Back.
 interface PanelCtx {
   go: (id: string) => void
   navigate?: RouteProps['navigate']
@@ -79,7 +78,8 @@ const SUBPAGES: SubPage[] = [
   { id: 'models', label: 'Models', icon: Cpu, render: () => <ModelsPanel /> },
   { id: 'search', label: 'Search', icon: Search, render: () => <SearchPanel /> },
   { id: 'prompts', label: 'Prompts', icon: FileText, render: () => <PromptsPanel /> },
-  { id: 'memory', label: 'Memory', icon: Database, render: (c) => <MemoryPanel query={c.query} setQuery={c.setQuery} /> },
+  // Memory was here. It is Library's Memory tab now (#3815), and its old address a row of
+  // `routeRedirects.ts`.
   // Grouped with Prompts/Models rather than under System: a study measures a prompt template
   // against another one, and its judge is a model — the things this page is about are the things
   // those two pages configure. Its RESULTS live on `#/learning`; this page is only the five knobs

@@ -106,7 +106,11 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'dashboard', from: ['router', 'palette', 'deep-link', 'tray', 'documented'], since: 'v0.1.0' },
   { route: 'chat', from: ['router', 'palette', 'deep-link', 'tray', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'projects', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
+  // Library (#3815): one sidebar row, whose tabs are Knowledge, Memory, Files and Artifacts.
+  { route: 'library', from: ['router', 'palette'], since: UNRELEASED },
   { route: 'knowledge', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
+  // Library's Memory tab, which was Settings › Memory.
+  { route: 'memory', from: ['router', 'palette', 'documented'], since: UNRELEASED },
   { route: 'tasks', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'inbox', from: ['router', 'palette', 'deep-link', 'tray', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'triggers', from: ['router', 'palette', 'deep-link', 'notification', 'gateway', 'documented'], since: 'v0.1.0' },
@@ -174,6 +178,8 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'knowledge/reports', from: ['documented'] },
   { route: 'knowledge?view=graph', from: ['documented'] },
   { route: 'knowledge?view=home', from: ['documented'] },
+  // The item list's own key, from when the view was called Library; the view is All items now.
+  { route: 'knowledge?view=library', from: ['documented'] },
   { route: 'knowledge?view=intents', from: ['documented'] },
   { route: 'knowledge?view=tags', from: ['documented'] },
   { route: 'knowledge?view=conflicts', from: ['documented'] },
@@ -204,6 +210,17 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'files?file=src%2Fapp.py', from: ['documented'] },
   { route: `artifacts/${S.artifact}`, from: ['deep-link', 'documented'] },
   { route: `artifacts/${S.artifact}?v=2`, from: ['documented'] },
+
+  // ── Memory ────────────────────────────────────────────────────────────────────────────────────
+  // Library's Memory tab: each of its views, a record the studio opens, and a learned preference.
+  { route: 'memory?tab=studio', from: ['documented'] },
+  { route: 'memory?tab=studio&sel=fact%3Apref.tone', from: ['documented'] },
+  { route: 'memory?tab=health', from: ['documented'] },
+  { route: 'memory?tab=recall', from: ['documented'] },
+  { route: 'memory?tab=inspect', from: ['documented'] },
+  { route: 'memory?tab=audit', from: ['documented'] },
+  { route: 'memory?tab=settings', from: ['documented'] },
+  { route: 'memory?tab=settings&pref=pref.tone', from: ['documented'] },
 
   // ── Capabilities ──────────────────────────────────────────────────────────────────────────────
   // Each tab keeps its page's address; the Store is the Apps page's store view (below).
@@ -275,7 +292,8 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'settings/inbox', from: ['documented'], since: 'v0.1.0' },
   { route: 'settings/legibility', from: ['documented'], since: 'v0.1.2' },
   { route: 'settings/loops', from: ['documented'], since: 'v0.2.0' },
-  { route: 'settings/memory', from: ['documented'], since: 'v0.1.0' },
+  // Retired to Library's Memory tab (#3815), with its views (below).
+  { route: 'settings/memory', from: ['documented'], since: 'v0.1.0', lands: 'memory' },
   { route: 'settings/models', from: ['gateway', 'documented'], since: 'v0.1.0' },
   { route: 'settings/notifications', from: ['documented'], since: 'v0.1.0' },
   { route: 'settings/packs', from: ['documented'], since: 'v0.2.0' },
@@ -294,10 +312,10 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'settings/usage', from: ['documented'], since: 'v0.2.0' },
   { route: 'settings/voice', from: ['documented'], since: 'v0.1.0' },
   { route: 'settings/workflows', from: ['documented'], since: 'v0.2.0' },
-  // Memory's tabs, each its own surface.
-  { route: 'settings/memory?tab=health', from: ['documented'] },
-  { route: 'settings/memory?tab=recall', from: ['documented'] },
-  { route: 'settings/memory?tab=inspect', from: ['documented'] },
-  { route: 'settings/memory?tab=audit', from: ['documented'] },
-  { route: 'settings/memory?tab=settings', from: ['documented'] },
+  // Memory's views, each its own surface, from when Memory was a page of Settings.
+  { route: 'settings/memory?tab=health', from: ['documented'], lands: 'memory?tab=health' },
+  { route: 'settings/memory?tab=recall', from: ['documented'], lands: 'memory?tab=recall' },
+  { route: 'settings/memory?tab=inspect', from: ['documented'], lands: 'memory?tab=inspect' },
+  { route: 'settings/memory?tab=audit', from: ['documented'], lands: 'memory?tab=audit' },
+  { route: 'settings/memory?tab=settings', from: ['documented'], lands: 'memory?tab=settings' },
 ]

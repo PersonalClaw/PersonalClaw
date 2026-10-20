@@ -18,7 +18,7 @@ describe('Markdown memory citations', () => {
       <Markdown citations={cites}>{'You shipped it [Memory 1] last week.'}</Markdown>,
     )
     const link = getByRole('link', { name: /Memory 1/ })
-    expect(link).toHaveAttribute('href', '#/settings/memory?tab=studio&sel=epi%3A42')
+    expect(link).toHaveAttribute('href', '#/memory?tab=studio&sel=epi%3A42')
     expect(link).toHaveAttribute('title', 'deployed billing on friday')
   })
 
@@ -61,7 +61,7 @@ describe('Markdown lesson citations', () => {
     )
     const link = getByRole('link', { name: /Lesson 1/ })
     expect(link).toHaveAttribute(
-      'href', `#/settings/memory?tab=studio&sel=${encodeURIComponent(`lesson:${rule}`)}`)
+      'href', `#/memory?tab=studio&sel=${encodeURIComponent(`lesson:${rule}`)}`)
     expect(link).toHaveAttribute('title', rule)
   })
 
@@ -70,7 +70,7 @@ describe('Markdown lesson citations', () => {
       <Markdown citations={cites}>{'Shipped [Memory 1], and dedupes in Postgres [Lesson 1].'}</Markdown>,
     )
     expect(getByRole('link', { name: /Memory 1/ })).toHaveAttribute(
-      'href', '#/settings/memory?tab=studio&sel=epi%3A42')
+      'href', '#/memory?tab=studio&sel=epi%3A42')
     expect(getByRole('link', { name: /Lesson 1/ }).getAttribute('href')).toContain('lesson%3A')
   })
 

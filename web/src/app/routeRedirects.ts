@@ -55,6 +55,10 @@ export const ROUTE_REDIRECTS: readonly RouteRedirect[] = [
   { from: 'files/:slug', to: 'artifacts/:slug', pr: 65 },
   // Vocabulary became a section of Speech & Transcription.
   { from: 'settings/vocabulary', to: 'settings/voice?section=vocabulary', pr: 'before v0.1.0' },
+  // The memory studio left Settings to be Library's Memory tab (#3815). An old link names the view
+  // (`tab`), the record (`sel`), a learned preference (`pref`) and a folder's own memory
+  // (`partition`), all of which the page reads under the same names.
+  { from: 'settings/memory', to: 'memory', keeps: { tab: 'tab', sel: 'sel', pref: 'pref', partition: 'partition' }, pr: 3815 },
 ]
 
 /** A segment as the router hands it to a page: decoded, or as written when it is not valid

@@ -225,7 +225,7 @@ export function IdentityReportPanel({ report, error, onRetry, onDelivered }: {
           shown={report.facets.items.length}
           lines={report.facets.items.map((f) => `${f.text} — ${f.cls}, ${f.state}`)}
           manage={report.facets.count > 0
-            ? { href: '#/settings/memory?tab=settings', label: 'Pin or forget them' }
+            ? { href: '#/memory?tab=settings', label: 'Pin or forget them' }
             : undefined}
         />
         <Group
@@ -261,7 +261,7 @@ function Group({ title, count, shown, lines, manage }: {
   shown: number
   lines: string[]
   /** Where the listed things are changed, when they can be: a learned preference is pinned or
-   *  forgotten in Settings → Memory, and a list of them with no way there is a report she cannot
+   *  forgotten in Library → Memory, and a list of them with no way there is a report she cannot
    *  act on. */
   manage?: { href: string; label: string }
 }) {

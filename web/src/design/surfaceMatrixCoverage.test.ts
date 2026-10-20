@@ -20,7 +20,7 @@ const VISITED_ROUTES = [
   'dashboard', 'chat', 'projects', 'knowledge', 'tasks', 'inbox', 'triggers', 'files', 'artifacts',
   'terminal', 'agents', 'tools', 'skills', 'learning', 'workflows', 'prompts', 'apps', 'settings',
   'settings/account', 'settings/design', 'settings/chat', 'settings/providers', 'settings/models',
-  'settings/search', 'settings/prompts', 'settings/memory', 'settings/evals', 'settings/agent',
+  'settings/search', 'settings/prompts', 'settings/evals', 'settings/agent',
   'settings/voice', 'settings/apps', 'settings/inbox', 'settings/documents', 'settings/notifications',
   'settings/security', 'settings/secrets', 'settings/devices', 'settings/sender-trust',
   'settings/guardrails', 'settings/external-access', 'settings/audit', 'settings/system',
@@ -30,6 +30,8 @@ const VISITED_ROUTES = [
   'settings/archive', 'settings/portability', 'settings/durability', 'settings/updates',
   'knowledge?view=graph', 'knowledge/item/not-a-real-item?read=1', 'mission-control',
   'notifications', 'discover', 'app/not-a-real-app', 'app/e2e-ui-fixture',
+  // Settings › Memory, the same page at the address it moved to: Library's Memory tab (#3815).
+  'memory',
 ] as const
 
 /** Every opened surface both specs visited, by its `OPENERS` label. */
@@ -88,7 +90,7 @@ describe('the UI quality matrix visits every surface the specs it replaced visit
     const spec = read('e2e/surfaces.spec.ts')
     const noSettings = spec.replace('...SETTINGS_ROUTES, ', '')
     expect(noSettings, 'the plant found no SETTINGS_ROUTES spread').not.toEqual(spec)
-    expect(dropped(VISITED_ROUTES, matrixRoutes(noSettings))).toContain('settings/memory')
+    expect(dropped(VISITED_ROUTES, matrixRoutes(noSettings))).toContain('settings/evals')
 
     const oneRouteFewer = matrixRoutes().filter((r) => r !== 'mission-control')
     expect(dropped(VISITED_ROUTES, oneRouteFewer)).toEqual(['mission-control'])

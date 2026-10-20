@@ -25,12 +25,16 @@ const FACTS: SemanticEntry[] = [
   },
   { key: 'user.favorite_language', value_json: '"Python"', source: 'user_explicit', confidence: 1 },
 ]
+/** The chat the inspector's investigate opens, as it was asked for. */
+const investigate = vi.fn(() => Promise.resolve())
+
 const FACET: MemoryFacet = {
   key: KEY, cls: 'style', text: 'keep your answers short', cue: 'explicit', stability: 1,
   stored_stability: 1, state: 'Active', updated_at: '2026-09-29T16:22:58Z', pinned: false, forgotten: false,
 }
 
 async function mount(query: Record<string, string>) {
+  vi.doMock('../../lib/investigate', () => ({ investigate, useInvestigate: () => investigate }))
   vi.doMock('../../lib/api', async (orig) => {
     const real = await orig<Record<string, unknown>>()
     return {
@@ -60,7 +64,13 @@ beforeEach(() => {
   Element.prototype.scrollTo = vi.fn() as unknown as typeof Element.prototype.scrollTo
   Element.prototype.scrollIntoView = vi.fn() as unknown as typeof Element.prototype.scrollIntoView
 })
-afterEach(() => { cleanup(); vi.resetModules(); vi.doUnmock('../../lib/api') })
+afterEach(() => {
+  cleanup()
+  vi.resetModules()
+  vi.doUnmock('../../lib/api')
+  vi.doUnmock('../../lib/investigate')
+  investigate.mockClear()
+})
 
 describe('in the Studio', () => {
   it('lists the preference in words, not its key over raw JSON', async () => {
@@ -75,7 +85,10 @@ describe('in the Studio', () => {
     await mount({})
     fireEvent.click(await screen.findByText('keep your answers short'))
     const manage = await screen.findByRole('link', { name: /Manage in Learned preferences/ })
-    expect(manage.getAttribute('href')).toBe(`#/settings/memory?tab=settings&pref=${encodeURIComponent(KEY)}`)
+    expect(manage.getAttribute('href')).toBe(`#/memory?tab=settings&pref=${encodeURIComponent(KEY)}`)
+    // Its investigate opens a chat whose way back is the Memory tab, at its own address.
+    fireEvent.click(screen.getByRole('button', { name: 'Investigate in chat' }))
+    expect(investigate).toHaveBeenCalledWith('memory_record', KEY, { backLink: '#/memory' })
     expect(screen.queryByRole('button', { name: /Edit the value/ })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull()
   })
@@ -87,6 +100,7 @@ describe('in the Studio', () => {
     await screen.findByText(/it no longer reaches the assistant/)
     expect(screen.queryByText(/shown to the assistant on every turn/)).toBeNull()
     expect(screen.queryByRole('link', { name: /Manage in Learned preferences/ })).toBeNull()
+    expect(screen.getByRole('link', { name: 'Learned preferences' }).getAttribute('href')).toBe('#/memory?tab=settings')
   })
 })
 

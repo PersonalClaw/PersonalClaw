@@ -171,6 +171,16 @@ describe('the disclosure store', () => {
     expect(isDisclosed('triggers', 'expert', [])).toBe(true)
   })
 
+  it('a pin of a page that became a Library tab reads as the Library row, once, in arrival order', () => {
+    // Knowledge, Files and Artifacts were rail rows, and a starter browser pinned each by visiting
+    // it. They are Library's tabs now (#3815), so the record still names ids the rail no longer has.
+    localStorage.setItem('nav-disclosure', JSON.stringify({ mode: 'starter', pinned: ['triggers', 'files', 'knowledge', 'artifacts'] }))
+    expect(readNavDisclosure()).toEqual({ mode: 'starter', pinned: ['triggers', 'library'] })
+    // The next write keeps what it read, so the record itself moves to the new row.
+    pinNavSurface('terminal')
+    expect(JSON.parse(localStorage.getItem('nav-disclosure')!).pinned).toEqual(['triggers', 'library', 'terminal'])
+  })
+
   it('undisclosedCount counts only what starter holds back', () => {
     const ids = [...STARTER_NAV_IDS, 'triggers', 'learning', 'app/weather']
     expect(undisclosedCount(ids, [])).toBe(2)
@@ -232,13 +242,38 @@ describe('the rail a fresh install sees', () => {
     // which is the moment to classify it.
     localStorage.setItem('nav-disclosure', JSON.stringify({
       mode: 'starter',
-      pinned: ['projects', 'knowledge', 'tasks', 'triggers', 'files', 'artifacts', 'terminal',
+      pinned: ['projects', 'library', 'tasks', 'triggers', 'terminal',
         'learning', 'workflows'],
     }))
     renderApp()
     await waitFor(() => expect(railLinks()).toContain('Workflows'))
     expect(screen.queryByRole('button', { name: /^Everything, show/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /^Show fewer/ })).toBeNull()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('a starter rail pinned before Library', () => {
+  // Knowledge, Files and Artifacts were three rows a starter rail showed once visited; they are
+  // Library's tabs now (#3815). The pins this browser wrote still name them, and the row they went
+  // to has to show in their place, or the rail shrinks on upgrade for exactly the surfaces in use.
+  it.each(['knowledge', 'files', 'artifacts'])('a pinned %s shows the Library row', async (id) => {
+    localStorage.setItem('nav-disclosure', JSON.stringify({ mode: 'starter', pinned: [id] }))
+    renderApp()
+    await waitFor(() => expect(railLinks()).toContain('Home'))
+    expect(railLinks()).toContain('Library')
+  })
+
+  it('a rail that had pinned every surface before Library still has nothing left to reveal', async () => {
+    localStorage.setItem('nav-disclosure', JSON.stringify({
+      mode: 'starter',
+      pinned: ['projects', 'knowledge', 'tasks', 'triggers', 'files', 'artifacts', 'terminal',
+        'learning', 'workflows'],
+    }))
+    renderApp()
+    await waitFor(() => expect(railLinks()).toContain('Workflows'))
+    expect(railLinks()).toContain('Library')
+    expect(screen.queryByRole('button', { name: /^Everything, show/ })).toBeNull()
   })
 })
 
@@ -307,7 +342,7 @@ describe('expert mode', () => {
 
     await waitFor(() => {
       const names = railLinks()
-      for (const label of ['Learning', 'Triggers', 'Terminal', 'Workflows', 'Projects', 'Knowledge']) {
+      for (const label of ['Learning', 'Triggers', 'Terminal', 'Workflows', 'Projects', 'Library']) {
         expect(names).toContain(label)
       }
     })

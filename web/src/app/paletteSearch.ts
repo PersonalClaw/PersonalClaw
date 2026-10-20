@@ -16,7 +16,7 @@ import { chatFindPath, searchCoverage } from '../pages/chat/searchDeepLink'
  *   · memory: episodic memories through `GET /api/memory/episodic/search`, facts (and slots)
  *     matched by key or value from `GET /api/memory/semantic` (the Memory studio's own filter), and
  *     lessons matched by their rule from `GET /api/lessons`, each opened as the selected record in
- *     Settings → Memory under the kind the studio lists it as (`semanticRowKind`);
+ *     Library → Memory under the kind the studio lists it as (`semanticRowKind`);
  *   · knowledge: `GET /api/knowledge/items?q=`, opened on the item's page;
  *   · tasks: `POST /api/tasks/search`, opened in the task list's side panel.
  *
@@ -82,7 +82,7 @@ const factValue = (json?: string) => {
     return typeof v === 'string' ? v : JSON.stringify(v)
   } catch { return json }
 }
-const memoryPath = (uid: string) => `settings/memory?tab=studio&sel=${encodeURIComponent(uid)}`
+const memoryPath = (uid: string) => `memory?tab=studio&sel=${encodeURIComponent(uid)}`
 
 /** A source's hits, and the sentence it owes when they come from only part of what it holds. */
 interface SourceAnswer { hits: ContentHit[]; note?: string }

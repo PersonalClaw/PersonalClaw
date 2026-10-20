@@ -563,7 +563,7 @@ def render_index(
             "Obsidian for the graph view. Edit a fact page above its "
             "`personalclaw:generated` marker and the next sync reads your change back "
             "into memory — your edit wins. Anything the sync cannot read confidently is "
-            "left exactly as you wrote it and reported in Settings → Memory → Health."
+            "left exactly as you wrote it and reported in Library → Memory → Health."
             if two_way
             else f"A read-only mirror of {whose}. Open this folder in "
             "Obsidian for the graph view. Do not edit — files are regenerated from the "
@@ -574,7 +574,7 @@ def render_index(
     if folder is not None and folder.gone:
         lines += [
             "That folder is no longer there, so no chat reads this memory any more. "
-            "Remove it in Settings → Memory.",
+            "Remove it in Library → Memory.",
             "",
         ]
     lines += ["## Counts", ""]
@@ -1484,7 +1484,7 @@ def starter_seeds(mode: str) -> dict[str, str]:
             if two_way
             else "This vault is in **mirror** mode: pages are regenerated from the store"
             " and your edits WILL be overwritten. Set `memory.vault_mode` to `two_way`"
-            " in Settings → Memory to edit memory from here."
+            " in Library → Memory to edit memory from here."
         ),
     ]
     # NOTE: no seed inside `raw/`. A guide page there would be swept into Knowledge by

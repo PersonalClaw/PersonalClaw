@@ -60,6 +60,12 @@ describe('IdentityReportPanel', () => {
     expect(screen.getByText('prefers terse replies — style, Active')).toBeTruthy()
   })
 
+  it('links the preferences it holds to where each is pinned or forgotten, the Memory tab', () => {
+    render(<IdentityReportPanel report={report()} error={undefined} onRetry={() => {}} onDelivered={() => {}} />)
+
+    expect(screen.getByRole('link', { name: 'Pin or forget them' }).getAttribute('href')).toBe('#/memory?tab=settings')
+  })
+
   it('omits the "showing N of M" note when nothing was dropped', () => {
     // The vacuity floor for the note above: it must be conditional, or it would appear on
     // every complete section and stop meaning "there is more".

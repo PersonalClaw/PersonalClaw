@@ -517,7 +517,7 @@ function linkifyMemory(children: any, citations: MemoryCitation[]): any {
       if (!cite || !cite.id) {
         parts.push(m[0])
       } else {
-        const href = `#/settings/memory?tab=studio&sel=${encodeURIComponent(citeSel(cite))}`
+        const href = `#/memory?tab=studio&sel=${encodeURIComponent(citeSel(cite))}`
         parts.push(
           <a key={`${ci}-${m.index}`} href={href} title={cite.preview || label}
             className="mx-0.5 inline-flex items-baseline rounded-sm bg-surface-high px-1.5 align-baseline text-[0.8em] text-primary-emphasis no-underline decoration-primary/40 transition-colors hover:bg-surface-highest hover:underline">
