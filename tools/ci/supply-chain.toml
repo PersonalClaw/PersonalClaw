@@ -88,6 +88,13 @@ permission = "issues: write"
 steps = ["report, and on main write the weekly issue"]
 reason = "Edits the one open issue titled `Weekly CI health` that the workflow's own account opened, or opens it once; it writes the issue only on main, and nothing else."
 
+[[audited_write]]
+workflow = "release-verify.yml"
+job = "report"
+permission = "issues: write"
+steps = ['Open, edit or close the "did not verify" issue']
+reason = "Keeps the one issue per tag that did not verify, closing it once a later run verifies the tag; it writes no other issue and runs nowhere else."
+
 # Exceptions. One waives exactly one violation of one rule (scope) in one file, and expires at
 # most 30 days after the day it is written or renewed. Renewing is a new expiry with a new
 # reason. An expired entry, one more than 30 days out, one that matches nothing or more than one
