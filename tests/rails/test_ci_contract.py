@@ -592,12 +592,15 @@ def _plant_job_copy(name: str, rel: str, job_id: str, copy_id: str, expect: str 
 
 
 def _toolchain_row(
-    name: str, check: Callable[[Tree], list[str]], controls: tuple[Control, ...]
+    name: str,
+    check: Callable[[Tree], list[str]],
+    controls: tuple[Control, ...],
+    scaffold: Callable[[Path], None] = _copy_toolchain_files,
 ) -> Row:
     return Row(
         name=name,
         check=lambda root: check(_tree(root)),
-        scaffold=_copy_toolchain_files,
+        scaffold=scaffold,
         controls=controls,
     )
 
@@ -1361,8 +1364,20 @@ _ALWAYS_RUN = frozenset({"tree-check", "changes", "security", "browse-live", "ap
 _ON_MAIN = "github.ref == 'refs/heads/main'"
 
 
+#: libyaml's loader where it is built, as tools/ci/supply_chain.py reads the workflows: the same
+#: constructor as yaml.safe_load's, and several times faster on a workflow the size of ci.yml.
+_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
 def _workflow(tree: Tree, name: str) -> dict[str, Any] | None:
-    return dict(_workflows(tree)).get(name)
+    """The workflow *name* in *tree*, parsed alone: a row that reads one workflow parses no
+    other, on the tree and on every control it plants."""
+    texts = [
+        text
+        for rel, text in tree.items()
+        if rel.startswith(".github/workflows/") and rel.rsplit("/", 1)[1] == name
+    ]
+    return yaml.load(texts[-1], Loader=_LOADER) if texts else None
 
 
 def _needs(job: dict[str, Any]) -> list[str]:
@@ -1609,6 +1624,15 @@ exit 0
 def _gate_behaviour(where: str, run: str, env: dict[str, str]) -> list[str]:
     """Run the gate's script under ``bash -e`` (GitHub's default shell) with ``gh`` and
     ``python3`` stubbed, once per planted answer, and hold its exit code and its error."""
+    return list(_gate_answers(where, run, env["SHARD_JOB"], env["GROUP_PREFIX"]))
+
+
+@functools.cache
+def _gate_answers(where: str, run: str, shard_job: str, group_prefix: str) -> tuple[str, ...]:
+    """The gate's violations, cached on all they depend on: the gate, its script and the two
+    names its env binds. The row checks a copy of the scaffold for every plant, and most plants
+    leave both gates' scripts as they are, so each script the row sees runs once, not once per
+    plant. Its planted answers run side by side, each in its own process and temporary folder."""
     import os
     import subprocess
     import tempfile
@@ -1623,65 +1647,77 @@ def _gate_behaviour(where: str, run: str, env: dict[str, str]) -> list[str]:
             (bin_dir / name).chmod(0o755)
         script = root / "gate.sh"
         script.write_text(run, encoding="utf-8")
-        for name, event, ref, result, answer, gh_fails, code, title, names in _GATE_CASES:
-            temp = root / f"temp-{len(bad)}-{abs(hash(name))}"
-            temp.mkdir()
-            log = temp / "calls.log"
-            log.write_text("", encoding="utf-8")
-            case_env = {
-                "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
-                "RUNNER_TEMP": str(temp),
-                "GITHUB_REPOSITORY": "PersonalClaw/PersonalClaw",
-                "GITHUB_EVENT_NAME": event,
-                "GITHUB_REF": ref,
-                "GH_TOKEN": "token",
-                "BEFORE": _BEFORE,
-                "RESULT": result,
-                "SHARD_JOB": env["SHARD_JOB"],
-                "GROUP_PREFIX": env["GROUP_PREFIX"],
-                "STUB_LOG": str(log),
-                "STUB_ANSWER": answer or "",
-            }
-            if answer is None:
-                case_env["STUB_NO_ANSWER"] = "1"
-            if gh_fails:
-                case_env["STUB_GH_FAIL"] = "1"
-            done = subprocess.run(
-                ["bash", "-e", str(script)],
-                env=case_env,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            out = done.stdout + done.stderr
-            calls = log.read_text(encoding="utf-8")
-            if done.returncode != code:
-                bad.append(f"{where} exits {done.returncode} on {name}, not {code}: {out!r}")
-                continue
-            if code == 0:
-                if "::error" in out:
-                    bad.append(f"{where} reports an error on {name}: {out!r}")
-                continue
-            if f"::error title=test shards {title}::" not in out:
-                bad.append(f"{where} does not name {name} '{title}': {out!r}")
-            if names and names not in out:
-                bad.append(f"{where} does not say {names!r} on {name}: {out!r}")
-            main_push = (event, ref) == ("push", "refs/heads/main") and result == "cancelled"
-            if not main_push and calls:
-                bad.append(f"{where} reads the API on {name}, where nothing can be superseded")
-            if main_push and not gh_fails:
-                fetch = f"contents/tools/ci/superseded.py?ref={_BEFORE}"
-                if fetch not in calls:
-                    bad.append(
-                        f"{where} does not fetch the previous main commit's check: {calls!r}"
-                    )
-                want = (
-                    f"python3 -I {temp}/superseded.py --workflow ci.yml --job "
-                    f"{env['SHARD_JOB']} --group-prefix {env['GROUP_PREFIX']}"
+        running: list[tuple[tuple[Any, ...], Path, Path, subprocess.Popen[str]]] = []
+        try:
+            for index, case in enumerate(_GATE_CASES):
+                _name, event, ref, result, answer, gh_fails = case[:6]
+                temp = root / f"temp-{index}"
+                temp.mkdir()
+                log = temp / "calls.log"
+                log.write_text("", encoding="utf-8")
+                case_env = {
+                    "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+                    "RUNNER_TEMP": str(temp),
+                    "GITHUB_REPOSITORY": "PersonalClaw/PersonalClaw",
+                    "GITHUB_EVENT_NAME": event,
+                    "GITHUB_REF": ref,
+                    "GH_TOKEN": "token",
+                    "BEFORE": _BEFORE,
+                    "RESULT": result,
+                    "SHARD_JOB": shard_job,
+                    "GROUP_PREFIX": group_prefix,
+                    "STUB_LOG": str(log),
+                    "STUB_ANSWER": answer or "",
+                }
+                if answer is None:
+                    case_env["STUB_NO_ANSWER"] = "1"
+                if gh_fails:
+                    case_env["STUB_GH_FAIL"] = "1"
+                gate = subprocess.Popen(
+                    ["bash", "-e", str(script)],
+                    env=case_env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
                 )
-                if want not in calls:
-                    bad.append(f"{where} does not run the fetched check as {want!r}: {calls!r}")
-    return bad
+                running.append((case, temp, log, gate))
+            for case, temp, log, gate in running:
+                name, event, ref, result, _answer, gh_fails, code, title, names = case
+                stdout, stderr = gate.communicate(timeout=60)
+                out = stdout + stderr
+                calls = log.read_text(encoding="utf-8")
+                if gate.returncode != code:
+                    bad.append(f"{where} exits {gate.returncode} on {name}, not {code}: {out!r}")
+                    continue
+                if code == 0:
+                    if "::error" in out:
+                        bad.append(f"{where} reports an error on {name}: {out!r}")
+                    continue
+                if f"::error title=test shards {title}::" not in out:
+                    bad.append(f"{where} does not name {name} '{title}': {out!r}")
+                if names and names not in out:
+                    bad.append(f"{where} does not say {names!r} on {name}: {out!r}")
+                main_push = (event, ref) == ("push", "refs/heads/main") and result == "cancelled"
+                if not main_push and calls:
+                    bad.append(f"{where} reads the API on {name}, where nothing can be superseded")
+                if main_push and not gh_fails:
+                    fetch = f"contents/tools/ci/superseded.py?ref={_BEFORE}"
+                    if fetch not in calls:
+                        bad.append(
+                            f"{where} does not fetch the previous main commit's check: {calls!r}"
+                        )
+                    want = (
+                        f"python3 -I {temp}/superseded.py --workflow ci.yml --job "
+                        f"{shard_job} --group-prefix {group_prefix}"
+                    )
+                    if want not in calls:
+                        bad.append(f"{where} does not run the fetched check as {want!r}: {calls!r}")
+        finally:
+            for *_, gate in running:
+                if gate.returncode is None:
+                    gate.kill()
+                    gate.communicate()
+    return tuple(bad)
 
 
 def main_push_runs_violations(tree: Tree) -> list[str]:
@@ -3019,6 +3055,13 @@ _TESTED_IF = "if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' 
 _MACOS_RUN = "uv run pytest -n 2 --dist worksteal -q"
 
 
+def _ci_alone(root: Path) -> None:
+    """The scaffold of a toolchain row whose check reads ci.yml and nothing else. The row copies
+    its scaffold for every control, and under load a copy of every toolchain file for each one
+    cost the row as much as its checks did."""
+    _write(root, _CI, (REPO / _CI).read_text(encoding="utf-8"))
+
+
 # ── No test walks a source root itself ───────────────────────────────────────────────────────
 #
 # A tree rail reads the package, web/src, docs and the workflows through tests/source_index.py,
@@ -3846,6 +3889,7 @@ ROWS: tuple[Row, ...] = (
             ),
             Control("the per-commit group on main passes", _nothing, fails=False),
         ),
+        scaffold=_ci_alone,
     ),
     _toolchain_row(
         "test-macos-before-the-merge",
