@@ -8613,6 +8613,211 @@ THE_HARNESS_GATES_RUN_IN_THE_MERGE_TIER = Row(
 ROWS = (*ROWS, THE_HARNESS_GATES_RUN_IN_THE_MERGE_TIER)
 
 
+# ── Each whole-tree check is in every tier that needs it, as a step that fails its job ───────
+#
+# A whole-tree check runs in the job that owns it (#3929): the rails in rails (and in breadth's
+# rails-macos), the rails census and the gate aggregate in rails-checks, harness validate and
+# harness scan in static, the security corpus in security. This row holds the catalogue to it:
+# each check runs in a job of every tier listed for it, and a check marked once runs in exactly
+# one job of each such tier, so it is neither skipped nor run twice. It holds the workflows to
+# the other half: a step that runs harness validate, harness scan, the gate aggregate or the
+# rails census fails its job, with no continue-on-error on the step or its job and no `|| true`
+# after the command. The breadth legs that run the rails and the security corpus record the
+# step's outcome and fail the job on it in their last step, so they are held by the tiers half.
+
+#: ``(what, the words its argv holds, the tiers that need it, whether exactly one job runs it,
+#: the text a workflow step that runs it carries)``.
+OWNED_CHECKS: tuple[tuple[str, frozenset[str], tuple[str, ...], bool, str], ...] = (
+    (
+        "harness validate",
+        frozenset({"-m", "harness", "validate"}),
+        ("change", "merge"),
+        True,
+        "python -m harness validate",
+    ),
+    (
+        "harness scan",
+        frozenset({"-m", "harness", "scan"}),
+        ("change", "merge"),
+        True,
+        "python -m harness scan",
+    ),
+    (
+        "the gate aggregate",
+        frozenset({"scripts/gate_report.py"}),
+        ("change", "merge"),
+        True,
+        "scripts/gate_report.py",
+    ),
+    (
+        "the rails census",
+        frozenset({"-m", "tools.ci", "rails", "check"}),
+        ("change", "merge"),
+        True,
+        "python -m tools.ci rails check",
+    ),
+    (
+        "the rails",
+        frozenset({"pytest", "tests/rails"}),
+        ("change", "merge", "breadth"),
+        True,
+        "tests/rails",
+    ),
+    (
+        "the security corpus",
+        frozenset({"pytest", "tests/security"}),
+        ("breadth",),
+        False,
+        "tests/security",
+    ),
+)
+
+_OWNED_WORKFLOWS = (".github/workflows/ci.yml", ".github/workflows/breadth.yml")
+#: The checks whose step must itself fail its job.
+_FAILS_ITS_JOB = frozenset(
+    {"harness validate", "harness scan", "the gate aggregate", "the rails census"}
+)
+_SWALLOWED = re.compile(r"\|\|\s*(?:true|:)(?:\s|$|;)")
+
+
+def owning_job_violations(root: Path) -> list[str]:
+    """Each owned check is in a job of every tier that needs it (exactly one where marked),
+    and every workflow step that runs one fails its job."""
+    try:
+        cat = catalogue.read(root)
+    except FileNotFoundError:
+        return [f"{catalogue.CATALOGUE} is missing"]
+    except catalogue.CatalogueError as exc:
+        return exc.problems
+    bad: list[str] = []
+    for what, words, tiers, once, _text in OWNED_CHECKS:
+        for tier in tiers:
+            runs = sorted(
+                job.id
+                for job in cat.tier(tier)
+                if any(words <= set(step.argv) for step in job.command)
+            )
+            if not runs:
+                bad.append(f"{what} runs in no job of the {tier} tier")
+            elif once and len(runs) > 1:
+                bad.append(f"{what} runs in {len(runs)} jobs of the {tier} tier: {runs}")
+    seen: set[str] = set()
+    for rel in _OWNED_WORKFLOWS:
+        workflow = yaml.safe_load((root / rel).read_text(encoding="utf-8")) or {}
+        for job_id, job in (workflow.get("jobs") or {}).items():
+            for step in job.get("steps") or []:
+                run = step.get("run") if isinstance(step, dict) else None
+                if not isinstance(run, str):
+                    continue
+                for what, _words, _tiers, _once, text in OWNED_CHECKS:
+                    if text not in run:
+                        continue
+                    seen.add(what)
+                    if what not in _FAILS_ITS_JOB:
+                        continue
+                    where = f"{rel} {job_id}: the step that runs {what}"
+                    if step.get("continue-on-error") or job.get("continue-on-error"):
+                        bad.append(f"{where} has continue-on-error, so its red is swallowed")
+                    for line in run.splitlines():
+                        if text in line and _SWALLOWED.search(line):
+                            bad.append(f"{where} ends in `|| true`, so its red is swallowed")
+    for what, *_rest in OWNED_CHECKS:
+        if what not in seen:
+            bad.append(f"no workflow step runs {what}")
+    return bad
+
+
+_STATIC = 'id = "static"\ntiers = ["change", "merge"]'
+_RAILS_CHECKS = 'id = "rails-checks"\ntiers = ["change", "merge"]'
+_VALIDATE_STEP = '  { argv = ["uv", "run", "python", "-m", "harness", "validate"] },\n'
+_GATES_STEP = '  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },\n'
+_CI_VALIDATE = (
+    "      - name: harness validate (spec shape + reference resolution)\n"
+    "        run: uv run python -m harness validate\n"
+)
+
+EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
+    name="each-whole-tree-check-runs-in-every-tier-that-needs-it-as-a-step-that-fails-its-job",
+    check=owning_job_violations,
+    scaffold=_catalogue_scaffold,
+    controls=(
+        _plant(
+            "harness validate dropped from static",
+            catalogue.CATALOGUE,
+            _VALIDATE_STEP,
+            "",
+            expect="harness validate runs in no job of the change tier",
+        ),
+        _plant(
+            "static held to the merge tier only",
+            catalogue.CATALOGUE,
+            _STATIC,
+            'id = "static"\ntiers = ["merge"]',
+            expect="harness scan runs in no job of the change tier",
+        ),
+        _plant(
+            "rails-checks held to the merge tier only",
+            catalogue.CATALOGUE,
+            _RAILS_CHECKS,
+            'id = "rails-checks"\ntiers = ["merge"]',
+            expect="the gate aggregate runs in no job of the change tier",
+        ),
+        _plant(
+            "the gate aggregate run a second time, in static",
+            catalogue.CATALOGUE,
+            _VALIDATE_STEP,
+            _VALIDATE_STEP + _GATES_STEP,
+            expect="the gate aggregate runs in 2 jobs of the merge tier",
+        ),
+        _plant(
+            "the security corpus moved out of breadth",
+            catalogue.CATALOGUE,
+            'id = "security"\ntiers = ["breadth"]',
+            'id = "security"\ntiers = ["weekly"]',
+            expect="the security corpus runs in no job of the breadth tier",
+        ),
+        _plant(
+            "continue-on-error on the harness validate step",
+            _OWNED_WORKFLOWS[0],
+            _CI_VALIDATE,
+            _CI_VALIDATE.replace("        run:", "        continue-on-error: true\n        run:"),
+            expect="the step that runs harness validate has continue-on-error",
+        ),
+        _plant(
+            "`|| true` after the gate aggregate",
+            _OWNED_WORKFLOWS[0],
+            "        run: uv run python scripts/gate_report.py\n",
+            "        run: uv run python scripts/gate_report.py || true\n",
+            expect="the step that runs the gate aggregate ends in `|| true`",
+        ),
+        _plant(
+            "continue-on-error on the whole rails-checks job",
+            _OWNED_WORKFLOWS[0],
+            "  rails-checks:\n",
+            "  rails-checks:\n    continue-on-error: true\n",
+            expect="rails-checks: the step that runs the rails census has continue-on-error",
+        ),
+        _plant(
+            "the gate aggregate also in a breadth job, a tier that does not list it, passes",
+            catalogue.CATALOGUE,
+            'junit = ["reports/junit-security-corpus.xml"]\ncommand = [\n',
+            'junit = ["reports/junit-security-corpus.xml"]\ncommand = [\n' + _GATES_STEP,
+            fails=False,
+        ),
+        _plant(
+            "a second rails job in breadth fails: the rails run once per tier",
+            catalogue.CATALOGUE,
+            'junit = ["reports/junit-security-corpus.xml"]\ncommand = [\n',
+            'junit = ["reports/junit-security-corpus.xml"]\ncommand = [\n'
+            '  { argv = ["uv", "run", "pytest", "-q", "tests/rails"] },\n',
+            expect="the rails runs in 2 jobs of the breadth tier",
+        ),
+    ),
+)
+
+ROWS = (*ROWS, EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT)
+
+
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
 def test_the_ci_contract_holds_and_each_check_can_fail(
     row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest
