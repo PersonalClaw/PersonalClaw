@@ -105,8 +105,8 @@ async def api_proactive_digest(request: web.Request) -> web.Response:
         )
     # Splatted rather than passed by name so the wire-envelope census can RESOLVE this payload to a
     # dict literal. A bare variable lands in its `unresolved` bucket — the hole a flat error
-    # envelope once hid in — and that bucket is a ratcheted ceiling, so a new unresolvable site is a
-    # regression even when, as here, the payload is a success body.
+    # envelope once hid in — and every site in that bucket is listed by name, so a new unresolvable
+    # site fails the census even when, as here, the payload is a success body.
     return web.json_response({**view})
 
 

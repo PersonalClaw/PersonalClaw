@@ -669,7 +669,8 @@ async def api_learning_identity_report(request: web.Request) -> web.Response:
     backend owns every judgement it renders. Composed by
     :func:`personalclaw.learning_report.identity_report_payload`, NOT assembled here: this handler
     owns nothing but the JSON, and a dict built in the route makes it a second author of a shape
-    that module owns (measured — it reddens `test_wire_error_envelope_census`'s `Call` pin).
+    that module owns (measured — sent as a local, it is a site `test_wire_error_envelope_census`'s
+    list of unresolvable payloads does not hold).
     """
     if not _enabled():
         return _off()

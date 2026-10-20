@@ -491,11 +491,11 @@ def identity_report_payload(
     """The read route's whole wire body: the deterministic report plus the delivery cadence.
 
     A composer rather than two lines in the handler, and the reason is measured, not stylistic.
-    ``test_wire_error_envelope_census`` pins the learning surface's unresolved payload rows as
-    ``Call`` — a composer's return value — because a dict assembled in the route reads as
-    ``Name``, which is the indirection that census exists to expose: it makes the handler a
-    second author of a shape this module owns. The first draft of this route did
-    ``payload = ...to_payload(); payload["cadence"] = ...`` and reddened it.
+    ``test_wire_error_envelope_census`` lists the learning surface's unresolved payloads by their
+    call, ``web.json_response(<a composer>(...))``, because a dict assembled in the route and sent
+    as a local is the indirection that census exists to expose: it makes the handler a second
+    author of a shape this module owns, and it is a site the list does not hold. The first draft
+    of this route did ``payload = ...to_payload(); payload["cadence"] = ...`` and reddened it.
 
     The cadence rides BESIDE the report, not inside :class:`IdentityReport`. The report is a
     gather over stores; a cadence is a setting about future deliveries. Putting it on the
