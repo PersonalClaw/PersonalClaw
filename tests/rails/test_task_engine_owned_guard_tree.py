@@ -24,7 +24,8 @@ _UPDATE_TASK_CALL_SITES: dict[str, int] = {
     # guarded door: the agent's task_update tool, behind the same refusal resolver
     "agents/native/builtin_tools.py": 1,
     # the non-engine door this issue closes: filtered by managed()/ENGINE_OWNED_FIELDS instead
-    # of refused, because it is not a caller-supplied-field write (see the filter test above)
+    # of refused, because it is not a caller-supplied-field write (the reset-state tests drive
+    # the filter: test_reset_defers_engine_owned_fields_on_a_managed_task)
     "tasks/hierarchy_handlers.py": 1,
     # engine/loop writers: the workflow controller and its loop kinds settle a managed task's
     # own fields directly through the façade — the one writer `engine_owned_refusal` deliberately
