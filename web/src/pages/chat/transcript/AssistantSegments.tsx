@@ -19,6 +19,7 @@ import { QuestionCard, type QuestionReply } from '../QuestionCard'
 import { ThinkingBlock } from '../ThinkingBlock'
 import { ContextLedger } from '../ContextLedger'
 import { parseOptions, parseSwitchToAgent } from '../parseAssistant'
+import { workedFor } from '../turnRuns'
 import { waitsPastItsTurn } from '../approvalSegment'
 import { type Segment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, type MemoryCitation, type SkillUsed, type ReplyCut, type ServedModel, failedStepCount, unaskedStepCount, LEDGER_ACTIVITY_KINDS, skillsUsedLabel, skillsUsedTitle } from '../chatTypes'
 
@@ -50,7 +51,7 @@ export function answerQueued(id: string, action: ApproveAction) {
  *  historical messages get stripped from the prose (they are never rendered as
  *  buttons — follow-up chips are the single suggestion surface) and referenced
  *  file paths surface as clickable chips below the prose. */
-export function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, onApprove, onAnswerQuestion, onSwitchToAgent, onOpenFile, onSetupModel, onRetry, chatSessionKey, citations, skillsUsed, cutOff, modelSubstitution, servedModel }: {
+export function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, onApprove, onAnswerQuestion, onSwitchToAgent, onOpenFile, onSetupModel, onRetry, chatSessionKey, citations, skillsUsed, cutOff, modelSubstitution, servedModel, workedMs }: {
   segments: Segment[]; isLast: boolean
   /** The tool results of the whole chat that show a run's live card, one per run. */
   liveCards: Set<Segment>
@@ -75,6 +76,9 @@ export function AssistantSegments({ segments, liveCards, isLast, messageTs, stre
   modelSubstitution?: string
   /** The model that answered this turn and how it was chosen, which the turn's chip names. */
   servedModel?: ServedModel
+  /** How long the turn worked, in milliseconds (`turnRuns.workedMs`), which its folded work says;
+   *  absent when nothing timed it. */
+  workedMs?: number
 }) {
   const fullText = segments.filter((s) => s.kind === 'text').map((s) => (s as { text: string }).text).join('\n')
   // A restricted-mode turn may OFFER a one-click escalation to Agent.
@@ -179,7 +183,7 @@ export function AssistantSegments({ segments, liveCards, isLast, messageTs, stre
   // Split the turn into the agent's WORK (tool calls, narration, approvals — up to
   // and including the last process step) and its FINAL ANSWER (trailing text after
   // the last step). Once the turn is complete the work folds into a compact
-  // "Worked through N steps" disclosure so the user reads the answer first and
+  // "Worked for 12s · N steps" disclosure so the user reads the answer first and
   // opens the intermediate steps only on demand. While streaming, work stays open.
   const processIdxs = segments.flatMap((s, i) => (isProcess(s) ? [i] : []))
   const lastProcessIdx = processIdxs.length ? processIdxs[processIdxs.length - 1] : -1
@@ -193,7 +197,7 @@ export function AssistantSegments({ segments, liveCards, isLast, messageTs, stre
   const finalSegs = (lastProcessIdx >= 0 ? segments.slice(lastProcessIdx + 1) : segments).filter((s) => s.kind === 'text')
 
   // An SDLC create/start/status segment becomes a LIVE progress card that must stay
-  // visible — never buried inside the collapsed "Worked through N steps" disclosure
+  // visible — never buried inside the collapsed "Worked for 12s · N steps" disclosure
   // (the card is a living, auto-refreshing widget, not a log line). Pull those out of
   // the work fold + render them at the top level between the work + the final answer.
   const isSdlc = (s: Segment) => s.kind === 'tool'
@@ -219,7 +223,7 @@ export function AssistantSegments({ segments, liveCards, isLast, messageTs, stre
     <>
       {workNodes.length > 0 && (
         collapseWork
-          ? <AgentWork stepCount={stepCount} toolNames={toolNames} failedCount={failedCount} unaskedCount={unaskedCount}>{workNodes}</AgentWork>
+          ? <AgentWork stepCount={stepCount} took={workedFor(workedMs)} toolNames={toolNames} failedCount={failedCount} unaskedCount={unaskedCount}>{workNodes}</AgentWork>
           : <div className="flex flex-col gap-1">{workNodes}</div>
       )}
       {/* Live SDLC progress cards stay at the top level, always visible — never
@@ -256,18 +260,20 @@ export function AssistantSegments({ segments, liveCards, isLast, messageTs, stre
 
 /** The agent's intermediate work for a completed turn, folded into one compact
  *  disclosure so the FINAL ANSWER leads and the steps that produced it open only
- *  on demand. Summarizes as "Worked through N steps" + how many of them failed +
- *  the distinct tools used. Collapsed by default; expanding reveals the original
- *  tool/approval/activity cards unchanged. (Replaces the old dot+rail timeline, whose
- *  connector added little once every step was followed by prose and whose dot ✓
+ *  on demand. Summarizes as "Worked for 12s · N steps" + how many of them failed +
+ *  the distinct tools used. The time is how long the turn worked (`turnRuns`); a turn nothing
+ *  timed says "Worked through N steps", with no time made up. Collapsed by default; expanding
+ *  reveals the original tool/approval/activity cards unchanged. (Replaces the old dot+rail
+ *  timeline, whose connector added little once every step was followed by prose and whose dot ✓
  *  duplicated each card's own status glyph.)
  *
  *  The failure count sits before the tool names and never truncates: the reply below
  *  can say the work succeeded when a step did not, and the fold is where that shows. The count
  *  of steps the agent CLI ran without asking her sits beside it for the same reason: folded, the
  *  cards that say so are out of sight. */
-function AgentWork({ stepCount, toolNames, failedCount, unaskedCount, children }: { stepCount: number; toolNames: string[]; failedCount: number; unaskedCount: number; children: React.ReactNode }) {
+function AgentWork({ stepCount, took, toolNames, failedCount, unaskedCount, children }: { stepCount: number; took: string; toolNames: string[]; failedCount: number; unaskedCount: number; children: React.ReactNode }) {
   const [open, setOpen] = useState(false)
+  const steps = `${stepCount} ${stepCount === 1 ? 'step' : 'steps'}`
   const summary = toolNames.length
     ? `${toolNames.slice(0, 3).join(', ')}${toolNames.length > 3 ? ` +${toolNames.length - 3} more` : ''}`
     : ''
@@ -281,7 +287,7 @@ function AgentWork({ stepCount, toolNames, failedCount, unaskedCount, children }
         </motion.span>
         <Wrench size={12} className="shrink-0 opacity-70" />
         <span className="shrink-0" style={fvs(500)}>
-          {open ? 'Hide work' : `Worked through ${stepCount} ${stepCount === 1 ? 'step' : 'steps'}`}
+          {open ? 'Hide work' : took ? `Worked for ${took} · ${steps}` : `Worked through ${steps}`}
         </span>
         {!open && failedCount > 0 && (
           <span className="inline-flex shrink-0 items-center gap-xs text-danger" style={fvs(550)}>

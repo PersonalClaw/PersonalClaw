@@ -16,6 +16,7 @@ import { findSegments } from '../findSegments'
 import { editReplacesLaterTurns } from '../editReplaces'
 import { asSent } from '../pasteBlocks'
 import { type ChatTurn, turnText, markCoordOf } from '../chatTypes'
+import { workedMs } from '../turnRuns'
 import type { ChatStream } from '../useChatStream'
 import type { useTranscript } from './useTranscript'
 import { AssistantSegments } from './AssistantSegments'
@@ -147,7 +148,7 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
                       onSwitchVariant={isLast ? switchVariant : undefined}
                       speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />
                   )}>
-                    <AssistantSegments segments={turn.segments} liveCards={liveCards} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onAnswerQuestion={answerQuestion} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} onRetry={isLast && !streaming ? regenerate : undefined} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} cutOff={turn.cutOff} modelSubstitution={turn.modelSubstitution} servedModel={turn.servedModel} />
+                    <AssistantSegments segments={turn.segments} liveCards={liveCards} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onAnswerQuestion={answerQuestion} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} onRetry={isLast && !streaming ? regenerate : undefined} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} cutOff={turn.cutOff} modelSubstitution={turn.modelSubstitution} servedModel={turn.servedModel} workedMs={workedMs(turn.runs)} />
                   </MessageAssistant>
                 )}
                 {/* Follow-up chips under the last assistant turn only,

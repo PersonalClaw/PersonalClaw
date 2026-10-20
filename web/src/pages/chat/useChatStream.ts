@@ -18,6 +18,7 @@ import { foldSubagentEvent } from './subagentCards'
 import { turnErrorText } from './turnError'
 import { applyApprovalFrame, applyApprovalResolved, applyToolCallFrame, applyToolResultFrame } from './liveToolFrames'
 import { applyQuestionFrame, applyQuestionResolved, graftPendingQuestions } from './questionFrames'
+import { withRowRuns, withRunEnded } from './turnRuns'
 import type { RoutingSuggestion } from './RoutingChip'
 import type { TurnPaste } from './PasteChip'
 import type { TurnEnding } from './transcript/TurnHead'
@@ -333,6 +334,10 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   // line), for the head of its reply to settle on; cleared when the next turn starts.
   const [turnEnding, setTurnEnding] = useState<TurnEnding | null>(null)
   const runSeqRef = useRef(0)
+  // The running turn's name and when the gateway started it, from its run state, kept for the
+  // frame that says it ended: with that frame's time they say how long its answer worked
+  // (`turnRuns.withRunEnded`).
+  const runningTurnRef = useRef<{ id: string; start: string } | null>(null)
   const [title, setTitle] = useState(seededDetail?.title || '')
   // Why the chat has no title yet, when no model is chosen for the chores (the gateway's sentence);
   // read with the chat, on opening it and after each turn, and gone once it has a title.
@@ -406,6 +411,14 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     if (from === 'frame') {
       const ended = running ? null : workPhaseOf(rs.phase)
       setTurnEnding(ended === 'done' || ended === 'error' ? { phase: ended, line: String(rs.line ?? '') } : null)
+    }
+    // The turn's own start, and its end once its last frame says it ended (`since`, when that frame
+    // started being said): the time its answer's folded work says.
+    const began = runningTurnRef.current
+    runningTurnRef.current = rs.turn ? { id: String(rs.turn.message_id ?? ''), start: String(rs.turn.started_at ?? '') } : null
+    if (!running && from === 'frame' && began?.start && rs.since) {
+      const run = { ...began, end: rs.since }
+      setTurns((prev) => withRunEnded(prev, run))
     }
   }
 
@@ -494,6 +507,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     dropTextRun()  // drop any in-flight reveal from the prior session
     // So is its run state: the next chat's stamps are its own, and may be older than the last one's.
     runSeqRef.current = 0
+    runningTurnRef.current = null
     setTurnPhase(null)
     setTurnLine('')
     setTurnEnding(null)
@@ -882,6 +896,12 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
           // no-op on the overwhelming majority of turns (no episodic recall).
           if (sk !== sessionRef.current) return
           setTitleNeed(d.title_needs_model || '')
+          // A page that missed the frame saying the turn ended times its answer from the rows, as a
+          // reload does (`turnRuns`). Not once the next turn runs: the answer at the end is its.
+          if (!streamingRef.current) {
+            const read = hydrateTurns(d.messages || [])
+            setTurns((prev) => withRowRuns(prev, read))
+          }
           const byTs = new Map<string, MemoryCitation[]>()
           let lastCites: MemoryCitation[] | null = null
           // A reply that did not finish (`finish_reason`: cut at the output cap, or cut off before

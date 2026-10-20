@@ -12,6 +12,8 @@ import type { AgentQuestion, QuestionAnswer } from '../../lib/api'
 import { questionSegmentOf } from './questionFrames'
 import { markerFor } from './pasteBlocks'
 import type { TurnPaste } from './PasteChip'
+// `turnRuns` imports ChatTurn from here as `import type` too.
+import { rowRuns, type TurnRun } from './turnRuns'
 
 export interface TextSegment { kind: 'text'; text: string }
 
@@ -384,6 +386,10 @@ export interface ChatTurn {
   // `meta.turn_telemetry` on reload, from its `stats` activity live. Absent on a turn that named
   // no model (an agent CLI's, a slash command's).
   servedModel?: ServedModel
+  // How long THIS assistant turn worked: one run per gateway turn its answer shows (`turnRuns`),
+  // timed by the gateway's run state on a page that heard the turn end, else by the turn's rows.
+  // The folded work says their sum. Absent on a turn nothing timed, and on every user turn.
+  runs?: TurnRun[]
   // paste blocks referenced by `[Paste #N]` markers in this turn's text, kept so
   // the bubble can render the markers as inspectable chips after send.
   pastes?: { seq: number; lines: number; content: string }[]
@@ -726,8 +732,13 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
     if (joinedSkills) { t.skillsUsed = joinedSkills; joinedSkills = undefined }
     return t
   }
+  // How long each answer worked, from its rows (`turnRuns`).
+  const runs = rowRuns()
 
   for (const m of messages) {
+    // A row that starts one of the gateway's turns starts a run; a message she steered into a
+    // running turn is part of that turn.
+    if (TURN_DISPATCH_ROLES.has(m.role) && m.meta?.steered !== true) runs.started(m.ts)
     if (m.role === 'user') {
       visible += 1
       const text = m.content.trim()
@@ -836,6 +847,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       if (!callId && ranHere) {
         const at = lastAssistant()
         at.segments = foldStepLine(at.segments, m.meta, m.content)
+        runs.row(at, m.ts)
         continue
       }
       if (callId) ranHere = true
@@ -909,6 +921,9 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       joinedSkills = joinedSkillsOf(m)
     }
     // other roles (queued/system): skip.
+    // A row the turn wrote went into the answer at the end, and is a row of the run being read.
+    const into = turns[turns.length - 1]
+    if (m.role !== 'user' && TRANSCRIPT_ROLES.has(m.role) && into?.role === 'assistant') runs.row(into, m.ts)
   }
   // A turn read before its answer began, or stopped before it said anything, still shows the
   // skills that joined it.

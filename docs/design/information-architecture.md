@@ -104,7 +104,9 @@ Top to bottom:
 - **Each turn** opens with the agent orb and one status line at its head
   ([`agent-orb.md`](agent-orb.md)). Its tool calls are dense rows (an icon, the tool's own label, a
   status pip) that fold, once the turn ends, into one line: "Worked for 12s · 6 steps", with any
-  failed or unasked steps counted on it. Helpers the turn started sit inside its folded steps.
+  failed or unasked steps counted on it. The time is the turn's own, from when the gateway started
+  it to when it ended; after a reload, from the first thing the turn recorded to the last. Helpers
+  the turn started sit inside its folded steps.
 - **Changes and plans** show in their turn as compact cards, and open in place or in the review
   pane on demand.
 - **Approval and question cards** sit where the agent asked. A card states the action and its

@@ -31,6 +31,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A chat's turns read in one centred column 768 px wide, whatever content width you picked; the content width still sets the other pages and the composer.**
 - **The terminal drawer's Open full opens the session the drawer shows on the Terminal page, rather than the page's first session.**
 - **The composer offers a reasoning effort again for a model whose provider app uses PersonalClaw's built-in Anthropic- or OpenAI-compatible client, with the levels that client sends the model (`personalclaw.sdk.model.wire_efforts`, the `model-efforts` core feature).**
+- **A finished turn's folded steps say how long the turn worked, "Worked for 1m 19s · 12 steps", where they said only how many steps there were.**
 
 ### Fixed
 
