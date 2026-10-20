@@ -19,6 +19,7 @@ The load-bearing claims:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 
 import pytest
@@ -154,34 +155,77 @@ def _body(resp) -> dict:
     return json.loads(resp.body.decode())
 
 
+async def _refused_for_an_unreadable_session(route) -> bool:
+    """Whether *route* refuses a call from a session whose mode cannot be read (403
+    ``restricted_session``), for a run that exists and a body every mutating route accepts."""
+    from personalclaw import session_restrictions
+
+    key = "dashboard:chat-mode-unreadable-guard"
+    run = store.create(WorkflowRun(id="", workflow_name="w"))
+    session_restrictions.mark_unreadable(key)
+    req = _req(
+        "POST",
+        "/api/workflows/x",
+        state=_State(_Sup()),
+        body={"name": "w", "ops": [{"op": "skip", "node_id": "a"}]},
+        headers={"X-Session-Key": key},
+    )
+    req["user"] = "owner"
+    req.match_info["run_id"] = run.id  # type: ignore[index]
+    req.match_info["name"] = "w"  # type: ignore[index]
+    try:
+        resp = await route(req)
+    finally:
+        session_restrictions.clear(key)
+    return resp.status == 403 and _body(resp)["error"]["code"] == "restricted_session"
+
+
+@contextlib.asynccontextmanager
+async def _events_client(state):
+    """A client of the per-run event stream, served by a real server over *state*."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    app = web.Application()
+    app["state"] = state
+    app.router.add_get("/api/workflows/runs/{run_id}/events", H.api_run_events)
+    async with TestClient(TestServer(app)) as client:
+        yield client
+
+
 # ── the shared-service claim ─────────────────────────────────────────────────
 
 
 class TestOneEngineTwoSurfaces:
-    def test_the_handlers_delegate_to_the_service_module(self) -> None:
-        """The whole design: two implementations kept in sync by hand is the bug class
-        this avoids."""
-        import ast
-        import inspect
+    async def test_the_handlers_delegate_to_the_service_module(self, monkeypatch) -> None:
+        """The whole design: two implementations kept in sync by hand is the bug class this
+        avoids. Each route answers with what the service layer (the module the chat tools call)
+        answered, so the two surfaces cannot grow two behaviours."""
+        from unittest.mock import AsyncMock, MagicMock
 
-        source = inspect.getsource(H)
-        imported = {
-            alias.name
-            for node in ast.walk(ast.parse(source))
-            if isinstance(node, ast.ImportFrom) and node.module == "personalclaw.workflows"
-            for alias in node.names
+        from personalclaw.workflows import run_cockpit, service
+
+        said = {"ok": True, "answered_by": "the service layer"}
+        monkeypatch.setattr(service, "list_defs", AsyncMock(return_value=said))
+        monkeypatch.setattr(service, "start_run", AsyncMock(return_value=said))
+        monkeypatch.setattr(service, "status", MagicMock(return_value=said))
+        monkeypatch.setattr(service, "audit", MagicMock(return_value=said))
+        monkeypatch.setattr(run_cockpit, "introspect", MagicMock(return_value=said))
+        run = store.create(WorkflowRun(id="", workflow_name="w"))
+
+        def by_run(path: str):
+            req = _req("GET", path)
+            req.match_info["run_id"] = run.id  # type: ignore[index]
+            return req
+
+        answers = {
+            "list": await H.api_defs_list(_req("GET", "/api/workflows")),
+            "start": await H.api_run_start(_req("POST", "/api/workflows/runs", body={"name": "w"})),
+            "status": await H.api_run_status(by_run("/api/workflows/runs/x")),
+            "audit": await H.api_audit(_req("GET", "/api/workflows/audit")),
+            "introspect": await H.api_run_introspect(by_run("/api/workflows/runs/x/introspect")),
         }
-        # `run_cockpit` is the service layer's read half: the cockpit's projections, returning the
-        # same service-result dicts.
-        assert {"service", "run_cockpit"} <= imported, imported
-        for call in (
-            "service.list_defs",
-            "service.start_run",
-            "service.status",
-            "service.audit",
-            "run_cockpit.introspect",
-        ):
-            assert call in source, call
+        for route, resp in answers.items():
+            assert _body(resp).get("answered_by") == "the service layer", route
 
     def test_routes_register_and_order_runs_before_the_def_wildcard(self) -> None:
         """`/api/workflows/runs` must not resolve as a definition named 'runs'."""
@@ -195,16 +239,49 @@ class TestOneEngineTwoSurfaces:
     def test_the_server_mounts_them(self) -> None:
         assert handler_for("GET", "/api/workflows") is H.api_defs_list
 
-    def test_the_gateway_publishes_the_supervisor_to_both_consumers(self) -> None:
-        """Without this the routes create runs nobody drives and the trigger provider
-        reports no supervisor — both tolerate None, both are inert."""
-        import inspect
+    def test_the_gateway_publishes_the_supervisor_to_both_consumers(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Without this the routes create runs nobody drives and the trigger provider reports no
+        supervisor — both tolerate None, both are inert. The gateway's start hands the one
+        supervisor it made to the dashboard state and to the action services."""
+        from unittest.mock import AsyncMock, MagicMock, patch
 
-        from personalclaw import gateway
+        import personalclaw.config.loader as loader
+        from personalclaw.action_providers import services as svc_mod
+        from personalclaw.config.loader import AppConfig
+        from personalclaw.gateway import GatewayOrchestrator
 
-        source = inspect.getsource(gateway)
-        assert "dashboard_state.workflows = self.workflow_watchdog" in source
-        assert "svc.workflows = self.workflow_watchdog" in source
+        monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+        monkeypatch.setattr("personalclaw.gateway.config_dir", lambda: tmp_path)
+        cfg = AppConfig()
+        cfg.workflows.enabled = True
+        with patch.object(cfg, "load_credentials", return_value={}):
+            orch = GatewayOrchestrator(cfg, no_dashboard=True, no_crons=True, no_open=True)
+        orch.dashboard_state = MagicMock()
+        services = svc_mod.ActionServices(state=None)
+        monkeypatch.setattr(svc_mod, "get_action_services", lambda: services)
+
+        class Supervisor:
+            def __init__(self, *_a, **_k) -> None:
+                pass
+
+            def start(self) -> None:
+                pass
+
+        nudges = MagicMock()
+        nudges.start = AsyncMock()
+        with (
+            patch("personalclaw.gateway.autonudge_enabled", return_value=True),
+            patch("personalclaw.gateway.AutoNudgeService", return_value=nudges),
+            patch("personalclaw.loop.watchdog.LoopWatchdog"),
+            patch("personalclaw.workflows.watchdog.WorkflowWatchdog", Supervisor),
+            patch("personalclaw.workflows.batch_start.resume"),
+        ):
+            asyncio.run(orch._init_autonudge())
+        assert isinstance(orch.workflow_watchdog, Supervisor)
+        assert orch.dashboard_state.workflows is orch.workflow_watchdog, "the routes drive nothing"
+        assert services.workflows is orch.workflow_watchdog, "the trigger provider has none"
 
 
 # ── the error envelope ───────────────────────────────────────────────────────
@@ -697,22 +774,24 @@ class TestRestrictedSessions:
             session_restrictions.clear(key)
         assert resp.status == 200
 
-    async def test_every_mutating_route_is_guarded(self) -> None:
-        """Asserted structurally: a new mutating route added without a guard is exactly the
-        gap that would not fail any other test."""
-        import inspect
-
-        for fn in (
-            H.api_def_save,
-            H.api_def_delete,
-            H.api_run_start,
-            H.api_run_edit,
-            H.api_run_cancel,
-            H.api_run_pause,
-            H.api_run_resume,
-            H.api_run_fork,
-        ):
-            assert "_guard(" in inspect.getsource(fn), fn.__name__
+    @pytest.mark.parametrize(
+        "route",
+        [
+            "api_def_save",
+            "api_def_delete",
+            "api_run_start",
+            "api_run_edit",
+            "api_run_cancel",
+            "api_run_pause",
+            "api_run_resume",
+            "api_run_fork",
+        ],
+    )
+    async def test_every_mutating_route_is_guarded(self, route) -> None:
+        """Each mutating route refuses a session whose mode cannot be read, before it changes
+        anything: a new mutating route added without the guard is exactly the gap that would not
+        fail any other test."""
+        assert await _refused_for_an_unreadable_session(getattr(H, route))
 
 
 # ── SSE ──────────────────────────────────────────────────────────────────────
@@ -734,39 +813,59 @@ class TestRunEvents:
         assert (await H.api_run_events(req)).status == 503
 
     async def test_it_is_snapshot_then_subscribe(self) -> None:
-        """A client that subscribed FIRST would miss everything between connect and the
-        first event, then render a run that looks stalled."""
-        import inspect
+        """A client that subscribed FIRST would miss everything between connect and the first
+        event, then render a run that looks stalled. A client of a live run gets the snapshot as
+        its first frame, then the run's events as they are published."""
+        from personalclaw.dashboard import sse as sse_mod
+        from personalclaw.workflows.watchdog import registry_key
 
-        source = inspect.getsource(H.api_run_events)
-        assert "on_connect" in source and "workflow_snapshot" in source
-        assert source.index("project(run_id)") < source.index("registry.hub")
+        state = _State()
+        run = store.create(WorkflowRun(id="", workflow_name="w"))
+        store.write_spec(run.id, {"name": "w", "root": {"kind": "transform", "id": "a"}})
+        async with _events_client(state) as client:
+            resp = await client.get(f"/api/workflows/runs/{run.id}/events")
+            first = await asyncio.wait_for(resp.content.readuntil(b"\n\n"), timeout=5)
+            assert first.startswith(b"event: workflow_snapshot\n"), first[:80]
+            try:
+                await asyncio.sleep(0.05)
+                state.workflow_sse().publish(registry_key(run.id), "workflow_event", {"n": 1})
+                live = await asyncio.wait_for(resp.content.readuntil(b"\n\n"), timeout=5)
+                assert live.startswith(b"event: workflow_event\n"), live[:80]
+            finally:
+                sse_mod.shutdown_event.set()
+                state.workflow_sse().publish(registry_key(run.id), "bye", "x")
+                try:
+                    await asyncio.wait_for(resp.content.read(), timeout=2)
+                except Exception:  # noqa: BLE001 - only the stream's end is waited for
+                    pass
+                sse_mod.shutdown_event.clear()
 
     async def test_the_snapshot_goes_out_validated(self) -> None:
         """Through `projection.project`, not a raw service read: the widget builds its whole
         view-model from this ONE frame, so a malformed field corrupts it rather than degrading
-        it — and the symptom would surface in a browser console instead of here."""
-        import inspect
+        it — and the symptom would surface in a browser console instead of here. The frame a
+        client receives is the validated projection, as a read hands it out."""
+        from personalclaw.workflows.projection import project, validate_snapshot
 
-        from personalclaw.workflows.projection import validate_snapshot
-
-        source = inspect.getsource(H.api_run_events)
-        assert "from personalclaw.workflows.projection import project" in source
-
-        run = store.create(WorkflowRun(id="", workflow_name="w"))
+        run = store.create(WorkflowRun(id="", workflow_name="w", status=RunStatus.COMPLETE))
         store.write_spec(run.id, {"name": "w", "root": {"kind": "transform", "id": "a"}})
-        from personalclaw.workflows.projection import project
-
+        async with _events_client(_State()) as client:
+            resp = await client.get(f"/api/workflows/runs/{run.id}/events")
+            body = (await asyncio.wait_for(resp.content.read(), timeout=5)).decode()
+        frame = body.split("data: ", 1)[1].split("\n\n", 1)[0]
         snap, issues = project(run.id)
-        assert issues == []
-        assert validate_snapshot(snap) == []
+        assert issues == [] and validate_snapshot(snap) == []
+        assert json.loads(frame) == H.shown_status(snap)
 
     async def test_a_terminal_run_closes_rather_than_holding_open(self) -> None:
-        """Events will never arrive for a finished run; holding the connection is a leak."""
-        import inspect
-
-        assert "close_after_connect" in inspect.getsource(H.api_run_events)
-        assert "TERMINAL_RUN_STATUSES" in inspect.getsource(H.api_run_events)
+        """Events will never arrive for a finished run; holding the connection is a leak. A
+        finished run's stream sends its snapshot and ends."""
+        run = store.create(WorkflowRun(id="", workflow_name="w", status=RunStatus.COMPLETE))
+        store.write_spec(run.id, {"name": "w", "root": {"kind": "transform", "id": "a"}})
+        async with _events_client(_State()) as client:
+            resp = await client.get(f"/api/workflows/runs/{run.id}/events")
+            body = await asyncio.wait_for(resp.content.read(), timeout=5)
+        assert body.startswith(b"event: workflow_snapshot\n")
 
 
 # ── the offline reference ────────────────────────────────────────────────────
@@ -861,14 +960,22 @@ class TestWorkspaceRoute:
         assert body["preview"]["ports"] == []
         assert "no isolated workspace" in body["preview"]["reason"]
 
-    async def test_the_delete_route_forwards_keep_open(self) -> None:
+    @pytest.mark.parametrize(("query", "kept"), [("?keep_open=true", True), ("", False)])
+    async def test_the_delete_route_forwards_keep_open(self, monkeypatch, query, kept) -> None:
         """One deletion with two dispositions for the workspace. A second route would be a second
-        place to keep the teardown-before-removal ordering right."""
-        import inspect
+        place to keep the teardown-before-removal ordering right. The route hands the service
+        the disposition the request asked for."""
+        from unittest.mock import AsyncMock
 
-        source = inspect.getsource(H.api_run_delete)
-        assert 'request.query.get("keep_open"' in source
-        assert "keep_open=keep_open" in source
+        from personalclaw.workflows import service
+
+        delete = AsyncMock(return_value={"ok": True})
+        monkeypatch.setattr(service, "delete_run", delete)
+        run = store.create(WorkflowRun(id="", workflow_name="wf", status=RunStatus.COMPLETE))
+        req = _req("DELETE", f"/api/workflows/runs/{run.id}{query}", state=_State(None))
+        req.match_info["run_id"] = run.id  # type: ignore[index]
+        assert (await H.api_run_delete(req)).status == 200
+        assert delete.await_args.kwargs["keep_open"] is kept
 
 
 # ── introspection: the nine questions ──
@@ -1042,14 +1149,15 @@ class TestIntrospectRoute:
 
     async def test_the_timeline_is_redacted_through_the_journals_own_redactor(self) -> None:
         """The ledger records failure detail and model verbatim, and a failure message is exactly
-        where a credential surfaces in a screenshot. Reusing `journal.redact` rather than a local
-        scrubber is what keeps the two from drifting."""
-        import inspect
+        where a credential surfaces in a screenshot. A credential in a step's failure detail
+        reaches the timeline as the journal's redactor writes it."""
+        from personalclaw.workflows import journal, run_cockpit
 
-        from personalclaw.workflows import run_cockpit
-
-        source = inspect.getsource(run_cockpit.introspection_timeline)
-        assert "journal_mod.redact" in source
+        secret = "AKIA" + "Q" * 16
+        event = {"kind": "step_failed", "ts": "t", "node_id": "a", "detail": f"key {secret}"}
+        (row,) = run_cockpit.introspection_timeline([event])
+        assert secret not in json.dumps(row)
+        assert row["detail"] == journal.redact({"detail": f"key {secret}"})["detail"]
 
     async def test_the_route_is_a_GET_it_mutates_nothing(self) -> None:
         """Forensics is a read. A POST here would invite a surface to 'refresh' stats by writing."""
@@ -1208,9 +1316,7 @@ class TestPolicyOverridesRoute:
         assert {r.method for r in matched} == {"PUT"}, [r.method for r in matched]
 
     async def test_the_mutation_is_guarded_like_its_siblings(self) -> None:
-        import inspect
-
-        assert "_guard(" in inspect.getsource(H.api_run_policy_overrides)
+        assert await _refused_for_an_unreadable_session(H.api_run_policy_overrides)
 
     async def test_the_status_read_carries_the_overlay_for_the_editor(self) -> None:
         """The FE editor renders current values from the run-detail read — an overlay it
