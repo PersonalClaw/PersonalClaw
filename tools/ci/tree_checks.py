@@ -126,7 +126,7 @@ CHECKS: Mapping[str, Check] = {
         sources=(_group(_ASSETS, "REPO_ROOT"),),
     ),
     # The whole-repository readers that no job but the suite's shards ran. The licence sweep's
-    # one place is now the rails job; the scanner's whole-tree scan is the next to move.
+    # and the scanner's whole-tree scan's one place is now the rails job.
     "licence-sweep": Check(
         owner="ci.yml rails: tests/rails/test_licence_governance_tree.py",
         entries={

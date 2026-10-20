@@ -160,30 +160,12 @@ def test_resolving_references_collects_only_the_files_they_name(
     assert len(errors) == 1 and repr(missing) in errors[0], errors
 
 
-def test_cli_validate_returns_zero_on_shipped_specs() -> None:
-    # The shipped set validates clean (warnings are allowed; errors are not).
-    assert cli.main(["validate"]) == 0
-
-
 def test_cli_explain_known_task_succeeds() -> None:
     assert cli.main(["explain", "T1.example-config-field"]) == 0
 
 
 def test_cli_explain_unknown_task_errors() -> None:
     assert cli.main(["explain", "no-such-task"]) == 2
-
-
-def test_cli_validate_has_no_scanner_warnings_now() -> None:
-    # The scanner check-ids are resolvable, so validate should have zero
-    # warnings on the shipped set (every rule's scanner: ref resolves).
-    import io
-    from contextlib import redirect_stdout
-
-    buf = io.StringIO()
-    with redirect_stdout(buf):
-        rc = cli.main(["validate", "--fast"])
-    assert rc == 0
-    assert "0 warning(s)" in buf.getvalue()
 
 
 def _planted_web_checkout(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:

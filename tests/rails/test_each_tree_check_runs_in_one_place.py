@@ -38,101 +38,12 @@ from rails_repo import REPO
 from tools.ci import shards
 from tools.ci.tree_checks import CHECKS, module_copies
 
-#: The calls that still run a check on the real tree in the suite, each removed by the step of
-#: #3929 that gives its check one place. ``(check, "path::test")``. The gate aggregate's copies
-#: are gone: its tests run every gate on stubs. So are the licence sweep's: its real-tree tests
-#: are the rail ``tests/rails/test_licence_governance_tree.py``, the scanner's whole-tree scan is
-#: ``tests/rails/test_harness_scanner_tree.py``, and the three render-determinism tests render a
-#: small tree of their own.
-KNOWN_COPIES: frozenset[tuple[str, str]] = frozenset(
-    {
-        (
-            "asset-licences",
-            "tests/test_asset_licenses.py::"
-            "test_every_bundled_font_is_a_pinned_third_party_record_with_a_notice_beside_it",
-        ),
-        (
-            "asset-licences",
-            "tests/test_asset_licenses.py::test_every_tracked_asset_has_a_licence_record",
-        ),
-        (
-            "docs-lint",
-            "tests/test_docs_lint_baseline.py::"
-            "test_baseline_ships_at_the_measured_population_whatever_it_is",
-        ),
-        (
-            "docs-lint",
-            "tests/test_docs_lint_baseline.py::test_committed_baseline_byte_matches_a_fresh_render",
-        ),
-        (
-            "docs-lint",
-            "tests/test_docs_lint_baseline.py::"
-            "test_committed_baseline_is_not_stale_on_the_shrink_side",
-        ),
-        (
-            "docs-lint",
-            "tests/test_docs_lint_baseline.py::test_no_per_file_counter_rose_vs_committed_baseline",
-        ),
-        (
-            "harness",
-            "tests/test_harness_validate.py::test_cli_validate_has_no_scanner_warnings_now",
-        ),
-        (
-            "harness",
-            "tests/test_harness_validate.py::test_cli_validate_returns_zero_on_shipped_specs",
-        ),
-        (
-            "inert-surface",
-            "tests/test_inert_surface_baseline.py::"
-            "test_committed_baseline_byte_matches_a_fresh_render",
-        ),
-        (
-            "inert-surface",
-            "tests/test_inert_surface_baseline.py::"
-            "test_committed_baseline_is_not_stale_on_the_shrink_side",
-        ),
-        (
-            "inert-surface",
-            "tests/test_inert_surface_baseline.py::"
-            "test_no_per_file_counter_rose_vs_committed_baseline",
-        ),
-        (
-            "inert-surface",
-            "tests/test_inert_surface_baseline.py::"
-            "test_the_enum_census_still_finds_a_nontrivial_population",
-        ),
-        (
-            "inert-surface",
-            "tests/test_inert_surface_baseline.py::"
-            "test_the_real_config_reader_census_fires_and_clears_an_accessor",
-        ),
-        (
-            "structural",
-            "tests/test_structural_baseline.py::"
-            "test_a_ratchet_that_inspects_zero_files_fires_vacuity_even_when_the_census_is_intact",
-        ),
-        (
-            "structural",
-            "tests/test_structural_baseline.py::"
-            "test_committed_baseline_byte_matches_a_fresh_render",
-        ),
-        (
-            "structural",
-            "tests/test_structural_baseline.py::"
-            "test_committed_baseline_is_not_stale_on_the_shrink_side",
-        ),
-        (
-            "structural",
-            "tests/test_structural_baseline.py::"
-            "test_every_ratchet_has_a_vacuity_assertion_and_it_holds_on_the_real_tree",
-        ),
-        (
-            "structural",
-            "tests/test_structural_baseline.py::"
-            "test_no_structural_counter_rose_vs_committed_baseline",
-        ),
-    }
-)
+#: The calls that still run a check on the real tree in the suite. None is left: the gate
+#: aggregate's tests run every gate on stubs, the render tests render a small tree of their
+#: own, and each real-tree check is its owning job's (``scripts/gate_report.py`` and
+#: ``scripts/check_asset_licenses.py`` in rails-checks, ``harness validate`` in harness) or a
+#: rail's, for what that job does not check. ``(check, "path::test")``; a new copy fails.
+KNOWN_COPIES: frozenset[tuple[str, str]] = frozenset()
 
 #: The suite's modules and helpers that read ``docs/``: prose checked against the tree. Each is a
 #: whole-tree read the suite still holds, so the suite's inputs are the docs too (#3945). These

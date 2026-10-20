@@ -7,6 +7,8 @@ hold to.
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 from asset_licenses_shared import REPO_ROOT, _asset_checks
 
@@ -33,3 +35,30 @@ def test_each_workflow_checks_the_tree_and_the_web_build_it_made(workflow):
     built = [after_build for built_web, after_build in checks if built_web]
     assert built, f"{workflow}: no --built-web check"
     assert all(built), f"{workflow}: --built-web runs before `npm run build`"
+
+
+_FONT_SUFFIXES = (".woff2", ".woff", ".ttf", ".otf", ".eot")
+
+
+def _sha(blob: bytes) -> str:
+    return hashlib.sha256(blob).hexdigest()
+
+
+def _group_of(manifest: dict, path: str) -> dict:
+    for group in manifest["groups"]:
+        if path in group["files"]:
+            return group
+    raise AssertionError(f"{path} is in no group")
+
+
+def test_every_bundled_font_is_a_pinned_third_party_record_with_a_notice_beside_it():
+    manifest = assets.load_manifest()
+    fonts = [path for path in assets.asset_paths() if path.endswith(_FONT_SUFFIXES)]
+    assert fonts, "no tracked font found; the census is broken"
+    for path in fonts:
+        group = _group_of(manifest, path)
+        assert group["ownership"] == "third-party", path
+        assert group["files"][path] == _sha((REPO_ROOT / path).read_bytes()), path
+        # Vite copies web/public into web/dist verbatim, and the wheel carries web/dist, so a
+        # notice in web/public ships everywhere the font does.
+        assert group["required_notice"].startswith("web/public/"), path

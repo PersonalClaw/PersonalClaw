@@ -49,6 +49,7 @@ tests/rails/test_control_bridge_tree.py
 tests/rails/test_dependency_bounds_tree.py
 tests/rails/test_deployment_commands_parse_tree.py
 tests/rails/test_desktop_macos_signature_gate_tree.py
+tests/rails/test_docs_lint_baseline_tree.py
 tests/rails/test_e2e_sign_in_is_not_in_the_home_tree.py
 tests/rails/test_each_home_has_its_own_tmux_server_tree.py
 tests/rails/test_each_tree_check_runs_in_one_place.py
@@ -63,6 +64,7 @@ tests/rails/test_general_kind_as_run_tree.py
 tests/rails/test_ghcr_anonymous_pull_tree.py
 tests/rails/test_guardrails_ladder_tree.py
 tests/rails/test_harness_scanner_tree.py
+tests/rails/test_harness_validate_tree.py
 tests/rails/test_home_path_census.py
 tests/rails/test_home_resolver_is_not_bound_at_import_tree.py
 tests/rails/test_host_facts_single_source_tree.py

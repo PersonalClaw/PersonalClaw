@@ -94,23 +94,6 @@ def _group_of(manifest: dict, path: str) -> dict:
 # ── The real record ────────────────────────────────────────────────────────────────────────
 
 
-def test_every_tracked_asset_has_a_licence_record():
-    assert assets.violations() == []
-
-
-def test_every_bundled_font_is_a_pinned_third_party_record_with_a_notice_beside_it():
-    manifest = assets.load_manifest()
-    fonts = [path for path in assets.asset_paths() if path.endswith(_FONT_SUFFIXES)]
-    assert fonts, "no tracked font found; the census is broken"
-    for path in fonts:
-        group = _group_of(manifest, path)
-        assert group["ownership"] == "third-party", path
-        assert group["files"][path] == _sha((REPO_ROOT / path).read_bytes()), path
-        # Vite copies web/public into web/dist verbatim, and the wheel carries web/dist, so a
-        # notice in web/public ships everywhere the font does.
-        assert group["required_notice"].startswith("web/public/"), path
-
-
 def test_fonts_css_serves_only_recorded_fonts():
     css = (REPO_ROOT / "web/src/design/fonts.css").read_text(encoding="utf-8")
     served = re.findall(r"""url\(["']?/fonts/([^"')]+)["']?\)""", css)
