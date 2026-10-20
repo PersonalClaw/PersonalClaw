@@ -199,21 +199,107 @@ def test_mixed_triggers_are_decided_INDEPENDENTLY(store, tmp_path):
     assert sorted(f.trigger.id for f in result.fires) == ["clock:ok", "clock:ro"]
 
 
-def test_the_production_admission_POPULATES_requested(store, tmp_path):
-    """🔴 The defect itself, pinned. `service.tick` omitted `requested`, so the fence never ran. A
-    source check, because the property is that the field is SUPPLIED — a behavioural test would pass
-    against a fence that happened to allow everything.
+_PROBE = "fence-probe"
 
-    The gate context is built in `admit_fire`, the ONE admission the tick and the event router both
-    call, so the field is asserted there and each production caller is asserted to reach it."""
-    import inspect
 
-    from personalclaw.triggers import event_fire
+class _FenceProbe:
+    """An unclassified action, so the fence treats it as write-capable; records each run."""
 
-    src = inspect.getsource(svc.admit_fire)
-    assert "requested=" in src, "admission must tell the fence what the trigger asks for"
-    assert "admit_fire(" in inspect.getsource(svc.tick)
-    assert "admit_fire(" in inspect.getsource(event_fire.EventRouter)
+    name = _PROBE
+    display_name = "Fence probe"
+
+    def __init__(self) -> None:
+        self.runs = 0
+
+    async def execute(self, action_config, ctx, timeout=30):
+        from personalclaw.action_providers.base import ActionResult
+
+        self.runs += 1
+        return ActionResult(success=True, stdout="ran")
+
+
+@pytest.fixture
+def fence_probe():
+    from personalclaw.action_providers.registry import _providers, register_action_provider
+
+    probe = _FenceProbe()
+    register_action_provider(probe)  # type: ignore[arg-type]
+    yield probe
+    _providers.pop(_PROBE, None)
+
+
+def _event_fire(home, tid: str, caps: dict) -> dict:
+    """A memory `event` trigger on the probe, fired through the gateway's real event router; the
+    run-history row the fire wrote."""
+    import time
+
+    from fakes import with_event_router
+
+    from personalclaw.event_triggers import MEMORY_UPDATE, SOURCE_MEMORY, emit_event, event_spec
+    from personalclaw.schedule_history import ScheduleRunStore
+
+    TriggerStore(base_dir=home).upsert(
+        Trigger(
+            id=tid,
+            name=tid,
+            kind="event",
+            enabled=True,
+            spec=event_spec(MEMORY_UPDATE),
+            capabilities=caps,
+            workflow={"inline": {"provider": _PROBE, "config": {}}},
+        )
+    )
+
+    async def fire() -> dict:
+        await with_event_router(
+            lambda: emit_event(
+                source=SOURCE_MEMORY, event_type="update", key="k", value="v", now=time.time()
+            )
+        )
+        runs, total = await ScheduleRunStore(home).list_for_job(tid, 0, 1)
+        return runs[0] if total else {}
+
+    return asyncio.run(fire())
+
+
+def test_the_production_admission_POPULATES_requested(store, tmp_path, monkeypatch, fence_probe):
+    """🔴 The defect itself. `service.tick` omitted `requested`, so the fence never ran on a real
+    fire. Driven through both production callers of the one admission, `admit_fire`: the clock
+    tick and the event router. On each, a write-capable action with no grant is refused by the
+    fence and does not run, and the same action granted is admitted — so a fence that allowed
+    everything, or one that refused everything, fails here."""
+    import personalclaw.config.loader as loader
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+
+    _due(store, "clock:bare", _PROBE)
+    _due(store, "clock:granted", _PROBE, caps={"providers": [_PROBE]})
+    result = _tick(store, tmp_path)
+    assert [f.trigger.id for f in result.fires] == ["clock:granted"]
+    (refused,) = [r for r in result.ledger_rows if r["trigger_id"] == "clock:bare"]
+    assert refused["outcome"] == "refused" and _PROBE in refused["reason"], refused
+
+    store.delete("clock:bare")
+    store.delete("clock:granted")
+    # The event half reads which fires the admission let through to the store dispatch. The
+    # dispatch checks the grant again, so whether the action ran cannot tell the two checks
+    # apart; a fire the fence refused must never reach the dispatch at all.
+    from personalclaw.gateway import GatewayOrchestrator
+
+    dispatch = GatewayOrchestrator._fire_store_trigger
+    dispatched: list[str] = []
+
+    async def spy(self, trigger, payload, **kwargs):
+        dispatched.append(trigger.id)
+        return await dispatch(self, trigger, payload, **kwargs)
+
+    monkeypatch.setattr(GatewayOrchestrator, "_fire_store_trigger", spy)
+    _event_fire(tmp_path, "event:bare", {})
+    assert fence_probe.runs == 0, "an ungranted write action ran on an event fire"
+    assert dispatched == [], "the event router let a refused fire through to the dispatch"
+    granted = _event_fire(tmp_path, "event:granted", {"providers": [_PROBE]})
+    assert dispatched == ["event:granted"], dispatched
+    assert fence_probe.runs == 1 and granted.get("status") == "success", granted
 
 
 # ── the save-time freeze ──
@@ -281,24 +367,42 @@ def test_a_created_write_trigger_actually_FIRES(tmp_path):
     assert [f.trigger.id for f in result.fires] == ["clock:writer"]
 
 
-def test_the_app_cron_reconciler_freezes_too():
+def _admitted_after_save(store, tmp_path, tid: str) -> list[str]:
+    """The row *tid* as its writer saved it, made due at NOW and walked through a real tick."""
+    row = store.get(tid).trigger
+    row.next_fire_at = _DUE
+    store.upsert(row)
+    return [f.trigger.id for f in _tick(store, tmp_path).fires]
+
+
+def test_the_app_cron_reconciler_freezes_too(tmp_path):
     """An app cron runs `invoke-agent` — write-capable — so without the freeze every app-declared
-    cron would refuse."""
-    import inspect
+    cron would refuse. Reconciled from a real installed app, the row carries the grant its action
+    needs, and the fence admits its fire."""
+    from test_an_apps_schedule_runs_at_its_declared_tier import JOB, _install
+    from test_apps_cannot_run_code_or_bypass_approvals import _home
 
-    from personalclaw.apps import app_crons
+    from personalclaw.apps.app_crons import reconcile_app_crons
 
-    src = inspect.getsource(app_crons.reconcile_app_crons)
-    assert "capabilities_for_action" in src
+    with _home(tmp_path):
+        _install(tmp_path, {"cron": True, "agent": "read"})
+        store = TriggerStore(base_dir=tmp_path)
+        reconcile_app_crons(store)
+        assert store.get(JOB).trigger.capabilities == {"providers": ["invoke-agent"]}
+        assert _admitted_after_save(store, tmp_path, JOB) == [JOB]
 
 
-def test_the_digest_reconciler_freezes_too():
-    import inspect
-
+def test_the_digest_reconciler_freezes_too(tmp_path, monkeypatch):
+    """The digest writes an inbox item, so its action is write-capable: the row the reconciler
+    creates carries the grant, and the fence admits its fire."""
     from personalclaw.action_providers import digest_provider
 
-    src = inspect.getsource(digest_provider.reconcile_digest_cron)
-    assert "capabilities_for_action" in src
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    store = TriggerStore(base_dir=tmp_path)
+    digest_provider.reconcile_digest_cron(store)
+    tid = digest_provider.DIGEST_JOB_NAME
+    assert store.get(tid).trigger.capabilities == {"providers": ["notification-digest"]}
+    assert _admitted_after_save(store, tmp_path, tid) == [tid]
 
 
 # ── the doctor finding for rows authored before the fence ──
@@ -343,12 +447,21 @@ def test_the_doctor_is_SILENT_for_a_read_only_trigger(store):
     assert not [f for f in _diagnose(store).findings if f.code == "unfenced_write_action"]
 
 
-def test_the_facade_passes_capabilities_to_the_doctor():
-    """🔴 The facade's doctor payload omitted `capabilities`, so the
-    check read every trigger as ungranted. The payload has to carry what the check reads."""
-    import inspect
+def test_the_facade_passes_capabilities_to_the_doctor(store, tmp_path, monkeypatch):
+    """🔴 The facade's doctor payload omitted `capabilities`, so the check read every trigger as
+    ungranted. Through the real route: the ungranted write trigger is reported, and the granted
+    one beside it is not."""
+    import json
+
+    from aiohttp.test_utils import make_mocked_request
 
     from personalclaw.dashboard.handlers import triggers as T
 
-    src = inspect.getsource(T.api_triggers_doctor)
-    assert '"capabilities"' in src
+    monkeypatch.setattr(T, "config_dir", lambda: tmp_path)
+    _due(store, "clock:old", "bash")
+    _due(store, "clock:ok", "bash", caps={"providers": ["bash"]})
+    resp = asyncio.run(T.api_triggers_doctor(make_mocked_request("GET", "/api/triggers/doctor")))
+    assert resp.status == 200
+    findings = json.loads(resp.body.decode())["findings"]
+    unfenced = sorted(f["trigger_id"] for f in findings if f["code"] == "unfenced_write_action")
+    assert unfenced == ["schedule:clock:old"], findings
