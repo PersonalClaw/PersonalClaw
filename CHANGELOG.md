@@ -8,6 +8,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-10-19
+
+A patch release on 0.2.2. ⌘Enter approves only the approval that has keyboard focus, and a delete,
+a change outside the chat's folder, a send to other people, spending, or a call to a tool that
+doesn't say what it does asks once more first, on every surface. Each reply shows a small orb for
+what its agent is doing, focus mode (⌘\) and reading mode (⌘⇧.) clear the screen, and a chat or an
+agent can take a terse or a conversational reply style. `personalclaw://` links open the desktop app
+on a page and never act. The dashboard API is version 2, so a client built for version 1 is refused.
+It installs over 0.2.2.
+
 ### Added
 
 - **Focus mode (⌘\) hides the sidebar and side pane; reading mode (⌘⇧.) folds the composer.**
