@@ -101,8 +101,10 @@ function AppHeaderActions({ actions }: { actions: AppHeaderAction[] }) {
     <div className="flex items-center gap-s">
       {actions.map((a) => {
         const variant = a.variant ?? 'secondary'
+        // A solid fill's focus ring is the ink, not the coral of the fill itself, as on Button's
+        // primary tier. Rail: `design/solidButtonFocusRing.test.ts`.
         const cls = variant === 'primary'
-          ? 'bg-primary text-on-primary hover:bg-primary-emphasis'
+          ? 'bg-primary text-on-primary hover:bg-primary-emphasis focus-visible:outline-on-surface'
           : variant === 'ghost'
             ? 'bg-transparent text-on-surface hover:bg-surface-high'
             : 'bg-surface-high text-on-surface hover:bg-surface-highest'

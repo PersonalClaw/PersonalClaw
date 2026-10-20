@@ -520,15 +520,18 @@ function HeaderOverflow({ actions }: { actions: { id: number; label: string; ico
 }
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
+// The two solid tiers draw their focus ring in the ink, as Button's do: the global ring is coral,
+// the fill's own colour on `primary` and all but the same red on `danger`. Rail:
+// `design/solidButtonFocusRing.test.ts`.
 const variants: Record<Variant, string> = {
-  primary: 'bg-primary text-on-primary hover:bg-primary-emphasis active:bg-primary-emphasis',
+  primary: 'bg-primary text-on-primary hover:bg-primary-emphasis active:bg-primary-emphasis focus-visible:outline-on-surface',
   secondary: 'bg-surface-high text-on-surface hover:bg-surface-highest active:bg-surface-highest',
   ghost: 'bg-transparent text-on-surface hover:bg-surface-high active:bg-surface-high',
   // `text-on-danger`, not `text-white` — same as Button's danger variant. Hardcoding white
   // pinned one ink across both themes, and the two themes need OPPOSITE inks: dark's danger is
   // a light red (#f66c66) where white is 2.89:1, light's is a deep red (#af2f29) where white is
   // 6.44:1. This was the only site that bypassed the token, and the only one that failed.
-  danger: 'bg-danger text-on-danger hover:opacity-90 active:opacity-90',
+  danger: 'bg-danger text-on-danger hover:opacity-90 active:opacity-90 focus-visible:outline-on-surface',
 }
 
 /** One responsive header control. Declares an `icon` + `label` (+ optional

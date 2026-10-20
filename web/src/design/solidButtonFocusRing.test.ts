@@ -5,8 +5,12 @@ import { SCHEMES } from './schemes'
 import { tokenValue } from './tokenSheet'
 import { readSource } from '../test/sourceTree'
 
-/** The focus ring on a SOLID button (Button's `primary` and `danger` tiers) clears 3:1 against what
- *  is next to it, in every scheme and both themes.
+/** The focus ring on a SOLID button clears 3:1 against what is next to it, in every scheme and both
+ *  themes. A solid button is any shared control filled with the accent or with danger: Button's
+ *  `primary` and `danger` tiers, a `filled` IconButton (the composer's send and stop, the steer and
+ *  comment sends), HeaderActions' own `primary` and `danger` tiers, and the primary header action
+ *  the app frame draws for a contributed app. Each carries the same fill, so each needs the same
+ *  ring; `SITES` below lists them, and every check runs on every one.
  *
  *  What is next to the ring. The ring is an outline drawn at an offset of at least 2px outside the
  *  button, so the page shows between the ring and the button's fill: on both sides the ring's
@@ -39,8 +43,12 @@ const contrast = (a: string, b: string): number => {
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
 }
 
-const CSS = () => readSource(join(process.cwd(), 'src/design/tokens.css'))
-const BUTTON = () => readSource(join(process.cwd(), 'src/ui/Button.tsx'))
+const source = (rel: string) => () => readSource(join(process.cwd(), rel))
+const CSS = source('src/design/tokens.css')
+const BUTTON = source('src/ui/Button.tsx')
+const ICON_BUTTON = source('src/ui/IconButton.tsx')
+const HEADER_ACTIONS = source('src/ui/HeaderActions.tsx')
+const APP_FRAME = source('src/pages/apps/AppFrame.tsx')
 
 /** A token in a given mode as `tokens.css` declares it, matching the `.light` RULE BLOCK (the file
  *  says ".light mode" in a comment first, the trap `focusRingContrast.test.ts` records). */
@@ -65,12 +73,33 @@ const NOT_A_RING = ['primary', 'primary-emphasis', 'on-primary-tint', 'secondary
 /** SC 1.4.11 / SC 2.4.11: a focus indicator is a UI component boundary, 3:1. */
 const FLOOR = 3
 
-/** The class list of one of Button's tiers, from its `variants` table. */
-function tier(name: 'primary' | 'danger'): string {
-  const m = BUTTON().match(new RegExp(`\\n\\s*${name}: '([^']*)'`))
-  if (!m) throw new Error(`no ${name} tier in Button's variants`)
+/** The class list of one tier in a file's `variants` table, read from inside the table so a key of
+ *  the same name elsewhere in the file cannot answer for it. */
+function tier(file: string, name: 'primary' | 'danger'): string {
+  const table = /const variants: Record<Variant, string> = \{([\s\S]*?)\n\}/.exec(file)?.[1]
+  if (!table) throw new Error('no variants table')
+  const m = table.match(new RegExp(`\\n\\s*${name}: '([^']*)'`))
+  if (!m) throw new Error(`no ${name} tier in the variants table`)
   return m[1]
 }
+
+/** The class list a component picks in one branch of a conditional, the first group of `re`. Line
+ *  comments are taken out first, so a note between the condition and its class list is no miss. */
+function branch(file: string, re: RegExp, what: string): string {
+  const m = re.exec(file.replace(/^\s*\/\/.*\n/gm, ''))
+  if (!m) throw new Error(`no ${what}`)
+  return m[1]
+}
+
+/** Every solid fill a shared control draws, and where its class list is written. */
+const SITES: { site: string; cls: () => string }[] = [
+  { site: 'Button primary', cls: () => tier(BUTTON(), 'primary') },
+  { site: 'Button danger', cls: () => tier(BUTTON(), 'danger') },
+  { site: 'IconButton filled', cls: () => branch(ICON_BUTTON(), /:\s*filled\s*\?\s*'([^']*)'/, "IconButton's filled branch") },
+  { site: 'HeaderActions primary', cls: () => tier(HEADER_ACTIONS(), 'primary') },
+  { site: 'HeaderActions danger', cls: () => tier(HEADER_ACTIONS(), 'danger') },
+  { site: "the app frame's primary header action", cls: () => branch(APP_FRAME(), /variant === 'primary'\s*\?\s*'([^']*)'/, "the app frame's primary header action") },
+]
 
 /** The colour token a tier's focus ring is drawn in: its own `focus-visible:outline-<token>`, or
  *  the global rule's `var(--color-…)` when it sets none. */
@@ -89,16 +118,18 @@ const fillToken = (cls: string): string => {
 }
 
 describe('a solid button\'s focus ring clears 3:1 against what is next to it', () => {
-  for (const name of ['primary', 'danger'] as const) {
-    it(`${name}: the ring is not the accent, the button's fill or a status colour`, () => {
-      const cls = tier(name)
+  for (const { site, cls: classes } of SITES) {
+    it(`${site}: the ring is not the accent, the button's fill or a status colour`, () => {
+      const cls = classes()
+      // The site read is the solid fill it names, not some other branch of the same file.
+      expect(['primary', 'danger'], `${site} reads as "${cls}"`).toContain(fillToken(cls))
       const ring = ringToken(cls)
-      expect(ring, `the ${name} tier's ring would be drawn in --color-${ring}`).not.toBe(fillToken(cls))
-      expect(NOT_A_RING, `the ${name} tier's ring would be drawn in --color-${ring}`).not.toContain(ring)
+      expect(ring, `${site}'s ring would be drawn in --color-${ring}`).not.toBe(fillToken(cls))
+      expect(NOT_A_RING, `${site}'s ring would be drawn in --color-${ring}`).not.toContain(ring)
     })
 
-    it(`${name}: the ring is >= 3:1 against every page surface, in every scheme and theme`, () => {
-      const ring = ringToken(tier(name))
+    it(`${site}: the ring is >= 3:1 against every page surface, in every scheme and theme`, () => {
+      const ring = ringToken(classes())
       const failures: string[] = []
       let worst = Infinity
       for (const s of SCHEMES) {
@@ -111,13 +142,12 @@ describe('a solid button\'s focus ring clears 3:1 against what is next to it', (
           }
         }
       }
-      expect(failures, `a ${name} button's focus ring nobody can see:\n${failures.join('\n')}`).toEqual([])
+      expect(failures, `${site}'s focus ring nobody can see:\n${failures.join('\n')}`).toEqual([])
       expect(worst).toBeGreaterThanOrEqual(FLOOR)
     })
 
-    it(`${name}: the ring sits at least 2px outside the button, so the fill never touches it`, () => {
-      const cls = tier(name)
-      expect(cls, 'a tier must not move its ring onto its fill').not.toMatch(/outline-offset|ring-inset/)
+    it(`${site}: the ring sits at least 2px outside the button, so the fill never touches it`, () => {
+      expect(classes(), 'a solid fill must not move its ring onto its fill').not.toMatch(/outline-offset|ring-inset/)
       const rule = /:focus-visible\s*\{([^}]*)\}/.exec(CSS())?.[1] ?? ''
       const offset = Number(/outline-offset:\s*(\d+)px/.exec(rule)?.[1] ?? 0)
       const width = Number(/outline:\s*(\d+)px\s+solid/.exec(rule)?.[1] ?? 0)
