@@ -41,6 +41,12 @@ export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
   'chatSplit.spec.ts': { mode: 'shared', why: 'answers its chat reads with route stubs' },
   'threadRailGeometry.spec.ts': { mode: 'shared', why: 'answers its thread reads with route stubs' },
   'focusAndReadingModes.spec.ts': { mode: 'shared', why: 'adds its own chat session and reads only its own' },
+  'idleCost.spec.ts': {
+    mode: 'shared',
+    why:
+      'reads Home and Chat and writes nothing; a window in which another spec pushed something to the ' +
+      'page or ran a turn is thrown away and measured again',
+  },
   'nonAxeA11yChecks.spec.ts': { mode: 'shared', why: 'plants its defects in the page, writes nothing' },
   'surfaceMatrix.control.spec.ts': {
     mode: 'shared',
