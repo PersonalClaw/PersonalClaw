@@ -99,9 +99,9 @@ def _sign_in_of(request: web.Request) -> tuple[str, float]:
 
 async def api_push_status(request: web.Request) -> web.Response:
     """The subscribe-side facts: backend, VAPID public key, which devices are subscribed."""
-    # Spelled out as a literal rather than forwarding `push_status()` wholesale. Two reasons,
-    # and the wire-error census (`test_unclassifiable_payloads_do_not_grow`) asks for the
-    # first: a response body that is an opaque call cannot be read statically, so nobody —
+    # Spelled out as a literal rather than forwarding `push_status()` wholesale. Two reasons, and
+    # the wire-error census (`test_every_unclassifiable_payload_is_listed_with_its_reason`) asks
+    # for the first: a response body that is an opaque call cannot be read statically, so nobody —
     # reviewer or scanner — can see what this route serves. The second is an ALLOWLIST: a
     # field added to `push_status()` for the CLI's benefit cannot become public by accident,
     # which matters on the one route in this module that touches key material.

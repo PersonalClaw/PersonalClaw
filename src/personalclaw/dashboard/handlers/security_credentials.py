@@ -89,8 +89,8 @@ async def api_security_credentials(request: web.Request) -> web.Response:
         return denied
     # The `{**…}` spread is not decoration: `test_wire_error_envelope_census` requires every
     # `json_response` body to be a literal dict AT THE CALL SITE, so a bare `_payload()` (a Call
-    # node) raises the unresolvable-payload count. Same shape as the two POSTs below, which is
-    # also why the three responses cannot drift apart.
+    # node) is a new site on its list of unresolvable payloads. Same shape as the two POSTs below,
+    # which is also why the three responses cannot drift apart.
     return web.json_response({**_payload()})
 
 

@@ -49,6 +49,9 @@ class Census:
     #: long-standing direct ceilings stay comparable across measurements.
     flat_via_wrapper: list[tuple[str, int]] = field(default_factory=list)
     structured_via_wrapper: list[tuple[str, int]] = field(default_factory=list)
+    #: The ``flat_via_wrapper`` calls, each named as a site the same way;
+    #: ``tests/rails/baselines/flat-envelopes-via-wrapper.sites.jsonl`` lists them.
+    flat_via_wrapper_sites: list[str] = field(default_factory=list)
     #: ``(file, name)`` for every response wrapper the scanner recognised. The vacuity
     #: anchor for the whole wrapper mechanism: if this empties, the two buckets above
     #: read clean for the wrong reason.
@@ -56,15 +59,13 @@ class Census:
     #: ``(file, line, node_type, via_wrapper)`` for every emit site whose payload the
     #: scanner refused to classify. LOUD by construction — see the docstring.
     unresolved: list[tuple[str, int, str, bool]] = field(default_factory=list)
+    #: The same calls, each named as a site the same way;
+    #: ``tests/rails/baselines/unresolved-payloads.sites.jsonl`` lists them.
+    unresolved_sites: list[str] = field(default_factory=list)
 
     @property
     def structured_total(self) -> int:
         return len(self.structured_direct) + len(self.emitter_sites)
-
-    @property
-    def flat_total(self) -> int:
-        """Every flat site, however the payload reached the response."""
-        return len(self.flat) + len(self.flat_via_wrapper)
 
 
 def _is_json_response(call: ast.Call) -> bool:
@@ -221,6 +222,8 @@ def scan_source(source: str | ast.Module, rel: str, census: Census) -> None:
     for name in sorted(wrappers):
         census.wrapper_defs.append((rel, name))
     dynamic: set[int] = set()
+    refused: set[int] = set()
+    wrapped_flat: set[int] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -251,8 +254,9 @@ def scan_source(source: str | ast.Module, rel: str, census: Census) -> None:
                 # A wrapper forwarding its own parameter. Not unaccounted-for: the values
                 # that flow through it are classified at the wrapper's call sites.
                 continue
-            # REFUSED, not skipped. See UNRESOLVED_PAYLOAD_CEILING.
+            # REFUSED, not skipped: named below, and the rail's list holds each one.
             census.unresolved.append((rel, node.lineno, type(payload).__name__, via_wrapper))
+            refused.add(id(node))
             continue
         for key, value in zip(payload.keys, payload.values):
             if not (isinstance(key, ast.Constant) and key.value == "error"):
@@ -262,14 +266,21 @@ def scan_source(source: str | ast.Module, rel: str, census: Census) -> None:
             )
             if via_wrapper:
                 bucket = census.structured_via_wrapper if has_code else census.flat_via_wrapper
+                if not has_code:
+                    wrapped_flat.add(id(node))
             else:
                 bucket = census.structured_direct if has_code else census.flat
             bucket.append((rel, node.lineno))
 
-    if dynamic:
-        census.dynamic_code_sites += numbered(
-            code_site(rel, scope, node) for node, scope in scoped(tree) if id(node) in dynamic
-        )
+    # Each site named for its list in source order, so a repeat in one function is ``#2``.
+    if dynamic or refused or wrapped_flat:
+        ordered = list(scoped(tree))
+        for ids, sites in (
+            (dynamic, census.dynamic_code_sites),
+            (refused, census.unresolved_sites),
+            (wrapped_flat, census.flat_via_wrapper_sites),
+        ):
+            sites += numbered(code_site(rel, s, node) for node, s in ordered if id(node) in ids)
 
 
 def scan() -> Census:
