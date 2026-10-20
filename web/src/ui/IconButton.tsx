@@ -126,7 +126,9 @@ export function IconButton({
         disabled
           ? 'text-on-surface-var opacity-40 cursor-not-allowed'
           : filled
-            ? 'bg-primary text-on-primary hover:bg-primary-emphasis active:bg-primary-emphasis'
+            // The ring is the ink, not coral: the global ring is the fill's own colour. Button's
+            // solid tiers carry the rule's reasons; rail: `design/solidButtonFocusRing.test.ts`.
+            ? 'bg-primary text-on-primary hover:bg-primary-emphasis active:bg-primary-emphasis focus-visible:outline-on-surface'
             : active
               ? 'bg-surface-high text-on-surface'
               : tone === 'danger'
