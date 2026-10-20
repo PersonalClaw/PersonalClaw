@@ -93,14 +93,14 @@ cap = 300
 reason = "the real eval matrix, a spawned child per cell, against a local endpoint"
 
 [[mark]]
-site = "tests/rails/test_inert_surface_baseline_tree.py::test_committed_baseline_is_not_stale_on_the_shrink_side"
+site = "tests/rails/test_inert_surface_baseline_tree.py::test_every_inert_surface_is_listed_with_its_reason"
 cap = 300
 reason = "builds the inert-surface census of the whole tree"
 
 [[mark]]
-site = "tests/rails/test_inert_surface_baseline_tree.py::test_committed_baseline_byte_matches_a_fresh_render"
+site = "tests/rails/test_inert_surface_baseline_tree.py::test_a_planted_surface_fails_by_name_and_a_wired_one_by_its_line"
 cap = 300
-reason = "renders the inert-surface census of the whole tree"
+reason = "builds the inert-surface census of the whole tree, and of a planted one"
 
 [[mark]]
 site = "tests/rails/test_inert_surface_baseline_tree.py::test_the_real_config_reader_census_fires_and_clears_an_accessor"

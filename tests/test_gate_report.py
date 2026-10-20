@@ -10,10 +10,10 @@ one run — the "aggregate, don't short-circuit" ergonomic. These tests prove th
   * the one rendered table carries every failure (all gate names + FAIL markers) in one string.
 
 All failure scenarios are SYNTHETIC — driven by monkeypatching each generator's
-``baseline_path``/``build_inventory`` (mirroring how the existing ratchet tests drive the
-shared ``regressions()`` with synthetic dicts). The real committed
-``config-baseline.json`` / ``inert-surface-baseline.json`` / ``docs-lint-baseline.json`` are
-never mutated.
+``baseline_path`` (the inert census's ``sites_path``) and ``build_inventory`` (mirroring how
+the existing ratchet tests drive the shared comparisons with synthetic data). The real
+committed ``config-baseline.json`` / ``docs-lint-baseline.json`` and the inert-surface site
+list are never mutated.
 """
 
 from __future__ import annotations
@@ -55,14 +55,25 @@ def _seed_config_drift(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config_gen, "baseline_path", lambda: stale)
 
 
-def _seed_inert_drift(monkeypatch, tmp_path: Path) -> None:
-    """Make inert-surface drift: a committed baseline of 0 for a file and a current inventory
-    of 1 for it, so the REAL shrink-only ``regressions()`` flags a rise."""
-    baseline = _write_json(
-        tmp_path / "inert-surface-baseline.json",
-        {"per_file": {"src/personalclaw/synthetic.py": {"inert": 0, "surfaces": []}}},
+#: The one surface the seeded inert census finds, and the site the gate must name.
+_INERT_SITE = "src/personalclaw/synthetic.py::enum:SyntheticProbe.NEW_MEMBER"
+
+
+def _write_sites(path: Path, *sites: str) -> Path:
+    path.write_text(
+        "".join(json.dumps({"site": site, "reason": "synthetic"}) + "\n" for site in sites),
+        encoding="utf-8",
     )
-    monkeypatch.setattr(inert_gen, "baseline_path", lambda: baseline)
+    return path
+
+
+def _seed_inert_drift(monkeypatch, tmp_path: Path) -> None:
+    """Make inert-surface drift: a committed site list that holds another surface of the file
+    and a current inventory with one it does not hold, so the REAL ``unlisted()`` names it."""
+    held = _write_sites(
+        tmp_path / "inert.sites.jsonl", "src/personalclaw/synthetic.py::enum:SyntheticProbe.OLD"
+    )
+    monkeypatch.setattr(inert_gen, "sites_path", lambda: held)
     monkeypatch.setattr(
         inert_gen,
         "build_inventory",
@@ -125,7 +136,8 @@ def gates(monkeypatch, tmp_path):
     monkeypatch.setattr(config_gen, "baseline_path", lambda: config)
     monkeypatch.setattr(config_gen, "build_baseline", lambda: render)
     empty = _write_json(tmp_path / "empty-baseline.json", {"per_file": {}})
-    monkeypatch.setattr(inert_gen, "baseline_path", lambda: empty)
+    no_sites = _write_sites(tmp_path / "empty.sites.jsonl")
+    monkeypatch.setattr(inert_gen, "sites_path", lambda: no_sites)
     monkeypatch.setattr(inert_gen, "build_inventory", lambda: {"per_file": {}})
     monkeypatch.setattr(docs_gen, "baseline_path", lambda: empty)
     monkeypatch.setattr(docs_gen, "build_inventory", lambda: {"per_file": {}})
@@ -180,7 +192,10 @@ def test_three_independent_failures_all_surface_in_one_run(gates, monkeypatch, t
     assert all(r.failures for r in seeded), results
     # Every seeded gate's failure is real and attributed (not the raise path).
     assert "config-baseline.json is stale" in by_name["config-baseline"].failures[0]
-    assert any("synthetic.py" in line for line in by_name["inert-surface"].failures)
+    assert by_name["inert-surface"].failures == [
+        f"Site {_INERT_SITE} is a new declared-but-inert surface, not listed in "
+        f"{inert_gen.SITES}: add the missing writer or reader"
+    ]
     assert any("synthetic.md" in line for line in by_name["docs-lint"].failures)
     assert all(by_name[n].ok for n in structural_gen.RATCHETS), results
 
@@ -243,6 +258,22 @@ def test_a_raising_gate_is_captured_and_does_not_stop_the_others(gates, monkeypa
             assert by_name[name].ok, by_name[name]
 
 
+def test_the_inert_surface_gate_names_an_unlisted_site_and_passes_a_listed_one(
+    gates, monkeypatch, tmp_path
+):
+    """The inert-surface gate compares the census's sites with the committed site list: the
+    seeded surface fails by its site while the list lacks it, and passes once a line holds it.
+    A listed surface the census no longer finds is the rail's to name, not this gate's."""
+    _seed_inert_drift(monkeypatch, tmp_path)
+    assert not {r.name: r for r in run_all_gates()}["inert-surface"].ok
+    held = _write_sites(
+        tmp_path / "held.sites.jsonl", _INERT_SITE, "src/personalclaw/gone.py::enum:G.ONE"
+    )
+    monkeypatch.setattr(inert_gen, "sites_path", lambda: held)
+    gate = {r.name: r for r in run_all_gates()}["inert-surface"]
+    assert gate.ok and gate.failures == [], gate
+
+
 def test_an_all_pass_run_exits_0_with_every_gate_pass(gates, capsys):
     """Every gate passes: ``main()`` exits 0, and the table shows one PASS row per gate."""
     assert main() == 0
@@ -260,7 +291,7 @@ def test_report_renders_every_failure_in_one_table():
         GateResult(
             "inert-surface",
             False,
-            ["src/personalclaw/x.py: inert surfaces rose 0 -> 1; new ..."],
+            ["Site src/personalclaw/x.py::enum:X.NEW is a new declared-but-inert surface, ..."],
         ),
         GateResult("docs-lint", False, ["docs/y.md: docs-lint findings rose 0 -> 1; new ..."]),
     ]
@@ -274,7 +305,7 @@ def test_report_renders_every_failure_in_one_table():
     table = report.split("\n\n", 1)[0]
     assert table.count("FAIL") == 3
     assert "config-baseline.json is stale" in report
-    assert "inert surfaces rose" in report
+    assert "is a new declared-but-inert surface" in report
     assert "docs-lint findings rose" in report
     assert "SUMMARY: 3 of 3 gate(s) FAILED, 3 failure(s) total." in report
 

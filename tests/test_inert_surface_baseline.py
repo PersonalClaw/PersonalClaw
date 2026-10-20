@@ -1,38 +1,43 @@
-"""Shrink-only ratchet for the committed inert-surface inventory.
+"""The inert-surface census, and the site list that holds it.
 
-``inert-surface-baseline.json`` is a GENERATED census (by
-``scripts/generate_inert_surface_baseline.py``) of *declared-but-inert surfaces* across
-six seam kinds — config keys, config readers, enum members, trigger kinds,
+``scripts/generate_inert_surface_baseline.py`` is a census of *declared-but-inert surfaces*
+across six seam kinds — config keys, config readers, enum members, trigger kinds,
 ``_EDITABLE_CONFIG`` entries, and SDK exports — each being a place where something is
 declared and nothing on the other side of the seam consumes or produces it. That defect
 passes ordinary tests because they hand-build the state the missing writer should have
 created; only a census of both ends catches it.
 
-This suite is the ratchet that keeps the census honest. It regenerates in-memory and
-asserts every per-file inert counter **may only shrink** versus the committed baseline:
+Each surface it finds is a site, ``<file>::<kind>:<name>``, and the committed list
+``tests/rails/baselines/inert-surfaces.sites.jsonl`` holds every one with the reason it is left
+inert (``tests/site_baseline.py``). The list replaced per-file counters that could only shrink:
 
-  * A per-file counter that ROSE — a NEW declared-but-inert surface — reds CI, naming the
-    file and the new surface. This is the rule: "adding a declared-but-unread surface
-    reds CI".
-  * A DECREASE is welcome (a cleanup added the missing writer/reader). The ratchet does
-    NOT demand exact equality and does NOT require the count to go down — only that it
-    never goes up. This is why we shipped at the MEASURED population, not zero: a never-run
-    gate given teeth at zero would red every pre-existing inert surface at once (an
-    outage). See the generator's module docstring.
+  * A surface the list does not hold — a NEW declared-but-inert surface — reds CI by name,
+    in the rails job's rail and in ``scripts/gate_report.py``. This is the rule: "adding a
+    declared-but-unread surface reds CI".
+  * A listed surface the census no longer finds (a cleanup added the missing writer/reader)
+    is welcome, and its line is deleted in that commit: the rail fails on a stale line, and
+    ``python tests/site_baseline.py --prune`` deletes it. The list shipped at the MEASURED
+    population, not zero: a never-run gate given teeth at zero would red every pre-existing
+    inert surface at once (an outage). See the generator's module docstring.
 
-⚠️  FORBIDDEN-TO-RAISE RULE (a required doc line — do not weaken it): when this test
-    reds because a counter ROSE, the fix is to ADD THE MISSING WRITER OR READER for the new
-    surface — NEVER to regenerate ``inert-surface-baseline.json`` to bless the higher
-    number. Raising a committed count to make CI green re-hides exactly the defect this
-    census exists to surface.
+The rails hold the real tree's census to the list
+(``tests/rails/test_inert_surface_baseline_tree.py``); the tests here prove the detectors, on
+trees they plant and on the real tree's recorded findings, and the gate's comparison on data of
+their own.
+
+⚠️  FORBIDDEN-TO-RAISE RULE (a required doc line — do not weaken it): when CI reds because
+    a new surface is not listed, the fix is to ADD THE MISSING WRITER OR READER for the new
+    surface — NEVER to add its line to the list to bless it. Listing a new surface to make
+    CI green re-hides exactly the defect this census exists to surface.
 
 # how to update
-    Regenerate the committed baseline ONLY when a counter LEGITIMATELY SHRANK (a real
-    cleanup landed that wired the missing writer/reader), and do it in that SAME commit::
+    Delete a surface's line ONLY when the census stopped finding it because a real cleanup
+    landed that wired the missing writer/reader, and do it in that SAME commit (or run
+    ``python tests/site_baseline.py --prune``). Each such cleanup commit should be able to
+    point at the writer/reader it added.
 
-        python scripts/generate_inert_surface_baseline.py
-
-    Each such cleanup commit should be able to point at the writer/reader it added.
+    The cases below were recorded while the list was per-file counters; a counter that rose
+    or fell is now lines added or deleted, and the rulings hold as they stand.
 
     ONE further case, added 2026-08-19: a counter may also rise because the CENSUS started
     seeing a population it was previously blind to — not because anything became inert.
@@ -57,7 +62,7 @@ asserts every per-file inert counter **may only shrink** versus the committed ba
     API type apart from an unkept promise. It now also clears an export that ANOTHER export's
     field or method signature names (``scripts/sdk_surface_closure.py``), which dropped
     ``sdk_export`` 229 → 170 and every touched file's counter with it. That is a plain
-    legitimate shrink under the rule above — regenerate in the same commit — but it is NOT a
+    legitimate shrink under the rule above — delete the lines in the same commit — but it is NOT a
     cleanup: nothing was wired, the census simply stopped scoring the API as inert. Recorded
     here because "a counter fell" normally means "a writer/reader landed", and reading this
     one that way would send someone looking for a commit that does not exist.
@@ -84,6 +89,7 @@ from pathlib import Path
 import pytest
 
 from scripts.generate_inert_surface_baseline import (
+    SITES,
     _attribute_names_in_src,
     _ConfigFieldDeclaration,
     _enum_members,
@@ -91,10 +97,12 @@ from scripts.generate_inert_surface_baseline import (
     _inert_enum_members,
     _iterated_enum_classes,
     _parse,
+    _repo_root,
     _src_py_files,
-    baseline_path,
-    build_baseline,
-    regressions,
+    build_inventory,
+    listed,
+    sites,
+    unlisted,
 )
 
 # The forbidden-to-raise sentence, asserted present in both the generator and this test so
@@ -102,13 +110,9 @@ from scripts.generate_inert_surface_baseline import (
 _FORBIDDEN_TO_RAISE = "add the missing writer or reader"
 
 
-def _committed_inventory() -> dict:
-    path = baseline_path()
-    assert path.is_file(), (
-        "inert-surface-baseline.json is missing — generate it with "
-        "`python scripts/generate_inert_surface_baseline.py`"
-    )
-    return json.loads(path.read_text(encoding="utf-8"))
+def _listed_surfaces() -> set[str]:
+    """``{"kind:name"}`` for every surface the committed list holds."""
+    return {site.split("::", 1)[1] for site in listed()}
 
 
 #: A small tree with one inert surface of every file-walking kind, plus the two anchors the
@@ -146,22 +150,25 @@ def _render_tree(root: Path) -> Path:
 
 
 def test_render_is_deterministic(tmp_path):
-    """Generating twice yields byte-identical output — no set-ordering, no timestamps, no
-    absolute paths. Determinism is the whole contract; without it the ratchet is noise.
+    """Building twice yields the same sites, sorted, with no absolute paths. Determinism is
+    the whole contract; without it the list is noise.
 
     Both builds are real (collection has to be order-stable too), over a small tree of this
-    test's own: the real tree's render is the rails job's (``scripts/gate_report.py``). The
-    fixture's findings are asserted as well, so a render that ignored *root* and read this
-    checkout cannot pass, and the override must not outlive the call.
+    test's own: the real tree's census is the rails' (``scripts/gate_report.py`` and
+    ``tests/rails/test_inert_surface_baseline_tree.py``). The fixture's findings are asserted as
+    well, so a census that ignored *root* and read this checkout cannot pass, and the override
+    must not outlive the call.
     """
     from scripts import generate_inert_surface_baseline as gen
 
     root = _render_tree(tmp_path)
-    first = build_baseline(root)
-    assert first == build_baseline(root)
+    first = build_inventory(root)
+    assert json.dumps(first, sort_keys=True) == json.dumps(build_inventory(root), sort_keys=True)
+    assert sites(first) == sorted(sites(first))
+    assert "src/personalclaw/kinds.py::enum:Colour.UNUSED" in sites(first)
     surfaces = {
         rel: [s for s in bucket["surfaces"] if not s.startswith("config:")]
-        for rel, bucket in json.loads(first)["per_file"].items()
+        for rel, bucket in first["per_file"].items()
     }
     assert surfaces["src/personalclaw/kinds.py"] == ["enum:Colour.UNUSED"]
     assert surfaces["src/personalclaw/triggers/models.py"] == ["trigger_kind:orphan"]
@@ -171,100 +178,66 @@ def test_render_is_deterministic(tmp_path):
     assert gen._repo_root() == Path(gen.__file__).resolve().parents[1]
 
 
-def test_baseline_is_well_shaped_and_sorted():
-    """The committed inventory has the declared shape and every list is sorted."""
-    inv = _committed_inventory()
-    assert set(inv) == {"generated_from", "per_file", "totals"}, inv.keys()
-    assert inv["generated_from"] == "scripts/generate_inert_surface_baseline.py"
-    total = 0
-    for rel, bucket in inv["per_file"].items():
-        assert set(bucket) == {"inert", "surfaces"}, bucket
-        assert isinstance(rel, str) and rel and not rel.startswith("/"), rel
-        surfaces = bucket["surfaces"]
-        assert surfaces == sorted(surfaces), f"{rel} surfaces not sorted"
-        assert len(surfaces) == len(set(surfaces)), f"{rel} has duplicate surfaces"
-        assert bucket["inert"] == len(surfaces), f"{rel} inert count != len(surfaces)"
-        for s in surfaces:
-            kind = s.split(":", 1)[0]
-            assert kind in {
-                "config",
-                "config_reader",
-                "enum",
-                "trigger_kind",
-                "editable_config",
-                "sdk_export",
-            }, s
-        total += bucket["inert"]
-    assert inv["totals"]["inert"] == total
-    assert inv["totals"]["inert"] == sum(inv["totals"]["by_kind"].values())
+def test_each_inert_surface_is_a_site_of_its_file():
+    """A site is the surface's file and its ``kind:name``, so two files' same-named surfaces
+    are two sites, and the list is sorted by site. An inventory that found nothing (or a stub
+    with no ``per_file``) has no sites."""
+    inventory = {
+        "per_file": {
+            "src/personalclaw/b.py": {"inert": 1, "surfaces": ["sdk_export:Lonely"]},
+            "src/personalclaw/a.py": {"inert": 2, "surfaces": ["enum:X.B", "sdk_export:Lonely"]},
+        }
+    }
+    assert sites(inventory) == [
+        "src/personalclaw/a.py::enum:X.B",
+        "src/personalclaw/a.py::sdk_export:Lonely",
+        "src/personalclaw/b.py::sdk_export:Lonely",
+    ]
+    assert sites({"per_file": {}}) == [] == sites({})
 
 
-def test_baseline_ships_at_a_nonzero_measured_population():
-    """The census must ship at the MEASURED population, not zero.
+def test_a_new_inert_surface_fails_the_gate_by_name():
+    """The rule: "adding a declared-but-unread surface reds CI". The gate's comparison names
+    each site the list does not hold, sorted, a new surface in a listed file and a new file's
+    alike, and says what fixes it."""
+    held = {"src/personalclaw/a.py::enum:X.OLD"}
+    found = [
+        "src/personalclaw/new_module.py::sdk_export:NeverImported",
+        "src/personalclaw/a.py::enum:X.OLD",
+        "src/personalclaw/a.py::enum:X.NEW_MEMBER",
+    ]
+    failures = unlisted(held, found)
+    assert [line.split(" ", 2)[1] for line in failures] == [
+        "src/personalclaw/a.py::enum:X.NEW_MEMBER",
+        "src/personalclaw/new_module.py::sdk_export:NeverImported",
+    ], failures
+    for line in failures:
+        assert SITES in line and _FORBIDDEN_TO_RAISE in line, line
 
-    A zeroed baseline would mean the ratchet was given teeth before the existing inert
-    surfaces were driven down — the outage this change explicitly avoids. A nonzero total is
-    the evidence we measured first and committed the real number."""
-    inv = _committed_inventory()
-    assert inv["totals"]["inert"] > 0, (
-        "inert-surface-baseline.json reports zero inert surfaces — ship at the MEASURED "
-        "population, not zero (a never-run gate given teeth at zero is an outage)."
+
+def test_a_wired_surface_is_not_the_gates_failure():
+    """The other side: a listed surface the census no longer finds (a cleanup landed) does not
+    fail the gate; its stale line is the rail's to name (``site_baseline.check``)."""
+    held = {"src/personalclaw/a.py::enum:X.WIRED", "src/personalclaw/a.py::enum:X.STILL"}
+    assert unlisted(held, ["src/personalclaw/a.py::enum:X.STILL"]) == []
+
+
+def test_the_list_is_read_by_site(tmp_path, monkeypatch):
+    """``listed()`` reads the site of each line of the committed list, blank lines skipped, so
+    a line's reason or ``added`` never changes what the gate compares."""
+    from scripts import generate_inert_surface_baseline as gen
+
+    path = tmp_path / "inert.sites.jsonl"
+    path.write_text(
+        '{"site": "src/personalclaw/a.py::enum:X.A", "reason": "r"}\n\n'
+        '{"site": "src/personalclaw/b.py::sdk_export:B", "reason": "r", "added": "2026-10-20"}\n',
+        encoding="utf-8",
     )
-
-
-def test_a_new_inert_surface_reds_the_ratchet():
-    """The rule: "adding a declared-but-unread surface reds CI".
-
-    We do NOT add dead code to the tree — we exercise the SHARED comparison the ratchet
-    relies on against a synthetic ``current`` that carries one extra surface for a real
-    file, and assert the comparison flags it (naming file + surface). This proves the gate
-    would red on a genuine new inert surface without perturbing the actual census."""
-    committed = _committed_inventory()
-    per_file = committed["per_file"]
-    assert per_file, "baseline is empty; cannot exercise the ratchet"
-
-    victim = sorted(per_file)[0]
-    synthetic = {
-        rel: {"inert": bucket["inert"], "surfaces": list(bucket["surfaces"])}
-        for rel, bucket in per_file.items()
-    }
-    synthetic[victim]["surfaces"].append("enum:SyntheticProbe.NEW_MEMBER")
-    synthetic[victim]["inert"] += 1
-
-    rose = regressions(per_file, synthetic)
-    assert any(victim in line and "NEW_MEMBER" in line for line in rose), rose
-
-
-def test_a_new_file_with_inert_surfaces_reds_the_ratchet():
-    """A file absent from the baseline that acquires an inert surface counts as a rise from
-    an implicit zero — covering the "brand new file introduces an inert surface" case."""
-    committed = _committed_inventory()
-    synthetic = {
-        rel: {"inert": bucket["inert"], "surfaces": list(bucket["surfaces"])}
-        for rel, bucket in committed["per_file"].items()
-    }
-    synthetic["src/personalclaw/brand_new_module.py"] = {
-        "inert": 1,
-        "surfaces": ["sdk_export:NeverImported"],
-    }
-    rose = regressions(committed["per_file"], synthetic)
-    assert any("brand_new_module.py" in line for line in rose), rose
-
-
-def test_a_cleanup_that_shrinks_a_counter_does_not_red_the_ratchet():
-    """The other side of the contract: driving a counter DOWN (a real cleanup) is welcome —
-    the rise-only comparison must return no regression for a shrink."""
-    committed = _committed_inventory()
-    per_file = committed["per_file"]
-    victim = next((rel for rel, b in per_file.items() if b["inert"] > 0), None)
-    assert victim is not None, "expected at least one file with inert surfaces"
-    shrunk = {
-        rel: {"inert": bucket["inert"], "surfaces": list(bucket["surfaces"])}
-        for rel, bucket in per_file.items()
-    }
-    shrunk[victim]["surfaces"].pop()
-    shrunk[victim]["inert"] -= 1
-    assert regressions(per_file, shrunk) == []
+    monkeypatch.setattr(gen, "sites_path", lambda: path)
+    assert listed() == {"src/personalclaw/a.py::enum:X.A", "src/personalclaw/b.py::sdk_export:B"}
+    assert gen.sites_path() == path
+    monkeypatch.undo()
+    assert gen.sites_path() == _repo_root() / SITES
 
 
 # ── config-reader census: the #322/#364 calibration pair ─────────────────────
@@ -559,7 +532,7 @@ def test_the_audited_value_lookup_call_sites_are_wired_and_the_members_re_verdic
 
     So the assertion is inverted rather than dropped, and it pins the re-verdict:
 
-    * ``Verdict.REPLAN`` and ``Actor.WORKER`` left the baseline — the judge gate names both
+    * ``Verdict.REPLAN`` and ``Actor.WORKER`` left the census — the judge gate names both
       explicitly (``_judge_gate_outcome`` maps REPLAN; the actor ruling picks WORKER for a
       ``self_judge`` gate), so they are reachable by NAME, not merely by value lookup.
     * ``Ratchet.RELAXED`` stays inert, and that is the honest verdict: nothing names it, and no
@@ -583,20 +556,17 @@ def test_the_audited_value_lookup_call_sites_are_wired_and_the_members_re_verdic
     stranded = [name for name, found in callers.items() if not found]
     assert not stranded, (
         f"{stranded} lost its production caller — the judge contract is authored-and-unrun again "
-        "Re-verdict the members the value-lookup audit covers before touching the baseline."
+        "Re-verdict the members the value-lookup audit covers before touching the list."
     )
 
-    baseline = _committed_inventory()
-    flagged = {
-        surface for entry in baseline["per_file"].values() for surface in entry.get("surfaces", [])
-    }
+    flagged = _listed_surfaces()
     for cleared in ("enum:Verdict.REPLAN", "enum:Actor.WORKER"):
         assert cleared not in flagged, (
             f"{cleared} is flagged inert again while its call site is wired — either the wiring "
-            "regressed or the detector's verdict did; read the code before regenerating"
+            "regressed or the detector's verdict did; read the code before listing it"
         )
     assert "enum:Ratchet.RELAXED" in flagged, (
-        "Ratchet.RELAXED left the baseline — if a template or a call site now names it, say so "
+        "Ratchet.RELAXED left the list — if a template or a call site now names it, say so "
         "here; if not, this is a false clear and the ratchet just lost a member it was watching"
     )
 
@@ -756,7 +726,7 @@ def test_an_export_named_by_another_exports_signature_is_not_inert(tranche, pinn
         f"[{tranche}] {missing} is exported so an app can fill a PUBLISHED field or call a "
         "PUBLISHED method or function, but the API-closure walk no longer finds the signature "
         "that requires it — either the signature moved or the walk regressed; read the code "
-        "before regenerating"
+        "before deleting a line"
     )
     still_reported = sorted(pinned & _reported_sdk_exports())
     assert not still_reported, (
@@ -961,9 +931,7 @@ def test_the_dashboard_closure_exemption_is_declared_load_bearing_and_still_just
     assert not closure.surface_closure().gaps, "the exemption must leave the gap rail closed"
 
     # Leg 3: the structural floor the argument rests on.
-    structural = json.loads(
-        (baseline_path().parent / "structural-baseline.json").read_text(encoding="utf-8")
-    )
+    structural = json.loads((_repo_root() / "structural-baseline.json").read_text(encoding="utf-8"))
     entry = structural["structural-import-direction"]["per_file"]["src/personalclaw/sdk/channel.py"]
     assert entry["edges"] == 4 and all("dashboard" in v for v in entry["violations"]), (
         "sdk/channel.py's committed HTTP-surface edge count is no longer the four grandfathered "

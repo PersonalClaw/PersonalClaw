@@ -30,7 +30,7 @@ back into the process-wide ``ProviderRegistry`` on a fresh start. ``start_dashbo
 closes that gap with ONE synchronous ``sync_entries_from_config()`` immediately after
 ``load_all_extensions()``. Deleting that call left 257 selected tests green: the
 FUNCTION had a rail (``test_registry_config_sync.py``), the WIRE had none — and a
-module-level call is outside ``inert-surface-baseline.json``'s vocabulary (it censuses
+module-level call is outside the inert-surface census's vocabulary (it censuses
 declared surfaces: config keys, enum members, trigger kinds, editable-config entries,
 SDK exports), so nothing else was ever going to notice.
 

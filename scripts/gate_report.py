@@ -10,8 +10,8 @@ five — six gates, one table, every failure visible in a single run:
     ``AppConfig`` schema; drift is a BYTE mismatch between the committed
     ``config-baseline.json`` and a fresh render.
   * ``inert-surface`` — ``scripts/generate_inert_surface_baseline.py`` censuses
-    declared-but-inert surfaces; drift is any per-file inert counter that ROSE
-    (``regressions(committed_per_file, current_per_file)`` non-empty).
+    declared-but-inert surfaces; drift is any surface its committed site list does not
+    hold (``unlisted(listed(), sites(current))`` non-empty), named by its site.
   * ``docs-lint`` — ``scripts/generate_docs_lint_baseline.py`` censuses docs drift;
     drift is any per-file finding counter that ROSE (``regressions(...)`` non-empty).
   * ``structural-size`` / ``structural-import-direction`` / ``structural-duplication``
@@ -29,9 +29,9 @@ that drifts, or even one that raises, is captured as a structured failure while 
 gate still runs.
 
 The output is DETERMINISTIC: gates run in a fixed order, each gate's failures are already
-sorted by the generator (``regressions()`` returns a sorted list; config's is a single fixed
-line), and the table carries no timestamps or absolute paths. Exit status is ``0`` iff every
-gate passes, else ``1``.
+sorted by the generator (``regressions()`` and ``unlisted()`` return sorted lists; config's
+is a single fixed line), and the table carries no timestamps or absolute paths. Exit status is
+``0`` iff every gate passes, else ``1``.
 
 Run it::
 
@@ -91,11 +91,21 @@ def _config_baseline_gate() -> GateResult:
     )
 
 
+def _inert_surface_gate() -> GateResult:
+    """inert-surface: ok iff every surface the census finds is a site its committed list holds.
+    ``unlisted()`` (owned by the generator) names each new site, sorted, so the report inherits
+    determinism for free. A listed site the census no longer finds is not this gate's: the
+    rails name its stale line (``tests/rails/test_inert_surface_baseline_tree.py``)."""
+    found = inert_gen.sites(inert_gen.build_inventory())
+    failures = inert_gen.unlisted(inert_gen.listed(), found)
+    return GateResult("inert-surface", not failures, failures)
+
+
 def _regressions_gate(name: str, gen: object) -> GateResult:
-    """inert-surface / docs-lint: ok iff no per-file counter ROSE versus the committed
-    baseline. ``regressions()`` (owned by each generator) is the shrink-only comparison the
-    ratchet test uses; its returned lines already name file + surface/finding and are sorted,
-    so the report inherits determinism for free."""
+    """docs-lint: ok iff no per-file counter ROSE versus the committed baseline.
+    ``regressions()`` (owned by the generator) is the shrink-only comparison the ratchet test
+    uses; its returned lines already name file + finding and are sorted, so the report
+    inherits determinism for free."""
     committed = json.loads(gen.baseline_path().read_text(encoding="utf-8"))["per_file"]
     current = gen.build_inventory()["per_file"]
     failures = list(gen.regressions(committed, current))
@@ -134,7 +144,7 @@ def run_all_gates() -> list[GateResult]:
     structural ratchets (size, import-direction, duplication)."""
     return [
         _guard("config-baseline", _config_baseline_gate),
-        _guard("inert-surface", lambda: _regressions_gate("inert-surface", inert_gen)),
+        _guard("inert-surface", _inert_surface_gate),
         _guard("docs-lint", lambda: _regressions_gate("docs-lint", docs_gen)),
         *[
             _guard(ratchet, lambda r=ratchet: _structural_gate(r))  # type: ignore[misc]

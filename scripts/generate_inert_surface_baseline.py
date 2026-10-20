@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Committed inert-surface inventory baseline.
+"""The inert-surface census, and the committed list of the surfaces it finds.
 
 A recurring defect class in this codebase: something is *declared* and nothing on the
 other side of the seam consumes or produces it — a config key no ``load()`` mapping
@@ -8,26 +8,29 @@ config entry with no backing field, an SDK export nothing imports. Tests pass an
 because they hand-build the state the missing writer should have produced. A round-trip
 or unit test cannot see the gap; only a *census of both ends of each seam* can.
 
-This generator IS that census. For each of six declared-surface kinds it enumerates the
-declared surfaces, applies a cheap deterministic writer/reader heuristic, and emits a
-per-file counter of inert surfaces to a committed ``inert-surface-baseline.json``. A
-companion test (``tests/test_inert_surface_baseline.py``) regenerates in-memory and
-asserts every per-file counter **may only shrink** versus the committed baseline: a NEW
-declared-but-inert surface raises a file's count and reds CI, naming the file and the
-surface; a cleanup that adds the missing writer/reader lowers it and is welcome.
+This module IS that census. For each of six declared-surface kinds it enumerates the
+declared surfaces and applies a cheap deterministic writer/reader heuristic. Each inert
+surface it finds is a site, ``<file>::<kind>:<name>`` (:func:`sites`), and the committed list
+:data:`SITES` holds every one, a line each with the reason it is left inert, in the per-site
+format of ``tests/site_baseline.py``. The rails hold the census to the list
+(``tests/rails/test_inert_surface_baseline_tree.py``): a NEW declared-but-inert surface fails
+by its site, and a listed surface the census no longer finds, because a cleanup added the
+missing writer/reader, fails on its stale line until the line is deleted. The list replaced
+per-file counters that could only shrink, which conflicted or went red on whichever of two
+branches merged second, though neither added a surface. ``scripts/gate_report.py`` fails on a
+new surface too (:func:`unlisted`).
 
-⚠️  FORBIDDEN-TO-RAISE RULE (the whole point — do not weaken it): when this baseline reds
-    CI because a counter ROSE, the fix is to ADD THE MISSING WRITER OR READER for the new
-    surface — never to regenerate the baseline to bless the higher number. Regenerating to
-    make a rising count green re-hides exactly the defect this file exists to surface.
-    Regeneration is legitimate ONLY when a counter LEGITIMATELY SHRANK (a real cleanup
-    landed) — and then it must happen in that same commit.
+⚠️  FORBIDDEN-TO-RAISE RULE (the whole point — do not weaken it): when CI reds because a
+    surface is not listed, the fix is to ADD THE MISSING WRITER OR READER for the new
+    surface — never to add its line to bless it. Listing a new surface to make CI green
+    re-hides exactly the defect this census exists to surface. Deleting a line is legitimate
+    ONLY when the census stopped finding the surface (a real cleanup landed) — and then it
+    must happen in that same commit (``python tests/site_baseline.py --prune``).
 
 ⚠️  SHIP AT THE MEASURED POPULATION, NOT AT ZERO. A never-run gate given teeth at zero is
-    an outage: it would red every existing declared-but-inert surface at once. So this
-    tool MEASURES the current population and commits the real (non-zero) number as the
-    floor; the ratchet only forbids *growth*. Driving the count down (one file per commit,
-    each proving a writer now exists) is a separate effort, not this change. In
+    an outage: it would red every existing declared-but-inert surface at once. So the list
+    holds the MEASURED population (non-zero); the rule only forbids *growth*. Driving it
+    down (one surface per commit, each proving a writer now exists) is a separate effort. In
     particular ``SafetyProfile`` (guardrails/policy.py) is expected to appear as inert and
     is left to be wired separately — do not "fix" any surface this census reports here.
 
@@ -41,7 +44,7 @@ references a surface is exactly the hand-built state that hides the seam gap.
     governs which cleanups get picked, so a surface it reports must really be unreachable.
     When a reported surface turns out to be reachable through a consumption shape the
     detector does not recognise, the fix is to TEACH THE DETECTOR THAT SHAPE — never to
-    delete the line from the baseline by hand, and never to relax the forbidden-to-raise
+    delete the line from the list by hand, and never to relax the forbidden-to-raise
     rule. Whole-enum iteration was taught exactly that way: ``Lineage.INFORMED_BY`` and
     ``Lineage.RELATED`` were reported inert while ``workflows/publish.py:136`` validated
     author-supplied edges against ``{e.value for e in Lineage}``, so a template author
@@ -54,9 +57,8 @@ references a surface is exactly the hand-built state that hides the seam gap.
     only from state this codebase itself wrote, would HIDE a real gap instead of naming it, and a
     false clear is the one error this census must not make quietly.
 
-The render is DETERMINISTIC: files, surface lists, and per-kind totals are all sorted,
-the output is ``json.dumps(..., indent=2, sort_keys=True)`` with a trailing newline, and
-it carries no timestamps or absolute paths. A second run is byte-identical to the first.
+The census is DETERMINISTIC: files, surface lists, sites and per-kind totals are all
+sorted, and it carries no timestamps or absolute paths. A second run equals the first.
 
 Per-surface-kind heuristic (each documented at its detector below):
   * ``config``          — a leaf config field (from the config-baseline walk) whose name is
@@ -76,14 +78,15 @@ Per-surface-kind heuristic (each documented at its detector below):
                           in-repo importer NOR is named by another export's field or method
                           signature. The SDK is a facade for installable app bundles that
                           live in a SEPARATE repo, so most exports look inert from here —
-                          which is precisely why this counter is large and why it ratchets
-                          rather than zeroes. The second clause is the API-closure reader
-                          (``scripts/sdk_surface_closure.py``): a type exported so an app
-                          can fill a PUBLISHED field is required by that field, and scoring
-                          it inert would have made un-exporting it the cheapest way to go
-                          green. An export reachable from nothing is still reported.
+                          which is precisely why most of the list is this kind and why
+                          it shrinks rather than starts at zero. The second clause is the
+                          API-closure reader (``scripts/sdk_surface_closure.py``): a type
+                          exported so an app can fill a PUBLISHED field is required by that
+                          field, and scoring it inert would have made un-exporting it the
+                          cheapest way to go green. An export reachable from nothing is
+                          still reported.
 
-Regenerate in place (ONLY on a legitimate shrink) with::
+Print the sites the census finds, one per line, with::
 
     python scripts/generate_inert_surface_baseline.py
 """
@@ -155,8 +158,8 @@ def _rel(path: Path) -> str:
 def _parse(path: Path) -> ast.Module | None:
     """Parse one source file once per process.
 
-    The baseline's kinds revisit the same production tree, and its tests intentionally
-    render more than once. Source paths are immutable during one generator/test process,
+    The census's kinds revisit the same production tree, and its tests intentionally
+    build it more than once. Source paths are immutable during one generator/test process,
     so reparsing them adds cost without adding coverage.
     """
     try:
@@ -1465,45 +1468,49 @@ def build_inventory(root: Path | None = None) -> dict[str, Any]:
     }
 
 
-def build_baseline(root: Path | None = None) -> str:
-    """Render the inventory as a deterministic JSON string (sorted, trailing newline)."""
-    return json.dumps(build_inventory(root), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+#: The committed list of inert surfaces, from the repository's root: one line per site, each with
+#: the reason the surface is left inert (``tests/site_baseline.py``). It replaced the per-file
+#: counters of ``inert-surface-baseline.json``.
+SITES = "tests/rails/baselines/inert-surfaces.sites.jsonl"
 
 
-def regressions(baseline_per_file: dict[str, Any], current_per_file: dict[str, Any]) -> list[str]:
-    """Files whose inert counter ROSE versus the baseline (shrink-only ratchet).
-
-    Returns a sorted list of human-readable regression lines — one per file whose current
-    ``inert`` count exceeds its committed count (a file absent from the baseline counts as
-    0). A DECREASE is never a regression: that is a cleanup and is welcome. This is the
-    exact comparison the ratchet test asserts against; it lives here so the test and the
-    generator share one definition of "backslide".
-    """
-    lines: list[str] = []
-    for rel in sorted(current_per_file):
-        current = int(current_per_file[rel].get("inert", 0))
-        baseline = int(baseline_per_file.get(rel, {}).get("inert", 0))
-        if current > baseline:
-            new_surfaces = sorted(
-                set(current_per_file[rel].get("surfaces", []))
-                - set(baseline_per_file.get(rel, {}).get("surfaces", []))
-            )
-            lines.append(
-                f"{rel}: inert surfaces rose {baseline} -> {current}; "
-                f"new declared-but-inert surface(s): {new_surfaces}"
-            )
-    return lines
+def sites_path() -> Path:
+    """Where :data:`SITES` is, in the tree the census reads."""
+    return _repo_root() / SITES
 
 
-def baseline_path() -> Path:
-    """Repo-root location of the committed ``inert-surface-baseline.json``."""
-    return _repo_root() / "inert-surface-baseline.json"
+def sites(inventory: dict[str, Any]) -> list[str]:
+    """Each surface of *inventory* (:func:`build_inventory`) as its site,
+    ``<file>::<kind>:<name>``, sorted."""
+    return sorted(
+        f"{rel}::{surface}"
+        for rel, bucket in inventory.get("per_file", {}).items()
+        for surface in bucket.get("surfaces", [])
+    )
+
+
+def listed() -> set[str]:
+    """The sites :data:`SITES` holds. Only each line's ``site`` is read: the rails check the
+    rest of a line (``tests/site_baseline.py``)."""
+    text = sites_path().read_text(encoding="utf-8")
+    return {json.loads(line)["site"] for line in text.splitlines() if line.strip()}
+
+
+def unlisted(held: set[str], found: list[str]) -> list[str]:
+    """One line for each site in *found* that *held* (:func:`listed`) does not hold: a NEW
+    declared-but-inert surface, sorted. A held site the census no longer finds is not one of
+    them; the rails name its stale line. This is the comparison ``scripts/gate_report.py``'s
+    inert-surface gate makes, so the gate and its tests share one definition of "new"."""
+    return [
+        f"Site {site} is a new declared-but-inert surface, not listed in {SITES}: "
+        "add the missing writer or reader"
+        for site in sorted(set(found) - held)
+    ]
 
 
 def main() -> None:
-    path = baseline_path()
-    path.write_text(build_baseline(), encoding="utf-8")
-    print(f"wrote {path}")
+    for site in sites(build_inventory()):
+        print(site)
 
 
 if __name__ == "__main__":
