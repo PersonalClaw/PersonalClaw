@@ -17,6 +17,7 @@ mistranslation available in this path. `resolve_confirmation` converts to `resol
 """
 
 import asyncio
+import contextlib
 
 import pytest
 
@@ -320,39 +321,193 @@ def test_the_confirm_route_is_MOUNTED():
     assert "/api/workflows/runs/{run_id}/confirm" in paths
 
 
-def test_confirm_is_guarded_by_the_SAME_operation_as_resume():
-    """This IS a resume with a verb vocabulary on top. A separate permission would let a caller who
-    may not answer a gate answer it through the other door."""
-    import inspect
+#: A run that parks on one approval gate and, once it is approved, carries on to a last step.
+APPROVAL = {
+    "name": "approval-gated",
+    "root": {
+        "kind": "sequence",
+        "id": "s",
+        "children": [
+            {"kind": "gate", "id": "approve", "config": {"kind": "approval", "prompt": "ok?"}},
+            {"kind": "transform", "id": "after", "config": {"expr": "the run carried on"}},
+        ],
+    },
+}
 
-    from personalclaw.workflows import handlers
+#: The Temporary chat live in the gateway, and the ordinary one, by the names their keys carry.
+TEMPORARY_CHAT = "tmp-chat"
+ORDINARY_CHAT = "c1"
 
-    source = inspect.getsource(handlers.api_run_confirm)
-    # The guard also names the run, so a restricted chat may answer only a run of its own.
-    assert '_guard(request, "workflow_run_resume"' in source
-
-
-def test_the_confirm_handler_AUDITS_the_verb():
-    """ "Who approved this, and what did they say" is the question an audit exists to answer."""
-    import inspect
-
-    from personalclaw.workflows import handlers
-
-    source = inspect.getsource(handlers.api_run_confirm)
-    assert "_audit(" in source
-    assert "verb" in source
+#: What an agent's tool presents: the gateway's internal secret, for the chat it acts for.
+AGENT_TOOL = {"X-Internal-Secret": "s", "X-Session-Key": f"dashboard:{ORDINARY_CHAT}"}
 
 
-def test_the_handler_does_not_accept_a_CHANNEL_from_the_body():
+async def _parked(watchdog, *, chat: str = "") -> str:
+    """A run driven to a real approval gate through the real supervisor; its id. *chat* is the
+    Temporary chat that started it, whose mode the run keeps (none: a run you started)."""
+    from personalclaw.workflows import ownership
+    from personalclaw.workflows import store as wstore
+    from personalclaw.workflows.models import RunOrigin, RunStatus, WorkflowRun
+
+    run = WorkflowRun(id="", workflow_name=APPROVAL["name"])
+    if chat:
+        run.origin = RunOrigin(session_key=f"dashboard:{chat}")
+        run.extra = ownership.stamp_run_mode({}, ownership.MemoryMode.TEMPORARY)
+    run = wstore.create(run)
+    wstore.write_spec(run.id, APPROVAL)
+    controller = await watchdog.launch(run, APPROVAL)
+    assert await controller.wait_for_terminal(timeout=15) == RunStatus.NEEDS_INPUT
+    return run.id
+
+
+def _still_waits(run_id: str) -> bool:
+    """Whether the run still waits on its one gate, unanswered."""
+    from personalclaw.workflows import store as wstore
+    from personalclaw.workflows.human_input import list_continuations
+    from personalclaw.workflows.models import RunStatus
+
+    return len(list_continuations(run_id)) == 1 and wstore.get(run_id).status == (
+        RunStatus.NEEDS_INPUT
+    )
+
+
+async def _carried_on(watchdog, run_id: str) -> bool:
+    """Whether the answered run went on past its gate to its last step, and ended there."""
+    from personalclaw.workflows import store as wstore
+    from personalclaw.workflows.models import RunStatus
+
+    ended = await watchdog.controller(run_id).wait_for_terminal(timeout=15)
+    return ended == RunStatus.COMPLETE and (
+        wstore.read_output(run_id, "root.children[1]") == "the run carried on"
+    )
+
+
+@contextlib.asynccontextmanager
+async def _gateway(tmp_path):
+    """The gateway's workflow routes over its dashboard state, with the real supervisor in it and
+    two live chats, a Temporary one and an ordinary one. Requests are admitted as you, as
+    `auth_mode=none` admits a loopback caller; the chat a request is for is the one it names in
+    `X-Session-Key`. Yields `(client, watchdog)`."""
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+    from chat_test_helpers import _make_state
+
+    from personalclaw.workflows.controller import EngineServices
+    from personalclaw.workflows.handlers import register_workflow_routes
+    from personalclaw.workflows.watchdog import WorkflowWatchdog
+
+    watchdog = WorkflowWatchdog(None, EngineServices())
+    state = _make_state(tmp_path)
+    state.workflows = watchdog
+    state.get_or_create_session(TEMPORARY_CHAT, memory_mode="temporary")
+    state.get_or_create_session(ORDINARY_CHAT)
+
+    @web.middleware
+    async def signed_in(request, handler):
+        request["user"] = "owner"
+        return await handler(request)
+
+    app = web.Application(middlewares=[signed_in])
+    app["state"] = state
+    register_workflow_routes(app)
+    async with TestClient(TestServer(app)) as client:
+        yield client, watchdog
+
+
+async def _post(client, run_id: str, verb: str, body: dict, headers: dict | None = None):
+    """POST *body* to the run's `/{verb}` route: `(status, answer)`."""
+    resp = await client.post(f"/api/workflows/runs/{run_id}/{verb}", json=body, headers=headers)
+    return resp.status, await resp.json()
+
+
+def _rows(operation: str) -> list[tuple[str, str, str]]:
+    """The security log's rows for *operation*, oldest first: `(caller, outcome, resources)`."""
+    from personalclaw.sel import sel
+
+    return [
+        (row["caller_identity"], row["outcome"], row["resources"])
+        for row in reversed(sel().recent(200))
+        if row.get("operation") == operation
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_temporary_chat_confirms_only_what_it_may_resume(tmp_path):
+    """This IS a resume with a verb vocabulary on top, so it is guarded by the same operation as
+    resume (`workflow_run_resume`). A separate permission would let a caller who may not answer a
+    gate answer it through the other door.
+
+    The guard also names the run, so a Temporary chat answers a run of its own and no other: on
+    a run you started, confirm refuses it exactly as resume does, writes the same refusal row
+    (`workflow_run_resume`, naming the run), and leaves the gate waiting; on the run the chat
+    started, its approve is taken and the run carries on."""
+    chat = {"X-Session-Key": f"dashboard:{TEMPORARY_CHAT}"}
+    async with _gateway(tmp_path) as (client, watchdog):
+        yours = await _parked(watchdog)
+        its_own = await _parked(watchdog, chat=TEMPORARY_CHAT)
+
+        resumed = await _post(client, yours, "resume", {"answer": True}, chat)
+        confirmed = await _post(client, yours, "confirm", {"verb": "approve"}, chat)
+        assert resumed[0] == confirmed[0] == 403, (resumed, confirmed)
+        assert confirmed[1]["error"]["code"] == "restricted_session", confirmed
+        assert confirmed[1] == resumed[1], "the two doors refused it differently"
+        assert _still_waits(yours), "a Temporary chat answered a run you started"
+        refused = [row for row in _rows("workflow_run_resume") if row[1] == "denied"]
+        assert refused == [(f"dashboard:{TEMPORARY_CHAT}", "denied", yours)] * 2
+
+        status, answer = await _post(client, its_own, "confirm", {"verb": "approve"}, chat)
+        assert status == 200, answer
+        assert answer["approved"] is True
+        assert await _carried_on(watchdog, its_own)
+
+
+@pytest.mark.asyncio
+async def test_a_confirm_is_audited_with_who_sent_it_and_the_verb(tmp_path):
+    """ "Who approved this, and what did they say" is the question an audit exists to answer.
+    Each confirm writes one row naming the work it was sent for (your own pages:
+    `dashboard:ui`), the run and the verb as it was sent, and whether it applied: a typo'd verb
+    is a failure, a skip and an approve a success."""
+    async with _gateway(tmp_path) as (client, watchdog):
+        run_id = await _parked(watchdog)
+
+        assert (await _post(client, run_id, "confirm", {"verb": "yolo"}))[0] == 400
+        assert (await _post(client, run_id, "confirm", {"verb": "skip"}))[0] == 200
+        assert _still_waits(run_id)
+        from_a_chat = {"X-Session-Key": f"dashboard:{ORDINARY_CHAT}"}
+        status, answer = await _post(client, run_id, "confirm", {"verb": "approve"}, from_a_chat)
+        assert status == 200, answer
+        assert await _carried_on(watchdog, run_id)
+
+    assert _rows("workflow_run_confirm") == [
+        ("dashboard:ui", "failure", f"{run_id}:yolo"),
+        ("dashboard:ui", "success", f"{run_id}:skip"),
+        (f"dashboard:{ORDINARY_CHAT}", "success", f"{run_id}:approve"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_channel_in_the_body_changes_nothing_about_who_answers(tmp_path):
     """`channel` marks a REMOTE reply the engine owner-binds. Passing one through from an untrusted
     body would let a caller claim to be a channel and get the remote path's different rules — the
-    reason `api_run_resume` does not forward it either."""
-    import inspect
+    reason `api_run_resume` does not forward it either.
 
-    from personalclaw.workflows import handlers
+    So the answer is judged by what the request proved, whatever channel its body names: an
+    agent's tool that names one is still refused as an agent's tool, and the gate waits; your own
+    approve that names one is still your local answer, taken on a run with no recorded owner (a
+    remote reply to such a run is refused), and the run carries on."""
+    remote = {"verb": "approve", "channel": "telegram"}
+    async with _gateway(tmp_path) as (client, watchdog):
+        run_id = await _parked(watchdog)
 
-    source = inspect.getsource(handlers.api_run_confirm)
-    assert "channel" not in source
+        status, answer = await _post(client, run_id, "confirm", remote, AGENT_TOOL)
+        assert status == 403, answer
+        assert answer["error"]["code"] == "approval_owner_only", answer
+        assert _still_waits(run_id), "an agent's tool answered by naming a channel"
+
+        status, answer = await _post(client, run_id, "confirm", remote)
+        assert status == 200, answer
+        assert answer["approved"] is True
+        assert await _carried_on(watchdog, run_id)
 
 
 def test_asyncio_free_service_call_is_synchronous():
