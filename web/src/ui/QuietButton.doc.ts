@@ -13,7 +13,7 @@ const doc: UiDoc = {
     { name: 'onClick', description: 'Click handler; receives the button mouse event.' },
     { name: 'title', description: 'Supplementary native tooltip (three of the consuming sites pass one).' },
     { name: 'ariaExpanded', description: 'When this quiet action is a DISCLOSURE, its open state — the same prop name Button uses, so the two siblings answer the question the same way instead of each inventing a spelling. Six call sites are disclosures and every one was silent: ChatPage\'s View/Hide, the artifact viewer\'s Compare versions/Close compare, and WorkflowRunDetail\'s four panel toggles (workspace, outbox, introspect, steer). Each swaps its own label, which tells a user what the NEXT click does but not whether the panel is open right now — which is what aria-expanded carries. Omit it for a plain quiet action (Download, Source file) so no state is claimed.' },
-    { name: 'disabled', description: 'The action is currently unavailable: 40% opacity, cursor-not-allowed, onClick suppressed, press feedback dropped. Mapped to aria-disabled and NEVER the native attribute (the same trade SquareIconButton and Button make), so the control keeps its tab stop and a keyboard user can reach it and hear why. This tier had no disabled state at all until now, and the measured consequence was OutboxPanel\'s "Choose files": it forwards to a file-picker input that is itself disabled={dropBusy}, so for the whole hand-over window the button stayed lit and clickable while every click was a silent no-op.' },
+    { name: 'disabled', description: 'The action is currently unavailable: 40% opacity, cursor-not-allowed, onClick suppressed, hover and press tints dropped. Mapped to aria-disabled and NEVER the native attribute (the same trade SquareIconButton and Button make), so the control keeps its tab stop and a keyboard user can reach it and hear why. This tier had no disabled state at all until now, and the measured consequence was OutboxPanel\'s "Choose files": it forwards to a file-picker input that is itself disabled={dropBusy}, so for the whole hand-over window the button stayed lit and clickable while every click was a silent no-op.' },
     { name: 'disabledReason', description: 'WHY it is unavailable, when disabled is true. Rides title (appended after an em dash, after any caller title), matching SquareIconButton.disabledReason and Button.disabledReason — an sr-only span inside the button would be concatenated into the accessible name, so the action would stop being findable by its own name. Omit it when the gate is self-evident; a compound gate should pass it only for the branch it actually describes.' },
     { name: 'className', description: 'Extra classes (tokens only — no raw hex/px).' },
   ],
@@ -28,7 +28,7 @@ const doc: UiDoc = {
     { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens (the token-lint ratchet fails the build otherwise).' },
   ],
   anatomy: [
-    'motion.button (h-7 rounded-md, ink-low → surface-high hover, expressiveness-scaled press spring on the fast spatial preset)',
+    'button (h-7 rounded-md, ink-low → surface-high on hover and press)',
     'leading glyph + label (children)',
   ],
 }

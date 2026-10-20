@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Bell, Check, CheckCheck, X } from 'lucide-react'
-import { spring, physics, stagger, listItemEnter } from '../design/motion'
+import { spring, overlayEnter, fadeEnter } from '../design/motion'
 import { api, type NotificationItem } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
@@ -125,28 +125,20 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
             —
           </span>
         )}
-        {/* unread badge springs in on a playful bounce, and RE-POPS on each count
-            change (key=unread) so a freshly-arrived notification announces itself
-            with a little jump rather than a silent number tick. */}
-        <AnimatePresence>
-          {unread > 0 && (
-            <motion.span key={unread}
-              initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}
-              transition={physics.playful}
-              data-type="caption"
-              className="absolute -right-0.5 -top-0.5 grid min-w-[15px] h-[15px] place-items-center rounded-pill px-1 leading-none"
-              style={withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 600)}>
-              {unread > 9 ? '9+' : unread}
-            </motion.span>
-          )}
-        </AnimatePresence>
+        {/* The unread badge. It swaps its number in place: it used to re-mount and pop on a playful
+            bounce at every change, and an unread count ticks too often for each tick to be an event. */}
+        {unread > 0 && (
+          <span data-type="caption"
+            className="absolute -right-0.5 -top-0.5 grid min-w-[15px] h-[15px] place-items-center rounded-pill px-1 leading-none"
+            style={withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 600)}>
+            {unread > 9 ? '9+' : unread}
+          </span>
+        )}
       </button>
       <AnimatePresence>
         {open && (
           <motion.div
-            initial={{ opacity: 0, scale: 0.96, y: -4 }}
-            animate={{ opacity: 1, scale: 1, y: 0, transition: spring.spatialFast }}
-            exit={{ opacity: 0, scale: 0.98, transition: spring.effects }}
+            variants={overlayEnter} initial="initial" animate="animate" exit="exit"
             style={{ transformOrigin: 'top right', boxShadow: 'var(--shadow-menu)' }}
             className="absolute right-0 top-full z-40 mt-2 w-[340px] overflow-hidden rounded-lgi bg-surface-container">
             <div className="flex items-center justify-between border-b border-outline-variant/40 px-m py-2.5">
@@ -174,7 +166,7 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
                   <div data-type="label-s" className="text-on-surface" style={fvs(500)}>You're all caught up</div>
                 </div>
               ) : (
-                <motion.div variants={{ animate: { transition: stagger(0.05) } }} initial="initial" animate="animate">
+                <motion.div initial="initial" animate="animate">
                   <AnimatePresence initial={false}>
                     {recent.map((n) => <ShadeRow key={n.ts} n={n} now={now} onOpen={() => openItem(n)} onAck={() => ack(n)} onDelete={() => remove(n)} />)}
                   </AnimatePresence>
@@ -207,7 +199,7 @@ function ShadeRow({ n, now, onOpen, onAck, onDelete }: { n: NotificationItem; no
   // subject, or "Dismiss: X" sits next to a row that calls itself Y.
   const subject = rowSubject([n.title, firstLine(n.body ?? '')])
   return (
-    <motion.div layout variants={listItemEnter}
+    <motion.div layout variants={fadeEnter}
       exit={{ opacity: 0, height: 0, marginTop: 0, transition: spring.spatialFast }}
       // The bell's dropdown carries the SAME row as `#/notifications`, so it had the same defect:
       // click-to-open on a bare div, no tab stop, no name. Fixed the same way, in the same change —

@@ -1,13 +1,14 @@
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { Loader2, type LucideIcon } from 'lucide-react'
 import { cx } from './cx'
-import { spring, physics, expr, exprHeavy } from '../design/motion'
+import { spring, physics, exprHeavy } from '../design/motion'
 
 /** Round icon button — pill hit area, rounded outline icon (ROND feel).
- *  Redesign-v2: expressiveness-scaled press/hover + a soft hover halo (bold only)
- *  so the button "lights up" under the cursor. Keeps the icon-morph (`iconKey`)
- *  and success `bloom` moments. Yields to reduced-motion; halo drops below the
- *  heavy-effect threshold. */
+ *  A press and a hover show by colour, at once (the `active:` tint is the hover's), plus a
+ *  soft hover halo (bold only) so the button "lights up" under the cursor. It does not scale
+ *  on press or hover: it used to, on a spring, and a control pressed that often should not
+ *  wobble. Keeps the icon-morph (`iconKey`) and success `bloom` moments. Yields to
+ *  reduced-motion; halo drops below the heavy-effect threshold. */
 export function IconButton({
   icon: Icon, label, title, onClick, active, filled, size = 40, iconSize = 20, className, disabled, disabledReason, loading = false, iconKey, bloom, tone = 'neutral',
 }: {
@@ -55,7 +56,7 @@ export function IconButton({
   //
   // What it does: `aria-busy`, the glyph cross-fades under a centered spinner (Button's
   // treatment), the click is refused by the same `off = disabled || loading` guard, and the
-  // press/hover springs and the hover halo stand down. It deliberately does NOT dim or set
+  // hover halo stands down. It deliberately does NOT dim or set
   // `aria-disabled`: a busy button is not unavailable, and it will be live again shortly.
   loading?: boolean
   // When set, the icon cross-fades/scales in whenever iconKey changes (a shape
@@ -94,8 +95,6 @@ export function IconButton({
   // One guard for both inert reasons, exactly as `Button` spells it (`off = !!disabled || loading`).
   // Without it, `loading` would trade a false "unavailable" for a double-fire.
   const off = !!disabled || loading
-  const pressScale = reduce ? 1 : 1 - expr(0.08, 0.5)
-  const hoverScale = reduce ? 1 : 1 + expr(0.06, 0.35)
   // Soft hover halo — non-filled + live buttons at bold intensity only (filled
   // buttons carry their own emphasis; refined mode stays flat).
   const showHalo = !off && !filled && !reduce && exprHeavy(0.5)
@@ -114,10 +113,8 @@ export function IconButton({
       aria-busy={loading || undefined}
       title={disabled && disabledReason ? `${title ?? label} — ${disabledReason}` : (title ?? label)}
       onClick={off ? undefined : onClick}
-      whileTap={off ? undefined : { scale: pressScale }}
-      whileHover={off ? undefined : { scale: hoverScale }}
       animate={bloom ? { scale: [1, 1.18, 1] } : undefined}
-      transition={bloom ? physics.playful : physics.snappy}
+      transition={bloom ? physics.playful : undefined}
       className={cx(
         // `shrink-0`: the size below is set via inline `width`/`height`, and an inline width is NOT a
         // floor for a flex child. Measured at 390px on the settings sub-routes, where this button sits in
@@ -129,13 +126,13 @@ export function IconButton({
         disabled
           ? 'text-on-surface-var opacity-40 cursor-not-allowed'
           : filled
-            ? 'bg-primary text-on-primary hover:bg-primary-emphasis'
+            ? 'bg-primary text-on-primary hover:bg-primary-emphasis active:bg-primary-emphasis'
             : active
               ? 'bg-surface-high text-on-surface'
               : tone === 'danger'
                 // This tier's own resting ink, with the sibling's danger RULE — see the prop's note.
-                ? 'text-on-surface-var hover:text-danger'
-                : 'text-on-surface-var hover:bg-surface-high hover:text-on-surface',
+                ? 'text-on-surface-var hover:text-danger active:text-danger'
+                : 'text-on-surface-var hover:bg-surface-high hover:text-on-surface active:bg-surface-high active:text-on-surface',
         // In flight keeps its full ink and its colour — only the cursor changes, because "wait"
         // is the honest thing to say. Dimming here is what made a working button read as dead.
         loading && !disabled && 'cursor-progress',

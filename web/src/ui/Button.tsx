@@ -2,7 +2,7 @@ import { useRef, type ReactNode } from 'react'
 import { AnimatePresence, motion, useMotionValue, useMotionTemplate, useReducedMotion } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
 import { cx } from './cx'
-import { spring, physics, expr, exprHeavy } from '../design/motion'
+import { spring, physics, exprHeavy } from '../design/motion'
 import { fvs } from '../design/fontWeight'
 import { usePersonality } from '../app/personality'
 
@@ -45,6 +45,19 @@ const variants: Record<Variant, string> = {
   'ghost-accent': 'bg-transparent text-primary-emphasis hover:bg-surface-high',
 }
 
+// A press shows by COLOUR, at once: each variant's pressed shade is its hover shade, so a tap on
+// a touch screen, where no hover precedes it, still shows that it landed. A separate map rather
+// than a second utility in each variant above: those strings are the variants' colour contracts,
+// and the contrast rails read them as such.
+const pressed: Record<Variant, string> = {
+  primary: 'active:bg-primary-emphasis',
+  tonal: 'active:bg-primary/25',
+  secondary: 'active:bg-surface-highest',
+  ghost: 'active:bg-surface-high',
+  danger: 'active:opacity-90',
+  'ghost-accent': 'active:bg-surface-high',
+}
+
 const sizes: Record<Size, string> = {
   // xs: dense in-panel chrome (cockpit banners, error retries, inline strips) —
   // the tier whose absence made pages hand-roll <button>s.
@@ -62,11 +75,11 @@ const sizeRole: Record<Size, string> = {
   lg: 'label-l',
 }
 
-/** The one shared button. Redesign-v2: bold, physical, expressiveness-scaled.
- *  Signature moments (all scale through the global `--expressiveness` knob and
- *  fully yield to reduced-motion):
- *   • spring press-in whose depth grows with expressiveness,
- *   • hover-lift,
+/** The one shared button. A press and a hover show by COLOUR, at once: each variant's
+ *  `hover:` shade is also its `active:` shade, so a tap on a touch screen, where no hover
+ *  precedes it, still shows. The button does not scale on either. It used to press in and
+ *  lift on a spring, and a control pressed many times an hour that wobbles under the pointer
+ *  explains nothing. Its remaining moments (they fully yield to reduced motion):
  *   • in an identity that keeps the decorative light (Claw Arcade, `web/DESIGN.md`
  *     §7), a liquid pointer-tracking sheen on solid (primary/danger) buttons — a
  *     radial highlight following the cursor; dropped below the heavy-effect
@@ -172,13 +185,10 @@ export function Button({
   }
   const onLeave = () => { mx.set(50); my.set(50) }
 
-  // Press/hover depth scale with expressiveness (floor keeps a hint when refined).
-  const pressScale = reduce ? 1 : 1 - expr(0.05, 0.4)
-  const hoverScale = reduce ? 1 : 1 + expr(0.025, 0.4)
   const showSheen = light && isSolid && !reduce && exprHeavy(0.45) && !off
 
   return (
-    <motion.button
+    <button
       ref={ref}
       type={type}
       title={softOff ? [title, disabledReason].filter(Boolean).join(' — ') : title}
@@ -203,8 +213,6 @@ export function Button({
       disabled={softOff ? undefined : off}
       onPointerMove={onMove}
       onPointerLeave={onLeave}
-      whileTap={off ? undefined : { scale: pressScale, transition: physics.snappy }}
-      whileHover={off ? undefined : { scale: hoverScale, transition: physics.snappy }}
       data-type={sizeRole[size]}
       style={fvs(470)}
       className={cx(
@@ -231,7 +239,7 @@ export function Button({
         // the click, and a spinner beside a progress verb says "working" more clearly than grey does.
         loading && loadingLabel ? 'disabled:pointer-events-none' : 'disabled:opacity-40 disabled:pointer-events-none',
         'aria-disabled:opacity-40 aria-disabled:cursor-not-allowed',
-        variants[variant], sizes[size], className,
+        variants[variant], pressed[variant], sizes[size], className,
       )}
     >
       {/* Liquid pointer-tracking sheen (the decorative light's: solid buttons, bold intensity only). */}
@@ -277,6 +285,6 @@ export function Button({
           </motion.span>
         )}
       </AnimatePresence>
-    </motion.button>
+    </button>
   )
 }

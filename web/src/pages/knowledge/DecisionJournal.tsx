@@ -64,13 +64,13 @@ export function DecisionJournal({ onOpenItem, onOpenChat }: { onOpenItem: (id: s
       {pending.length > 0 && (
         <section aria-labelledby="decisions-pending" className="flex flex-col gap-s">
           <h2 id="decisions-pending" data-type="title-s" className="text-on-surface-low">Open ({pending.length})</h2>
-          {pending.map((d, i) => <PendingRow key={d.id} d={d} index={i} onOpen={() => onOpenItem(d.id)} />)}
+          {pending.map((d) => <PendingRow key={d.id} d={d} onOpen={() => onOpenItem(d.id)} />)}
         </section>
       )}
       {resolved.length > 0 && (
         <section aria-labelledby="decisions-resolved" className="flex flex-col gap-s">
           <h2 id="decisions-resolved" data-type="title-s" className="text-on-surface-low">Resolved ({resolved.length})</h2>
-          {resolved.map((d, i) => <ResolvedRow key={d.id} d={d} index={i} onOpen={() => onOpenItem(d.id)} />)}
+          {resolved.map((d) => <ResolvedRow key={d.id} d={d} onOpen={() => onOpenItem(d.id)} />)}
         </section>
       )}
     </div>
@@ -162,12 +162,12 @@ function Bar({ b }: { b: CalibrationBucket }) {
  *  Three pending states get three different icons AND three different sentences, because
  *  "stale-pending" means no reminder is coming and rendering it as merely overdue would promise
  *  a review card that will never arrive. */
-function PendingRow({ d, index, onOpen }: { d: DecisionRow; index: number; onOpen: () => void }) {
+function PendingRow({ d, onOpen }: { d: DecisionRow; onOpen: () => void }) {
   const state = pendingState(d)
   const Icon = state === 'stale' ? BellOff : state === 'overdue' ? CircleAlert : Clock
   const tone = state === 'stale' ? 'var(--color-warn)' : state === 'overdue' ? 'var(--color-danger)' : 'var(--color-on-surface-low)'
   return (
-    <ListRow index={index} onClick={onOpen} label={d.summary} accent={state === 'counting' ? undefined : tone}>
+    <ListRow onClick={onOpen} label={d.summary} accent={state === 'counting' ? undefined : tone}>
       <div className="flex min-w-0 flex-col gap-xs">
         <div className="flex min-w-0 items-center gap-s">
           <span className="truncate text-on-surface" style={fvs(500)}>{d.summary}</span>
@@ -188,11 +188,11 @@ function PendingRow({ d, index, onOpen }: { d: DecisionRow; index: number; onOpe
 
 /** A resolved decision, expectation and outcome SIDE BY SIDE. Never one collapsed into a
  *  verdict: the whole value of the record is that the two are readable against each other. */
-function ResolvedRow({ d, index, onOpen }: { d: DecisionRow; index: number; onOpen: () => void }) {
+function ResolvedRow({ d, onOpen }: { d: DecisionRow; onOpen: () => void }) {
   const grade = d.outcome_grade || ''
   const tone = grade === 'better' ? 'var(--color-ok)' : grade === 'worse' ? 'var(--color-warn)' : 'var(--color-primary)'
   return (
-    <ListRow index={index} onClick={onOpen} label={d.summary} accent={tone}>
+    <ListRow onClick={onOpen} label={d.summary} accent={tone}>
       <div className="flex min-w-0 flex-col gap-s">
         <div className="flex min-w-0 items-center gap-s">
           <span className="truncate text-on-surface" style={fvs(500)}>{d.summary}</span>

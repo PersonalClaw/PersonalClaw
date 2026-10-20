@@ -18,7 +18,7 @@
  *  Usage — the wrapper needs `relative` and, for the focus ring, the `has-` variants:
  *
  *      <motion.div
- *        tabIndex={-1}                      // Motion's whileTap/whileHover sets 0 otherwise,
+ *        tabIndex={-1}                      // a framer gesture on the wrapper sets 0 otherwise,
  *        onClick={open}                     //   which would be a second, nameless tab stop
  *        className="group relative … has-[>button:focus-visible]:ring-2
  *                   has-[>button:focus-visible]:ring-inset

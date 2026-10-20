@@ -92,9 +92,8 @@ function lastRun(r: ResearchReport): string {
   return r.last_result ? `${ran} · ${r.last_result}` : ran
 }
 
-export function ReportRow({ report, index, onChanged }: {
+export function ReportRow({ report, onChanged }: {
   report: ResearchReport
-  index?: number
   onChanged: () => void
 }) {
   const [busy, setBusy] = useState(false)
@@ -128,7 +127,7 @@ export function ReportRow({ report, index, onChanged }: {
   }
 
   return (
-    <ListRow index={index}>
+    <ListRow>
       {/* One column inside the row, so the edit form opens BELOW what it edits: the row lays
           its children out side by side. */}
       <div className="flex min-w-0 flex-1 flex-col items-start">
@@ -329,7 +328,7 @@ export function ReportsPage({ onBack }: { onBack: () => void }) {
               action={{ label: 'New report', onClick: () => setCreating(true), icon: Plus }} />
           ) : (
             <div className="flex flex-col gap-m">
-              {reports.map((r, i) => <ReportRow key={r.id} report={r} index={i} onChanged={reload} />)}
+              {reports.map((r) => <ReportRow key={r.id} report={r} onChanged={reload} />)}
             </div>
           )}
         </div>

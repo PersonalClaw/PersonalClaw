@@ -147,8 +147,8 @@ export function NavRail({
             {item.section}
           </div>
         )}
-        <motion.button
-          type="button" onClick={() => onSelect(item.id)} whileTap={{ scale: 0.98 }} transition={spring.spatialFast}
+        <button
+          type="button" onClick={() => onSelect(item.id)}
           // The badge rides the accessible NAME because an aria-label overrides the element's
           // text, so a badge span inside the button is announced nowhere. Same composition the
           // notifications bell already uses ("Notifications, 3 unread" + a title spelling it out).
@@ -172,16 +172,10 @@ export function NavRail({
           data-type="body-m"
           className={rowCls(active ? 'text-on-surface' : 'text-on-surface-var hover:bg-surface-low/60 hover:text-on-surface')}
           style={withWeight({ height: 32 }, active ? 470 : 400)}>
-          {/* Springy active pill — a single shared-layout element that SLIDES from
-              the previously-active item to this one (layoutId), instead of each
-              item toggling its own background. Sits behind the icon/label. */}
-          {active && (
-            <motion.span
-              layoutId="nav-active-pill"
-              transition={spring.spatialDefault}
-              className="absolute inset-0 rounded-pill bg-surface-low"
-            />
-          )}
+          {/* The active pill, behind the icon and label. It changes item at once, by colour: a rail
+              click is the most frequent action in the app, and a pill sliding over from the last
+              item says nothing about where you are now. */}
+          {active && <span className="absolute inset-0 rounded-pill bg-surface-low" />}
           <span className="relative z-10 shrink-0 inline-flex">
             <Icon size={18} strokeWidth={2} />
             {/* Collapsed rail has no room for the pill badge — show a dot so
@@ -197,7 +191,7 @@ export function NavRail({
               {item.badge}
             </span>
           )}
-        </motion.button>
+        </button>
       </div>
     )
   }
@@ -234,8 +228,8 @@ export function NavRail({
           badge comment above spells out: an `aria-label` OVERRIDES the element's text, so
           anything only in a child span is announced nowhere. */}
       {disclosure && disclosure.moreCount > 0 && (
-        <motion.button
-          type="button" onClick={disclosure.onToggle} whileTap={{ scale: 0.98 }} transition={spring.spatialFast}
+        <button
+          type="button" onClick={disclosure.onToggle}
           aria-expanded={disclosure.expanded}
           aria-label={disclosure.expanded
             ? `Show fewer, hide ${disclosure.moreCount} surface${disclosure.moreCount === 1 ? '' : 's'}`
@@ -258,7 +252,7 @@ export function NavRail({
           {!collapsed && !disclosure.expanded && (
             <span data-type="caption" className="relative z-10 tabular-nums">+{disclosure.moreCount}</span>
           )}
-        </motion.button>
+        </button>
       )}
 
       {/* flex spacer pushes pinned items (e.g. Settings) to the bottom. The live

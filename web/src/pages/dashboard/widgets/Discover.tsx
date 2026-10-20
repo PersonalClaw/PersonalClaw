@@ -120,9 +120,9 @@ export function Discover({ navigate }: RouteProps) {
             ))}
         </AnimatePresence>
       </div>
-      <Button variant="ghost" size="xs" onClick={() => navigate('discover')} className="group self-start text-on-surface-var">
+      <Button variant="ghost" size="xs" onClick={() => navigate('discover')} className="self-start text-on-surface-var">
         {tips.length > 1 ? `See all ${tips.length} in Discover` : 'Open Discover'}
-        <ArrowRight size={14} className="transition-transform group-hover:translate-x-px" />
+        <ArrowRight size={14} />
       </Button>
     </div>
   )
@@ -200,9 +200,9 @@ function TipCard({ tip, depth, reduce, onGo, onDismiss }: {
           className="-mr-xs shrink-0 text-on-surface-low"
         />
       </div>
-      <Button variant="tonal" size="xs" onClick={onGo} className="group self-start">
+      <Button variant="tonal" size="xs" onClick={onGo} className="self-start">
         {tip.try_it.label}
-        <ArrowUpRight size={13} className="transition-transform group-hover:translate-x-px group-hover:-translate-y-px" />
+        <ArrowUpRight size={13} />
       </Button>
       </>
       )}

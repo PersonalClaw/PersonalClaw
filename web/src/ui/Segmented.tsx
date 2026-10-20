@@ -1,9 +1,7 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { withWeight } from '../design/fontWeight'
-import { motion, useReducedMotion } from 'framer-motion'
 import { ChevronDown } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { spring, physics, expr } from '../design/motion'
 import { fvs } from '../design/fontWeight'
 import { Popover, MenuRow } from './Popover'
 import { menuCursorKeydown, useMenuCursor } from '../lib/useMenuCursor'
@@ -61,7 +59,6 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
   collapse?: 'scroll' | 'menu' | 'wrap'
 }) {
   const sm = size === 'sm'
-  const reduce = useReducedMotion()
   // Claim the enclosing `Field`'s label, the same contract `TextInput` already honours: an explicit
   // `ariaLabel` always WINS, otherwise the published label id names the group. Measured before this —
   // a DOM census of 14 routes found **7 unnamed groups** (9 named), so a screen-reader user heard
@@ -128,14 +125,6 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
     ro.observe(parent)
     return () => ro.disconnect()
   }, [collapse, options, iconOnly, sm])
-  // The sliding indicator carries personality: at bold expressiveness it settles
-  // with a little overshoot/squish (physics.snappy); refined/reduced → a clean
-  // snappy spring with no wobble. Tab press-scale also scales with the knob.
-  const indicatorSpring = reduce || expr(1, 0) < 0.4 ? spring.spatialFast : physics.snappy
-  const pressScale = reduce ? 1 : 1 - expr(0.06, 0.4)
-  // A per-instance layoutId so the sliding active-indicator is scoped to THIS
-  // segmented group (two on a page must not share/steal one indicator).
-  const groupId = useId()
   // WAI-ARIA radiogroup keyboard nav: ←/→/↑/↓ (and Home/End) move selection between
   // options, with a roving tabindex (only the checked option is in the tab order).
   //
@@ -181,18 +170,16 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
       {options.map((o, idx) => {
         const on = o.key === value
         const Icon = o.icon
-        // The active fill is a shared-layout pill that SLIDES + squishes between
-        // options (layoutId) instead of each button toggling its own background —
-        // the liquid active-indicator. Text/icon color still flips per option.
+        // The active fill moves to the picked option at once, with the text/icon colour: a
+        // tab or option change is a high-frequency action, so the fill no longer slides and
+        // squishes between options, and a press no longer scales the option.
         const activeBg = o.tone ? `color-mix(in srgb, ${o.tone} 20%, transparent)` : 'var(--color-primary)'
         const fg = on
           ? (o.tone ? o.tone : 'var(--color-on-primary)')
           : 'var(--color-on-surface-low)'
         return (
-          <motion.button key={o.key} type="button" role="radio" aria-checked={on} disabled={disabled}
+          <button key={o.key} type="button" role="radio" aria-checked={on} disabled={disabled}
             tabIndex={on ? 0 : -1} onKeyDown={(e) => move(e, idx)}
-            whileTap={disabled ? undefined : { scale: pressScale }}
-            transition={spring.spatialFast}
             onClick={() => onChange(o.key)} title={o.title ?? o.label}
             // `data-type` carries size + line-height; the WEIGHT stays what this control
             // always rendered — fw-400 pins the sm tier back to 400 (caption's own
@@ -202,9 +189,7 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
             className={`relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-pill transition-colors whitespace-nowrap ${sm ? 'fw-400' : ''} ${iconOnly ? (sm ? 'size-6' : 'size-8') : (sm ? 'h-6 px-2.5' : 'h-8 px-m')}`}
             style={on ? withWeight({ color: fg }, 550) : { color: fg }}>
             {on && (
-              <motion.span
-                layoutId={`seg-${groupId}`}
-                transition={indicatorSpring}
+              <span
                 className="absolute inset-0 rounded-pill"
                 style={{ background: activeBg }}
               />
@@ -213,7 +198,7 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
               {Icon && <Icon size={sm ? 12 : 15} className="shrink-0" />}
               {!iconOnly && o.label}
             </span>
-          </motion.button>
+          </button>
         )
       })}
     </div>

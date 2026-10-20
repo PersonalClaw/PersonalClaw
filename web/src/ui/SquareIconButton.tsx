@@ -1,15 +1,15 @@
-import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { Loader2, type LucideIcon } from 'lucide-react'
 import { cx } from './cx'
-import { spring, physics, expr } from '../design/motion'
+import { spring, physics } from '../design/motion'
 
 /** Dense square icon button — the compact sibling of the round {@link IconButton}.
  *  A 28px (size-7) `rounded-md` hit area with a small glyph, for tight action
  *  clusters in list rows, card headers, and content toolbars where the 40px round
  *  pill is too large. Idle at ink-low; hover fills surface-high and brightens to
- *  ink; the `on` (selected/toggled) state carries the coral tint. Press springs in
- *  (expressiveness-scaled), yielding to reduced-motion — matching the animated
- *  icon-button doctrine.
+ *  ink; the `on` (selected/toggled) state carries the coral tint. A press shows by
+ *  colour, at once (the `active:` tint is the hover's), with no scale — the same
+ *  rule as the rest of the button family.
  *
  *  Pass either an `icon` component or `children` (for glyphs that swap on state,
  *  e.g. spinner⇄wifi or a rotating chevron). `on` means selected; `disabled` means
@@ -66,8 +66,8 @@ export function SquareIconButton({
    *  primitive was missing the state, so each caller invented half of it.
    *
    *  What it does: `aria-busy`, the glyph cross-fades under a centered spinner (`Button`'s
-   *  treatment), the click is refused by the same `off = disabled || loading` guard, and the
-   *  press spring stands down. It deliberately does NOT dim or set `aria-disabled` — a working
+   *  treatment), and the click is refused by the same `off = disabled || loading` guard.
+   *  It deliberately does NOT dim or set `aria-disabled` — a working
    *  button is not an unavailable one. Pass your idle glyph as usual; the spinner is the
    *  primitive's, so callers stop shipping their own. */
   loading?: boolean
@@ -78,15 +78,13 @@ export function SquareIconButton({
   iconSize?: number
   className?: string
 }) {
-  const reduce = useReducedMotion()
   // One guard for both inert reasons, exactly as `Button` spells it — otherwise `loading` would
   // trade a false "unavailable" for a double-fire.
   const off = !!disabled || loading
-  const pressScale = reduce || off ? 1 : 1 - expr(0.1, 0.5)
   // The tint means "this is the live one" for both questions; the ARIA state is the one that differs.
   const lit = on || ariaExpanded
   return (
-    <motion.button
+    <button
       type="button"
       aria-label={label}
       aria-disabled={disabled || undefined}
@@ -101,8 +99,6 @@ export function SquareIconButton({
       aria-busy={loading || undefined}
       title={disabled && disabledReason ? `${title ?? label} — ${disabledReason}` : (title ?? label)}
       onClick={off ? undefined : onClick}
-      whileTap={off ? undefined : { scale: pressScale }}
-      transition={spring.spatialFast}
       className={cx(
         // `relative`: the loading spinner is an `absolute inset-0` overlay, and without a
         // positioned ancestor here it would centre itself on the nearest one — the row.
@@ -112,8 +108,8 @@ export function SquareIconButton({
           : lit
             ? 'text-primary'
             : tone === 'danger'
-              ? 'text-on-surface-low hover:text-danger'
-              : 'text-on-surface-low hover:bg-surface-high hover:text-on-surface',
+              ? 'text-on-surface-low hover:text-danger active:text-danger'
+              : 'text-on-surface-low hover:bg-surface-high hover:text-on-surface active:bg-surface-high active:text-on-surface',
         // In flight keeps its full ink and colour; only the cursor changes. Dimming here is
         // exactly what made a working button read as dead.
         loading && !disabled && 'cursor-progress',
@@ -143,6 +139,6 @@ export function SquareIconButton({
           </motion.span>
         )}
       </AnimatePresence>
-    </motion.button>
+    </button>
   )
 }

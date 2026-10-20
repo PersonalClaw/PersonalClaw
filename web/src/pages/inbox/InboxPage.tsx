@@ -647,7 +647,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
             anchorKey={openId ?? undefined}
             className="flex flex-col gap-s"
           >
-            {(it, i, listCtx) => {
+            {(it) => {
               const cm = verdictMeta(it)
               const cf = confMeta(it.confidence)
               const sm = statusMeta(it.status)
@@ -689,7 +689,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                 {/* index=0 while windowed: a windowed row REMOUNTS every time it scrolls
                     back in, and ListRow's entrance stagger is keyed on the index — so an
                     index-keyed delay replays the fade on every row, on every scroll. */}
-                <ListRow index={listCtx.windowed ? 0 : i} accent={unread ? accentTone : undefined} onClick={() => setOpenId(it.id)}
+                <ListRow accent={unread ? accentTone : undefined} onClick={() => setOpenId(it.id)}
                   label={rowSubject([channelBacked ? (it.sender_name || it.sender_id || 'Unknown') : km.label, previewText(it.message)])}>
                   <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${accentTone} 16%, transparent)` }}>
                     {channelBacked ? <cm.icon size={18} style={{ color: cm.tone }} /> : <km.icon size={18} style={{ color: km.tone }} />}

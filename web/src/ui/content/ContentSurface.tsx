@@ -1,7 +1,5 @@
-import { lazy, Suspense, useEffect, useId, useImperativeHandle, useRef, useState, forwardRef, createElement, type ReactNode } from 'react'
-import { motion } from 'framer-motion'
+import { lazy, Suspense, useEffect, useImperativeHandle, useRef, useState, forwardRef, createElement, type ReactNode } from 'react'
 import { Save, RotateCcw, Eye, Code2, Columns2, WrapText, Copy, Check, Loader2, FileWarning, Download, type LucideIcon } from 'lucide-react'
-import { spring } from '../../design/motion'
 import { SquareIconButton } from '../SquareIconButton'
 import { Centered } from '../Centered'
 import { LoadingStatus } from '../ListScaffold'
@@ -229,7 +227,6 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
   const commentsOn = !!commentTarget && isCommentable(type)
   // Per-surface layoutId so the view-toggle's sliding pill can't fly between two
   // ContentSurfaces mounted at once (e.g. two chat embeds).
-  const viewToggleId = `content-view-${useId()}`
 
   const PreviewEl = type.preview?.render
   function renderPreview() {
@@ -323,9 +320,9 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
                 always a way into edit mode; Split only when the type supports it */}
             {editable && previewable && (
               <div className="mr-1 inline-flex rounded-pill bg-surface-container p-0.5">
-                <ToggleBtn icon={Eye} label="Preview" on={view === 'preview'} onClick={() => setView('preview')} compact={compact} indicatorId={viewToggleId} />
-                {splittable && <ToggleBtn icon={Columns2} label="Split" on={view === 'split'} onClick={() => setView('split')} compact={compact} indicatorId={viewToggleId} />}
-                <ToggleBtn icon={Code2} label="Edit" on={view === 'edit'} onClick={() => setView('edit')} compact={compact} indicatorId={viewToggleId} />
+                <ToggleBtn icon={Eye} label="Preview" on={view === 'preview'} onClick={() => setView('preview')} compact={compact} />
+                {splittable && <ToggleBtn icon={Columns2} label="Split" on={view === 'split'} onClick={() => setView('split')} compact={compact} />}
+                <ToggleBtn icon={Code2} label="Edit" on={view === 'edit'} onClick={() => setView('edit')} compact={compact} />
               </div>
             )}
             {view !== 'preview' && draftEditable && (
@@ -444,16 +441,15 @@ function SurfaceLoading() {
   )
 }
 
-function ToggleBtn({ icon: Icon, label, on, onClick, compact, indicatorId }: { icon: typeof Eye; label: string; on: boolean; onClick: () => void; compact?: boolean; indicatorId: string }) {
+function ToggleBtn({ icon: Icon, label, on, onClick, compact }: { icon: typeof Eye; label: string; on: boolean; onClick: () => void; compact?: boolean }) {
   return (
     <button onClick={onClick} type="button" title={compact ? label : undefined} aria-label={label}
       data-type="caption"
       className={`relative inline-flex items-center gap-1 rounded-pill h-6 transition-colors ${compact ? 'px-2' : 'px-2.5'}`}
       style={{ color: on ? 'var(--color-on-surface)' : 'var(--color-on-surface-low)' }}>
-      {/* liquid active pill — slides between Preview/Split/Edit via layoutId (the
-          Segmented pattern) instead of the highlight blink-jumping. */}
-      {on && <motion.span layoutId={indicatorId} transition={spring.spatialFast}
-        className="absolute inset-0 rounded-pill" style={{ background: 'var(--color-surface-highest)' }} />}
+      {/* The active view's fill. It moves to Preview/Split/Edit at once: a view switch is a
+          high-frequency action, and a pill sliding over says nothing the fill does not. */}
+      {on && <span className="absolute inset-0 rounded-pill" style={{ background: 'var(--color-surface-highest)' }} />}
       <Icon size={12} className="relative" /> {!compact && <span className="relative">{label}</span>}
     </button>
   )

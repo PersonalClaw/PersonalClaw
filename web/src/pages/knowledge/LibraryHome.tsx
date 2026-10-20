@@ -197,11 +197,11 @@ function ItemRows({ items, onOpen, subtitle, lead, actions }: {
 }) {
   return (
     <ul className="flex min-w-0 flex-col gap-s">
-      {items.map((it, i) => {
+      {items.map((it) => {
         const name = it.title || it.url_title || '(untitled)'
         return (
           <li key={it.id} className="min-w-0">
-            <ListRow index={i} label={name} onClick={() => onOpen(it.id)}>
+            <ListRow label={name} onClick={() => onOpen(it.id)}>
               {lead?.(it)}
               <div className="min-w-0 flex-1">
                 <p className="truncate text-on-surface" data-type="label-m">{name}</p>

@@ -1,7 +1,5 @@
 import type { ReactNode } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
 import { cx } from './cx'
-import { spring, expr } from '../design/motion'
 
 /** The quiet "add another row" affordance beneath an editable list (workflow
  *  steps, prompt/snippet variables). A surface-container fill, medium radius, 36px
@@ -12,30 +10,27 @@ import { spring, expr } from '../design/motion'
  *  this is the single source. Children are the leading icon + label. Pass
  *  `className="self-start"` where the button must not stretch in its flex column.
  *
- *  Press springs in (expressiveness-scaled, yielding to reduced motion) — the same
- *  spring the rest of the button family uses. This button APPENDS A ROW, so the press
- *  acknowledgement is the only feedback between the click and the new row arriving. */
+ *  A press shows by colour, at once (the `active:` fill is the hover's), with no
+ *  scale. This button APPENDS A ROW, so the press acknowledgement is the only
+ *  feedback between the click and the new row arriving, and the tint gives it on a
+ *  touch screen too, where no hover precedes the tap. */
 export function AddItemButton({ children, onClick, className }: {
   children: ReactNode
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
   className?: string
 }) {
-  const reduce = useReducedMotion()
-  const pressScale = reduce ? 1 : 1 - expr(0.05, 0.4)
   return (
-    <motion.button
+    <button
       type="button"
       onClick={onClick}
-      whileTap={{ scale: pressScale }}
-      transition={spring.spatialFast}
       data-type="body-s"
       className={cx(
         'inline-flex items-center gap-xs rounded-md bg-surface-container px-m h-9',
-        'text-on-surface-var hover:bg-surface-high transition-colors',
+        'text-on-surface-var hover:bg-surface-high active:bg-surface-high transition-colors',
         className,
       )}
     >
       {children}
-    </motion.button>
+    </button>
   )
 }

@@ -144,7 +144,8 @@ export const physics = {
   get smooth(): Transition { return bouncy(320, 34, 38) },
   /** liquid, generous settle — large surfaces, layout shifts, morphs */
   get fluid(): Transition { return bouncy(180, 26, 34) },
-  /** the most overshoot at bounciness=1 — the ~3-4 earned personality moments */
+  /** the most overshoot at bounciness=1 — the ~3-4 earned personality moments (a success
+   *  bloom, a sheet). Never a menu, a list or a count: those repeat too often to bounce. */
   get playful(): Transition { return bouncy(420, 14, 34) },
 }
 
@@ -163,26 +164,37 @@ export const messageEnter: Variants = {
   animate: { opacity: 1, y: 0, transition: { duration: duration.medium, ease: ease.emphasizedDecel } },
 }
 
-/** Menu / sheet entrance — spring scale+fade on the `playful` preset (one of the
- *  ~3-4 sanctioned bounce moments).
+/** The entrance for what the owner opens many times an hour: a menu, the command palette,
+ *  the rows of a list she keeps coming back to. Opacity alone, on the critically damped
+ *  `smooth` preset, with no scale, no rise and no overshoot, and rows arrive together
+ *  rather than one after another. Motion repeated that often explains nothing, so all it
+ *  may do is not flash.
  *
  *  `animate` is a FUNCTION, not an object literal, and that is load-bearing. A
- *  module-level `{ transition: physics.playful }` reads the getter ONCE at import
- *  and freezes whatever bounciness (and whatever reduced-motion answer) happened to
- *  be true then — every overlay in the app would ignore the slider for the rest of
- *  the session. Framer resolves a variant function per animation, so the preset is
- *  read fresh each time it opens.
+ *  module-level `{ transition: physics.smooth }` reads the getter ONCE at import and
+ *  freezes whatever bounciness (and whatever reduced-motion answer) happened to be true
+ *  then. Framer resolves a variant function per animation, so the preset is read fresh
+ *  each time. */
+export const fadeEnter: Variants = {
+  initial: { opacity: 0 },
+  animate: () => ({ opacity: 1, transition: physics.smooth }),
+}
+
+/** Menu / palette entrance — `fadeEnter`, plus an exit that fades on the effects curve.
  *
- *  `exit` is a function for the SAME reason, and it did not used to be. While
- *  `spring.effects` was a static literal an object here was harmless; now that it is a
- *  getter, a literal would read the reduced-motion gate once at import and every overlay
- *  in the app would exit on whatever the media query happened to say then. This is the
- *  one shape that turns the new gate back into a snapshot, so it is the shape to look for
- *  when adding anything to this file. */
+ *  It used to scale and rise in on `playful`, as one of the sanctioned bounce moments; a
+ *  menu opening is the most frequent of those by far, so it no longer is one. A toast that
+ *  wants to arrive with weight has its own variant (`pages/code/CodeToast.tsx`).
+ *
+ *  `exit` is a function for the same reason `animate` is. While `spring.effects` was a
+ *  static literal an object here was harmless; now that it is a getter, a literal would
+ *  read the reduced-motion gate once at import and every overlay in the app would exit on
+ *  whatever the media query happened to say then. This is the one shape that turns the
+ *  gate back into a snapshot, so it is the shape to look for when adding anything to this
+ *  file. */
 export const overlayEnter: Variants = {
-  initial: { opacity: 0, scale: 0.96, y: 4 },
-  animate: () => ({ opacity: 1, scale: 1, y: 0, transition: physics.playful }),
-  exit: () => ({ opacity: 0, scale: 0.98, transition: spring.effects }),
+  ...fadeEnter,
+  exit: () => ({ opacity: 0, transition: spring.effects }),
 }
 
 /** Thinking glow — slow opacity/scale pulse. */
@@ -194,8 +206,11 @@ export const thinkingPulse: Variants = {
   },
 }
 
-/** Stagger a container's children by a fixed step. Use on list/grid entrances so
- *  rows cascade instead of popping in together. */
+/** Stagger a container's children by a fixed step. For FIRST-RUN moments only — the
+ *  onboarding steps, Try one — and the rare walkthrough: something seen once, where the
+ *  order things arrive in tells the story. A list the owner opens repeatedly renders its
+ *  rows together (`fadeEnter`), and `design/highFrequencySurfacesDoNotSpring.test.ts`
+ *  holds every other call site to an allowlist with its reason. */
 export function stagger(step = 0.04, delayChildren = 0): Transition {
   return { staggerChildren: step, delayChildren }
 }

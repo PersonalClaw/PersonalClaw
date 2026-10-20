@@ -5,7 +5,7 @@ import { Button } from '../../../../ui/Button'
 import { Eyebrow } from '../../../../ui/Eyebrow'
 import { Centered } from '../../../../ui/Centered'
 import { type CodeProject, type CodeStage, type TaskItem } from '../../../../lib/api'
-import { listItemEnter, stagger, physics } from '../../../../design/motion'
+import { fadeEnter, physics } from '../../../../design/motion'
 import { Expandable } from '../../../../ui/motion'
 import { BUSY_REASON } from '../../../../ui/unavailable'
 import { execState } from './taskState'
@@ -214,13 +214,13 @@ function StageGroup({ stage: s, status: st, tasks, preview, doneIds, queuedSet, 
       )}
       {tasks.length === 0
         ? <p data-type="caption" className="px-3 pb-2 text-on-surface-low/70">no tasks yet</p>
-        // Cascade the rows in on first paint (stagger + rise/fade) so a stage's tasks
-        // read as arriving, not popping together. Keyed by task id, so the poll/SSE
-        // refresh (a re-render, not a remount) never re-fires it — only a genuinely new
-        // task animates in. Framer's `initial` runs once per mounted key.
-        : <motion.div variants={{ animate: { transition: stagger() } }} initial="initial" animate="animate">
+        // The rows fade in together on first paint, with no cascade and no rise: the cockpit's
+        // task list is read over and over, so the order rows arrive in says nothing. Keyed by task
+        // id, so the poll/SSE refresh (a re-render, not a remount) never re-fires it — only a
+        // genuinely new task fades in. Framer's `initial` runs once per mounted key.
+        : <motion.div initial="initial" animate="animate">
             {tasks.map((t) => (
-              <motion.div key={t.id} variants={listItemEnter}>
+              <motion.div key={t.id} variants={fadeEnter}>
                 <TaskRow task={t} preview={preview}
                   state={execState(t, doneIds, queuedSet, stageOpen, knownIds, ended)} active={activeTaskIds.has(t.id)} onSelect={() => onSelect(t.id)} />
               </motion.div>

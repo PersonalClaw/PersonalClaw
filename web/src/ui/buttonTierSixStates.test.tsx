@@ -1,10 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, act } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { QuietButton } from './QuietButton'
-import { TileButton } from './TileButton'
-import { AddItemButton } from './AddItemButton'
 
 // ── Three button tiers were missing half of DESIGN.md:221's six states ────────────────────────
 //
@@ -44,27 +42,14 @@ import { AddItemButton } from './AddItemButton'
 // VERBATIM rather than as a fourth spelling: `aria-disabled` and never the native attribute (so
 // the tab stop survives and a keyboard user can reach the control and hear why), the reason riding
 // `title` after an em dash, the click suppressed in the handler, `opacity-40` +
-// `cursor-not-allowed` for the sighted signal. All three tiers gain the press spring.
+// `cursor-not-allowed` for the sighted signal. The three tiers also gained a press spring here; it
+// has since gone with every other button press scale, and a press shows by colour instead
+// (`buttonPressIsColour.test.tsx` holds that for every tier, these three included).
 //
-// 🔑 THE PRESS ASSERTIONS HERE ARE BEHAVIOURAL, NOT A SOURCE CENSUS. framer-motion's `whileTap`
-// is observable in jsdom: `pointerDown` writes `transform: scale(…)` on the element. Measured
-// while writing this file — motion allowed `transform: scale(0.9727…)`, reduced motion
-// `transform: none`, disabled no `style` attribute at all. So this rail reads the DOM rather than
-// grepping for the prop name, and a `whileTap` wired to the wrong value fails here.
-//
-// 🪤 `whileTap` MAKES FRAMER PUT `tabindex="0"` ON THE ELEMENT, and it drops off again in the
-// disabled branch (where `whileTap` is `undefined`) — measured `0` vs `null`. Both are focusable,
-// because a native `<button>` needs no tabindex, which is why the tab-stop assertion below tests
-// FOCUSABILITY and not the attribute. Asserting `tabindex="0"` would pass today and go red the
-// moment the press spring moves, for no accessibility reason.
-
-/** Press and let the spring run; returns the `scale(n)` framer wrote, or null. */
-async function pressScaleOf(el: HTMLElement): Promise<number | null> {
-  await act(async () => { fireEvent.pointerDown(el, { button: 0, isPrimary: true }) })
-  await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
-  const m = /scale\(([\d.]+)\)/.exec(el.getAttribute('style') ?? '')
-  return m ? Number(m[1]) : null
-}
+// 🪤 A native `<button>` needs no tabindex to be focusable, which is why the tab-stop assertion
+// below tests FOCUSABILITY and not the attribute. While the press spring lived, framer's
+// `whileTap` put `tabindex="0"` on the element and dropped it in the disabled branch; asserting
+// the attribute would have gone red the moment the spring moved, for no accessibility reason.
 
 describe('QuietButton has a disabled state at all — the tier had none', () => {
   it('announces aria-disabled and NEVER the native attribute', () => {
@@ -140,32 +125,6 @@ describe('QuietButton has a disabled state at all — the tier had none', () => 
     const el = screen.getByRole('button', { name: 'Download' })
     expect(el.getAttribute('title')).toBe('Download')
     expect(el.hasAttribute('aria-disabled')).toBe(false)
-  })
-})
-
-describe('all three tiers acknowledge a press', () => {
-  const cases: [string, () => void][] = [
-    ['QuietButton', () => { render(<QuietButton onClick={vi.fn()}>Download</QuietButton>) }],
-    ['TileButton', () => { render(<TileButton onClick={vi.fn()} ariaLabel="Download">tile body</TileButton>) }],
-    ['AddItemButton', () => { render(<AddItemButton onClick={vi.fn()}>Download</AddItemButton>) }],
-  ]
-
-  for (const [name, mount] of cases) {
-    it(`${name} springs in on pointer-down`, async () => {
-      mount()
-      const scale = await pressScaleOf(screen.getByRole('button', { name: 'Download' }))
-      expect(scale, `${name} writes no press transform at all`).not.toBeNull()
-      expect(scale, `${name} must press IN`).toBeLessThan(1)
-      // "Press feedback is scale(0.97), not 0.8" (rubric lens 3). The floor stops a future edit
-      // turning an acknowledgement into a collapse; the ceiling stops it becoming invisible.
-      expect(scale!, `${name} presses too deep to read as a button`).toBeGreaterThan(0.9)
-      expect(scale!, `${name} presses too shallow to be perceptible`).toBeLessThan(0.995)
-    })
-  }
-
-  it('a DISABLED QuietButton does not spring — inert must look inert', async () => {
-    render(<QuietButton onClick={vi.fn()} disabled disabledReason="Busy">Download</QuietButton>)
-    expect(await pressScaleOf(screen.getByRole('button', { name: 'Download' }))).toBeNull()
   })
 })
 

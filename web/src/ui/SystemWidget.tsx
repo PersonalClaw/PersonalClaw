@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Cpu, MemoryStick, HardDrive, Activity, Zap, Network, Boxes, ShieldCheck, Server, Bot, X, Loader2, RotateCw, DownloadCloud, AlertTriangle } from 'lucide-react'
 import { api, type SystemInfo, type AuthStatus, type SpawnedAgent } from '../lib/api'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
-import { spring, stagger, listItemEnter } from '../design/motion'
+import { spring, overlayEnter, fadeEnter } from '../design/motion'
 import { fvs } from '../design/fontWeight'
 import { Meter } from './Meter'
 import { reportingWrite } from '../app/reportingWrite'
@@ -96,8 +96,7 @@ export function SystemWidget() {
         <AnimatePresence>
           {open && pos && (
             <motion.div ref={cardRef}
-              initial={{ opacity: 0, y: -8, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -8, scale: 0.98 }}
-              transition={spring.spatialFast}
+              variants={overlayEnter} initial="initial" animate="animate" exit="exit"
               // Portaled to <body> with FIXED coords anchored to the trigger, so
               // no overflow/stacking context can clip it. Opens DOWN + LEFT from
               // the top-right shell corner, right-aligned to the dot.
@@ -259,12 +258,12 @@ function RunningAgents({ open }: { open: boolean }) {
           {running.length} running · {doneCount} done{failed ? ' · not updating' : ''}
         </span>
       </div>
-      {/* the live subagent fleet — rows stagger in and animate out as background
-          agents spawn/finish, so the monitor reads as a living list */}
-      <motion.div className="flex flex-col gap-1" variants={{ animate: { transition: stagger(0.04) } }} initial="initial" animate="animate">
+      {/* the live subagent fleet — rows fade in together and collapse out as background
+          agents spawn/finish, so the monitor reads as a living list without a cascade */}
+      <motion.div className="flex flex-col gap-1" initial="initial" animate="animate">
         <AnimatePresence initial={false}>
           {running.map((a) => (
-            <motion.div key={a.id} layout variants={listItemEnter}
+            <motion.div key={a.id} layout variants={fadeEnter}
               exit={{ opacity: 0, height: 0, marginTop: 0, transition: spring.spatialFast }}
               data-type="caption"
               className="flex items-center gap-1.5 rounded-md bg-surface-high px-2 py-1">

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import * as motion from './motion'
 import {
-  dragElastic, dragSpring, instant, listItemEnter, overlayEnter, physics,
+  dragElastic, dragSpring, fadeEnter, instant, listItemEnter, overlayEnter, physics,
   prefersReducedMotion, regionStagger, spring, swipeDismiss, viewTransition,
 } from './motion'
 import { runtime } from './runtime'
@@ -236,7 +236,7 @@ describe('preset-bearing variants', () => {
   // import: every overlay and list row in the app would then ignore the slider for the
   // rest of the session, and would keep whatever reduced-motion answer was true at
   // import. Both variants are functions so Framer resolves them per animation.
-  it.each([['overlayEnter', overlayEnter], ['listItemEnter', listItemEnter]] as const)(
+  it.each([['overlayEnter', overlayEnter], ['fadeEnter', fadeEnter], ['listItemEnter', listItemEnter]] as const)(
     '%s resolves its preset fresh on every animation', (_name, variants) => {
       runtime.bounciness = 1
       const playful = resolveVariant(variants.animate).transition as { damping?: number }
@@ -248,6 +248,21 @@ describe('preset-bearing variants', () => {
       expect(resolveVariant(variants.animate).transition).toEqual(instant)
     },
   )
+
+  it('menus, the palette and repeated lists enter by opacity alone, on the smooth preset', () => {
+    // A menu opening was one of `playful`'s "earned moments", and it is the most frequent of them
+    // by far: the owner opens menus many times an hour. A drop, a scale or an overshoot repeated
+    // that often explains nothing, so the shared entrances carry opacity and nothing else, on the
+    // critically damped curve. Reduced motion still collapses it (`instant`, above).
+    for (const [name, v] of [['overlayEnter', overlayEnter], ['fadeEnter', fadeEnter]] as const) {
+      expect(v.initial, `${name} starts from more than transparent`).toEqual({ opacity: 0 })
+      const { transition, ...target } = resolveVariant(v.animate)
+      expect(target, `${name} moves something besides opacity`).toEqual({ opacity: 1 })
+      expect(transition, `${name} is not on physics.smooth`).toEqual(physics.smooth)
+    }
+    const { transition: _exit, ...leaving } = resolveVariant(overlayEnter.exit)
+    expect(leaving, 'a menu shrinks or moves as it closes').toEqual({ opacity: 0 })
+  })
 
   it('overlayEnter.exit is a FUNCTION too — the one shape that re-snapshots the gate', () => {
     // `exit` was an object literal, which was harmless only while `spring.effects` was a

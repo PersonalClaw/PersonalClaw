@@ -128,8 +128,8 @@ export function SecretsPanel() {
               ? <RowGroup><Row label="None stored" hint="Add one above to make it available everywhere." ><span /></Row></RowGroup>
               : (
                 <RowGroup>
-                  {globals.map((s, i) => (
-                    <SecretRow key={s.name} s={s} index={i} onChanged={refresh}
+                  {globals.map((s) => (
+                    <SecretRow key={s.name} s={s} onChanged={refresh}
                       removeBody={globalRemoveBody(s.name, projectsHolding(s.name))} />
                   ))}
                 </RowGroup>
@@ -152,8 +152,8 @@ export function SecretsPanel() {
                 <div key={pid} className="mb-l last:mb-0">
                   <div data-type="caption" className="mb-xs text-on-surface-low">{projectLabel(pid)}</div>
                   <RowGroup>
-                    {rows.map((s, i) => (
-                      <SecretRow key={s.name} s={s} index={i} onChanged={refresh}
+                    {rows.map((s) => (
+                      <SecretRow key={s.name} s={s} onChanged={refresh}
                         removeTitle={`Remove ${s.name} from ${projectLabel(pid)}?`}
                         removeBody={projectRemoveBody(s.name, projectLabel(pid), globalNames.has(s.name))} />
                     ))}
@@ -177,7 +177,7 @@ export function SecretsPanel() {
                 + 'them — edit them where the gateway is launched. Store one above to take ownership.'}
             >
               <RowGroup>
-                {host.map((s, i) => <SecretRow key={s.name} s={s} index={i} onChanged={refresh} removeBody="" />)}
+                {host.map((s) => <SecretRow key={s.name} s={s} onChanged={refresh} removeBody="" />)}
               </RowGroup>
             </Section>
           )}
@@ -209,9 +209,8 @@ function projectRemoveBody(name: string, project: string, hasGlobal: boolean): s
 }
 
 /** One vault row: name, scope treatment, and what references it. */
-function SecretRow({ s, index, onChanged, removeTitle, removeBody }: {
+function SecretRow({ s, onChanged, removeTitle, removeBody }: {
   s: SecretPresenceWire
-  index: number
   onChanged: () => void
   /** The confirm's title; `Remove NAME?` unless the scope needs saying. */
   removeTitle?: string
@@ -239,7 +238,7 @@ function SecretRow({ s, index, onChanged, removeTitle, removeBody }: {
   }
 
   return (
-    <ListRow index={index} label={s.name}>
+    <ListRow label={s.name}>
       <div className="flex items-start justify-between gap-l py-s">
         <div className="min-w-0">
           <div className="flex items-center gap-s">

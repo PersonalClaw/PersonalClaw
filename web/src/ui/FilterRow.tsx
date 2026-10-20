@@ -1,11 +1,10 @@
 import { type ReactNode } from 'react'
-import { motion } from 'framer-motion'
 import { type LucideIcon } from 'lucide-react'
 import { withWeight } from '../design/fontWeight'
-import { spring } from '../design/motion'
 
-/** ONE selectable filter row — `icon · label · count`, with a sliding tint marking the
- *  selected one.
+/** ONE selectable filter row — `icon · label · count`, with a tint marking the selected
+ *  one. The tint moves to a new row at once: a filter changes many times an hour, so it no
+ *  longer slides between rows, and a press shows by the hover colour, with no scale.
  *
  *  Extracted because a second surface needed it. `ui/FilterMenu`'s dropdown rows
  *  and the App Store's persistent category/source rail are the SAME control at two
@@ -24,16 +23,13 @@ import { spring } from '../design/motion'
  *  a screen-reader user nothing.
  */
 export function FilterRow({
-  label, count, icon: Icon, selected, indicatorId, onClick, pressed, trailing,
+  label, count, icon: Icon, selected, onClick, pressed, trailing,
 }: {
   label: string
   /** Rendered only when > 0 — a bare "0" beside a label reads as a broken count. */
   count?: number
   icon?: LucideIcon
   selected: boolean
-  /** `layoutId` for the shared selected-row indicator: one per GROUP, so the tint glides
-   *  from row to row within that group instead of blink-swapping. Omit for a lone row. */
-  indicatorId?: string
   onClick: () => void
   /** Set only where the row is a toggle button rather than a popover row. */
   pressed?: boolean
@@ -41,11 +37,10 @@ export function FilterRow({
   trailing?: ReactNode
 }) {
   return (
-    <motion.button type="button" onClick={onClick} aria-pressed={pressed}
-      whileTap={{ scale: 0.98 }} transition={spring.spatialFast}
-      className={`relative flex h-8 w-full items-center gap-s rounded-md px-s text-left transition-colors ${selected ? '' : 'hover:bg-surface-high'}`}>
-      {selected && indicatorId && (
-        <motion.span layoutId={indicatorId} transition={spring.spatialFast} aria-hidden
+    <button type="button" onClick={onClick} aria-pressed={pressed}
+      className={`relative flex h-8 w-full items-center gap-s rounded-md px-s text-left transition-colors ${selected ? '' : 'hover:bg-surface-high active:bg-surface-high'}`}>
+      {selected && (
+        <span aria-hidden
           className="absolute inset-0 rounded-md" style={{ background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' }} />
       )}
       {Icon && <Icon size={14} aria-hidden className="relative shrink-0" style={{ color: selected ? 'var(--color-primary)' : 'var(--color-on-surface-var)' }} />}
@@ -55,6 +50,6 @@ export function FilterRow({
         <span data-type="caption" className="relative shrink-0 text-on-surface-low tabular-nums">{count}</span>
       )}
       {trailing}
-    </motion.button>
+    </button>
   )
 }

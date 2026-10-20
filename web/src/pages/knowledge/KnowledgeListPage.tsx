@@ -802,7 +802,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                     anchorKey={peekId ?? undefined}
                     className="flex flex-col gap-s"
                   >
-                    {(it, i, listCtx) => {
+                    {(it) => {
                       const tm = resolveType(it)
                       // Model-backed stages that FAILED on the last run, from the persisted phase
                       // map — whatever the status token (`partial` OR `unsearchable`).
@@ -848,7 +848,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                       return (
                         <ContextMenu key={it.id} items={menuItems}>
                         {/* index=0 while windowed — see ui/WindowedList's ctx.windowed doc. */}
-                        <ListRow index={listCtx.windowed ? 0 : i} accent={tm.tone} onClick={() => setItemTok(peekId === it.id ? '' : it.id)} label={it.title || it.url_title || '(untitled)'}>
+                        <ListRow accent={tm.tone} onClick={() => setItemTok(peekId === it.id ? '' : it.id)} label={it.title || it.url_title || '(untitled)'}>
                           {/* Selection tick. Hidden until hover or an active selection so
                               the list stays calm when nobody is curating; a wrapper stops
                               the click from also opening the item. */}
@@ -1117,7 +1117,7 @@ export function IntentsView({ selectedId, onSelect, reloadKey }: {
         // field cannot render a Paused badge over a switch that reads on.
         const on = it.enabled !== false
         return (
-        <ListRow key={it.id} index={0} accent={it.id === selectedId ? 'var(--color-primary)' : undefined} onClick={() => onSelect(it)} label={it.goal || it.id}>
+        <ListRow key={it.id} accent={it.id === selectedId ? 'var(--color-primary)' : undefined} onClick={() => onSelect(it)} label={it.goal || it.id}>
           <Target size={15} className="shrink-0 text-primary/80" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
@@ -1377,10 +1377,10 @@ function EntityDetail({ name, onOpenItem, onSelectEntity }: { name: string; onOp
         {items === undefined && itemsErr ? <LoadError what="mentioned items" error={itemsErr} onRetry={refreshItems} />
           : items === undefined ? (loading ? <ListSkeleton rows={3} what="mentioned items" /> : null)
           : items.length === 0 ? <p data-type="body-s" className="text-on-surface-low">No items reference this entity.</p>
-          : items.map((it, i) => {
+          : items.map((it) => {
               const tm = resolveType(it)
               return (
-                <ListRow key={it.id} index={i} accent={tm.tone} onClick={() => onOpenItem(it.id)} label={it.title || it.url_title || '(untitled)'}>
+                <ListRow key={it.id} accent={tm.tone} onClick={() => onOpenItem(it.id)} label={it.title || it.url_title || '(untitled)'}>
                   <tm.icon size={16} style={{ color: tm.tone }} className="shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div data-type="body-s" className="truncate text-on-surface">{it.title || it.url_title || '(untitled)'}</div>

@@ -200,8 +200,8 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
                         : <EmptyState icon={Users} title="No native agents" hint="Create an agent to define its model, system prompt, skills, tools, triggers, and workflows." action={{ label: 'New agent', onClick: onCreate, icon: Plus }} />
                     ) : (
                       <div className="flex flex-col gap-s">
-                        {shownNative.map((a, i) => (
-                          <NativeRow key={a.name} agent={a} index={i} isDefault={native.defaultAgent === a.name} onClick={() => setOpen({ kind: 'native', name: a.name })} />
+                        {shownNative.map((a) => (
+                          <NativeRow key={a.name} agent={a} isDefault={native.defaultAgent === a.name} onClick={() => setOpen({ kind: 'native', name: a.name })} />
                         ))}
                       </div>
                     )}
@@ -231,8 +231,8 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
                         <p data-type="body-s" className="text-on-surface-low">{n ? 'No matching agents.' : 'No agents discovered.'}</p>
                       ) : (
                         <div className="flex flex-col gap-s">
-                          {items.map((a, i) => (
-                            <DiscoveredRow key={a.id} agent={a} index={i} tone={pm.tone} icon={pm.icon} onClick={() => setOpen({ kind: 'discovered', providerId: g.providerId, id: a.id })} />
+                          {items.map((a) => (
+                            <DiscoveredRow key={a.id} agent={a} tone={pm.tone} icon={pm.icon} onClick={() => setOpen({ kind: 'discovered', providerId: g.providerId, id: a.id })} />
                           ))}
                         </div>
                       )}
@@ -268,7 +268,7 @@ function GroupSection({ title, icon: Icon, tone, subtitle, count, badge, childre
   )
 }
 
-function NativeRow({ agent, index, isDefault, onClick }: { agent: SavedAgent; index: number; isDefault: boolean; onClick: () => void }) {
+function NativeRow({ agent, isDefault, onClick }: { agent: SavedAgent; isDefault: boolean; onClick: () => void }) {
   // Right-click / long-press → scoped actions. This row only performs "open" (the
   // detail panel owns save/delete/set-default); a single-item menu still aids
   // discoverability, matching the shared ContextMenu idiom used across rows.
@@ -285,7 +285,7 @@ function NativeRow({ agent, index, isDefault, onClick }: { agent: SavedAgent; in
         rail's only other shipped uses — `InboxPage` lights it for UNREAD, `TriggersListPage` for
         ENABLED — where the rail always means "this row is live/needs you". The default row still
         pairs it with the star; the rest keep the coral icon square that says "agent". */}
-    <ListRow index={index} accent={isDefault ? 'var(--color-primary)' : undefined} onClick={onClick} label={agent.name}>
+    <ListRow accent={isDefault ? 'var(--color-primary)' : undefined} onClick={onClick} label={agent.name}>
       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)' }}><Users size={19} className="text-primary" /></span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-s">
@@ -348,7 +348,7 @@ function NativeRow({ agent, index, isDefault, onClick }: { agent: SavedAgent; in
   )
 }
 
-function DiscoveredRow({ agent, index, tone, icon: Icon, onClick }: { agent: DiscoveredAgent; index: number; tone: string; icon: typeof Cpu; onClick: () => void }) {
+function DiscoveredRow({ agent, tone, icon: Icon, onClick }: { agent: DiscoveredAgent; tone: string; icon: typeof Cpu; onClick: () => void }) {
   // Discovered agents are runtime-provided + read-only, so "open" (the detail
   // panel) is the only action this row performs — a single-item ContextMenu,
   // consistent with the shared right-click idiom across list rows.
@@ -357,7 +357,7 @@ function DiscoveredRow({ agent, index, tone, icon: Icon, onClick }: { agent: Dis
   ]
   return (
     <ContextMenu items={menuItems}>
-    <ListRow index={index} onClick={onClick} label={agent.name}>
+    <ListRow onClick={onClick} label={agent.name}>
       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${tone} 16%, transparent)` }}><Icon size={19} style={{ color: tone }} /></span>
       <div className="flex-1 min-w-0">
         {/* Same two fixes on the discovered variant. This file already insists the two row shapes

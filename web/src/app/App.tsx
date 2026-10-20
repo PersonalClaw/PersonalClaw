@@ -836,25 +836,27 @@ function AppInner() {
           <ModelWaits session="" floating className="mx-auto w-full max-w-[36rem]" />
         </div>
         <ErrorBoundary resetKey={rendered}>
-          {/* Route cross-fade (global choreography): the new page fades+
-              rises in on each route change — keyed on `rendered` so switching
-              sections reads as a continuous transition, not a hard cut.
-              Enter-only (no exit-wait) keeps navigation instant; MotionConfig
-              at the root swaps this for no motion under Reduce Motion.
+          {/* Route cross-fade (global choreography): the new page fades in on
+              each route change — keyed on `rendered` so switching sections reads
+              as a continuous transition, not a hard cut. It no longer rises: a rail
+              click is the most frequent action in the app, and a page climbing 6px
+              each time is motion that explains nothing. Enter-only (no exit-wait)
+              keeps navigation instant; MotionConfig at the root swaps this for no
+              motion under Reduce Motion.
 
               🔴 The code-split boundary sits INSIDE this element, never around it. Around it, a
               lazy component anywhere in a page that suspends after the page painted made React
               hide THIS element (`display: none !important`) and detach its ref. On the reveal,
               framer-motion re-mounts it and jumps every value back to `initial` so the entrance
               can replay — but the replay runs from its effect after a RENDER, and a Suspense
-              reveal re-renders nothing here. So the page came back pinned at opacity 0 /
-              translateY(6px) until something re-rendered the shell: the blank Files page. In
+              reveal re-renders nothing here. So the page came back pinned at opacity 0 (and,
+              while it still rose, translateY(6px)) until something re-rendered the shell: the blank Files page. In
               here, a suspension hides only the page, and this element is never hidden at all. */}
           <motion.div
             key={rendered}
             className="h-full"
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
             transition={{ duration: duration.medium, ease: ease.emphasizedDecel }}
           >
             <Suspense fallback={<PageFallback />}>

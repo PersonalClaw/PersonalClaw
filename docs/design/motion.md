@@ -20,7 +20,7 @@ is "how should this move?" and not "what am I in?".
 | `physics.snappy` | controls, chevrons, press + hover feedback, small state flips | quick, barely overshoots | 520 / 30 → 40 |
 | `physics.smooth` | **the default.** Anything where nothing argues for another tier | critically damped, no wobble | 320 / 34 → 38 |
 | `physics.fluid` | large surfaces, layout shifts, cards promoting, morphs | liquid, generous settle | 180 / 26 → 34 |
-| `physics.playful` | the ~3–4 *earned* personality moments — a menu opening, a success bloom | the most overshoot | 420 / 14 → 34 |
+| `physics.playful` | the ~3–4 *earned* personality moments — a success bloom, a sheet. Never a menu, a list or a count: those repeat too often to bounce | the most overshoot | 420 / 14 → 34 |
 
 ```tsx
 import { physics } from '../design/motion'
@@ -146,13 +146,17 @@ animate: { opacity: 1, transition: physics.smooth }
 animate: () => ({ opacity: 1, transition: physics.smooth })
 ```
 
-`overlayEnter` and `listItemEnter` are already written this way; copy them.
+`fadeEnter`, `overlayEnter` and `listItemEnter` are already written this way; copy them.
 
 **Choreograph, don't scatter.** One considered movement beats ten small ones — scattered
-animation is the single loudest "this UI was generated" tell. For a list or a grid, put
-`stagger()` on the parent and `listItemEnter` on the children so rows cascade instead of
-popping in together. Prefer orchestrating a surface's regions over animating every element in
-it — §5a is how.
+animation is the single loudest "this UI was generated" tell. A list, a menu or the palette the
+owner opens many times an hour enters by opacity alone, its rows together: `fadeEnter` on the
+rows (`overlayEnter` on a menu's surface), with no `stagger()`, no per-index `delay:`, no scale
+and no rise. A cascade is for a moment seen once, where the order things arrive in tells the
+story: `stagger()` on the parent and `listItemEnter` on the children, in the onboarding steps,
+Try one and the planning walkthrough. `design/highFrequencySurfacesDoNotSpring.test.ts` holds
+every other `stagger(` and per-index delay to that allowlist, each entry with its reason. Prefer
+orchestrating a surface's regions over animating every element in it — §5a is how.
 
 ---
 
@@ -623,11 +627,15 @@ and hover scale on a button: a press shows by colour, at once. Toasts are not on
 neither are the cascades of first-run moments (onboarding, Try one) and of the planning
 walkthrough: they happen rarely, so they keep their motion.
 
-**Hover that changes size stays.** The send button's hover width and the side panel's resize
-handle change size, so they keep moving, on a `physics.*` preset, or on `spring.effects` where
-only a fill's visible width changes.
+**Hover that changes size stays.** The composer's resize grip and the side panel's resize
+handle widen on hover, so they keep moving, on a `physics.*` preset (both already ride
+`physics.snappy`), or on `spring.effects` where only a fill's visible width changes.
 
 ### What is stripped
+
+All of it is gone. `design/highFrequencySurfacesDoNotSpring.test.ts` (menus, the palette, lists and
+counts), `ui/navRailIsInstant.test.tsx`, `design/countsDoNotPop.test.tsx`,
+`ui/buttonPressIsColour.test.tsx` and `ui/chat/MessageUser.test.tsx` keep it gone.
 
 | File | Motion | Why |
 |---|---|---|

@@ -4,7 +4,7 @@ import { useFocusTrap } from '../ui/useFocusTrap'
 import { AnimatePresence, motion } from 'framer-motion'
 import { CornerDownLeft, ArrowRight, MessageSquare, Brain, BookOpen, ListChecks, Keyboard } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { spring } from '../design/motion'
+import { overlayEnter } from '../design/motion'
 import { Eyebrow } from '../ui/Eyebrow'
 import { SearchField } from '../ui/SearchField'
 import { CONTENT_SOURCES, MIN_CONTENT_QUERY, SOURCE_LABEL, useContentSearch, type ContentHit, type ContentSource } from './paletteSearch'
@@ -162,9 +162,10 @@ export function CommandPalette({ commands, navigate }: { commands: Command[]; na
               a dialog role + `aria-modal` with `ui/useFocusTrap` (the contract
               `ui/dialogFocusContract.test.tsx` enforces), and `ui/composer/SlashMenu` +
               `ui/composer/MarkdownInput` already ship the listbox/option/activedescendant trio. */}
+          {/* Opacity alone, no drop and no scale: the palette is opened many times an hour, and a
+              card that falls in each time only stands between the owner and the first keystroke. */}
           <TrappedCard
-            initial={{ opacity: 0, y: -10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -10, scale: 0.98 }}
-            transition={spring.spatialFast}
+            variants={overlayEnter} initial="initial" animate="animate" exit="exit"
             className="relative w-full overflow-hidden rounded-2xl border border-outline/40 bg-surface-container shadow-2xl"
             style={{ maxWidth: 560, borderRadius: 'var(--radius-xl)' }}
             onClick={(e) => e.stopPropagation()}>

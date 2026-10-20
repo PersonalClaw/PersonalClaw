@@ -16,11 +16,11 @@ const doc: UiDoc = {
   bestPractices: [
     { guidance: true, description: 'Reach for FilterMenu for all list criteria instead of scattering a filter Segmented, a sort <select>, and a scope dropdown across the header — one pill, one active-count badge, consistent everywhere.' },
     { guidance: true, description: "Set each section's defaultKey to the option that means \"not filtering\" — that's what the active-count badge and the inline Clear measure against." },
-    { guidance: true, description: 'Model each criterion as its own section with its own onChange; the menu handles the sliding selected-row indicator, counts, and Clear per section.' },
+    { guidance: true, description: 'Model each criterion as its own section with its own onChange; the menu handles the selected-row tint, counts, and Clear per section.' },
     { guidance: true, description: "Use option.groupLabel to draw a sub-heading + divider within a section (e.g. presets vs projects); set option.count to show a tally and option.icon for a leading glyph." },
     { guidance: false, description: 'Do not hardcode colors or px — the active-tint color-mix and every surface route through design tokens (the token-lint ratchet fails the build otherwise).' },
   ],
-  anatomy: ['Popover (bottom placement)', 'trigger pill (sliders icon + label + spring-pop active-count badge)', 'per-section blocks (uppercase title + inline Clear)', 'option rows (liquid layoutId selected-indicator, icon • label • count • check)', 'Done button (ghost)'],
+  anatomy: ['Popover (bottom placement)', 'trigger pill (sliders icon + label + active-count badge, swapped in place)', 'per-section blocks (uppercase title + inline Clear)', 'option rows (selected tint, icon • label • count • check)', 'Done button (ghost)'],
 }
 
 export default doc

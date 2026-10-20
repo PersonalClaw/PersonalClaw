@@ -1,12 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { motion } from 'framer-motion'
+import { motion, type Variants } from 'framer-motion'
 import { AlertTriangle, CheckCircle2, HelpCircle, X, XCircle } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
-import { overlayEnter } from '../../design/motion'
+import { physics, spring } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
 import { clipWords } from '../../lib/clipWords'
+
+/** The toast's own entrance: it rises and scales in on `playful`, the weight `overlayEnter`
+ *  carried before menus went to opacity alone. A toast arrives unasked and rarely, so it keeps the
+ *  motion that says "something happened"; a menu the owner opened herself does not need it.
+ *  A function so the presets are read per animation, never frozen at import. */
+const toastEnter = (): Variants => ({
+  initial: { opacity: 0, scale: 0.96, y: 4 },
+  animate: () => ({ opacity: 1, scale: 1, y: 0, transition: physics.playful }),
+  exit: () => ({ opacity: 0, scale: 0.98, transition: spring.effects }),
+})
 
 /** The code cockpit's toast, and the one rule for when it may stand over the page.
  *
@@ -100,7 +110,7 @@ function CodeToast({ kind, text, onDismiss, onRespond }: {
   const Icon = kind === 'error' ? XCircle : kind === 'conflict' ? AlertTriangle : kind === 'ok' ? CheckCircle2 : HelpCircle
   return createPortal(
     <motion.div role="alert" aria-live="assertive"
-      variants={overlayEnter} initial="initial" animate="animate" exit="exit"
+      variants={toastEnter()} initial="initial" animate="animate" exit="exit"
       className="fixed bottom-4 right-4 z-[var(--z-toast)] w-[360px] max-w-[calc(100vw-2rem)] rounded-xl border border-outline-variant/50 bg-surface-container p-3.5 shadow-lg">
       <div className="flex items-start gap-2.5">
         <Icon size={18} className="mt-0.5 shrink-0" style={{ color: tone }} />

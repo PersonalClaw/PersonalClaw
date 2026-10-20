@@ -5,7 +5,7 @@ import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
 import { StatusPill as UiStatusPill } from '../../ui/StatusPill'
 import { StaleNotice } from '../../ui/StaleNotice'
-import { spring, expr } from '../../design/motion'
+import { fadeEnter, spring } from '../../design/motion'
 import { ERROR_SURFACE_PAINT } from '../../design/errorTreatments'
 import { readableErrText } from '../../lib/errText'
 import { fvs, withWeight } from '../../design/fontWeight'
@@ -112,14 +112,11 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, failed, 
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 8, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
+      // The tiles fade in together and hover by colour alone (`hover:bg-surface-high`): Settings
+      // opens on 22 of them, and tiles that rise and grow in, then lift under the pointer, only
+      // stand between the owner and the setting she came for.
+      variants={fadeEnter} initial="initial" animate="animate"
       transition={spring.spatialDefault}
-      // physical liftable bento card: rises + gains shadow on hover (depth via
-      // expr), consistent with ListRow/TaskCard/AppCard/Surface. NO whileTap here —
-      // the card hosts inline controls (toggles/selects) over a full-card nav
-      // overlay, and a whole-card press-squish would fire when tapping those.
-      whileHover={{ y: -expr(4, 0.3), boxShadow: 'var(--shadow-lift)' }}
       className="group relative flex w-full flex-col rounded-xl bg-surface-container p-4 transition-colors focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary hover:bg-surface-high"
     >
       {/* Behind-content nav overlay: the whole card opens the subpage.
@@ -148,7 +145,7 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, failed, 
             {query ? <Highlight text={title} query={query} /> : title}
           </span>
           <StaleNotice stale={!loading && !!stale} what={title.toLowerCase()} announce={false} className="shrink-0" />
-          <ArrowRight size={14} className="shrink-0 text-on-surface-low transition-transform group-hover:translate-x-0.5" />
+          <ArrowRight size={14} className="shrink-0 text-on-surface-low" />
         </div>
         {/* Failure is checked BEFORE loading, and the order is the whole point: `data === undefined`
             satisfies the skeleton branch too, so a failure tested second is a failure never shown —

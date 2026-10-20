@@ -40,3 +40,21 @@ describe('a long user message', () => {
     expect(screen.queryByRole('button', { name: /Show full message/ })).toBeNull()
   })
 })
+
+// ── A sent message arrives without an entrance ──────────────────────────────────────────────────
+//
+// Sending is the action the owner repeats most in chat, and the bubble used to arrive on a spring:
+// the newest one travelled 120px up from the composer and grew from 0.94 (`spring.spatialSlow`), and
+// every other one rose 8px and faded in (`messageEnter`). Both wrote their start state on the first
+// commit, so the words just typed were invisible for the first frame and then moving. A message the
+// owner just wrote is not news to her; it should simply be there, where it lands.
+
+describe('a sent message', () => {
+  it('writes no opacity and no transform on its first commit', () => {
+    const { container } = render(<MessageUser>Ship the motion pass</MessageUser>)
+    const bubble = container.firstElementChild as HTMLElement
+    expect(screen.getByText('Ship the motion pass')).toBeInTheDocument()
+    expect(bubble.style.opacity, 'the bubble fades in').toBe('')
+    expect(bubble.style.transform, 'the bubble travels or rises in').toBe('')
+  })
+})

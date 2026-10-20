@@ -9,7 +9,7 @@ import {
   Boxes, Package, Store, KeyRound, RotateCw, ShieldAlert, Wrench,
 } from 'lucide-react'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
-import { spring, expr } from '../../design/motion'
+import { fadeEnter } from '../../design/motion'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -866,8 +866,8 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
                     <div key={g.key}>
                       <SourceDivider label={g.label} count={g.items.length} />
                       <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
-                        {g.items.map((it, i) => (
-                          <AppCard key={it.name} item={it} index={i}
+                        {g.items.map((it) => (
+                          <AppCard key={it.name} item={it}
                             onInstall={() => {}} onOpen={() => setOpenName(it.name)} onAction={appActions.dispatch} />
                         ))}
                       </div>
@@ -970,8 +970,8 @@ export function StoreView({ catalog, catalogError, result, totalKnown, installed
             <div key={g.key}>
               <SourceDivider label={g.label} count={g.items.length} />
               <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
-                {g.items.map((e, i) => (
-                  <AppCard key={e.name} item={e} index={i}
+                {g.items.map((e) => (
+                  <AppCard key={e.name} item={e}
                     onInstall={() => install.begin(installTargetFor(e))}
                     onOpen={() => onOpen(e.name)} onAction={onAction} />
                 ))}
@@ -1233,8 +1233,8 @@ export function SourcesPanel({ catalog, catalogError, reloadCatalog, onInstalled
  *     menu of the real lifecycle actions (Configure / Update / Enable-Disable /
  *     Force-uninstall). The card's NAME is a link to the detail panel (explicit
  *     "details" affordance), so the action buttons never double as "open panel". */
-function AppCard({ item, index, onInstall, onOpen, onAction }: {
-  item: StoreItem; index: number; onInstall: () => void; onOpen: () => void; onAction: DispatchAppAction
+function AppCard({ item, onInstall, onOpen, onAction }: {
+  item: StoreItem; onInstall: () => void; onOpen: () => void; onAction: DispatchAppAction
 }) {
   const providerLabel = item.isProvider
     ? `${PROVIDER_ENTITY_LABEL[item.providerType] ?? item.providerType} provider` : ''
@@ -1319,18 +1319,17 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
 
   return (
     <ContextMenu items={menuItems}>
-    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
-      // physical liftable feature card: rises + gains shadow on hover (depth via
-      // expr), consistent with the ListRow/Surface/TaskCard treatment. The whole
-      // card is a click target → the app detail panel.
-      whileHover={{ y: -expr(4, 0.3), boxShadow: 'var(--shadow-lift)' }}
+    <motion.div variants={fadeEnter} initial="initial" animate="animate"
+      // The cards fade in together and hover by shadow alone: the Store is opened often, so
+      // the cards neither cascade in nor rise under the pointer. The whole card is a click
+      // target → the app detail panel.
       // No role/tabIndex/onKeyDown here: the card carries its own Actions menu button, so a
       // role="button" wrapper is `nested-interactive` (axe, serious). The tab stop is the
-      // empty overlay below — the ListRow resolution. `whileHover`/`whileTap` still make
-      // Motion mark the wrapper focusable, hence tabIndex={-1} rather than no attribute.
+      // empty overlay below — the ListRow resolution. tabIndex={-1} keeps the wrapper out of
+      // the tab order explicitly, as it did when Motion's hover gesture marked it focusable.
       tabIndex={-1}
       onClick={onOpen}
-      className="group relative flex min-h-[11rem] cursor-pointer flex-col overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary"
+      className="group relative flex min-h-[11rem] cursor-pointer flex-col overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container hover:shadow-lift has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary"
       style={{ borderRadius: 'var(--radius-lg)' }}>
       {/* The name was carried by `title` on the wrapper before. */}
       <RowHitTarget label={`${item.displayName} — details`} />
@@ -1344,7 +1343,7 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
         style={hero ? undefined : { background: artGradient(item.name) }}>
         {hero && (
           <img src={hero} alt="" loading="lazy"
-            className="size-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
+            className="size-full object-cover" />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-surface-container/50 to-transparent" />
       </div>

@@ -92,7 +92,7 @@ function StoreRailBlock({ title, allLabel, allCount, icon, options, value, onCha
       {rows.map((o) => (
         <FilterRow key={o.key} label={o.label} count={o.count} icon={icon}
           selected={value === o.key} pressed={value === o.key}
-          indicatorId={`store-rail-${title}`} onClick={() => onChange(o.key)} />
+          onClick={() => onChange(o.key)} />
       ))}
     </div>
   )

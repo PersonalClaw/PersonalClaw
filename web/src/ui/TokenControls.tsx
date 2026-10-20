@@ -4,7 +4,7 @@ import { RotateCcw } from 'lucide-react'
 import type { ColorToken, ScalarToken, SelectToken } from '../design/tokenRegistry'
 import { useAppearance } from '../app/appearance'
 import { useMode } from '../app/theme'
-import { spring, physics } from '../design/motion'
+import { physics } from '../design/motion'
 
 /** Shared reset control — the RotateCcw icon spins a full turn on click (a literal
  *  "rewind to default" microinteraction), consistent across all token rows.
@@ -91,7 +91,6 @@ export function ColorControl({ token }: { token: ColorToken }) {
 export function SelectControl({ token }: { token: SelectToken }) {
   const { selectValue, setSelect, resetToken } = useAppearance()
   const val = selectValue(token)
-  const indicatorId = `tokensel-${useId()}`
   return (
     <div className="flex items-center gap-m py-2">
       <span data-type="body-s" className="flex-1 min-w-0 text-on-surface">{token.label}</span>
@@ -113,9 +112,9 @@ export function SelectControl({ token }: { token: SelectToken }) {
               data-type="body-s"
               className={`relative rounded-pill px-m h-7 capitalize transition-colors ${on ? 'text-on-primary' : 'text-on-surface-var hover:text-on-surface'}`}
             >
-              {/* liquid active pill — slides between options via layoutId instead of
-                  the primary fill jumping instantly from one option to another. */}
-              {on && <motion.span layoutId={indicatorId} transition={spring.spatialFast} className="absolute inset-0 rounded-pill bg-primary" />}
+              {/* The active option's fill. It moves to the new option at once: an option change
+                  is a high-frequency action, and a fill sliding over says nothing the fill does not. */}
+              {on && <span className="absolute inset-0 rounded-pill bg-primary" />}
               <span className="relative">{opt}</span>
             </button>
           )

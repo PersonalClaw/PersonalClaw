@@ -1,9 +1,9 @@
-import { useId, useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { RectangleVertical, RectangleHorizontal, StretchHorizontal, MoveHorizontal } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useAppearance, type WidthPreset } from '../app/appearance'
-import { spring, stagger, listItemEnter } from '../design/motion'
+import { overlayEnter, spring } from '../design/motion'
 
 const OPTS: { key: WidthPreset; icon: LucideIcon; label: string }[] = [
   { key: 'narrow', icon: RectangleVertical, label: 'Narrow' },
@@ -23,7 +23,6 @@ export function WidthPill() {
   const btnRef = useRef<HTMLButtonElement>(null)
   const active = OPTS.find((o) => o.key === widthPreset) ?? OPTS[1]
   const ActiveIcon = active.icon
-  const indicatorId = `widthpill-active-${useId()}`
 
   // 🔴 THIS MENU WAS HOVER-ONLY, so it could not be opened at all without a pointer. Driven on
   // `#/dashboard`: focus the trigger, press Enter → `aria-expanded` stayed **false** and nothing
@@ -67,34 +66,29 @@ export function WidthPill() {
           // inside the hover region while crossing into the menu). Absolute so
           // the corner cluster never reflows as it expands.
           <motion.div
-            initial={{ opacity: 0, scale: 0.96, y: -4 }}
-            animate={{ opacity: 1, scale: 1, y: 0, transition: spring.spatialFast }}
-            exit={{ opacity: 0, scale: 0.98, transition: spring.effects }}
+            variants={overlayEnter} initial="initial" animate="animate" exit="exit"
             style={{ transformOrigin: 'top center' }}
             className="absolute left-1/2 top-full z-40 -translate-x-1/2 pt-1">
-            <motion.div variants={{ animate: { transition: stagger(0.035) } }} initial="initial" animate="animate"
-              className="flex flex-col gap-0.5 rounded-pill bg-surface-container p-0.5" style={{ boxShadow: 'var(--shadow-menu)' }}>
+            <div className="flex flex-col gap-0.5 rounded-pill bg-surface-container p-0.5" style={{ boxShadow: 'var(--shadow-menu)' }}>
               {OPTS.map((o) => {
                 const on = o.key === widthPreset
                 const Icon = o.icon
                 return (
-                  <motion.button key={o.key} type="button" variants={listItemEnter} whileTap={{ scale: 0.9 }}
+                  <button key={o.key} type="button"
                     onClick={() => { setWidthPreset(o.key); setOpen(false) }}
                     title={`Content width: ${o.label}`} aria-label={`Content width: ${o.label}`} aria-pressed={on}
                     className="relative grid size-7 place-items-center rounded-pill transition-colors"
                     style={{ color: on ? 'var(--color-on-surface)' : 'var(--color-on-surface-low)' }}>
-                    {/* liquid active indicator — one shared pill that SLIDES between
-                        the 4 width options via layoutId, instead of the highlight
-                        blink-jumping from icon to icon. */}
+                    {/* The active option's fill. It moves to the picked option at once, and the four
+                        options arrive together: a menu opened this often should not cascade or slide. */}
                     {on && (
-                      <motion.span layoutId={indicatorId} transition={spring.spatialFast}
-                        className="absolute inset-0 rounded-pill" style={{ background: 'var(--color-surface-highest)' }} />
+                      <span className="absolute inset-0 rounded-pill" style={{ background: 'var(--color-surface-highest)' }} />
                     )}
                     <Icon size={14} className="relative" />
-                  </motion.button>
+                  </button>
                 )
               })}
-            </motion.div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
