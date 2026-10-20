@@ -37,6 +37,7 @@ import pytest
 import quarantine
 import security_census
 import site_baseline
+import source_pin_census
 import timeout_marks
 import yaml
 from rails_repo import REPO
@@ -10020,6 +10021,118 @@ NO_NEW_GETSOURCE_OUTSIDE_THE_RAILS = Row(
 )
 
 ROWS = (*ROWS, NO_NEW_GETSOURCE_OUTSIDE_THE_RAILS)
+
+
+# ── #3937's line is the source-pin census's own ──────────────────────────────────────────────
+#
+# #3937 is done when the source-text pins outside tests/rails (the getsource sites above, and the
+# literal pins on source text) fall to half their count at its starting commit. Both counts are
+# taken by tests/source_pin_census.py and recorded in one row, which this row holds to the counter:
+# taken under the counter's current rule, each count the sum of its kinds at a full commit sha, and
+# the target half the baseline. A row taken under another rule measured something else.
+
+_SHA_THEN = "1" * 40
+_SHA_NOW = "2" * 40
+
+
+def _measure_row(**changes: Any) -> dict[str, Any]:
+    recorded: dict[str, Any] = {
+        "counter": source_pin_census.COUNTER,
+        "rule": source_pin_census.RULE,
+        "baseline": {
+            "sha": _SHA_THEN,
+            "sites": 9,
+            "getsource": 3,
+            "in": 4,
+            "not_in": 1,
+            "count": 1,
+        },
+        "target": 4,
+        "measured": {"sha": _SHA_NOW, "sites": 6, "getsource": 2, "in": 3, "not_in": 1, "count": 0},
+    }
+    for key, value in changes.items():
+        side, _, field = key.partition("__")
+        if field:
+            recorded[side] = {**recorded[side], field: value}
+        else:
+            recorded[side] = value
+    return recorded
+
+
+def _write_measure(**changes: Any) -> Callable[[Path], None]:
+    text = json.dumps(_measure_row(**changes), indent=2) + "\n"
+    return lambda root: _write(root, source_pin_census.MEASURE, text)
+
+
+def _measure_check(root: Path) -> list[str]:
+    return source_pin_census.row_problems(root)
+
+
+SOURCE_PIN_LINE_IS_THE_COUNTERS_OWN = Row(
+    name="#3937's source-pin line is recorded by its own counter",
+    check=_measure_check,
+    scaffold=_write_measure(),
+    controls=(
+        Control(
+            "a target that is not half the baseline fails",
+            _write_measure(target=5),
+            expect="the target 5 is not half the baseline's 9 sites (4)",
+        ),
+        Control(
+            "a row taken under another rule fails",
+            _write_measure(rule=source_pin_census.RULE + 1),
+            expect=f"taken under rule {source_pin_census.RULE + 1}",
+        ),
+        Control(
+            "a count that is not the sum of its kinds fails",
+            _write_measure(measured__sites=7),
+            expect="the measured's 7 sites are not the sum of its kinds",
+        ),
+        Control(
+            "a kind left out fails",
+            _write_measure(
+                baseline={"sha": _SHA_THEN, "sites": 9, "getsource": 3, "in": 5, "count": 1}
+            ),
+            expect="the baseline lacks a count",
+        ),
+        Control(
+            "a short sha fails",
+            _write_measure(baseline__sha=_SHA_THEN[:8]),
+            expect="the baseline names no full commit sha",
+        ),
+        Control(
+            "a row naming another counter fails",
+            _write_measure(counter="tests/getsource_census.py"),
+            expect="not this counter",
+        ),
+        Control(
+            "a missing row fails",
+            _remove(source_pin_census.MEASURE),
+            expect="is missing",
+        ),
+        Control(
+            "a row that is not JSON fails",
+            lambda root: _write(root, source_pin_census.MEASURE, "{baseline: 9}\n"),
+            expect="is not JSON",
+        ),
+        Control(
+            "a later measure passes, at the target or above it",
+            _write_measure(
+                measured={
+                    "sha": "3" * 40,
+                    "sites": 8,
+                    "getsource": 3,
+                    "in": 4,
+                    "not_in": 1,
+                    "count": 0,
+                }
+            ),
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, SOURCE_PIN_LINE_IS_THE_COUNTERS_OWN)
 
 
 # ── No workflow job outside the catalogue runs a test (#3909) ────────────────────────────────

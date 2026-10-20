@@ -31,7 +31,10 @@ when the property is structural. No new `inspect.getsource` call lands in a test
 `tests/rails`: the calls still there are listed in `tests/rails/baselines/getsource.sites.jsonl`,
 a site baseline that only shrinks, and the CI contract row "no new inspect.getsource call lands
 outside tests/rails" fails on a call it does not list (the rule is in `tests/getsource_census.py`).
-When you convert one, delete its line.
+When you convert one, delete its line. `python tests/source_pin_census.py` counts both halves of
+what is left: those calls, and every `in`, `not in` or `.count()` of a literal on source text,
+however the test read it. `tests/rails/baselines/source-pins.json` holds its count at the starting
+commit, the target (half of it) and the latest measure.
 
 ## A parametrized test, converted
 

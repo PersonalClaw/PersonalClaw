@@ -1,0 +1,21 @@
+{
+  "counter": "tests/source_pin_census.py",
+  "rule": 1,
+  "baseline": {
+    "sha": "c705b30264b9f87db6b91429e25a2bc5ee939464",
+    "sites": 906,
+    "getsource": 270,
+    "in": 447,
+    "not_in": 171,
+    "count": 18
+  },
+  "target": 453,
+  "measured": {
+    "sha": "4304c58435377c85d3e35e03173b605b588507d3",
+    "sites": 563,
+    "getsource": 131,
+    "in": 287,
+    "not_in": 136,
+    "count": 9
+  }
+}
