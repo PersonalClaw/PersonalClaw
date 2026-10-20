@@ -229,3 +229,75 @@ test.describe('the chat header fits at every width', () => {
     })
   }
 })
+
+// ── THE TURNS READ AT THE READING WIDTH ─────────────────────────────────────────────────────────
+//
+// The transcript's turn column takes `--reading-width`, not the page-width preset, so a thread reads
+// at one width however wide the window is (#3820). `theTurnColumnReadsAtTheReadingWidth.test.tsx`
+// pins the cause in jsdom, which lays nothing out; this measures the result where it is drawn. At
+// the goldens' 1280 the column the turns sit in is as wide as the token resolves to, narrower than
+// the window, and centred in the transcript's scroller. On a tree whose column took the preset, the
+// shipped `full` preset ran it the scroller's whole width.
+
+interface TurnColumn {
+  viewport: number
+  turns: number
+  /** `--reading-width` as declared on `<html>`, for the message. */
+  declared: string
+  /** The same token, resolved to pixels by the browser on a probe's border box. */
+  readingWidth: number
+  /** The turn column's painted width. */
+  column: number
+  /** The scroller's content box, which the column centres in. */
+  scroller: number
+  leftGap: number
+  rightGap: number
+}
+
+/** Read the turn column in ONE evaluate, so every number shares a layout pass. */
+async function readTurnColumn(page: Page): Promise<TurnColumn> {
+  return page.evaluate(() => {
+    const scroller = document.querySelector<HTMLElement>('[data-transcript-scroll]')
+    const turns = scroller ? Array.from(scroller.querySelectorAll('[data-transcript-turn]')) : []
+    const column = turns[0]?.parentElement
+    if (!scroller || !column) throw new Error('no turn in the transcript scroller')
+    const probe = document.createElement('div')
+    probe.style.cssText = 'position:fixed;top:0;left:0;visibility:hidden;box-sizing:border-box;width:var(--reading-width)'
+    document.body.appendChild(probe)
+    const readingWidth = probe.getBoundingClientRect().width
+    probe.remove()
+    const c = column.getBoundingClientRect()
+    const s = scroller.getBoundingClientRect()
+    const left = s.left + scroller.clientLeft
+    const right = left + scroller.clientWidth
+    const r1 = (n: number) => Math.round(n * 10) / 10
+    return {
+      viewport: window.innerWidth,
+      turns: turns.filter((t) => t.parentElement === column).length,
+      declared: getComputedStyle(document.documentElement).getPropertyValue('--reading-width').trim(),
+      readingWidth: r1(readingWidth),
+      column: r1(c.width),
+      scroller: r1(scroller.clientWidth),
+      leftGap: r1(c.left - left),
+      rightGap: r1(right - c.right),
+    }
+  })
+}
+
+test.describe("the chat's turns read at the reading width", () => {
+  test('1280px — the turn column is --reading-width wide, narrower than the window, and centred', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await pinTheChat(page)
+    await gotoRoute(page, `chat/${KEY}`)
+    await expect(page.locator('[data-transcript-turn]'), 'the chat never showed its turns').toHaveCount(DETAIL.messages.length)
+    const g = await readTurnColumn(page)
+    const report = `column ${g.column}px in a ${g.scroller}px scroller (gaps ${g.leftGap} / ${g.rightGap}), ` +
+      `--reading-width ${g.readingWidth}px (declared "${g.declared}"), viewport ${g.viewport}px`
+    expect(g.viewport, 'the viewport did not apply').toBe(1280)
+    expect(g.turns, `the turns are not all in one column: ${report}`).toBe(DETAIL.messages.length)
+    expect(Math.abs(g.column - g.readingWidth), `the turn column is not the reading width: ${report}`).toBeLessThanOrEqual(0.5)
+    expect(g.readingWidth, `--reading-width resolves to no width: ${report}`).toBeGreaterThan(0)
+    expect(g.column, `the turn column runs the window's width: ${report}`).toBeLessThan(g.scroller)
+    expect(Math.abs(g.leftGap - g.rightGap), `the turn column is not centred: ${report}`).toBeLessThanOrEqual(1)
+  })
+})

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { ROUTES, VIEW_ROUTES, THEMES, ORB_STATE_SHOTS } from '../../e2e/routes'
+import { ROUTES, VIEW_ROUTES, THEMES, ORB_STATE_SHOTS, REDUCED_MOTION_SHOTS } from '../../e2e/routes'
 
 // ── Every surface the visual gate snapshots must HAVE a committed baseline ───────────────────
 //
@@ -44,8 +44,8 @@ const BASELINES = join(process.cwd(), 'e2e', '__screenshots__', 'visual.spec.ts'
  *  capturing one without declaring it, reds one of the two assertions below. */
 const CAPTURED_PLATFORMS = ['darwin'] as const
 
-/** `<id|route>-<theme>` for every route, and each of the agent orb's state shots by its key — the
- *  `arg` half of playwright's `snapshotPathTemplate`. */
+/** `<id|route>-<theme>` for every route, and each of the agent orb's state shots and each
+ *  reduced-motion shot by its key — the `arg` half of playwright's `snapshotPathTemplate`. */
 function expectedKeys(): string[] {
   const keys: string[] = []
   for (const theme of THEMES) {
@@ -54,6 +54,7 @@ function expectedKeys(): string[] {
     }
   }
   for (const { key } of ORB_STATE_SHOTS) keys.push(key)
+  for (const { key } of REDUCED_MOTION_SHOTS) keys.push(key)
   return keys
 }
 
