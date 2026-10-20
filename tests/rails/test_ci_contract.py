@@ -29,11 +29,13 @@ from pathlib import Path
 from typing import Any
 
 import ci_masking
+import getsource_census
 import local_actions
 import private_walkers
 import pytest
 import quarantine
 import security_census
+import site_baseline
 import timeout_marks
 import yaml
 from rails_repo import REPO
@@ -8024,6 +8026,161 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
 )  # fmt: skip
 
 ROWS = (*ROWS, NO_CANDIDATE_POSTS_THE_MERGE_VERDICT, CONCURRENCY_KEYS_ON_THE_CANDIDATE)
+
+
+# ── No new getsource call outside tests/rails ───────────────────────────────────────────────
+#
+# A test that reads the product's source and asserts a literal in it pins the text, not what the
+# code does. The calls still outside tests/rails are listed in a site baseline that only shrinks
+# (tests/getsource_census.py holds the rule): a call the list does not hold fails, and so does a
+# line whose call is gone. Against the gate's base commit, a line the base lacks needs `added` and
+# a reason (tests/site_baseline.py).
+
+_LISTED = "tests/test_listed.py::test_it::inspect.getsource(json)"
+_PIN_REASON = "not converted yet"
+_A_PIN = "import inspect\nimport json\n\n\ndef test_it():\n    assert inspect.getsource(json)\n"
+
+
+def _getsource_scaffold(root: Path) -> None:
+    """A tree where the rule holds: one listed call, a call inside tests/rails, a test with no
+    call, and the baseline registered."""
+    _write(root, "tests/test_listed.py", _A_PIN)
+    _write(root, "tests/rails/test_a_rail.py", _A_PIN)
+    _write(root, "tests/test_clean.py", "def test_it():\n    assert 1 + 1 == 2\n")
+    _write(
+        root,
+        getsource_census.BASELINE,
+        json.dumps({"site": _LISTED, "reason": _PIN_REASON}) + "\n",
+    )
+    registered = {
+        "site": getsource_census.BASELINE,
+        "rail": "tests/rails/test_a_rail.py",
+        "replaces": "no limit",
+        "ceiling": 1,
+        "reason": "the scaffold's list",
+    }
+    _write(root, site_baseline.REGISTRY, json.dumps(registered) + "\n")
+
+
+def _getsource_check(root: Path) -> list[str]:
+    """The baseline's failures for *root*: against the gate's base on the real tree, and with no
+    base on a scaffold, which is not a repository."""
+    base = site_baseline.FROM_THE_GATE if root == REPO else None
+    try:
+        site_baseline.check(
+            getsource_census.sites(root), getsource_census.BASELINE, base, root=root, prune=False
+        )
+    except AssertionError as exc:
+        return str(exc).splitlines()[1:] or [str(exc)]
+    return []
+
+
+def _new_test(text: str, rel: str = "tests/test_new_pin.py") -> Callable[[Path], None]:
+    return lambda root: _write(root, rel, "import inspect\nimport json\n\n\n" + text)
+
+
+def _drop_listed_call(root: Path) -> None:
+    _write(root, "tests/test_listed.py", "def test_it():\n    assert True\n")
+
+
+def _baseline_of(*lines: dict[str, str]) -> Callable[[Path], None]:
+    text = "".join(json.dumps(line) + "\n" for line in lines)
+    return lambda root: (root / getsource_census.BASELINE).write_text(text, encoding="utf-8")
+
+
+NO_NEW_GETSOURCE_OUTSIDE_THE_RAILS = Row(
+    name="no new inspect.getsource call lands outside tests/rails",
+    check=_getsource_check,
+    scaffold=_getsource_scaffold,
+    controls=(
+        Control(
+            "a planted call outside the list fails",
+            _new_test("def test_it():\n    assert inspect.getsource(json)\n"),
+            expect="tests/test_new_pin.py::test_it::inspect.getsource(json) is not listed",
+        ),
+        Control(
+            "a second call in a listed test fails",
+            lambda root: _write(
+                root, "tests/test_listed.py", _A_PIN + "    assert inspect.getsource(json)\n"
+            ),
+            expect=f"{_LISTED} #2 is not listed",
+        ),
+        Control(
+            "a bare getsource imported from inspect fails",
+            lambda root: _write(
+                root,
+                "tests/test_bare.py",
+                "import json\nfrom inspect import getsource\n\n\n"
+                "def test_it():\n    assert getsource(json)\n",
+            ),
+            expect="tests/test_bare.py::test_it::getsource(json) is not listed",
+        ),
+        Control(
+            "getsource taken under another name fails where it is taken",
+            _new_test("READ = inspect.getsource\n\n\ndef test_it():\n    assert READ(json)\n"),
+            expect="tests/test_new_pin.py::<module>::inspect.getsource is not listed",
+        ),
+        Control(
+            "getsource imported under an alias fails at the import",
+            lambda root: _write(
+                root,
+                "tests/test_alias.py",
+                "import json\nfrom inspect import getsource as read\n\n\n"
+                "def test_it():\n    assert read(json)\n",
+            ),
+            expect="from inspect import getsource as read is not listed",
+        ),
+        Control(
+            "a call in a helper module under tests fails too",
+            _new_test(
+                "def source_of(module):\n    return inspect.getsource(module)\n",
+                rel="tests/pin_helpers.py",
+            ),
+            expect="tests/pin_helpers.py::source_of::inspect.getsource(module) is not listed",
+        ),
+        Control(
+            "a converted call whose line stays fails: the list only shrinks",
+            _drop_listed_call,
+            expect=f"Site {_LISTED} is listed",
+        ),
+        Control(
+            "a line for a call that does not exist fails",
+            _baseline_of(
+                {"site": _LISTED, "reason": _PIN_REASON},
+                {"site": "tests/test_x.py::t::inspect.getsource(x)", "reason": "r"},
+            ),
+            expect="Site tests/test_x.py::t::inspect.getsource(x) is listed",
+        ),
+        Control(
+            "a converted call with its line deleted passes",
+            lambda root: (_drop_listed_call(root), _baseline_of()(root)),
+            fails=False,
+        ),
+        Control(
+            "a new call inside tests/rails passes",
+            _new_test(
+                "def test_it():\n    assert inspect.getsource(json)\n",
+                rel="tests/rails/test_another_rail.py",
+            ),
+            fails=False,
+        ),
+        Control(
+            "the word in a comment or a string passes",
+            _new_test(
+                "# inspect.getsource(json) would pin the text\n\n\n"
+                "def test_it():\n    assert 'getsource' != inspect.getdoc(json)\n"
+            ),
+            fails=False,
+        ),
+        Control(
+            "inspect.getsourcefile passes: it names a file and reads no text",
+            _new_test("def test_it():\n    assert inspect.getsourcefile(json)\n"),
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, NO_NEW_GETSOURCE_OUTSIDE_THE_RAILS)
 
 
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
